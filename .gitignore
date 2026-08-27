@@ -1,0 +1,11 @@
+.data/
+docker-data/
+.env
+comicarr.db
+comicarr.db-shm
+comicarr.db-wal
+.pnpm-store/
+__pycache__/
+*.pyc
+v1-prototype/node_modules/
+v1-prototype/dist/

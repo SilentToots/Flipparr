@@ -1,0 +1,13 @@
+.git
+.gitignore
+.data
+docker-data
+comicarr.db
+__pycache__
+*.pyc
+*.pyo
+.DS_Store
+audit
+v1-prototype/node_modules
+v1-prototype/dist
+v1-prototype/.openai

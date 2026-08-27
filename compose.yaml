@@ -1,0 +1,27 @@
+services:
+  comic-library:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: comic-library:local
+    container_name: comic-library
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-1026}:${PGID:-100}"
+    ports:
+      - "${COMICARR_PORT:-8787}:8787"
+    environment:
+      TZ: "${TZ:-America/New_York}"
+      COMICARR_DATABASE: /config/comicarr.db
+      COMICARR_PROVIDER_CONFIG: /config/metadata-providers.json
+      COMICARR_ACQUISITION_CONFIG: /config/acquisition-services.json
+      COMICARR_WEB_ROOT: /app/web
+    volumes:
+      - "${CONFIG_PATH:-./docker-data}:/config"
+      - "${COMICS_PATH:?Set COMICS_PATH to the NAS comics directory}:/comics:rw"
+      - "${SAB_COMPLETE_PATH:?Set SAB_COMPLETE_PATH to SABnzbd's completed comics directory}:/downloads/complete/comics:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true

@@ -1,0 +1,4380 @@
+#!/usr/bin/env python3
+"""Read-only comic filename metadata proof of concept.
+
+Run with: python3 app.py
+Then open: http://127.0.0.1:8787
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import difflib
+import hashlib
+import html
+import io
+import json
+import mimetypes
+import os
+import posixpath
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+import xml.etree.ElementTree as ET
+from dataclasses import asdict, dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+from catalog_store import CatalogStore
+
+
+SUPPORTED_EXTENSIONS = {".cbz", ".cbr", ".pdf", ".epub", ".cb7", ".cbt"}
+ZIP_COMIC_EXTENSIONS = {".cbz", ".epub"}
+ARCHIVE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"}
+COVER_THUMBNAIL_MAX_DIMENSION = 600
+COVER_THUMBNAIL_QUALITY = 82
+COVER_SOURCE_MAX_BYTES = 50_000_000
+COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-v1"
+USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
+PROVIDER_CONFIG_PATH = Path(
+    os.environ.get(
+        "COMICARR_PROVIDER_CONFIG",
+        str(Path(__file__).parent / ".data" / "metadata-providers.json"),
+    )
+)
+ACQUISITION_CONFIG_PATH = Path(
+    os.environ.get(
+        "COMICARR_ACQUISITION_CONFIG",
+        str(Path(__file__).parent / ".data" / "acquisition-services.json"),
+    )
+)
+GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
+GCD_API_BASE = "https://www.comics.org/api"
+METRON_API_BASE = "https://metron.cloud/api"
+COMIC_VINE_API_BASE = "https://comicvine.gamespot.com/api"
+_PROVIDER_CONFIG_LOCK = threading.Lock()
+_ACQUISITION_CONFIG_LOCK = threading.Lock()
+_RELEASE_CANDIDATE_LOCK = threading.Lock()
+_RELEASE_CANDIDATES: dict[str, dict[str, Any]] = {}
+_RELEASE_CANDIDATE_TTL_SECONDS = 30 * 60
+_REMOTE_JSON_CACHE: dict[str, Any] = {}
+_REMOTE_JSON_INFLIGHT: dict[str, threading.Event] = {}
+_REMOTE_JSON_LOCK = threading.Lock()
+_REMOTE_CACHE_FILE = Path(tempfile.gettempdir()) / "comic-metadata-poc-cache-v1.json"
+_REMOTE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+_PERSIST_REMOTE_CACHE = False
+CATALOG_DATABASE_PATH = Path(
+    os.environ.get("COMICARR_DATABASE", str(Path(__file__).parent / ".data" / "comicarr.db"))
+)
+WEB_ROOT = Path(os.environ.get("COMICARR_WEB_ROOT", "")).resolve() if os.environ.get("COMICARR_WEB_ROOT") else None
+_CATALOG_STORE: CatalogStore | None = None
+_CATALOG_STORE_LOCK = threading.Lock()
+FORMAT_PATTERNS = (
+    ("omnibus", re.compile(r"\bomnibus\b", re.I)),
+    ("compendium", re.compile(r"\bcompendium\b", re.I)),
+    ("deluxe edition", re.compile(r"\bdeluxe(?: edition)?\b", re.I)),
+    ("hardcover", re.compile(r"\b(?:hardcover|hard cover|hc)\b", re.I)),
+    ("trade paperback", re.compile(r"\b(?:trade paperback|tpb)\b", re.I)),
+    ("graphic novel", re.compile(r"\bgraphic novel\b", re.I)),
+)
+NOISE = re.compile(
+    r"\b(?:digital|webrip|web-dl|retail|scan|fixed|empire|zone-empire|"
+    r"noads|no ads|english|eng|v\d{2}|\d{3,4}p)\b",
+    re.I,
+)
+YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
+ISBN_13 = re.compile(r"(?<!\d)(97[89](?:[ -]?\d){10})(?!\d)")
+ISBN_10 = re.compile(r"(?<!\d)(\d(?:[ -]?\d){8}[ -]?[\dXx])(?!\d)")
+VOLUME = re.compile(r"\b(?:vol(?:ume)?\.?|book)\s*[-#:]?\s*(\d+)\b", re.I)
+ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*)(\d+(?:\.\w+)?)\b", re.I)
+PADDED_ISSUE = re.compile(
+    r"\b(0{1,3}\d{1,3})\b(?=\s*(?:\((?:19|20)\d{2}\)|(?:19|20)\d{2}\b|$))",
+    re.I,
+)
+
+
+@dataclass
+class ParsedFile:
+    path: str
+    filename: str
+    extension: str
+    title: str
+    volume: int | None = None
+    issue: str | None = None
+    year: int | None = None
+    format: str | None = None
+    isbn: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def catalog_store() -> CatalogStore:
+    global _CATALOG_STORE
+    with _CATALOG_STORE_LOCK:
+        if _CATALOG_STORE is None:
+            _CATALOG_STORE = CatalogStore(CATALOG_DATABASE_PATH)
+        return _CATALOG_STORE
+
+
+PROVIDER_DEFINITIONS = {
+    "gcd": {
+        "name": "Grand Comics Database", "credentialField": None,
+        "capabilities": ["Series structure", "Issue records", "Volume records"],
+        "description": "Built-in anonymous catalog source. No account or API key is required.",
+        "defaultEnabled": True, "defaultPriority": 10,
+    },
+    "metron": {
+        "name": "Metron", "credentialField": "token",
+        "capabilities": ["Issue titles", "Release dates", "Covers", "Creators", "Cross-provider IDs"],
+        "description": "Optional authenticated source for detailed issue metadata and cross-provider matching.",
+        "defaultEnabled": False, "defaultPriority": 20,
+    },
+    "comic_vine": {
+        "name": "Comic Vine", "credentialField": "apiKey",
+        "capabilities": ["Issue titles", "Release dates", "Covers", "Volumes"],
+        "description": "Optional API-key source for issue and volume enrichment. Comic Vine restricts its API to non-commercial use.",
+        "defaultEnabled": False, "defaultPriority": 30,
+    },
+    "open_library": {
+        "name": "Open Library", "credentialField": None,
+        "capabilities": ["ISBN editions", "Volumes", "Book covers"],
+        "description": "Built-in source for ISBN-based trades, hardcovers, omnibuses, and ebooks.",
+        "defaultEnabled": True, "defaultPriority": 40,
+    },
+}
+
+ACQUISITION_SERVICE_DEFINITIONS = {
+    "prowlarr": {
+        "name": "Prowlarr", "kind": "Indexer manager",
+        "capabilities": ["Usenet indexer search", "Release candidates", "Indexer health"],
+        "description": "Search your configured indexers for wanted issues and volumes.",
+        "defaultUrl": "http://localhost:9696", "defaultEnabled": False,
+    },
+    "sabnzbd": {
+        "name": "SABnzbd", "kind": "Download client",
+        "capabilities": ["NZB downloads", "Queue status", "Completed-download tracking"],
+        "description": "Download selected NZBs and report their progress back to Comic Library.",
+        "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
+    },
+}
+
+
+def _provider_defaults() -> dict[str, dict[str, Any]]:
+    return {
+        provider_id: {
+            "enabled": bool(definition["defaultEnabled"]),
+            "priority": int(definition["defaultPriority"]),
+        }
+        for provider_id, definition in PROVIDER_DEFINITIONS.items()
+    }
+
+
+def load_provider_config() -> dict[str, dict[str, Any]]:
+    """Load local provider credentials without ever returning them to the browser."""
+    with _PROVIDER_CONFIG_LOCK:
+        config = _provider_defaults()
+        try:
+            saved = json.loads(PROVIDER_CONFIG_PATH.read_text())
+        except (OSError, ValueError, json.JSONDecodeError):
+            saved = {}
+        if isinstance(saved, dict):
+            for provider_id, values in saved.items():
+                if provider_id in config and isinstance(values, dict):
+                    config[provider_id].update(values)
+        metron_env = os.environ.get("METRON_API_TOKEN", "").strip()
+        comic_vine_env = os.environ.get("COMIC_VINE_API_KEY", "").strip()
+        if metron_env:
+            config["metron"]["token"] = metron_env
+            config["metron"]["enabled"] = True
+        if comic_vine_env:
+            config["comic_vine"]["apiKey"] = comic_vine_env
+            config["comic_vine"]["enabled"] = True
+        return config
+
+
+def save_provider_config(provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if provider_id not in PROVIDER_DEFINITIONS:
+        raise ValueError("Unknown metadata provider")
+    definition = PROVIDER_DEFINITIONS[provider_id]
+    if definition["credentialField"] is None:
+        raise ValueError("Built-in providers do not require configuration")
+    with _PROVIDER_CONFIG_LOCK:
+        config = _provider_defaults()
+        try:
+            saved = json.loads(PROVIDER_CONFIG_PATH.read_text())
+        except (OSError, ValueError, json.JSONDecodeError):
+            saved = {}
+        if isinstance(saved, dict):
+            for saved_id, values in saved.items():
+                if saved_id in config and isinstance(values, dict):
+                    config[saved_id].update(values)
+        current = config[provider_id]
+        credential_field = str(definition["credentialField"])
+        supplied_credential = str(payload.get(credential_field) or "").strip()
+        if supplied_credential:
+            current[credential_field] = supplied_credential
+        if bool(payload.get("clearCredentials")):
+            current.pop(credential_field, None)
+        if "enabled" in payload:
+            current["enabled"] = bool(payload["enabled"])
+        if "priority" in payload:
+            try:
+                current["priority"] = max(1, min(99, int(payload["priority"])))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Provider priority must be a number") from exc
+        PROVIDER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = PROVIDER_CONFIG_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(config, indent=2, ensure_ascii=False))
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, PROVIDER_CONFIG_PATH)
+    return public_provider_config()
+
+
+def public_provider_config() -> dict[str, Any]:
+    config = load_provider_config()
+    providers = []
+    for provider_id, definition in PROVIDER_DEFINITIONS.items():
+        values = config[provider_id]
+        credential_field = definition["credentialField"]
+        configured = credential_field is None or bool(values.get(str(credential_field)))
+        providers.append({
+            "id": provider_id, "name": definition["name"],
+            "description": definition["description"],
+            "capabilities": definition["capabilities"],
+            "builtIn": credential_field is None, "configured": configured,
+            "enabled": bool(values.get("enabled")) and configured,
+            "priority": int(values.get("priority") or definition["defaultPriority"]),
+            "credentialField": credential_field,
+            "credentialHint": "Saved locally" if configured and credential_field else None,
+        })
+    providers.sort(key=lambda item: item["priority"])
+    return {"providers": providers, "credentialStorage": "local-file"}
+
+
+def _provider_headers(provider_id: str, credential: str) -> dict[str, str]:
+    headers = {"Accept": "application/json", "User-Agent": "Comicarr/1.0 (local metadata client)"}
+    if provider_id == "metron":
+        headers["Authorization"] = f"Bearer {credential}"
+    return headers
+
+
+def fetch_json_with_headers(url: str, headers: dict[str, str], timeout: float = 12.0) -> Any:
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    if provider_id not in {"metron", "comic_vine"}:
+        raise ValueError("This provider does not require a connection test")
+    config = load_provider_config()[provider_id]
+    credential_field = str(PROVIDER_DEFINITIONS[provider_id]["credentialField"])
+    credential = str(payload.get(credential_field) or config.get(credential_field) or "").strip()
+    if not credential:
+        raise ValueError(f"Enter a {PROVIDER_DEFINITIONS[provider_id]['name']} credential first")
+    if provider_id == "metron":
+        url = f"{METRON_API_BASE}/series/?page=1"
+        data = fetch_json_with_headers(url, _provider_headers(provider_id, credential))
+        detail = f"Authenticated successfully; {int(data.get('count') or 0):,} series are available."
+    else:
+        url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({
+            "api_key": credential, "format": "json", "limit": 1, "field_list": "id",
+        })
+        data = fetch_json_with_headers(url, _provider_headers(provider_id, credential))
+        if str(data.get("status_code")) != "1":
+            raise ValueError(str(data.get("error") or "Comic Vine rejected the API key"))
+        detail = "API key verified successfully."
+    return {"provider": provider_id, "status": "connected", "detail": detail}
+
+
+def _acquisition_service_defaults() -> dict[str, dict[str, Any]]:
+    return {
+        service_id: {
+            "enabled": bool(definition["defaultEnabled"]),
+            "url": str(definition["defaultUrl"]),
+            **({"category": "comics"} if service_id == "sabnzbd" else {}),
+        }
+        for service_id, definition in ACQUISITION_SERVICE_DEFINITIONS.items()
+    }
+
+
+def _normalize_service_url(value: Any) -> str:
+    url = str(value or "").strip().rstrip("/")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Enter a complete HTTP or HTTPS URL")
+    if parsed.username or parsed.password:
+        raise ValueError("Enter credentials in the API key field, not in the URL")
+    return url
+
+
+def load_acquisition_service_config() -> dict[str, dict[str, Any]]:
+    """Load local acquisition credentials without returning secrets to the browser."""
+    with _ACQUISITION_CONFIG_LOCK:
+        config = _acquisition_service_defaults()
+        try:
+            saved = json.loads(ACQUISITION_CONFIG_PATH.read_text())
+        except (OSError, ValueError, json.JSONDecodeError):
+            saved = {}
+        if isinstance(saved, dict):
+            for service_id, values in saved.items():
+                if service_id in config and isinstance(values, dict):
+                    config[service_id].update(values)
+        environment = {
+            "prowlarr": (os.environ.get("PROWLARR_URL"), os.environ.get("PROWLARR_API_KEY")),
+            "sabnzbd": (os.environ.get("SABNZBD_URL"), os.environ.get("SABNZBD_API_KEY")),
+        }
+        for service_id, (url, api_key) in environment.items():
+            if str(url or "").strip():
+                config[service_id]["url"] = str(url).strip().rstrip("/")
+            if str(api_key or "").strip():
+                config[service_id]["apiKey"] = str(api_key).strip()
+                config[service_id]["enabled"] = True
+        sab_category = str(os.environ.get("SABNZBD_CATEGORY") or "").strip()
+        if sab_category:
+            config["sabnzbd"]["category"] = sab_category
+        return config
+
+
+def public_acquisition_service_config() -> dict[str, Any]:
+    config = load_acquisition_service_config()
+    services = []
+    for service_id, definition in ACQUISITION_SERVICE_DEFINITIONS.items():
+        values = config[service_id]
+        configured = bool(values.get("url") and values.get("apiKey"))
+        services.append({
+            "id": service_id, "name": definition["name"], "kind": definition["kind"],
+            "description": definition["description"], "capabilities": definition["capabilities"],
+            "configured": configured, "enabled": bool(values.get("enabled")) and configured,
+            "url": str(values.get("url") or definition["defaultUrl"]),
+            "category": str(values.get("category") or "comics") if service_id == "sabnzbd" else None,
+            "credentialHint": "Saved locally" if values.get("apiKey") else None,
+        })
+    return {"services": services, "credentialStorage": "local-file"}
+
+
+def save_acquisition_service_config(service_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if service_id not in ACQUISITION_SERVICE_DEFINITIONS:
+        raise ValueError("Unknown acquisition service")
+    with _ACQUISITION_CONFIG_LOCK:
+        config = _acquisition_service_defaults()
+        try:
+            saved = json.loads(ACQUISITION_CONFIG_PATH.read_text())
+        except (OSError, ValueError, json.JSONDecodeError):
+            saved = {}
+        if isinstance(saved, dict):
+            for saved_id, values in saved.items():
+                if saved_id in config and isinstance(values, dict):
+                    config[saved_id].update(values)
+        current = config[service_id]
+        if "url" in payload and str(payload.get("url") or "").strip():
+            current["url"] = _normalize_service_url(payload["url"])
+        supplied_key = str(payload.get("apiKey") or "").strip()
+        if supplied_key:
+            current["apiKey"] = supplied_key
+        if bool(payload.get("clearCredentials")):
+            current.pop("apiKey", None)
+        if "enabled" in payload:
+            current["enabled"] = bool(payload["enabled"])
+        if service_id == "sabnzbd" and "category" in payload:
+            category = str(payload.get("category") or "").strip()
+            if not category:
+                raise ValueError("Enter a SABnzbd category")
+            current["category"] = category
+        ACQUISITION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = ACQUISITION_CONFIG_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(config, indent=2, ensure_ascii=False))
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, ACQUISITION_CONFIG_PATH)
+    return public_acquisition_service_config()
+
+
+def test_acquisition_service_connection(
+    service_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    if service_id not in ACQUISITION_SERVICE_DEFINITIONS:
+        raise ValueError("Unknown acquisition service")
+    payload = payload or {}
+    config = load_acquisition_service_config()[service_id]
+    url = _normalize_service_url(payload.get("url") or config.get("url"))
+    api_key = str(payload.get("apiKey") or config.get("apiKey") or "").strip()
+    if not api_key:
+        raise ValueError(f"Enter a {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} API key first")
+    if service_id == "prowlarr":
+        data = fetch_json_with_headers(
+            f"{url}/api/v1/system/status",
+            {"Accept": "application/json", "X-Api-Key": api_key, "User-Agent": "Comicarr/1.0"},
+        )
+        version = str(data.get("version") or "unknown")
+        detail = f"Connected to Prowlarr {version}."
+    else:
+        endpoint = f"{url}/api?" + urllib.parse.urlencode({
+            "mode": "version", "output": "json", "apikey": api_key,
+        })
+        data = fetch_json_with_headers(endpoint, {"Accept": "application/json", "User-Agent": "Comicarr/1.0"})
+        version = str((data.get("version") if isinstance(data, dict) else None) or "unknown")
+        detail = f"Connected to SABnzbd {version}; downloads will use the “{str(payload.get('category') or config.get('category') or 'comics')}” category."
+    return {"service": service_id, "status": "connected", "detail": detail}
+
+
+def _enabled_acquisition_service(service_id: str) -> dict[str, Any]:
+    config = load_acquisition_service_config().get(service_id) or {}
+    if not config.get("enabled") or not config.get("apiKey"):
+        name = ACQUISITION_SERVICE_DEFINITIONS[service_id]["name"]
+        raise ValueError(f"Connect and enable {name} in Settings first")
+    return {**config, "url": _normalize_service_url(config.get("url"))}
+
+
+def _release_tokens(value: Any) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(value or "").casefold())
+
+
+def _release_issue_matches(title: str, issue_number: Any) -> bool:
+    number = str(issue_number or "").strip()
+    if not number:
+        return False
+    escaped = re.escape(number.lstrip("0") or "0")
+    return bool(re.search(rf"(?:#|\b0*){escaped}(?!\d)", title, re.I))
+
+
+def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
+    title = str(release.get("title") or "")
+    release_tokens = set(_release_tokens(title))
+    series_tokens = set(_release_tokens(context.get("seriesTitle")))
+    score = 0
+    reasons: list[str] = []
+    if series_tokens and series_tokens.issubset(release_tokens):
+        score += 50
+        reasons.append("Series title matches")
+    if _release_issue_matches(title, context.get("issueNumber")):
+        score += 35
+        reasons.append(f"Issue #{context.get('issueNumber')} matches")
+    year = str(context.get("publicationYear") or context.get("seriesYear") or "").strip()
+    if year and year in title:
+        score += 10
+        reasons.append(f"Publication year {year} matches")
+    category_ids = {
+        str(category.get("id") if isinstance(category, dict) else category)
+        for category in (release.get("categories") or [])
+    }
+    if "7030" in category_ids:
+        score += 5
+        reasons.append("Listed as a comic")
+    return min(score, 100), reasons
+
+
+def _release_format_tags(title: Any) -> list[str]:
+    value = str(title or "")
+    tags = []
+    for label, pattern in (
+        ("CBZ", r"\bcbz\b"), ("CBR", r"\bcbr\b"), ("Digital", r"\bdigital\b"),
+        ("Retail", r"\bretail\b"), ("English", r"\b(?:english|eng)\b"),
+    ):
+        if re.search(pattern, value, re.I):
+            tags.append(label)
+    return tags
+
+
+def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
+    """Search one wanted issue and return credential-free release summaries."""
+    store = catalog_store()
+    context = store.get_acquisition_job_context(job_id)
+    prowlarr = _enabled_acquisition_service("prowlarr")
+    issue_number = str(context.get("issueNumber") or "").strip()
+    padded_issue = issue_number.zfill(3) if issue_number.isdigit() else issue_number
+    query = " ".join(part for part in (context.get("seriesTitle"), padded_issue) if part)
+    store.update_acquisition_job(job_id, "searching", f"Searching Prowlarr for {query}")
+    endpoint = f"{prowlarr['url']}/api/v1/search?" + urllib.parse.urlencode({
+        "query": query, "type": "search", "categories": "7030", "limit": 100,
+    })
+    payload = fetch_json_with_headers(
+        endpoint,
+        {"Accept": "application/json", "X-Api-Key": str(prowlarr["apiKey"]),
+         "User-Agent": "Comicarr/1.0"},
+        timeout=45.0,
+    )
+    releases = payload if isinstance(payload, list) else []
+    now = time.time()
+    candidates = []
+    with _RELEASE_CANDIDATE_LOCK:
+        for candidate_id, cached in list(_RELEASE_CANDIDATES.items()):
+            if float(cached.get("expiresAt") or 0) <= now:
+                _RELEASE_CANDIDATES.pop(candidate_id, None)
+        for release in releases:
+            if not isinstance(release, dict):
+                continue
+            protocol = str(release.get("protocol") or "").casefold()
+            title = str(release.get("title") or "").strip()
+            download_url = str(release.get("downloadUrl") or "").strip()
+            if protocol != "usenet" or not title or not download_url:
+                continue
+            score, reasons = _release_candidate_score(release, context)
+            if score < 85:
+                continue
+            seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
+            candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
+            _RELEASE_CANDIDATES[candidate_id] = {
+                "jobId": int(job_id), "downloadUrl": download_url, "title": title,
+                "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
+            }
+            candidates.append({
+                "id": candidate_id, "title": title,
+                "indexer": str(release.get("indexer") or "Unknown indexer"),
+                "sizeBytes": int(release.get("size") or 0),
+                "publishDate": release.get("publishDate"), "protocol": "Usenet",
+                "matchScore": score, "matchReasons": reasons,
+                "matchStrength": "Strong match" if score >= 85 else "Possible match",
+                "formatTags": _release_format_tags(title),
+            })
+    candidates.sort(key=lambda item: (-item["matchScore"], -item["sizeBytes"], item["title"]))
+    candidates = candidates[:24]
+    detail = f"{len(candidates)} release candidate{'s' if len(candidates) != 1 else ''} found"
+    store.update_acquisition_job(job_id, "queued", detail)
+    return {
+        "job": context, "query": query, "candidateCount": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
+    """Send a cached Prowlarr result to SABnzbd without exposing its URL to the browser."""
+    now = time.time()
+    with _RELEASE_CANDIDATE_LOCK:
+        candidate = _RELEASE_CANDIDATES.get(candidate_id)
+        if (not candidate or int(candidate.get("jobId") or 0) != int(job_id)
+                or float(candidate.get("expiresAt") or 0) <= now):
+            _RELEASE_CANDIDATES.pop(candidate_id, None)
+            raise ValueError("This release result expired; search again")
+    sab = _enabled_acquisition_service("sabnzbd")
+    endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+        "mode": "addurl", "name": candidate["downloadUrl"],
+        "nzbname": candidate["title"], "cat": str(sab.get("category") or "comics"),
+        "priority": -100, "pp": -1, "output": "json", "apikey": sab["apiKey"],
+    })
+    payload = fetch_json_with_headers(
+        endpoint, {"Accept": "application/json", "User-Agent": "Comicarr/1.0"}, timeout=30.0
+    )
+    if not isinstance(payload, dict) or not payload.get("status"):
+        raise ValueError("SABnzbd did not accept this release")
+    queue_ids = [str(value) for value in (payload.get("nzo_ids") or [])]
+    if not queue_ids:
+        raise ValueError("SABnzbd accepted the release but did not return a queue ID")
+    detail = f"Sent to SABnzbd: {candidate['title']}"
+    store = catalog_store()
+    store.record_acquisition_download(job_id, queue_ids[0], candidate["title"])
+    job = store.update_acquisition_job(job_id, "grabbed", detail)
+    with _RELEASE_CANDIDATE_LOCK:
+        _RELEASE_CANDIDATES.pop(candidate_id, None)
+    return {"status": "grabbed", "job": job, "queueIds": queue_ids,
+            "detail": "Release sent to SABnzbd."}
+
+
+def start_catalog_scan(folder: str, recursive: bool = True) -> int:
+    """Queue an incremental scan and return its durable scan-run id."""
+    store = catalog_store()
+    scan_id = store.begin_scan(folder, recursive)
+    worker = threading.Thread(
+        target=store.perform_scan,
+        args=(scan_id, scan_folder, enrich),
+        name=f"comicarr-scan-{scan_id}",
+        daemon=True,
+    )
+    worker.start()
+    return scan_id
+
+
+def normalize_isbn(value: str) -> str:
+    return re.sub(r"[^0-9Xx]", "", value).upper()
+
+
+def valid_isbn(value: str) -> bool:
+    normalized = normalize_isbn(value)
+    if len(normalized) == 13 and normalized.isdigit():
+        total = sum((1 if index % 2 == 0 else 3) * int(char) for index, char in enumerate(normalized[:12]))
+        return (10 - total % 10) % 10 == int(normalized[-1])
+    if len(normalized) == 10:
+        values = [10 if char == "X" else int(char) for char in normalized]
+        return sum((10 - index) * value for index, value in enumerate(values)) % 11 == 0
+    return False
+
+
+def find_isbn(value: str) -> re.Match[str] | None:
+    match = ISBN_13.search(value)
+    if match and valid_isbn(match.group(1)):
+        return match
+    for candidate in ISBN_10.finditer(value):
+        if valid_isbn(candidate.group(1)):
+            return candidate
+    return None
+
+
+_FALLBACK_SEGMENT_WORDS = {
+    "a", "and", "batman", "bastards", "birth", "earth", "heaven", "key", "locke",
+    "luther", "of", "right", "southern", "strange", "strode", "talent", "the",
+}
+_SEGMENT_WORDS: set[str] | None = None
+
+
+def segmentation_words() -> set[str]:
+    global _SEGMENT_WORDS
+    if _SEGMENT_WORDS is not None:
+        return _SEGMENT_WORDS
+    words = set(_FALLBACK_SEGMENT_WORDS)
+    for dictionary_path in (Path("/usr/share/dict/words"), Path("/usr/share/dict/propernames")):
+        try:
+            words.update(
+                value.lower() for value in dictionary_path.read_text(errors="ignore").splitlines()
+                if value.isalpha()
+            )
+        except OSError:
+            continue
+    _SEGMENT_WORDS = words
+    return words
+
+
+def split_compound_token(token: str) -> str:
+    """Insert likely word boundaries into a long, unspaced filename token."""
+    if len(token) < 8 or not token.isalpha():
+        return token
+    lowered = token.lower()
+    words = segmentation_words()
+    if lowered in words:
+        return token
+
+    def word_score(word: str) -> int | None:
+        derived = False
+        if word not in words:
+            stems = []
+            if word.endswith("s") and len(word) > 3:
+                stems.append(word[:-1])
+            if word.endswith("es") and len(word) > 4:
+                stems.append(word[:-2])
+            if word.endswith("ed") and len(word) > 4:
+                stems.append(word[:-2])
+            if word.endswith("ing") and len(word) > 5:
+                stems.append(word[:-3])
+            if not any(stem in words for stem in stems):
+                return None
+            derived = True
+        if len(word) == 1 and word not in {"a", "i"}:
+            return None
+        connector_bonus = 15 if word in {"and", "of", "the"} else 0
+        return len(word) * len(word) - 8 + connector_bonus - (2 if derived else 0)
+
+    best: list[tuple[int, list[str]] | None] = [None] * (len(lowered) + 1)
+    best[0] = (0, [])
+    for start in range(len(lowered)):
+        if best[start] is None:
+            continue
+        for end in range(start + 1, min(len(lowered), start + 24) + 1):
+            word = lowered[start:end]
+            score_delta = word_score(word)
+            if score_delta is None:
+                continue
+            # Favor meaningful longer words while still allowing short joiners.
+            score = best[start][0] + score_delta
+            if best[end] is None or score > best[end][0]:
+                best[end] = (score, best[start][1] + [word])
+    if best[-1] is None or len(best[-1][1]) < 2:
+        return token
+    return " ".join(best[-1][1])
+
+
+def split_compound_title(title: str) -> tuple[str, bool]:
+    tokens = title.split()
+    segmented = [split_compound_token(token) for token in tokens]
+    result = " ".join(segmented)
+    return result, result != title
+
+
+def parse_filename(path: Path) -> ParsedFile:
+    decoded_filename = urllib.parse.unquote(path.name)
+    raw = Path(decoded_filename).stem.replace("_", " ").replace(".", " ")
+    raw = re.sub(r"\s+", " ", raw).strip()
+
+    isbn_match = find_isbn(raw)
+    isbn = normalize_isbn(isbn_match.group(1)) if isbn_match else None
+    year_matches = YEAR.findall(raw)
+    year = int(year_matches[-1]) if year_matches else None
+    volume_match = VOLUME.search(raw)
+    volume = int(volume_match.group(1)) if volume_match else None
+    issue_match = ISSUE.search(raw) or PADDED_ISSUE.search(raw)
+    issue = issue_match.group(1) if issue_match else None
+    if issue and issue.isdigit():
+        issue = str(int(issue))
+
+    detected_format = None
+    for name, pattern in FORMAT_PATTERNS:
+        if pattern.search(raw):
+            detected_format = name
+            break
+
+    title = raw
+    if isbn_match:
+        title = title.replace(isbn_match.group(0), " ")
+    if issue_match:
+        title = title.replace(issue_match.group(0), " ", 1)
+    # Parenthesized/bracketed filename groups are normally release metadata
+    # such as year, scan type, or release group—not part of the comic title.
+    title = re.sub(r"\([^)]*\)|\[[^]]*\]|\{[^}]*\}", " ", title)
+    title = NOISE.sub(" ", title)
+    title = YEAR.sub(" ", title)
+    title = VOLUME.sub(" ", title)
+    for _, pattern in FORMAT_PATTERNS:
+        title = pattern.sub(" ", title)
+    title = re.sub(r"\s+-\s+|[-–—]+$", " ", title)
+    title = re.sub(r"\s+", " ", title).strip(" -")
+    title, inserted_boundaries = split_compound_title(title)
+
+    warnings = []
+    if not title:
+        warnings.append("Could not infer a title")
+    if not isbn:
+        warnings.append("No ISBN found in filename; title matching may be ambiguous")
+    if issue and detected_format:
+        warnings.append("Filename resembles both an issue and a collected volume")
+    if inserted_boundaries:
+        warnings.append("Inserted probable word boundaries in a concatenated title; verify the parsed title")
+
+    return ParsedFile(
+        path=str(path),
+        filename=decoded_filename,
+        extension=path.suffix.lower(),
+        title=title,
+        volume=volume,
+        issue=issue,
+        year=year,
+        format=detected_format,
+        isbn=isbn,
+        warnings=warnings,
+    )
+
+
+def _zip_xml(archive: zipfile.ZipFile, member_name: str) -> ET.Element | None:
+    try:
+        info = archive.getinfo(member_name)
+    except KeyError:
+        return None
+    if info.file_size > 2_000_000:
+        return None
+    try:
+        return ET.fromstring(archive.read(info))
+    except (ET.ParseError, OSError):
+        return None
+
+
+def _text(element: ET.Element | None) -> str | None:
+    if element is None or element.text is None:
+        return None
+    value = element.text.strip()
+    return value or None
+
+
+def read_epub_metadata(path: Path) -> dict[str, Any]:
+    with zipfile.ZipFile(path) as archive:
+        container = _zip_xml(archive, "META-INF/container.xml")
+        if container is None:
+            return {}
+        rootfile = container.find(".//{*}rootfile")
+        opf_path = rootfile.get("full-path") if rootfile is not None else None
+        if not opf_path:
+            return {}
+        package = _zip_xml(archive, opf_path)
+        if package is None:
+            return {}
+        metadata = package.find(".//{*}metadata")
+        if metadata is None:
+            return {}
+        identifiers = [value for value in (_text(x) for x in metadata.findall("{*}identifier")) if value]
+        normalized_isbns = [normalize_isbn(value) for value in identifiers if valid_isbn(value)]
+        creators = []
+        for creator in metadata.findall("{*}creator"):
+            name = _text(creator)
+            if not name:
+                continue
+            role = creator.get("{http://www.idpf.org/2007/opf}role") or creator.get("role")
+            creators.append({"name": name, "role": role})
+        description = _text(metadata.find("{*}description"))
+        page_match = re.search(r"\b(\d{1,4})[- ]page\b", description or "", re.I)
+        detected_format = next(
+            (name for name, pattern in FORMAT_PATTERNS if pattern.search(description or "")),
+            "ebook",
+        )
+        quoted_contents = []
+        for quoted in re.findall(r"[“\"]([^”\"]+)[”\"]", description or ""):
+            value = quoted.strip()
+            if value and value not in quoted_contents and len(value) <= 120:
+                quoted_contents.append(value)
+        manifest_items = list(package.findall(".//{*}manifest/{*}item"))
+        cover_meta = next(
+            (item.get("content") for item in metadata.findall("{*}meta") if item.get("name") == "cover"),
+            None,
+        )
+        cover_item = next(
+            (item for item in manifest_items if "cover-image" in (item.get("properties") or "").split()),
+            None,
+        )
+        if cover_item is None and cover_meta:
+            cover_item = next((item for item in manifest_items if item.get("id") == cover_meta), None)
+        if cover_item is None:
+            cover_item = next(
+                (
+                    item for item in manifest_items
+                    if (item.get("media-type") or "").startswith("image/")
+                    and "cover" in f"{item.get('id') or ''} {item.get('href') or ''}".lower()
+                ),
+                None,
+            )
+        cover_member = None
+        cover_media_type = None
+        if cover_item is not None and cover_item.get("href"):
+            cover_member = posixpath.normpath(posixpath.join(posixpath.dirname(opf_path), cover_item.get("href")))
+            cover_media_type = cover_item.get("media-type")
+        return {
+            "source": "EPUB package metadata",
+            "title": _text(metadata.find("{*}title")),
+            "creators": [creator["name"] for creator in creators],
+            "creator_details": creators,
+            "publisher": _text(metadata.find("{*}publisher")),
+            "date": _text(metadata.find("{*}date")),
+            "language": _text(metadata.find("{*}language")),
+            "description": description,
+            "rights": _text(metadata.find("{*}rights")),
+            "subjects": [value for value in (_text(x) for x in metadata.findall("{*}subject")) if value],
+            "identifiers": identifiers,
+            "isbns": normalized_isbns,
+            "format": detected_format,
+            "page_count": int(page_match.group(1)) if page_match else None,
+            "named_contents": quoted_contents,
+            "cover_member": cover_member,
+            "cover_media_type": cover_media_type,
+        }
+
+
+def read_comicinfo_metadata(path: Path) -> dict[str, Any]:
+    with zipfile.ZipFile(path) as archive:
+        member = next((name for name in archive.namelist() if name.lower().endswith("comicinfo.xml")), None)
+        if not member:
+            return {}
+        root = _zip_xml(archive, member)
+        if root is None:
+            return {}
+        def value(name: str) -> str | None:
+            return _text(root.find(name))
+        contributors = {
+            role: value(tag)
+            for role, tag in (
+                ("writer", "Writer"), ("penciller", "Penciller"), ("inker", "Inker"),
+                ("colorist", "Colorist"), ("letterer", "Letterer"), ("cover_artist", "CoverArtist"),
+            )
+            if value(tag)
+        }
+        return {
+            "source": "ComicInfo.xml",
+            "series": value("Series"),
+            "title": value("Title"),
+            "number": value("Number"),
+            "volume": value("Volume"),
+            "year": value("Year"),
+            "publisher": value("Publisher"),
+            "imprint": value("Imprint"),
+            "format": value("Format"),
+            "summary": value("Summary"),
+            "language": value("LanguageISO"),
+            "web": value("Web"),
+            "comicvine_volume_id": value("ComicVineVolumeId"),
+            "comicvine_issue_id": value("ComicVineIssueId"),
+            "metron_id": value("MetronId") or value("MetronIssueId"),
+            "contributors": contributors,
+        }
+
+
+def read_embedded_metadata(path: Path) -> dict[str, Any]:
+    try:
+        if path.suffix.lower() == ".epub":
+            return read_epub_metadata(path)
+        if path.suffix.lower() in {".cbz", ".cb7", ".cbt"}:
+            return read_comicinfo_metadata(path)
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        return {}
+    return {}
+
+
+def _natural_member_key(member: str) -> list[tuple[int, Any]]:
+    """Sort archive page names naturally, so 2.jpg appears before 10.jpg."""
+    return [
+        (1, int(part)) if part.isdigit() else (0, part.casefold())
+        for part in re.split(r"(\d+)", member)
+    ]
+
+
+def find_archive_cover_member(path: Path, embedded: dict[str, Any] | None = None) -> str | None:
+    """Find the file's declared cover or its first plausible comic page."""
+    if path.suffix.lower() not in ZIP_COMIC_EXTENSIONS:
+        return None
+    if embedded and embedded.get("cover_member"):
+        return str(embedded["cover_member"])
+    try:
+        with zipfile.ZipFile(path) as archive:
+            images = []
+            for info in archive.infolist():
+                member = info.filename
+                parts = Path(member).parts
+                if (
+                    info.is_dir()
+                    or info.file_size <= 0
+                    or info.file_size > COVER_SOURCE_MAX_BYTES
+                    or Path(member).suffix.lower() not in ARCHIVE_IMAGE_EXTENSIONS
+                    or "__MACOSX" in parts
+                    or any(part.startswith(".") for part in parts)
+                ):
+                    continue
+                images.append(member)
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        return None
+    if not images:
+        return None
+    images.sort(key=_natural_member_key)
+    named_covers = [
+        member for member in images
+        if re.search(r"(?:^|[_. -])(?:front[_. -]*cover|cover)(?:[_. -]|$)", Path(member).stem, re.I)
+        and not re.search(r"(?:^|[_. -])back(?:[_. -]|$)", Path(member).stem, re.I)
+    ]
+    return named_covers[0] if named_covers else images[0]
+
+
+def file_cover_info(path: Path, embedded: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    member = find_archive_cover_member(path, embedded)
+    if not member:
+        return None
+    return {
+        "source": "comic file",
+        "member": member,
+        "url": "/api/file-cover?" + urllib.parse.urlencode({"path": str(path)}),
+        "max_dimension": COVER_THUMBNAIL_MAX_DIMENSION,
+    }
+
+
+def inspect_file_health(path: Path) -> dict[str, str]:
+    """Perform cheap structural checks without reading every comic page."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return {"status": "error", "code": "unreadable", "message": f"File cannot be read: {exc}"}
+    if size == 0:
+        return {"status": "error", "code": "empty_file", "message": "File is empty (0 bytes)."}
+
+    extension = path.suffix.lower()
+    if extension in {".cbz", ".epub"}:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                members = [info for info in archive.infolist() if not info.is_dir()]
+        except (zipfile.BadZipFile, OSError, RuntimeError):
+            return {
+                "status": "error", "code": "corrupt_archive",
+                "message": "Archive is corrupt, truncated, or not a readable ZIP file.",
+            }
+        if not members:
+            return {
+                "status": "error", "code": "empty_archive",
+                "message": f"Archive is empty ({size} bytes) and contains no files or comic pages.",
+            }
+        if extension == ".cbz" and not any(
+            Path(info.filename).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS for info in members
+        ):
+            return {
+                "status": "error", "code": "no_image_pages",
+                "message": "CBZ is readable but contains no supported image pages.",
+            }
+    elif extension == ".cbr":
+        try:
+            with path.open("rb") as source:
+                header = source.read(8)
+        except OSError as exc:
+            return {"status": "error", "code": "unreadable", "message": f"File cannot be read: {exc}"}
+        if not header.startswith(b"Rar!\x1a\x07"):
+            return {
+                "status": "error", "code": "corrupt_archive",
+                "message": "CBR does not have a valid RAR archive header.",
+            }
+    elif extension == ".cb7":
+        try:
+            with path.open("rb") as source:
+                header = source.read(6)
+        except OSError as exc:
+            return {"status": "error", "code": "unreadable", "message": f"File cannot be read: {exc}"}
+        if header != b"7z\xbc\xaf'\x1c":
+            return {
+                "status": "error", "code": "corrupt_archive",
+                "message": "CB7 does not have a valid 7-Zip archive header.",
+            }
+    elif extension == ".cbt" and not tarfile.is_tarfile(path):
+        return {
+            "status": "error", "code": "corrupt_archive",
+            "message": "CBT is not a readable TAR archive.",
+        }
+    elif extension == ".pdf":
+        try:
+            with path.open("rb") as source:
+                header = source.read(5)
+        except OSError as exc:
+            return {"status": "error", "code": "unreadable", "message": f"File cannot be read: {exc}"}
+        if header != b"%PDF-":
+            return {
+                "status": "error", "code": "invalid_pdf",
+                "message": "PDF signature is missing; the file may be corrupt or mislabeled.",
+            }
+    return {"status": "ok", "code": "readable", "message": "File passed basic structural checks."}
+
+
+def render_file_cover_thumbnail(path: Path, member: str) -> bytes:
+    """Extract and cache a web-sized JPEG without modifying the comic archive."""
+    stat = path.stat()
+    fingerprint = "\0".join(
+        (
+            str(path.resolve()), str(stat.st_mtime_ns), str(stat.st_size), member,
+            str(COVER_THUMBNAIL_MAX_DIMENSION), str(COVER_THUMBNAIL_QUALITY),
+        )
+    )
+    cache_key = hashlib.sha256(fingerprint.encode()).hexdigest()
+    cached = COVER_CACHE_DIR / f"{cache_key}.jpg"
+    try:
+        if cached.is_file():
+            return cached.read_bytes()
+    except OSError:
+        pass
+
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo(member)
+        if info.file_size <= 0 or info.file_size > COVER_SOURCE_MAX_BYTES:
+            raise ValueError("Embedded cover is too large")
+        source_bytes = archive.read(info)
+
+    body = normalize_image_to_jpeg(source_bytes)
+    try:
+        COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_temp = COVER_CACHE_DIR / f".{cache_key}-{threading.get_ident()}.tmp"
+        cache_temp.write_bytes(body)
+        os.replace(cache_temp, cached)
+    except OSError:
+        pass
+    return body
+
+
+def normalize_image_to_jpeg(source_bytes: bytes) -> bytes:
+    """Create a bounded JPEG using Pillow on macOS, Linux, and Docker."""
+    try:
+        from PIL import Image, ImageOps, UnidentifiedImageError
+        with Image.open(io.BytesIO(source_bytes)) as source:
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            image.thumbnail((COVER_THUMBNAIL_MAX_DIMENSION, COVER_THUMBNAIL_MAX_DIMENSION))
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=COVER_THUMBNAIL_QUALITY, optimize=True)
+            body = output.getvalue()
+    except (OSError, ValueError, UnidentifiedImageError) as exc:
+        raise ValueError("Cover image is not a readable supported image") from exc
+    if not body:
+        raise ValueError("Cover thumbnail is empty")
+    return body
+
+
+def render_uploaded_cover_thumbnail(source_bytes: bytes, suffix: str = ".img") -> bytes:
+    """Validate and normalize an uploaded image into a bounded local JPEG."""
+    if not source_bytes or len(source_bytes) > COVER_SOURCE_MAX_BYTES:
+        raise ValueError("Uploaded cover must be between 1 byte and 50 MB")
+    return normalize_image_to_jpeg(source_bytes)
+
+
+def lookup_identity(parsed: ParsedFile, embedded: dict[str, Any]) -> ParsedFile:
+    title = embedded.get("title") if embedded.get("source") == "EPUB package metadata" else embedded.get("series")
+    isbns = embedded.get("isbns") or []
+    # EPUB package metadata describes the book itself. ComicInfo.xml may describe
+    # an issue scan incorrectly embedded in a collected file, so its date/year is
+    # retained for review but not allowed to steer collection matching.
+    year_value = embedded.get("date") if embedded.get("source") == "EPUB package metadata" else None
+    year_match = YEAR.search(str(year_value)) if year_value else None
+    warnings = [warning for warning in parsed.warnings if not (isbns and warning.startswith("No ISBN found"))]
+    return ParsedFile(
+        path=parsed.path,
+        filename=parsed.filename,
+        extension=parsed.extension,
+        title=title or parsed.title,
+        volume=parsed.volume,
+        issue=parsed.issue,
+        year=int(year_match.group(1)) if year_match else parsed.year,
+        format=embedded.get("format") or parsed.format,
+        isbn=isbns[0] if isbns else parsed.isbn,
+        warnings=warnings,
+    )
+
+
+def scan_folder(folder: str, recursive: bool = True) -> list[ParsedFile]:
+    root = Path(folder).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise ValueError("Folder does not exist or is not a directory")
+    iterator = root.rglob("*") if recursive else root.glob("*")
+    return [parse_filename(p) for p in iterator if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS]
+
+
+def fetch_json(url: str, timeout: float = 8.0) -> Any:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "ComicMetadataPOC/0.1 (local read-only experiment)",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def load_persisted_remote_cache() -> None:
+    global _PERSIST_REMOTE_CACHE
+    _PERSIST_REMOTE_CACHE = True
+    try:
+        payload = json.loads(_REMOTE_CACHE_FILE.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    cutoff = time.time() - _REMOTE_CACHE_TTL_SECONDS
+    with _REMOTE_JSON_LOCK:
+        for url, entry in payload.items():
+            if (
+                isinstance(entry, dict)
+                and entry.get("saved_at", 0) >= cutoff
+                and isinstance(entry.get("data"), (dict, list))
+            ):
+                _REMOTE_JSON_CACHE[url] = entry["data"]
+
+
+def persist_remote_cache(snapshot: dict[str, Any]) -> None:
+    if not _PERSIST_REMOTE_CACHE:
+        return
+    payload = {
+        url: {"saved_at": time.time(), "data": data}
+        for url, data in snapshot.items()
+    }
+    temporary = _REMOTE_CACHE_FILE.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False))
+        os.replace(temporary, _REMOTE_CACHE_FILE)
+    except OSError:
+        pass
+
+
+def fetch_cached_json(url: str, timeout: float = 8.0) -> Any:
+    """Share remote responses and coalesce concurrent requests for the same URL."""
+    while True:
+        with _REMOTE_JSON_LOCK:
+            cached = _REMOTE_JSON_CACHE.get(url)
+            if cached is not None:
+                return cached
+            event = _REMOTE_JSON_INFLIGHT.get(url)
+            if event is None:
+                event = threading.Event()
+                _REMOTE_JSON_INFLIGHT[url] = event
+                leader = True
+            else:
+                leader = False
+        if leader:
+            break
+        event.wait(timeout + 5.0)
+
+    try:
+        result = fetch_json(url, timeout=timeout)
+    except Exception:
+        with _REMOTE_JSON_LOCK:
+            _REMOTE_JSON_INFLIGHT.pop(url, None)
+            event.set()
+        raise
+    with _REMOTE_JSON_LOCK:
+        _REMOTE_JSON_CACHE[url] = result
+        _REMOTE_JSON_INFLIGHT.pop(url, None)
+        event.set()
+        cache_snapshot = dict(_REMOTE_JSON_CACHE)
+    persist_remote_cache(cache_snapshot)
+    return result
+
+
+def search_open_library(parsed: ParsedFile) -> list[dict[str, Any]]:
+    if parsed.isbn:
+        query = f"isbn:{parsed.isbn}"
+    else:
+        query = f'title:"{parsed.title}"'
+    url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode(
+        {"q": query, "limit": 5, "fields": "key,title,subtitle,author_name,publisher,first_publish_year,publish_year,isbn,cover_i,edition_key"}
+    )
+    data = fetch_cached_json(url)
+    if not data.get("docs") and parsed.isbn and parsed.title:
+        query = f'title:"{parsed.title}"'
+        url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode(
+            {"q": query, "limit": 5, "fields": "key,title,subtitle,author_name,publisher,first_publish_year,publish_year,isbn,cover_i,edition_key"}
+        )
+        data = fetch_cached_json(url)
+    results = []
+    for item in data.get("docs", [])[:5]:
+        results.append(
+            {
+                "source": "Open Library",
+                "source_id": item.get("key"),
+                "title": item.get("title"),
+                "subtitle": item.get("subtitle"),
+                "creators": item.get("author_name", []),
+                "publisher": (item.get("publisher") or [None])[0],
+                "publication_year": item.get("first_publish_year"),
+                "isbns": item.get("isbn", [])[:10],
+                "cover": f"https://covers.openlibrary.org/b/id/{item['cover_i']}-M.jpg" if item.get("cover_i") else None,
+                "url": f"https://openlibrary.org{item.get('key')}" if item.get("key") else None,
+                "search_query": query,
+            }
+        )
+    return results
+
+
+def metadata_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(metadata_text(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(metadata_text(item) for item in value)
+    return ""
+
+
+def human_metadata_text(value: Any) -> str:
+    if isinstance(value, dict) and "value" in value:
+        return human_metadata_text(value["value"])
+    return metadata_text(value)
+
+
+def extract_issue_coverage(
+    value: str | None,
+    source: str = "Open Library edition notes",
+    confidence: str | None = None,
+) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    text = re.sub(r"\s+", " ", value.replace("–", "-").replace("—", "-")).strip()
+    clauses = []
+    marker = re.compile(
+        r"(?:originally\s+published(?:\s+in\s+single\s+magazine\s+form)?\s+as|"
+        r"collects?|collecting|includes?)\s+(.+?)(?:\.|$)",
+        re.I,
+    )
+    clauses.extend(match.group(1) for match in marker.finditer(text))
+    if not clauses:
+        clauses = [text]
+    claim_pattern = re.compile(
+        r"(?P<series>[A-Za-z0-9][A-Za-z0-9 &'’:.!/-]*?)\s+#(?P<start>\d+[A-Za-z]?)"
+        r"(?:\s*-\s*#?(?P<end>\d+[A-Za-z]?))?",
+        re.I,
+    )
+    claims = []
+    seen = set()
+    for clause in clauses:
+        for match in claim_pattern.finditer(clause):
+            series = re.split(r"[,;]", match.group("series"))[-1]
+            series = re.sub(r"^(?:and|plus)\s+", "", series, flags=re.I).strip(" -")
+            if normalized_title(series) in {"issue", "issues"}:
+                series = ""
+            start = match.group("start")
+            end = match.group("end") or start
+            issues = [start]
+            if start.isdigit() and end.isdigit():
+                first, last = int(start), int(end)
+                if first <= last and last - first <= 200:
+                    issues = [str(number) for number in range(first, last + 1)]
+            key = (series.lower(), start.lower(), end.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            claim = {
+                    "series": series,
+                    "start_issue": start,
+                    "end_issue": end,
+                    "issues": issues,
+                    "source_text": match.group(0).strip(),
+                    "source": source,
+                }
+            if confidence:
+                claim["confidence"] = confidence
+            claims.append(claim)
+    return claims
+
+
+def find_open_library_volume_edition(candidate: dict[str, Any], volume: int | None) -> dict[str, Any] | None:
+    source_id = candidate.get("source_id")
+    if not volume or not isinstance(source_id, str) or not source_id.startswith("/works/"):
+        return None
+    url = f"https://openlibrary.org{source_id}/editions.json?limit=25"
+    data = fetch_cached_json(url)
+    pattern = re.compile(rf"(?:\b(?:vol(?:ume)?|book)\.?\s*[-#:]?\s*{volume}\b|\b{volume}\s*:\s*)", re.I)
+    for entry in data.get("entries", []):
+        notes_text = human_metadata_text(entry.get("notes"))
+        description_text = human_metadata_text(entry.get("description"))
+        searchable = metadata_text(
+            {
+                "title": entry.get("title"),
+                "subtitle": entry.get("subtitle"),
+                "other_titles": entry.get("other_titles"),
+                "series": entry.get("series"),
+                "notes": entry.get("notes"),
+                "description": entry.get("description"),
+            }
+        )
+        if pattern.search(searchable):
+            return {
+                "edition_id": entry.get("key"),
+                "title": entry.get("title"),
+                "subtitle": entry.get("subtitle"),
+                "other_titles": entry.get("other_titles", []),
+                "publish_date": entry.get("publish_date"),
+                "publishers": entry.get("publishers", []),
+                "isbn_10": entry.get("isbn_10", []),
+                "isbn_13": entry.get("isbn_13", []),
+                "number_of_pages": entry.get("number_of_pages"),
+                "volume_evidence": searchable,
+                "notes": notes_text or None,
+                "description": description_text or None,
+                "coverage": extract_issue_coverage(" ".join(x for x in (notes_text, description_text) if x)),
+            }
+    return None
+
+
+def normalized_title(value: str | None) -> str:
+    value = re.sub(r"\band\b", "&", (value or "").lower())
+    return re.sub(r"[^a-z0-9]", "", value)
+
+
+def fetch_gcd_json(url: str) -> Any:
+    """Cache GCD responses so a batch does not repeat anonymous API calls."""
+    return fetch_cached_json(url, timeout=12.0)
+
+
+def gcd_title_parts(parsed: ParsedFile) -> tuple[str, str]:
+    title = VOLUME.sub(" ", parsed.title)
+    title = re.sub(r"\s+", " ", title).strip(" :-")
+    base, separator, subtitle = title.partition(":")
+    if not separator:
+        subtitle = ""
+    base = re.sub(r"\band\b", "&", base, flags=re.I).strip()
+    return base, subtitle.strip()
+
+
+def _descriptor_number(value: str | None) -> str | None:
+    match = re.match(r"\s*(\d+(?:\.\w+)?)\b", value or "", re.I)
+    return match.group(1) if match else None
+
+
+def _gcd_issue_id(api_url: str | None) -> str | None:
+    match = re.search(r"/issue/(\d+)/?", api_url or "")
+    return match.group(1) if match else None
+
+
+def infer_gcd_coverage(
+    base_title: str,
+    issue: dict[str, Any],
+    series_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Infer a range only when a same-named limited series and story count agree."""
+    subtitle = (issue.get("title") or "").strip()
+    if not subtitle:
+        return []
+    target = normalized_title(f"{base_title}: {subtitle}")
+    source_series = next(
+        (
+            series for series in series_results
+            if normalized_title(series.get("name")) == target
+            and series.get("country") == "us"
+            and series.get("language") == "en"
+            and "limited series" in (series.get("publishing_format") or "").lower()
+        ),
+        None,
+    )
+    if not source_series:
+        return []
+    issue_numbers = []
+    for descriptor in source_series.get("issue_descriptors") or []:
+        number = _descriptor_number(descriptor)
+        if number and number not in issue_numbers:
+            issue_numbers.append(number)
+    comic_story_count = sum(
+        1 for story in issue.get("story_set") or []
+        if (story.get("type") or "").lower() == "comic story"
+    )
+    if len(issue_numbers) < 2 or comic_story_count != len(issue_numbers):
+        return []
+    return [{
+        "series": source_series.get("name"),
+        "start_issue": issue_numbers[0],
+        "end_issue": issue_numbers[-1],
+        "issues": issue_numbers,
+        "source_text": (
+            f"Inferred from {comic_story_count} comic stories in the volume "
+            f"and {len(issue_numbers)} distinct issues in the matching GCD limited series."
+        ),
+        "source": "Grand Comics Database inference",
+        "confidence": "inferred",
+    }]
+
+
+def clean_gcd_credit(value: str | None) -> list[str]:
+    names = []
+    for raw_name in re.split(r"\s*;\s*", value or ""):
+        name = re.sub(r"\s*\((?:credited|signed(?:\s+as)?)[^)]*\).*", "", raw_name, flags=re.I).strip()
+        if not name or name.startswith("?") or name.lower() in {"none", "various", "typeset"}:
+            continue
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def gcd_candidate_from_issue(
+    parsed: ParsedFile,
+    base_title: str,
+    series: dict[str, Any],
+    descriptor: str,
+    issue: dict[str, Any],
+    series_results: list[dict[str, Any]],
+    preliminary_score: int,
+    preliminary_reasons: list[str],
+    record_kind: str = "collection",
+) -> dict[str, Any]:
+    isbns = [normalize_isbn(issue["isbn"])] if issue.get("isbn") and valid_isbn(issue["isbn"]) else []
+    reasons = list(preliminary_reasons)
+    score = preliminary_score
+    if parsed.isbn and parsed.isbn in isbns:
+        score += 100
+        reasons.append("exact ISBN")
+    elif parsed.isbn and isbns:
+        score -= 15
+        reasons.append("ISBN differs from the file metadata; GCD may describe a print edition of the same collection")
+    stories = issue.get("story_set") or []
+    comic_stories = [
+        story for story in stories if (story.get("type") or "").lower() == "comic story"
+    ]
+    credit_stories = comic_stories or stories
+    creators = []
+    contributor_roles: dict[str, list[str]] = {}
+    for role in ("script", "pencils", "inks", "colors", "letters", "editing"):
+        names = []
+        for story in credit_stories:
+            for name in clean_gcd_credit(story.get(role)):
+                if name not in names:
+                    names.append(name)
+                if name not in creators:
+                    creators.append(name)
+        if names:
+            contributor_roles[role] = names
+    cover_contributors = []
+    for story in stories:
+        if (story.get("type") or "").lower() != "cover":
+            continue
+        for role in ("pencils", "inks", "colors"):
+            for name in clean_gcd_credit(story.get(role)):
+                if name not in cover_contributors:
+                    cover_contributors.append(name)
+    coverage = infer_gcd_coverage(base_title, issue, series_results) if record_kind == "collection" else []
+    issue_id = _gcd_issue_id(issue.get("api_url"))
+    publication_date = issue.get("on_sale_date") or issue.get("key_date") or issue.get("publication_date")
+    year_match = YEAR.search(str(publication_date)) if publication_date else None
+    page_count = issue.get("page_count")
+    try:
+        page_count = int(float(page_count)) if page_count else None
+    except (TypeError, ValueError):
+        page_count = None
+    named_comic_stories = [
+        story.get("title") for story in comic_stories if story.get("title")
+    ]
+    return {
+        "source": "Grand Comics Database",
+        "source_id": issue_id,
+        "record_type": "single_issue" if record_kind == "single_issue" else "collected_edition",
+        "title": series.get("name") or re.sub(r"\s*\(\d{4} series\)$", "", issue.get("series_name") or ""),
+        "subtitle": issue.get("title") or None,
+        "issue": issue.get("number") if record_kind == "single_issue" else None,
+        "volume": (issue.get("volume") or issue.get("number")) if record_kind == "collection" else None,
+        "descriptor": issue.get("descriptor") or descriptor,
+        "creators": creators,
+        "contributors": contributor_roles,
+        "cover_contributors": cover_contributors,
+        "publisher": issue.get("indicia_publisher"),
+        "publication_year": int(year_match.group(1)) if year_match else None,
+        "publication_date": publication_date,
+        "isbns": isbns,
+        "cover": issue.get("cover"),
+        "url": f"https://www.comics.org/issue/{issue_id}/" if issue_id else None,
+        "format": series.get("binding") or series.get("publishing_format"),
+        "language": series.get("language"),
+        "named_contents": named_comic_stories,
+        "matched_edition": {
+            "isbn_10": [value for value in isbns if len(value) == 10],
+            "isbn_13": [value for value in isbns if len(value) == 13],
+            "number_of_pages": page_count,
+            "coverage": coverage,
+        },
+        "coverage_status": (
+            "single issue; volume coverage does not apply"
+            if record_kind == "single_issue" else
+            "inferred from matching GCD series and story counts; not an explicit GCD reprint relationship"
+            if coverage else
+            "GCD identifies this volume, but its API does not expose a defensible issue range for it"
+        ),
+        "match_score": score,
+        "match_score_note": "internal candidate ranking value; not a confidence percentage",
+        "match_reasons": reasons,
+        "verification_status": (
+            "single issue matched through the GCD API by series and issue number"
+            if record_kind == "single_issue" else
+            "exact edition ISBN verified through the GCD API; inferred coverage is labeled separately"
+            if parsed.isbn and parsed.isbn in isbns else
+            "collection identity matched through the GCD API; the exact file edition is not confirmed"
+        ),
+    }
+
+
+def search_gcd(parsed: ParsedFile) -> list[dict[str, Any]]:
+    base_title, subtitle = gcd_title_parts(parsed)
+    if not base_title:
+        return []
+    query_path = urllib.parse.quote(base_title, safe="")
+    search_url = f"{GCD_API_BASE}/series/name/{query_path}/"
+    data = fetch_gcd_json(search_url)
+    series_results = data.get("results") or []
+    full_title = normalized_title(parsed.title)
+    base_normalized = normalized_title(base_title)
+    if parsed.issue:
+        ranked_refs = []
+        for series in series_results:
+            publishing_format = (series.get("publishing_format") or "").lower()
+            if "collected edition" in publishing_format:
+                continue
+            if series.get("country") not in {None, "", "us"} or series.get("language") not in {None, "", "en"}:
+                continue
+            similarity = difflib.SequenceMatcher(
+                None, normalized_title(series.get("name")), base_normalized
+            ).ratio()
+            if similarity < 0.82:
+                continue
+            issues = series.get("active_issues") or []
+            descriptors = series.get("issue_descriptors") or []
+            for index, api_url in enumerate(issues):
+                descriptor = descriptors[index] if index < len(descriptors) else ""
+                if _descriptor_number(descriptor) != parsed.issue:
+                    continue
+                score = 55 + int(40 * similarity)
+                reasons = [
+                    f"GCD descriptor matches issue {parsed.issue}",
+                    f"series title similarity {similarity:.0%}",
+                ]
+                if series.get("country") == "us" and series.get("language") == "en":
+                    score += 10
+                    reasons.append("US English issue")
+                if "[" in descriptor:
+                    score -= 5
+                ranked_refs.append((score, series, descriptor, api_url, reasons))
+        ranked_refs.sort(key=lambda item: item[0], reverse=True)
+        candidates = []
+        seen_urls = set()
+        for score, series, descriptor, api_url, reasons in ranked_refs:
+            if api_url in seen_urls:
+                continue
+            seen_urls.add(api_url)
+            issue = fetch_gcd_json(api_url)
+            candidates.append(
+                gcd_candidate_from_issue(
+                    parsed, base_title, series, descriptor, issue, series_results,
+                    score, reasons, record_kind="single_issue",
+                )
+            )
+            # A filename normally cannot identify a cover variant, so use the
+            # best regular issue instead of spending API calls on variants.
+            if len(candidates) == 1:
+                break
+        candidates.sort(key=lambda item: item["match_score"], reverse=True)
+        return candidates
+    ranked_refs = []
+    for series in series_results:
+        publishing_format = (series.get("publishing_format") or "").lower()
+        if "collected edition" not in publishing_format:
+            continue
+        if series.get("country") not in {None, "", "us"} or series.get("language") not in {None, "", "en"}:
+            continue
+        series_name = normalized_title(series.get("name"))
+        base_similarity = difflib.SequenceMatcher(None, series_name, base_normalized).ratio()
+        full_similarity = difflib.SequenceMatcher(None, series_name, full_title).ratio()
+        if max(base_similarity, full_similarity) < 0.72:
+            continue
+        issues = series.get("active_issues") or []
+        descriptors = series.get("issue_descriptors") or []
+        for index, api_url in enumerate(issues):
+            descriptor = descriptors[index] if index < len(descriptors) else ""
+            number = _descriptor_number(descriptor)
+            if parsed.volume is not None and number != str(parsed.volume):
+                continue
+            subtitle_match = bool(
+                subtitle and normalized_title(subtitle) in normalized_title(descriptor)
+            )
+            full_series_match = full_similarity >= 0.88
+            if parsed.volume is None and subtitle and not (subtitle_match or full_series_match):
+                continue
+            if parsed.volume is None and not subtitle and len(issues) > 1:
+                continue
+            score = 30
+            reasons = ["GCD identifies the series as a collected volume"]
+            if base_similarity == 1:
+                score += 45
+                reasons.append("exact normalized series title")
+            elif full_similarity >= 0.88:
+                score += 35
+                reasons.append("strong collected-volume title match")
+            else:
+                score += int(25 * max(base_similarity, full_similarity))
+            if parsed.volume is not None and number == str(parsed.volume):
+                score += 35
+                reasons.append(f"GCD descriptor matches volume {parsed.volume}")
+            if subtitle_match:
+                score += 25
+                reasons.append("GCD descriptor matches the embedded subtitle")
+            if series.get("country") == "us" and series.get("language") == "en":
+                score += 10
+                reasons.append("US English edition")
+            # Prefer the base printing over later-printing duplicates.
+            if "[" in descriptor:
+                score -= 5
+            ranked_refs.append((score, series, descriptor, api_url, reasons))
+    ranked_refs.sort(key=lambda item: item[0], reverse=True)
+    candidates = []
+    seen_urls = set()
+    for score, series, descriptor, api_url, reasons in ranked_refs:
+        if api_url in seen_urls:
+            continue
+        seen_urls.add(api_url)
+        issue = fetch_gcd_json(api_url)
+        candidates.append(
+            gcd_candidate_from_issue(
+                parsed, base_title, series, descriptor, issue, series_results, score, reasons
+            )
+        )
+        # Return the best edition first; additional printings multiply network
+        # time without improving the recommendation in this POC.
+        if len(candidates) == 1:
+            break
+    candidates.sort(key=lambda item: item["match_score"], reverse=True)
+    return candidates
+
+
+def _gcd_series_id(series: dict[str, Any]) -> str | None:
+    match = re.search(r"/series/(\d+)/?", series.get("api_url") or "")
+    return match.group(1) if match else None
+
+
+def _gcd_series_publisher(series: dict[str, Any]) -> str | None:
+    value = series.get("publisher") or series.get("publisher_name") or series.get("indicia_publisher")
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("label")
+    if isinstance(value, str) and re.match(r"https?://", value):
+        return None
+    return str(value).strip() if value else None
+
+
+def _gcd_canonical_issue_entries(series: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return one base record for each issue number, collapsing cover variants."""
+    canonical_entries: dict[str, dict[str, Any]] = {}
+    issue_urls = series.get("active_issues") or []
+    descriptors = series.get("issue_descriptors") or []
+    for index, api_url in enumerate(issue_urls):
+        descriptor = descriptors[index] if index < len(descriptors) else ""
+        number = _descriptor_number(descriptor)
+        provider_match = re.search(r"/issue/(\d+)/?", api_url or "")
+        if not number or not provider_match:
+            continue
+        entry = {
+            "number": number,
+            "provider_id": provider_match.group(1),
+            "api_url": api_url,
+            "descriptor": descriptor,
+        }
+        existing = canonical_entries.get(number)
+        # Prefer the undecorated/base issue to variant covers and later printings.
+        if existing is None or ("[" in existing["descriptor"] and "[" not in descriptor):
+            canonical_entries[number] = entry
+    return sorted(canonical_entries.values(), key=lambda item: _natural_member_key(item["number"]))
+
+
+def _issue_year(issue: dict[str, Any]) -> int | None:
+    publication_date = issue.get("on_sale_date") or issue.get("key_date") or issue.get("publication_date")
+    year_match = YEAR.search(str(publication_date)) if publication_date else None
+    return int(year_match.group(1)) if year_match else None
+
+
+def _issue_date(issue: dict[str, Any]) -> str | None:
+    publication_date = issue.get("on_sale_date") or issue.get("key_date") or issue.get("publication_date")
+    match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", str(publication_date or ""))
+    return match.group(1) if match else None
+
+
+def _hydrate_gcd_issue_entries_with_status(
+    entries: list[dict[str, Any]], provider_series_id: str | None = None
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Attach all issue titles/dates with one overview call when GCD supports it.
+
+    GCD explicitly throttles anonymous API traffic. Its series-overview endpoint
+    returns every non-variant issue and longest comic-story title at once, so a
+    normal refresh should never fan out into dozens of concurrent requests.
+    """
+    if not entries:
+        return [], {
+            "status": "complete", "source": "none", "titleCount": 0,
+            "dateCount": 0, "missingTitleCount": 0, "missingDateCount": 0,
+        }
+    if provider_series_id:
+        overview_url = f"{GCD_API_BASE}/series/{provider_series_id}/overview/?format=json"
+        try:
+            overview_payload = fetch_gcd_json(overview_url)
+            overview_rows = (
+                overview_payload
+                if isinstance(overview_payload, list)
+                else (overview_payload.get("results") or []) if isinstance(overview_payload, dict) else []
+            )
+            by_provider_id = {
+                str(row.get("issue_id")): row for row in overview_rows if row.get("issue_id") is not None
+            }
+            by_number = {
+                str(row.get("number")): row for row in overview_rows if row.get("number") is not None
+            }
+            hydrated_entries = []
+            for entry in entries:
+                hydrated = dict(entry)
+                row = by_provider_id.get(str(entry.get("provider_id"))) or by_number.get(str(entry.get("number")))
+                if row:
+                    story = row.get("longest_story") or {}
+                    hydrated["title"] = row.get("title") or story.get("title") or hydrated.get("title")
+                    hydrated["publication_year"] = _issue_year(row) or hydrated.get("publication_year")
+                    hydrated["publication_date"] = _issue_date(row) or hydrated.get("publication_date")
+                    if row.get("cover_url"):
+                        hydrated["cover"] = row["cover_url"]
+                hydrated_entries.append(hydrated)
+            title_count = sum(bool(entry.get("title")) for entry in hydrated_entries)
+            date_count = sum(bool(entry.get("publication_year")) for entry in hydrated_entries)
+            return hydrated_entries, {
+                "status": "complete" if title_count == len(entries) else "partial",
+                "source": "gcd_series_overview", "titleCount": title_count,
+                "dateCount": date_count, "missingTitleCount": len(entries) - title_count,
+                "missingDateCount": len(entries) - date_count,
+            }
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    retry_seconds = int(retry_after) if retry_after else None
+                except ValueError:
+                    retry_seconds = None
+                return [dict(entry) for entry in entries], {
+                    "status": "deferred", "source": "gcd_series_overview",
+                    "titleCount": sum(bool(entry.get("title")) for entry in entries),
+                    "dateCount": sum(bool(entry.get("publication_year")) for entry in entries),
+                    "missingTitleCount": sum(not entry.get("title") for entry in entries),
+                    "missingDateCount": sum(not entry.get("publication_year") for entry in entries),
+                    "retryAfterSeconds": retry_seconds,
+                }
+            if exc.code != 404:
+                raise
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+            pass
+
+    # Compatibility fallback for providers that have not deployed the overview
+    # endpoint. Keep it sequential to avoid triggering anti-bot throttling.
+    hydrated_entries = []
+    for entry in entries:
+        hydrated = dict(entry)
+        api_url = entry.get("api_url")
+        if not api_url:
+            hydrated_entries.append(hydrated)
+            continue
+        try:
+            issue = fetch_gcd_json(api_url)
+        except urllib.error.HTTPError as exc:
+            hydrated_entries.append(hydrated)
+            if exc.code == 429:
+                hydrated_entries.extend(dict(item) for item in entries[len(hydrated_entries):])
+                break
+            continue
+        except Exception:
+            hydrated_entries.append(hydrated)
+            continue
+        comic_stories = [
+            story for story in (issue.get("story_set") or [])
+            if str(story.get("type") or "").casefold() == "comic story"
+        ]
+        hydrated["title"] = issue.get("title") or next(
+            (story.get("title") for story in comic_stories if story.get("title")), None
+        )
+        hydrated["publication_year"] = _issue_year(issue)
+        hydrated["publication_date"] = _issue_date(issue)
+        hydrated_entries.append(hydrated)
+    title_count = sum(bool(entry.get("title")) for entry in hydrated_entries)
+    date_count = sum(bool(entry.get("publication_year")) for entry in hydrated_entries)
+    return hydrated_entries, {
+        "status": "complete" if title_count == len(entries) else "partial",
+        "source": "individual_issue_fallback", "titleCount": title_count,
+        "dateCount": date_count, "missingTitleCount": len(entries) - title_count,
+        "missingDateCount": len(entries) - date_count,
+    }
+
+
+def _hydrate_gcd_issue_entries(
+    entries: list[dict[str, Any]], provider_series_id: str | None = None
+) -> list[dict[str, Any]]:
+    return _hydrate_gcd_issue_entries_with_status(entries, provider_series_id)[0]
+
+
+def rank_gcd_series_runs(context: dict[str, Any], results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rank possible GCD publication runs without treating the score as certainty."""
+    target_titles = [context.get("title") or "", *(context.get("aliases") or [])]
+    normalized_targets = [normalized_title(value) for value in target_titles if normalized_title(value)]
+    owned_numbers = {str(value).strip().lower() for value in context.get("ownedIssueNumbers") or []}
+    target_publisher = normalized_title(context.get("publisher"))
+    target_year = context.get("year")
+    try:
+        target_year = int(target_year) if target_year else None
+    except (TypeError, ValueError):
+        target_year = None
+    candidates = []
+    seen_ids: set[str] = set()
+    for series in results:
+        provider_id = _gcd_series_id(series)
+        if not provider_id or provider_id in seen_ids:
+            continue
+        if series.get("country") not in {None, "", "us"} or series.get("language") not in {None, "", "en"}:
+            continue
+        publishing_format = str(series.get("publishing_format") or "")
+        if "collected edition" in publishing_format.lower():
+            continue
+        candidate_title = normalized_title(series.get("name"))
+        title_similarity = max(
+            (difflib.SequenceMatcher(None, candidate_title, target).ratio() for target in normalized_targets),
+            default=0,
+        )
+        if title_similarity < 0.5:
+            continue
+        entries = _gcd_canonical_issue_entries(series)
+        if not entries:
+            continue
+        issue_numbers = [str(entry["number"]) for entry in entries]
+        issue_number_set = {number.strip().lower() for number in issue_numbers}
+        overlap_numbers = sorted(owned_numbers & issue_number_set, key=_natural_member_key)
+        score = int(title_similarity * 60)
+        reasons = []
+        if title_similarity == 1:
+            score += 20
+            reasons.append("Exact series-title match")
+        elif title_similarity >= 0.85:
+            score += 10
+            reasons.append("Strong series-title match")
+        else:
+            reasons.append("Possible series-title match")
+        try:
+            candidate_year = int(series.get("year_began")) if series.get("year_began") else None
+        except (TypeError, ValueError):
+            candidate_year = None
+        if target_year and candidate_year:
+            year_difference = abs(target_year - candidate_year)
+            if year_difference == 0:
+                score += 25
+                reasons.append(f"Series began in {target_year}")
+            elif year_difference == 1:
+                score += 8
+                reasons.append("Start year is within one year")
+            elif year_difference >= 5:
+                score -= 20
+                reasons.append(f"Start year differs by {year_difference} years")
+        publisher = _gcd_series_publisher(series)
+        publisher_similarity = difflib.SequenceMatcher(
+            None, normalized_title(publisher), target_publisher
+        ).ratio() if publisher and target_publisher else 0
+        if publisher_similarity >= 0.85:
+            score += 15
+            reasons.append("Publisher matches library metadata")
+        if owned_numbers:
+            overlap_ratio = len(overlap_numbers) / len(owned_numbers)
+            score += int(overlap_ratio * 30)
+            if overlap_numbers:
+                reasons.append(
+                    f"Contains {len(overlap_numbers)} of {len(owned_numbers)} issue numbers already owned"
+                )
+            else:
+                score -= 15
+                reasons.append("Does not contain the issue numbers currently associated with your editions")
+        if "ongoing" in publishing_format.lower() or "limited" in publishing_format.lower():
+            score += 5
+        year_ended = series.get("year_ended")
+        year_label = str(candidate_year or "Unknown")
+        if year_ended and str(year_ended) != str(candidate_year):
+            year_label += f"–{year_ended}"
+        candidates.append({
+            "provider": "gcd", "providerSeriesId": provider_id,
+            "apiUrl": series.get("api_url") or "", "title": series.get("name") or "Untitled series",
+            "yearBegan": candidate_year, "yearEnded": year_ended, "yearLabel": year_label,
+            "publisher": publisher, "publishingFormat": publishing_format or None,
+            "status": series.get("publication_status") or None,
+            "issueCount": len(entries), "issueNumbers": issue_numbers,
+            "sampleIssues": issue_numbers[:12], "ownedOverlap": len(overlap_numbers),
+            "ownedIssueCount": len(owned_numbers), "overlapIssueNumbers": overlap_numbers,
+            "matchScore": score, "matchReasons": reasons,
+            "fit": "strong" if score >= 110 else "possible" if score >= 75 else "review",
+            "_series": series,
+        })
+        seen_ids.add(provider_id)
+    candidates.sort(key=lambda item: (-item["matchScore"], item["title"], item["yearBegan"] or 0))
+    return candidates[:12]
+
+
+def _gcd_discovery_search_rows(query: str) -> list[dict[str, Any]]:
+    """Find the alphabetic page containing an exact title without crawling every result page."""
+    base_url = f"{GCD_API_BASE}/series/name/{urllib.parse.quote(query, safe='')}/"
+    first_page = fetch_gcd_json(base_url)
+    results = list(first_page.get("results") or [])
+    target = str(query).casefold()
+    if any(str(item.get("name") or "").casefold() == target for item in results):
+        return results
+    try:
+        page_count = max(1, (int(first_page.get("count") or len(results)) + 49) // 50)
+    except (TypeError, ValueError):
+        page_count = 1
+    low, high = 2, min(page_count, 40)
+    while low <= high:
+        page = (low + high) // 2
+        separator = "&" if "?" in base_url else "?"
+        payload = fetch_gcd_json(f"{base_url}{separator}page={page}")
+        page_results = list(payload.get("results") or [])
+        if not page_results:
+            break
+        results.extend(page_results)
+        names = [str(item.get("name") or "").casefold() for item in page_results]
+        if target in names:
+            break
+        if target < names[0]:
+            high = page - 1
+        elif target > names[-1]:
+            low = page + 1
+        else:
+            # GCD's ordering normalizes articles and localized titles, so an
+            # exact title can fall on an adjacent page even when it appears
+            # lexically inside this page's range.
+            for neighbor in (page - 1, page + 1):
+                if neighbor < 2 or neighbor > page_count:
+                    continue
+                adjacent = fetch_gcd_json(f"{base_url}{separator}page={neighbor}")
+                adjacent_results = list(adjacent.get("results") or [])
+                results.extend(adjacent_results)
+                if any(str(item.get("name") or "").casefold() == target for item in adjacent_results):
+                    return results
+            break
+    return results
+
+
+def _discovery_query_parts(query: str) -> tuple[str, str, int | None]:
+    """Split an optional trailing publication year from a discovery query."""
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    match = re.fullmatch(r"(.+?)(?:\s+|\s*\()((?:19|20)\d{2})\)?", cleaned)
+    if match and match.group(1).strip():
+        return cleaned, match.group(1).strip(), int(match.group(2))
+    return cleaned, cleaned, None
+
+
+def discover_gcd_series(query: str) -> dict[str, Any]:
+    """Search publication runs that are not limited to the local library."""
+    cleaned, title_query, year_hint = _discovery_query_parts(query)
+    if len(cleaned) < 2:
+        raise ValueError("Enter at least two characters to discover a series")
+    ranked = rank_gcd_series_runs(
+        {"title": title_query, "aliases": [], "ownedIssueNumbers": []},
+        _gcd_discovery_search_rows(title_query),
+    )
+    if year_hint:
+        ranked.sort(key=lambda item: (
+            0 if normalized_title(item.get("title")) == normalized_title(title_query) else 1,
+            abs((item.get("yearBegan") or 0) - year_hint) if item.get("yearBegan") else 9999,
+            -item.get("matchScore", 0),
+        ))
+    library = catalog_store().catalog().get("series") or []
+    provider_ids = {
+        str((item.get("issueCatalog") or {}).get("providerSeriesId"))
+        for item in library if (item.get("issueCatalog") or {}).get("providerSeriesId")
+    }
+    library_keys = {
+        (normalized_title(item.get("title")), str(item.get("year") or ""))
+        for item in library
+    }
+    results = []
+    for candidate in ranked[:24]:
+        public = {key: value for key, value in candidate.items() if key != "_series"}
+        key = (normalized_title(candidate.get("title")), str(candidate.get("yearBegan") or ""))
+        public["inLibrary"] = (
+            str(candidate["providerSeriesId"]) in provider_ids or key in library_keys
+        )
+        results.append(public)
+    return {
+        "query": cleaned,
+        "titleQuery": title_query,
+        "yearHint": year_hint,
+        "provider": "Grand Comics Database",
+        "providerId": "gcd",
+        "results": results,
+    }
+
+
+def _discovery_library_keys() -> set[tuple[str, str]]:
+    return {
+        (normalized_title(item.get("title")), str(item.get("year") or ""))
+        for item in (catalog_store().catalog().get("series") or [])
+    }
+
+
+def _metron_discovery_creators(issue: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return concise, structured credits suitable for a discovery byline."""
+    useful_roles = {"writer", "artist", "penciller", "inker", "colorist", "letterer"}
+    creators = []
+    for credit in issue.get("credits") or []:
+        name = str(credit.get("creator") or "").strip()
+        roles = [
+            str(role.get("name") or "").strip()
+            for role in (credit.get("role") or [])
+            if str(role.get("name") or "").strip().casefold() in useful_roles
+        ]
+        if name and roles:
+            creators.append({"name": name, "roles": roles})
+    return creators
+
+
+def discover_metron_series(query: str, token: str) -> dict[str, Any]:
+    """Use Metron's purpose-built series list endpoint for primary discovery."""
+    cleaned, title_query, year_hint = _discovery_query_parts(query)
+    if len(cleaned) < 2:
+        raise ValueError("Enter at least two characters to discover a series")
+    url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode({"q": title_query})
+    payload = fetch_json_with_headers(url, _provider_headers("metron", token))
+    library_keys = _discovery_library_keys()
+    results = []
+    for search_rank, row in enumerate((payload.get("results") or [])[:100]):
+        raw_title = str(row.get("series") or row.get("name") or "").strip()
+        title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip()
+        if not title or not row.get("id"):
+            continue
+        year = _provider_year(row.get("year_began"), raw_title)
+        year_ended = _provider_year(row.get("year_end"))
+        publisher_value = row.get("publisher") or {}
+        publisher = publisher_value.get("name") if isinstance(publisher_value, dict) else publisher_value
+        issue_count = int(row.get("issue_count") or 0)
+        results.append({
+            "provider": "metron", "providerName": "Metron",
+            "providerSeriesId": str(row["id"]), "title": title,
+            "yearBegan": year, "yearEnded": year_ended,
+            "yearLabel": f"{year or 'Unknown'}{f'–{year_ended}' if year_ended and year_ended != year else ''}",
+            "publisher": publisher, "issueCount": issue_count,
+            "cover": row.get("image"), "status": row.get("status"),
+            "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
+            "_searchRank": search_rank,
+        })
+    results.sort(key=lambda item: (
+        0 if normalized_title(item["title"]) == normalized_title(title_query) else 1,
+        abs((item.get("yearBegan") or 0) - year_hint) if year_hint and item.get("yearBegan") else (9999 if year_hint else 0),
+        -difflib.SequenceMatcher(None, normalized_title(item["title"]), normalized_title(title_query)).ratio(),
+        -(item.get("yearBegan") or 0), item["_searchRank"],
+    ))
+    # The list endpoint is intentionally lightweight. Hydrate only the best
+    # exact match so the primary result gets publisher/status/cover context
+    # without turning one search into an N+1 request burst.
+    exact = next(
+        (item for item in results if normalized_title(item["title"]) == normalized_title(title_query)),
+        None,
+    )
+    if exact is not None:
+        try:
+            detail = fetch_json_with_headers(
+                f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/",
+                _provider_headers("metron", token),
+            )
+            publisher_value = detail.get("publisher") or {}
+            exact["publisher"] = (
+                publisher_value.get("name") if isinstance(publisher_value, dict) else publisher_value
+            ) or exact.get("publisher")
+            exact["cover"] = detail.get("image") or exact.get("cover")
+            exact["status"] = detail.get("status") or exact.get("status")
+            detail_end = _provider_year(detail.get("year_end"))
+            if detail_end:
+                exact["yearEnded"] = detail_end
+                exact["yearLabel"] = f"{exact.get('yearBegan') or 'Unknown'}–{detail_end}"
+        except Exception:
+            pass
+        # Series records do not contain contributor credits. Sample the first
+        # issue so an exact discovery match can show an honest comic byline
+        # without hydrating every search result and overwhelming the provider.
+        try:
+            issue_page = fetch_json_with_headers(
+                f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/issue_list/?page=1",
+                _provider_headers("metron", token),
+            )
+            representative = next((
+                issue for issue in (issue_page.get("results") or []) if issue.get("id")
+            ), None)
+            if representative:
+                exact["cover"] = exact.get("cover") or representative.get("image")
+                issue_detail = fetch_json_with_headers(
+                    f"{METRON_API_BASE}/issue/{representative['id']}/",
+                    _provider_headers("metron", token),
+                )
+                creators = _metron_discovery_creators(issue_detail)
+                if creators:
+                    exact["creators"] = creators
+                    exact["creatorCreditsSource"] = (
+                        f"Issue #{representative.get('number')}"
+                        if representative.get("number") else "Representative issue"
+                    )
+        except Exception:
+            pass
+    for item in results:
+        item.pop("_searchRank", None)
+    return {
+        "query": cleaned, "titleQuery": title_query, "yearHint": year_hint,
+        "provider": "Metron", "providerId": "metron", "results": results[:24],
+    }
+
+
+def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
+    """Use Comic Vine volume search as a secondary discovery catalog."""
+    cleaned, title_query, year_hint = _discovery_query_parts(query)
+    if len(cleaned) < 2:
+        raise ValueError("Enter at least two characters to discover a series")
+    url = f"{COMIC_VINE_API_BASE}/search/?" + urllib.parse.urlencode({
+        "api_key": api_key, "format": "json", "resources": "volume", "query": title_query,
+        "limit": 50, "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url,image",
+    })
+    payload = fetch_json_with_headers(url, _provider_headers("comic_vine", api_key))
+    if str(payload.get("status_code")) != "1":
+        raise ValueError(str(payload.get("error") or "Comic Vine series search failed"))
+    library_keys = _discovery_library_keys()
+    results = []
+    for row in (payload.get("results") or []):
+        title = str(row.get("name") or "").strip()
+        if not title or not row.get("id"):
+            continue
+        year = _provider_year(row.get("start_year"))
+        publisher = (row.get("publisher") or {}).get("name")
+        image = row.get("image") or {}
+        results.append({
+            "provider": "comic_vine", "providerName": "Comic Vine",
+            "providerSeriesId": str(row["id"]), "title": title,
+            "yearBegan": year, "yearEnded": None, "yearLabel": str(year or "Unknown"),
+            "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
+            "cover": image.get("medium_url") or image.get("small_url"),
+            "url": row.get("site_detail_url"),
+            "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
+        })
+    results.sort(key=lambda item: (
+        0 if normalized_title(item["title"]) == normalized_title(title_query) else 1,
+        abs((item.get("yearBegan") or 0) - year_hint) if year_hint and item.get("yearBegan") else (9999 if year_hint else 0),
+        -difflib.SequenceMatcher(None, normalized_title(item["title"]), normalized_title(title_query)).ratio(),
+        -(item.get("yearBegan") or 0), item["title"],
+    ))
+    return {
+        "query": cleaned, "titleQuery": title_query, "yearHint": year_hint,
+        "provider": "Comic Vine", "providerId": "comic_vine", "results": results[:24],
+    }
+
+
+def discover_series(query: str) -> dict[str, Any]:
+    """Discover through the best configured search catalog, retaining GCD as fallback."""
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    if len(cleaned) < 2:
+        raise ValueError("Enter at least two characters to discover a series")
+    config = load_provider_config()
+    attempts: list[tuple[str, Any]] = []
+    metron = config.get("metron") or {}
+    if metron.get("enabled") and metron.get("token"):
+        attempts.append(("Metron", lambda: discover_metron_series(cleaned, str(metron["token"]))))
+    comic_vine = config.get("comic_vine") or {}
+    if comic_vine.get("enabled") and comic_vine.get("apiKey"):
+        attempts.append(("Comic Vine", lambda: discover_comic_vine_series(cleaned, str(comic_vine["apiKey"]))))
+    attempts.append(("Grand Comics Database", lambda: discover_gcd_series(cleaned)))
+    errors = []
+    empty_result = None
+    for name, search in attempts:
+        try:
+            result = search()
+        except Exception as exc:
+            errors.append({"provider": name, "error": str(exc)})
+            continue
+        result["providersChecked"] = [item[0] for item in attempts[:len(errors) + 1]]
+        if result.get("results"):
+            if result.get("providerId") == "metron" and comic_vine.get("enabled") and comic_vine.get("apiKey"):
+                try:
+                    artwork_result = discover_comic_vine_series(cleaned, str(comic_vine["apiKey"]))
+                    artwork_rows = artwork_result.get("results") or []
+                    artwork_by_key = {
+                        (normalized_title(item.get("title")), str(item.get("yearBegan") or "")): item
+                        for item in artwork_rows
+                    }
+                    artwork_by_title = {
+                        normalized_title(item.get("title")): item for item in artwork_rows
+                    }
+                    for item in result["results"]:
+                        match = artwork_by_key.get((
+                            normalized_title(item.get("title")), str(item.get("yearBegan") or ""),
+                        )) or artwork_by_title.get(normalized_title(item.get("title")))
+                        if not match:
+                            continue
+                        item["cover"] = item.get("cover") or match.get("cover")
+                        item["publisher"] = item.get("publisher") or match.get("publisher")
+                        if item.get("cover"):
+                            item["coverProvider"] = "Comic Vine"
+                    result["artworkProvider"] = "Comic Vine"
+                    result["providersChecked"].append("Comic Vine artwork")
+                except Exception as exc:
+                    result.setdefault("enrichmentWarnings", []).append({
+                        "provider": "Comic Vine", "error": str(exc),
+                    })
+                exact = next((
+                    item for item in result["results"]
+                    if normalized_title(item.get("title")) == normalized_title(cleaned)
+                ), None)
+                if exact is not None and not exact.get("cover"):
+                    try:
+                        issue_page = fetch_json_with_headers(
+                            f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/issue_list/?page=1",
+                            _provider_headers("metron", str(metron["token"])),
+                        )
+                        cover_issue = next((
+                            issue for issue in (issue_page.get("results") or []) if issue.get("image")
+                        ), None)
+                        if cover_issue:
+                            exact["cover"] = cover_issue["image"]
+                            exact["coverProvider"] = "Metron"
+                    except Exception:
+                        pass
+            if errors:
+                result["fallbacks"] = errors
+            return result
+        empty_result = result
+    if empty_result is not None:
+        empty_result["fallbacks"] = errors
+        return empty_result
+    raise RuntimeError("No comic discovery provider is currently available")
+
+
+def request_discovered_gcd_series(
+    query: str, provider_series_id: str, acquisition_preference: str = "either"
+) -> dict[str, Any]:
+    """Import one discovered run and immediately place its missing issues on the wanted list."""
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    provider_series_id = str(provider_series_id or "").strip()
+    if len(cleaned) < 2 or not re.fullmatch(r"\d+", provider_series_id):
+        raise ValueError("Choose a valid discovered publication run")
+    candidates = rank_gcd_series_runs(
+        {"title": cleaned, "aliases": [], "ownedIssueNumbers": []},
+        _gcd_discovery_search_rows(cleaned),
+    )
+    candidate = next(
+        (item for item in candidates if item["providerSeriesId"] == provider_series_id), None
+    )
+    if not candidate:
+        raise ValueError("That publication run is no longer available in the search results")
+    series = candidate["_series"]
+    entries, metadata = _hydrate_gcd_issue_entries_with_status(
+        _gcd_canonical_issue_entries(series), provider_series_id
+    )
+    if not entries:
+        raise ValueError("The selected publication run has no usable issue list")
+    store = catalog_store()
+    run = store.ensure_provider_series_run(
+        "gcd", provider_series_id, candidate["title"],
+        candidate.get("yearBegan"), candidate.get("publisher"),
+    )
+    ended = candidate.get("yearEnded")
+    try:
+        ended_year = int(ended) if ended else None
+    except (TypeError, ValueError):
+        ended_year = None
+    status = "complete" if ended_year and ended_year <= time.gmtime().tm_year else "complete_to_date"
+    store.apply_issue_list(
+        int(run["id"]), "gcd", provider_series_id, candidate.get("apiUrl") or "", entries,
+        status=status,
+        detail=f"Added from Discover with {len(entries)} known issues.",
+        source="added from library discovery search",
+    )
+    request = store.create_acquisition_request(
+        "series", int(run["id"]), acquisition_preference, True
+    )
+    return {
+        "series": {**run, "publisher": candidate.get("publisher"), "year": candidate.get("yearBegan")},
+        "request": request,
+        "issueCount": len(entries),
+        "metadata": metadata,
+    }
+
+
+def _find_gcd_series_runs(series_run_id: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    context = catalog_store().get_series_sync_context(series_run_id)
+    search_names = []
+    for value in [context["title"], *(context.get("aliases") or [])]:
+        if value and normalized_title(value) not in {normalized_title(item) for item in search_names}:
+            search_names.append(value)
+        if len(search_names) == 3:
+            break
+    urls = [f"{GCD_API_BASE}/series/name/{urllib.parse.quote(name, safe='')}/" for name in search_names]
+    results: list[dict[str, Any]] = []
+    errors = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(urls)) as executor:
+        futures = [executor.submit(fetch_gcd_json, url) for url in urls]
+        for future in futures:
+            try:
+                results.extend(future.result().get("results") or [])
+            except Exception as exc:
+                errors.append(str(exc))
+    if not results and errors:
+        raise RuntimeError(errors[0])
+    return context, rank_gcd_series_runs(context, results)
+
+
+def find_gcd_series_runs(series_run_id: int) -> dict[str, Any]:
+    context, candidates = _find_gcd_series_runs(series_run_id)
+    public_candidates = [{key: value for key, value in candidate.items() if key != "_series"} for candidate in candidates]
+    return {
+        "series": {
+            "id": str(context["id"]), "title": context["title"], "year": context.get("year"),
+            "publisher": context.get("publisher"), "ownedIssueNumbers": context.get("ownedIssueNumbers") or [],
+        },
+        "candidates": public_candidates,
+        "provider": "Grand Comics Database",
+        "guidance": "Choose the publication run, not a collected volume. Nothing is linked until you confirm.",
+    }
+
+
+def confirm_gcd_series_run(series_run_id: int, provider_series_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"\d+", provider_series_id):
+        raise ValueError("A valid GCD series run is required")
+    _, candidates = _find_gcd_series_runs(series_run_id)
+    candidate = next((item for item in candidates if item["providerSeriesId"] == provider_series_id), None)
+    if not candidate:
+        raise ValueError("That GCD series run is no longer available in the current search results")
+    series = candidate["_series"]
+    entries = _hydrate_gcd_issue_entries(
+        _gcd_canonical_issue_entries(series), provider_series_id
+    )
+    if not entries:
+        raise ValueError("The selected GCD series has no usable issue descriptors")
+    ended = series.get("year_ended")
+    try:
+        ended_year = int(ended) if ended else None
+    except (TypeError, ValueError):
+        ended_year = None
+    status = "complete" if ended_year and ended_year <= time.gmtime().tm_year else "complete_to_date"
+    detail = (
+        f"You confirmed GCD series {provider_series_id}; {len(entries)} canonical issues were imported "
+        "and cover variants were collapsed by issue number."
+    )
+    return catalog_store().apply_issue_list(
+        series_run_id, "gcd", provider_series_id, series.get("api_url") or "", entries,
+        status=status, detail=detail, source="user-confirmed series run",
+    )
+
+
+def confirm_gcd_series_collection(
+    series_run_id: int, provider_series_ids: list[str], collection_name: str,
+    acquisition_preference: str = "either", include_specials: bool = True,
+) -> dict[str, Any]:
+    """Import several related GCD runs as one monitorable Collection."""
+    selected_ids = list(dict.fromkeys(str(value) for value in provider_series_ids))
+    if not selected_ids or any(not re.fullmatch(r"\d+", value) for value in selected_ids):
+        raise ValueError("Select at least one valid GCD publication run")
+    context, candidates = _find_gcd_series_runs(series_run_id)
+    collection_name = re.sub(r"\s+", " ", collection_name).strip() or context["title"]
+    selected = [candidate for candidate in candidates if candidate["providerSeriesId"] in selected_ids]
+    if {candidate["providerSeriesId"] for candidate in selected} != set(selected_ids):
+        raise ValueError("One or more selected publication runs are no longer available")
+    store = catalog_store()
+    imported = []
+    for candidate in selected:
+        series = candidate["_series"]
+        entries = _hydrate_gcd_issue_entries(
+            _gcd_canonical_issue_entries(series), candidate["providerSeriesId"]
+        )
+        if not entries:
+            continue
+        run = store.ensure_provider_series_run(
+            "gcd", candidate["providerSeriesId"], candidate["title"],
+            candidate.get("yearBegan"), candidate.get("publisher") or context.get("publisher"),
+        )
+        ended = candidate.get("yearEnded")
+        try:
+            ended_year = int(ended) if ended else None
+        except (TypeError, ValueError):
+            ended_year = None
+        status = "complete" if ended_year and ended_year <= time.gmtime().tm_year else "complete_to_date"
+        store.apply_issue_list(
+            int(run["id"]), "gcd", candidate["providerSeriesId"], series.get("api_url") or "", entries,
+            status=status,
+            detail=f"Imported as part of the reviewed {collection_name} Collection structure.",
+            source="user-confirmed collection structure",
+        )
+        imported.append({**candidate, "seriesId": run["id"]})
+    if not imported:
+        raise ValueError("The selected runs did not contain usable issue lists")
+
+    matched_volumes = store.reassign_matching_editions(
+        series_run_id,
+        [{"id": item["seriesId"], "title": item["title"]} for item in imported],
+    )
+
+    current_catalog = store.catalog()
+    current_series = next(
+        (item for item in current_catalog["series"] if item["id"] == str(series_run_id)), None
+    )
+    family_id = (current_series.get("family") or {}).get("id") if current_series else None
+    all_run_ids = list(dict.fromkeys([series_run_id, *(int(item["seriesId"]) for item in imported)]))
+    if family_id:
+        for run_id in all_run_ids:
+            store.set_series_run_family(run_id, int(family_id))
+    else:
+        family = store.create_series_family(collection_name, all_run_ids)
+        family_id = family["id"]
+
+    arcs = []
+    used_names: set[str] = set()
+    normalized_collection = normalized_title(collection_name)
+    for item in imported:
+        title = item["title"]
+        if ":" in title:
+            arc_name = title.split(":", 1)[1].strip()
+        elif normalized_title(title) == normalized_collection:
+            arc_name = "Original series"
+        else:
+            arc_name = title
+        base_name = arc_name
+        suffix = 2
+        while normalized_title(arc_name) in used_names:
+            arc_name = f"{base_name} ({suffix})"
+            suffix += 1
+        used_names.add(normalized_title(arc_name))
+        arc_type = "specials" if "one-shot" in str(item.get("publishingFormat") or "").lower() else "main"
+        arcs.append({"name": arc_name, "type": arc_type, "runIds": [item["seriesId"]]})
+    structured = store.set_story_structure(int(family_id), arcs)
+    monitoring = store.set_collection_monitoring(
+        int(family_id), acquisition_preference, include_specials
+    )
+    return {
+        "collection": structured["collection"], "arcCount": structured["arcCount"],
+        "runCount": len(imported),
+        "issueCount": sum(item["issueCount"] for item in imported),
+        "matchedVolumeCount": matched_volumes["count"],
+        "monitoring": monitoring,
+    }
+
+
+def sync_gcd_issue_catalog(series_run_id: int) -> dict[str, Any]:
+    """Import one canonical issue number per GCD issue, excluding cover variants."""
+    store = catalog_store()
+    context = store.get_series_sync_context(series_run_id)
+    known_issue_ids = set(context["knownGcdIssueIds"])
+    if not known_issue_ids:
+        raise ValueError("A verified GCD single-issue match is required before importing a complete issue list")
+    confirmed_series_id = context.get("gcdSeriesId")
+    if confirmed_series_id:
+        direct_url = f"{GCD_API_BASE}/series/{confirmed_series_id}/?format=json"
+        try:
+            direct_series = fetch_gcd_json(direct_url)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or not context.get("gcdIssueEntries"):
+                raise
+            retained_entries = context["gcdIssueEntries"]
+            direct_series = {
+                "name": context["title"], "country": "us", "language": "en",
+                "year_began": context.get("year"), "publisher": context.get("publisher"),
+                "publishing_format": "series",
+                "api_url": context.get("gcdSeriesApiUrl") or f"{GCD_API_BASE}/series/{confirmed_series_id}/",
+                "active_issues": [entry.get("api_url") for entry in retained_entries],
+                "issue_descriptors": [str(entry["number"]) for entry in retained_entries],
+            }
+        results = [direct_series] if isinstance(direct_series, dict) else []
+    else:
+        query_url = f"{GCD_API_BASE}/series/name/{urllib.parse.quote(context['title'], safe='')}/"
+        results = (fetch_gcd_json(query_url).get("results") or [])
+    ranked = []
+    target_title = normalized_title(context["title"])
+    for series in results:
+        if series.get("country") not in {None, "", "us"} or series.get("language") not in {None, "", "en"}:
+            continue
+        publishing_format = (series.get("publishing_format") or "").lower()
+        if "collected edition" in publishing_format:
+            continue
+        issue_urls = series.get("active_issues") or []
+        provider_ids = {
+            match.group(1)
+            for url in issue_urls
+            if (match := re.search(r"/issue/(\d+)/?", url or ""))
+        }
+        overlap = len(known_issue_ids & provider_ids)
+        if overlap == 0:
+            continue
+        similarity = difflib.SequenceMatcher(None, normalized_title(series.get("name")), target_title).ratio()
+        score = overlap * 100 + int(similarity * 40)
+        if context.get("year") and series.get("year_began") == context["year"]:
+            score += 25
+        if "ongoing" in publishing_format or "limited" in publishing_format:
+            score += 10
+        ranked.append((score, series))
+    if not ranked:
+        raise ValueError("GCD did not return a series containing the verified local issue IDs")
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    series = ranked[0][1]
+    series_id = _gcd_series_id(series)
+    if not series_id:
+        raise ValueError("The matched GCD series is missing a provider ID")
+    base_entries = _gcd_canonical_issue_entries(series)
+    retained_by_provider = {
+        str(entry.get("provider_id")): entry for entry in context.get("gcdIssueEntries") or []
+    }
+    for entry in base_entries:
+        retained = retained_by_provider.get(str(entry.get("provider_id"))) or {}
+        entry["title"] = retained.get("title")
+        entry["publication_year"] = retained.get("publication_year")
+    entries, metadata = _hydrate_gcd_issue_entries_with_status(base_entries, series_id)
+    if not entries:
+        raise ValueError("The matched GCD series has no usable issue descriptors")
+    ended = series.get("year_ended")
+    status = "complete" if isinstance(ended, int) and ended <= time.gmtime().tm_year else "complete_to_date"
+    detail = (
+        f"Matched GCD series {series_id} using {len(known_issue_ids)} verified local issue ID"
+        f"{'s' if len(known_issue_ids) != 1 else ''}; cover variants were collapsed by issue number."
+    )
+    if metadata["status"] == "deferred":
+        detail += " Existing issue details were retained; missing titles and dates will repair automatically after the provider limit resets."
+    else:
+        detail += (
+            f" Loaded {metadata['titleCount']} issue title"
+            f"{'s' if metadata['titleCount'] != 1 else ''} and {metadata['dateCount']} publication date"
+            f"{'s' if metadata['dateCount'] != 1 else ''} in one series request."
+        )
+    result = store.apply_issue_list(
+        series_run_id, "gcd", series_id, series.get("api_url") or "",
+        entries, status=status, detail=detail,
+    )
+    result["metadata"] = metadata
+    return result
+
+
+def _provider_date(value: Any) -> str | None:
+    match = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", str(value or ""))
+    if not match or match.group(2) == "00" or match.group(3) == "00":
+        return None
+    return match.group(0)
+
+
+def _provider_year(*values: Any) -> int | None:
+    for value in values:
+        match = re.search(r"\b((?:19|20)\d{2})\b", str(value or ""))
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _fetch_provider_pages(
+    url: str, headers: dict[str, str], result_key: str = "results", max_pages: int = 20
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    next_url: str | None = url
+    for _ in range(max_pages):
+        if not next_url:
+            break
+        payload = fetch_json_with_headers(next_url, headers)
+        page_rows = payload.get(result_key) or []
+        rows.extend(row for row in page_rows if isinstance(row, dict))
+        next_url = payload.get("next")
+    return rows
+
+
+def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str, list[dict[str, Any]]]:
+    headers = _provider_headers("metron", token)
+    if context.get("metronSeriesId"):
+        series_id = str(context["metronSeriesId"])
+    else:
+        filters: dict[str, Any] = {"q": context["title"]}
+        if context.get("gcdSeriesId"):
+            filters = {"gcd_id": context["gcdSeriesId"]}
+        elif context.get("year"):
+            filters["year_began"] = context["year"]
+        search_url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode(filters)
+        payload = fetch_json_with_headers(search_url, headers)
+        candidates = payload.get("results") or []
+        exact = [
+            candidate for candidate in candidates
+            if normalized_title(str(candidate.get("series") or candidate.get("name") or "").split("(")[0])
+            == normalized_title(context["title"])
+        ]
+        if context.get("year"):
+            year_matches = [candidate for candidate in exact if candidate.get("year_began") == context["year"]]
+            exact = year_matches or exact
+        if len(exact) != 1:
+            raise ValueError("Metron could not identify one unambiguous matching series")
+        series_id = str(exact[0]["id"])
+    detail = fetch_json_with_headers(f"{METRON_API_BASE}/series/{series_id}/", headers)
+    issue_rows = _fetch_provider_pages(
+        f"{METRON_API_BASE}/series/{series_id}/issue_list/", headers
+    )
+    entries = []
+    for issue in issue_rows:
+        number = str(issue.get("number") or "").strip()
+        if not number:
+            continue
+        publication_date = _provider_date(issue.get("store_date")) or _provider_date(issue.get("cover_date"))
+        title = str(issue.get("title") or issue.get("name") or "").strip() or None
+        entries.append({
+            "number": number, "provider_id": str(issue.get("id") or "") or None,
+            "api_url": f"{METRON_API_BASE}/issue/{issue['id']}/" if issue.get("id") else None,
+            "title": title, "publication_date": publication_date,
+            "publication_year": _provider_year(publication_date, issue.get("cover_date")),
+            "cover": issue.get("image"),
+        })
+    if not entries:
+        raise ValueError("Metron returned no issues for the matched series")
+    source_url = str(detail.get("resource_url") or f"{METRON_API_BASE}/series/{series_id}/")
+    return series_id, source_url, entries
+
+
+def _comic_vine_issue_entries(
+    context: dict[str, Any], api_key: str
+) -> tuple[str, str, list[dict[str, Any]]]:
+    headers = _provider_headers("comic_vine", api_key)
+    if context.get("comicVineVolumeId"):
+        detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{context['comicVineVolumeId']}/?" + urllib.parse.urlencode({
+            "api_key": api_key, "format": "json",
+            "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url",
+        })
+        payload = fetch_json_with_headers(detail_url, headers)
+        if str(payload.get("status_code")) != "1" or not isinstance(payload.get("results"), dict):
+            raise ValueError(str(payload.get("error") or "Comic Vine volume lookup failed"))
+        volume = payload["results"]
+    else:
+        filters = f"name:{context['title']}"
+        search_url = f"{COMIC_VINE_API_BASE}/volumes/?" + urllib.parse.urlencode({
+            "api_key": api_key, "format": "json", "filter": filters, "limit": 20,
+            "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url",
+        })
+        payload = fetch_json_with_headers(search_url, headers)
+        if str(payload.get("status_code")) != "1":
+            raise ValueError(str(payload.get("error") or "Comic Vine series search failed"))
+        candidates = [
+            candidate for candidate in (payload.get("results") or [])
+            if normalized_title(candidate.get("name")) == normalized_title(context["title"])
+        ]
+        expected_count = len(context.get("gcdIssueEntries") or []) or len(context.get("knownGcdIssueIds") or [])
+        context_year = _provider_year(context.get("year"))
+        context_publisher = normalized_title(context.get("publisher"))
+
+        def candidate_rank(candidate: dict[str, Any]) -> tuple[int, int, int, int]:
+            candidate_count = int(candidate.get("count_of_issues") or 0)
+            candidate_year = _provider_year(candidate.get("start_year"))
+            publisher = normalized_title((candidate.get("publisher") or {}).get("name"))
+            publisher_match = bool(
+                publisher and context_publisher
+                and (publisher in context_publisher or context_publisher in publisher)
+            )
+            year_distance = abs(candidate_year - context_year) if candidate_year and context_year else 9999
+            return (
+                1 if expected_count and candidate_count == expected_count else 0,
+                1 if publisher_match else 0,
+                1 if year_distance == 0 else 0,
+                -year_distance,
+            )
+
+        ranked = sorted(candidates, key=candidate_rank, reverse=True)
+        if not ranked or (len(ranked) > 1 and candidate_rank(ranked[0]) == candidate_rank(ranked[1])):
+            raise ValueError("Comic Vine could not identify one unambiguous matching volume")
+        volume = ranked[0]
+    volume_id = str(volume["id"])
+    issue_url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({
+        "api_key": api_key, "format": "json", "filter": f"volume:{volume_id}", "limit": 100,
+        "field_list": "id,name,issue_number,cover_date,store_date,image,site_detail_url",
+        "sort": "issue_number:asc",
+    })
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    for _ in range(20):
+        page_url = issue_url + f"&offset={offset}"
+        page = fetch_json_with_headers(page_url, headers)
+        if str(page.get("status_code")) != "1":
+            raise ValueError(str(page.get("error") or "Comic Vine issue lookup failed"))
+        page_rows = page.get("results") or []
+        rows.extend(row for row in page_rows if isinstance(row, dict))
+        offset += len(page_rows)
+        if not page_rows or offset >= int(page.get("number_of_total_results") or offset):
+            break
+    entries = []
+    for issue in rows:
+        number = str(issue.get("issue_number") or "").strip()
+        if not number:
+            continue
+        image = issue.get("image") or {}
+        publication_date = _provider_date(issue.get("store_date")) or _provider_date(issue.get("cover_date"))
+        entries.append({
+            "number": number, "provider_id": str(issue.get("id") or "") or None,
+            "api_url": issue.get("site_detail_url"),
+            "title": str(issue.get("name") or "").strip() or None,
+            "publication_date": publication_date,
+            "publication_year": _provider_year(publication_date, issue.get("cover_date")),
+            "cover": image.get("medium_url") or image.get("small_url") or image.get("original_url"),
+        })
+    if not entries:
+        raise ValueError("Comic Vine returned no issues for the matched volume")
+    return volume_id, str(volume.get("site_detail_url") or ""), entries
+
+
+def request_discovered_series(
+    provider: str, query: str, provider_series_id: str,
+    acquisition_preference: str = "either",
+) -> dict[str, Any]:
+    """Import the exact discovered provider run and begin following its missing issues."""
+    provider = str(provider or "gcd").strip().lower()
+    if provider == "gcd":
+        return request_discovered_gcd_series(query, provider_series_id, acquisition_preference)
+    if provider not in {"metron", "comic_vine"} or not re.fullmatch(r"\d+", str(provider_series_id or "")):
+        raise ValueError("Choose a valid discovered publication run")
+    config = load_provider_config().get(provider) or {}
+    credential_field = "token" if provider == "metron" else "apiKey"
+    credential = str(config.get(credential_field) or "").strip()
+    if not config.get("enabled") or not credential:
+        raise ValueError(f"{PROVIDER_DEFINITIONS[provider]['name']} is not configured")
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    context = {"title": cleaned}
+    if provider == "metron":
+        context["metronSeriesId"] = str(provider_series_id)
+        provider_id, source_url, entries = _metron_issue_entries(context, credential)
+        detail = fetch_json_with_headers(
+            f"{METRON_API_BASE}/series/{provider_id}/", _provider_headers(provider, credential)
+        )
+        raw_title = str(detail.get("name") or detail.get("series") or cleaned)
+        title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip()
+        year = _provider_year(detail.get("year_began"), raw_title)
+        publisher_value = detail.get("publisher") or {}
+        publisher = publisher_value.get("name") if isinstance(publisher_value, dict) else publisher_value
+        ended = _provider_year(detail.get("year_end"))
+    else:
+        context["comicVineVolumeId"] = str(provider_series_id)
+        provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
+        detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
+            "api_key": credential, "format": "json", "field_list": "name,start_year,publisher",
+        })
+        payload = fetch_json_with_headers(detail_url, _provider_headers(provider, credential))
+        detail = payload.get("results") or {}
+        title = str(detail.get("name") or cleaned).strip()
+        year = _provider_year(detail.get("start_year"))
+        publisher = (detail.get("publisher") or {}).get("name")
+        ended = None
+    run = catalog_store().ensure_provider_series_run(provider, provider_id, title, year, publisher)
+    status = "complete" if ended and ended <= time.gmtime().tm_year else "complete_to_date"
+    catalog_store().apply_issue_list(
+        int(run["id"]), provider, provider_id, source_url, entries, status=status,
+        detail=f"Added from {PROVIDER_DEFINITIONS[provider]['name']} with {len(entries)} known issues.",
+        source="added from library discovery search",
+    )
+    request = catalog_store().create_acquisition_request(
+        "series", int(run["id"]), acquisition_preference, True
+    )
+    return {
+        "series": {**run, "publisher": publisher, "year": year},
+        "request": request, "issueCount": len(entries),
+        "metadata": {"provider": provider, "status": status},
+    }
+
+
+def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
+    """Refresh structure through GCD, then fill missing fields from enabled providers."""
+    store = catalog_store()
+    before = store.issue_metadata_summary(series_run_id)
+    provider_results: list[dict[str, Any]] = []
+    provider_errors: list[dict[str, str]] = []
+    retry_after_seconds: int | None = None
+    canonical_status: str | None = None
+    try:
+        gcd_result = sync_gcd_issue_catalog(series_run_id)
+        provider_results.append(gcd_result)
+        canonical_status = gcd_result.get("status")
+        gcd_metadata = gcd_result.get("metadata") or {}
+        if gcd_metadata.get("status") == "deferred":
+            retry_after_seconds = gcd_metadata.get("retryAfterSeconds")
+    except Exception as exc:
+        provider_errors.append({"provider": "gcd", "error": str(exc)})
+
+    context = store.get_series_sync_context(series_run_id)
+    config = load_provider_config()
+    enabled = sorted(
+        (
+            (provider_id, values) for provider_id, values in config.items()
+            if provider_id in {"metron", "comic_vine"} and values.get("enabled")
+        ),
+        key=lambda item: int(item[1].get("priority") or 99),
+    )
+    for provider_id, values in enabled:
+        credential_field = str(PROVIDER_DEFINITIONS[provider_id]["credentialField"])
+        credential = str(values.get(credential_field) or "").strip()
+        if not credential:
+            continue
+        try:
+            if provider_id == "metron":
+                provider_series_id, api_url, entries = _metron_issue_entries(context, credential)
+            else:
+                provider_series_id, api_url, entries = _comic_vine_issue_entries(context, credential)
+            result = store.apply_issue_list(
+                series_run_id, provider_id, provider_series_id, api_url, entries,
+                status=canonical_status if canonical_status in {"complete", "complete_to_date"} else "complete_to_date",
+                detail=(
+                    f"Issue structure retained from the canonical catalog; missing titles and dates "
+                    f"were enriched through {PROVIDER_DEFINITIONS[provider_id]['name']}."
+                ),
+                source="matched automatically by canonical title, year, and cross-provider identifiers",
+            )
+            provider_results.append(result)
+            context = store.get_series_sync_context(series_run_id)
+        except Exception as exc:
+            provider_errors.append({"provider": provider_id, "error": str(exc)})
+
+    if not provider_results:
+        detail = "; ".join(
+            f"{PROVIDER_DEFINITIONS.get(item['provider'], {}).get('name', item['provider'])}: {item['error']}"
+            for item in provider_errors
+        )
+        raise ValueError(detail or "No metadata provider could refresh this series")
+    after = store.issue_metadata_summary(series_run_id)
+    before_raw_titles = before.get("rawMissingTitleCount", before["missingTitleCount"])
+    after_raw_titles = after.get("rawMissingTitleCount", after["missingTitleCount"])
+    repaired_titles = max(0, before_raw_titles - after_raw_titles)
+    repaired_dates = max(0, before["missingDateCount"] - after["missingDateCount"])
+    checked_names = [
+        PROVIDER_DEFINITIONS.get(result.get("provider"), {}).get("name", result.get("provider"))
+        for result in provider_results
+    ]
+    checked_names = list(dict.fromkeys(str(name) for name in checked_names if name))
+    complete_titleless_sources = [
+        result for result in provider_results
+        if result.get("issueCount") == after["issueCount"] and int(result.get("titleCount") or 0) == 0
+    ]
+    title_policy = "numbered_only" if (
+        after["issueCount"] > 0
+        and after_raw_titles == after["issueCount"]
+        and len(complete_titleless_sources) >= 2
+    ) else "named"
+    if title_policy == "numbered_only":
+        after["titlePolicy"] = title_policy
+        after["missingTitleCount"] = 0
+        after["missingTitleIssues"] = []
+    title_available = after["issueCount"] - after_raw_titles
+    date_available = after["issueCount"] - after["missingDateCount"]
+    if title_policy == "numbered_only":
+        detail = (
+            f"Checked {', '.join(checked_names)}. All {after['issueCount']} issues are matched and "
+            f"{date_available} of {after['issueCount']} release dates are available. The matched "
+            "catalogs describe this run by issue number and do not publish separate issue titles."
+        )
+    else:
+        detail = (
+            f"Checked {', '.join(checked_names)}. {title_available} of {after['issueCount']} issue titles "
+            f"and {date_available} of {after['issueCount']} release dates are available."
+        )
+    missing_parts = []
+    if after["missingTitleIssues"]:
+        missing_parts.append("title: " + ", ".join(f"#{number}" for number in after["missingTitleIssues"][:12]))
+    if after["missingDateIssues"]:
+        missing_parts.append("release date: " + ", ".join(f"#{number}" for number in after["missingDateIssues"][:12]))
+    if missing_parts:
+        detail += " Still unavailable from enabled providers — " + "; ".join(missing_parts) + "."
+    store.update_issue_catalog_detail(series_run_id, detail, title_policy=title_policy)
+    remaining = after["missingTitleCount"] + after["missingDateCount"]
+    return {
+        "seriesId": str(series_run_id), "status": "complete", "issueCount": after["issueCount"],
+        "providers": provider_results, "providerErrors": provider_errors,
+        "metadata": {
+            "status": "complete" if remaining == 0 else "partial",
+            "repairedTitleCount": repaired_titles, "repairedDateCount": repaired_dates,
+            **after,
+            **({"retryAfterSeconds": retry_after_seconds} if retry_after_seconds else {}),
+        },
+    }
+
+
+def assess_identity_confidence(
+    parsed: ParsedFile,
+    embedded: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Explain confidence in identity separately from metadata completeness."""
+    if candidate.get("record_type") != "single_issue":
+        return None
+    score = 10
+    corroborated = ["GCD returned a specific issue record"]
+    conflicts = []
+    limitations = []
+
+    series_similarity = difflib.SequenceMatcher(
+        None, normalized_title(parsed.title), normalized_title(candidate.get("title"))
+    ).ratio()
+    if series_similarity == 1:
+        score += 25
+        corroborated.append("filename series exactly matches GCD series")
+    elif series_similarity >= 0.85:
+        score += 15
+        corroborated.append(f"filename series strongly matches GCD series ({series_similarity:.0%})")
+    else:
+        conflicts.append(f"filename and GCD series differ ({series_similarity:.0%} similarity)")
+
+    if parsed.issue and parsed.issue == str(candidate.get("issue") or ""):
+        score += 30
+        corroborated.append(f"filename and GCD both identify issue {parsed.issue}")
+    else:
+        conflicts.append("filename and GCD issue numbers do not agree")
+
+    candidate_year = candidate.get("publication_year")
+    if parsed.year and candidate_year:
+        difference = abs(int(parsed.year) - int(candidate_year))
+        if difference == 0:
+            score += 5
+            corroborated.append("filename year agrees with GCD publication year")
+        elif difference == 1:
+            score -= 3
+            conflicts.append(
+                f"filename says {parsed.year}; GCD publication date is {candidate.get('publication_date') or candidate_year}"
+            )
+        else:
+            score -= 12
+            conflicts.append(f"filename year {parsed.year} conflicts with GCD year {candidate_year}")
+
+    if embedded.get("source") == "ComicInfo.xml":
+        if normalized_title(embedded.get("series")) == normalized_title(candidate.get("title")):
+            score += 10
+            corroborated.append("ComicInfo.xml series agrees with GCD")
+        else:
+            conflicts.append("ComicInfo.xml series does not agree with GCD")
+        if str(embedded.get("number") or "").lstrip("0") == str(candidate.get("issue") or "").lstrip("0"):
+            score += 10
+            corroborated.append("ComicInfo.xml issue number agrees with GCD")
+        else:
+            conflicts.append("ComicInfo.xml issue number does not agree with GCD")
+        embedded_publisher = normalized_title(re.sub(r"\binc\.?\b", "", embedded.get("publisher") or "", flags=re.I))
+        candidate_publisher = normalized_title(re.sub(r"\binc\.?\b", "", candidate.get("publisher") or "", flags=re.I))
+        if embedded_publisher and embedded_publisher == candidate_publisher:
+            score += 5
+            corroborated.append("ComicInfo.xml publisher agrees with GCD")
+        embedded_year_match = YEAR.search(str(embedded.get("year") or ""))
+        if embedded_year_match and candidate_year:
+            if int(embedded_year_match.group(1)) == int(candidate_year):
+                score += 5
+                corroborated.append("ComicInfo.xml year agrees with GCD publication year")
+            else:
+                conflicts.append("ComicInfo.xml year does not agree with GCD")
+        embedded_story = normalized_title(embedded.get("title"))
+        if embedded_story and any(
+            difflib.SequenceMatcher(None, embedded_story, normalized_title(title)).ratio() >= 0.8
+            for title in candidate.get("named_contents") or []
+        ):
+            score += 5
+            corroborated.append("ComicInfo.xml story title agrees with the GCD story record")
+
+    if "[" in (candidate.get("descriptor") or ""):
+        limitations.append("series and issue are verified; the filename does not independently verify the cover variant")
+    limitations.append("identity confidence does not guarantee every credit or descriptive field is complete")
+    score = max(0, min(97, score))
+    level = "high" if score >= 85 else "medium" if score >= 65 else "low"
+    return {
+        "scope": "series and issue identity",
+        "level": level,
+        "score": score,
+        "corroborated_fields": corroborated,
+        "conflicts": conflicts,
+        "limitations": limitations,
+    }
+
+
+def score_candidate(parsed: ParsedFile, candidate: dict[str, Any], rank: int) -> tuple[int, list[str]]:
+    title_similarity = difflib.SequenceMatcher(
+        None, normalized_title(candidate.get("title")), normalized_title(parsed.title)
+    ).ratio()
+    score = max(0, 20 - rank * 3)
+    reasons = [f"Open Library search rank {rank + 1}"]
+    candidate_isbns = {normalize_isbn(value) for value in candidate.get("isbns", [])}
+    exact_isbn = bool(parsed.isbn and parsed.isbn in candidate_isbns)
+    if title_similarity == 1:
+        score += 50
+        reasons.append("exact normalized title")
+    elif title_similarity >= 0.8:
+        score += 30
+        reasons.append(f"strong title similarity ({title_similarity:.0%})")
+    elif not exact_isbn:
+        score -= 60
+        reasons.append(f"title mismatch ({title_similarity:.0%})")
+    else:
+        reasons.append(f"title differs, but exact ISBN overrides it ({title_similarity:.0%})")
+    if exact_isbn:
+        score += 100
+        reasons.append("exact ISBN")
+    if candidate.get("matched_edition"):
+        score += 50
+        reasons.append(f"Open Library edition explicitly matches volume {parsed.volume}")
+    if parsed.year and candidate.get("publication_year"):
+        difference = abs(int(candidate["publication_year"]) - parsed.year)
+        if difference <= 1:
+            score += 15
+            reasons.append("publication year agrees")
+        elif difference >= 5:
+            score -= 10
+            reasons.append("publication year conflicts")
+    return score, reasons
+
+
+def search_google_books(parsed: ParsedFile) -> list[dict[str, Any]]:
+    if not GOOGLE_BOOKS_API_KEY:
+        return []
+    query = f"isbn:{parsed.isbn}" if parsed.isbn else f'intitle:"{parsed.title}"'
+    url = "https://www.googleapis.com/books/v1/volumes?" + urllib.parse.urlencode(
+        {"q": query, "maxResults": 5, "key": GOOGLE_BOOKS_API_KEY}
+    )
+    data = fetch_json(url)
+    if not data.get("items") and parsed.isbn and parsed.title:
+        query = f'intitle:"{parsed.title}"'
+        url = "https://www.googleapis.com/books/v1/volumes?" + urllib.parse.urlencode(
+            {"q": query, "maxResults": 5, "key": GOOGLE_BOOKS_API_KEY}
+        )
+        data = fetch_json(url)
+    results = []
+    for item in data.get("items", [])[:5]:
+        info = item.get("volumeInfo", {})
+        results.append(
+            {
+                "source": "Google Books",
+                "source_id": item.get("id"),
+                "title": info.get("title"),
+                "subtitle": info.get("subtitle"),
+                "creators": info.get("authors", []),
+                "publisher": info.get("publisher"),
+                "published_date": info.get("publishedDate"),
+                "description": info.get("description"),
+                "page_count": info.get("pageCount"),
+                "format": info.get("printType"),
+                "isbns": [x.get("identifier") for x in info.get("industryIdentifiers", []) if x.get("identifier")],
+                "cover": (info.get("imageLinks") or {}).get("thumbnail"),
+                "url": info.get("infoLink"),
+            }
+        )
+    return results
+
+
+def embedded_epub_candidate(lookup: ParsedFile, embedded: dict[str, Any]) -> dict[str, Any] | None:
+    if embedded.get("source") != "EPUB package metadata" or not embedded.get("title"):
+        return None
+    isbns = embedded.get("isbns") or []
+    score = 55
+    reasons = ["title read directly from EPUB package metadata"]
+    if embedded.get("creators"):
+        score += 5
+        reasons.append("creator metadata present")
+    if embedded.get("publisher"):
+        score += 5
+        reasons.append("publisher metadata present")
+    if isbns:
+        score += 10
+        reasons.append("valid-checksum ISBN present in EPUB")
+    if embedded.get("cover_member"):
+        reasons.append("cover image found inside EPUB")
+    cover_url = None
+    if embedded.get("cover_member"):
+        cover_url = "/api/file-cover?" + urllib.parse.urlencode({"path": lookup.path})
+    embedded_coverage = extract_issue_coverage(
+        embedded.get("description"), "EPUB package description", "file confirmed"
+    )
+    return {
+        "source": "EPUB package metadata",
+        "source_id": None,
+        "title": embedded.get("title"),
+        "subtitle": None,
+        "creators": embedded.get("creators", []),
+        "publisher": embedded.get("publisher"),
+        "publication_year": lookup.year,
+        "isbns": isbns,
+        "cover": cover_url,
+        "url": None,
+        "description": embedded.get("description"),
+        "format": embedded.get("format"),
+        "language": embedded.get("language"),
+        "rights": embedded.get("rights"),
+        "subjects": embedded.get("subjects", []),
+        "creator_details": embedded.get("creator_details", []),
+        "named_contents": embedded.get("named_contents", []),
+        "coverage_status": (
+            "coverage found in embedded description"
+            if embedded_coverage
+            else "not available in EPUB metadata; an external collection source is required"
+        ),
+        "matched_edition": {
+            "isbn_10": [value for value in isbns if len(value) == 10],
+            "isbn_13": [value for value in isbns if len(value) == 13],
+            "number_of_pages": embedded.get("page_count"),
+            "coverage": embedded_coverage,
+        },
+        "match_score": score,
+        "match_reasons": reasons,
+        "verification_status": "embedded-only; not confirmed by an external catalog",
+    }
+
+
+def embedded_comicinfo_candidate(
+    parsed: ParsedFile,
+    embedded: dict[str, Any],
+) -> dict[str, Any] | None:
+    if embedded.get("source") != "ComicInfo.xml" or not parsed.issue or not embedded.get("series"):
+        return None
+    embedded_issue = str(embedded.get("number") or "").lstrip("0") or None
+    if embedded_issue and embedded_issue != parsed.issue:
+        return None
+    embedded_title = embedded.get("title")
+    if (
+        embedded_title
+        and re.search(rf"#\s*0*{re.escape(parsed.issue)}\b", embedded_title, re.I)
+        and normalized_title(embedded.get("series")) in normalized_title(embedded_title)
+    ):
+        embedded_title = None
+    contributors: dict[str, list[str]] = {}
+    creators = []
+    for role, value in (embedded.get("contributors") or {}).items():
+        names = [name.strip() for name in str(value).split(",") if name.strip()]
+        if not names:
+            continue
+        contributors[role] = names
+        if role != "cover_artist":
+            for name in names:
+                if name not in creators:
+                    creators.append(name)
+    year_match = YEAR.search(str(embedded.get("year") or ""))
+    corroborated = []
+    conflicts = []
+    confidence_score = 50
+    if normalized_title(parsed.title) == normalized_title(embedded.get("series")):
+        confidence_score += 15
+        corroborated.append("filename series agrees with ComicInfo.xml")
+    if parsed.issue == (embedded_issue or parsed.issue):
+        confidence_score += 20
+        corroborated.append(f"filename and ComicInfo.xml both identify issue {parsed.issue}")
+    if parsed.year and year_match:
+        embedded_year = int(year_match.group(1))
+        if parsed.year == embedded_year:
+            confidence_score += 5
+            corroborated.append("filename year agrees with ComicInfo.xml")
+        else:
+            confidence_score -= 5
+            conflicts.append(f"filename says {parsed.year}; ComicInfo.xml says {embedded_year}")
+    confidence_score = min(84, max(0, confidence_score))
+    source_id = embedded.get("metron_id") or embedded.get("comicvine_issue_id")
+    return {
+        "source": "ComicInfo.xml",
+        "source_id": source_id,
+        "record_type": "single_issue",
+        "title": embedded.get("series"),
+        "subtitle": embedded_title,
+        "issue": embedded_issue or parsed.issue,
+        "volume": None,
+        "creators": creators,
+        "contributors": contributors,
+        "cover_contributors": contributors.get("cover_artist", []),
+        "publisher": embedded.get("publisher"),
+        "publication_year": int(year_match.group(1)) if year_match else parsed.year,
+        "publication_date": None,
+        "isbns": [],
+        "cover": None,
+        "url": embedded.get("web"),
+        "format": embedded.get("format"),
+        "language": embedded.get("language"),
+        "description": embedded.get("summary"),
+        "named_contents": [embedded_title] if embedded_title else [],
+        "matched_edition": {
+            "isbn_10": [], "isbn_13": [], "number_of_pages": None, "coverage": [],
+        },
+        "coverage_status": "single issue; volume coverage does not apply",
+        "match_score": 82,
+        "match_score_note": "internal candidate ranking value; not a confidence percentage",
+        "match_reasons": [
+            "filename and embedded series agree",
+            f"filename and embedded metadata agree on issue {parsed.issue}",
+            "used as a resilient fallback while an external catalog is unavailable",
+        ],
+        "verification_status": "matched from filename plus embedded ComicInfo.xml; not confirmed by an external catalog",
+        "identity_confidence": {
+            "scope": "series and issue identity",
+            "level": "medium",
+            "score": confidence_score,
+            "corroborated_fields": corroborated,
+            "conflicts": conflicts,
+            "limitations": [
+                "filename and ComicInfo.xml may have originated from the same release source",
+                "external catalog confirmation is unavailable",
+            ],
+        },
+    }
+
+
+def enrich(parsed: ParsedFile) -> dict[str, Any]:
+    file_health = inspect_file_health(Path(parsed.path))
+    embedded = read_embedded_metadata(Path(parsed.path))
+    local_cover = file_cover_info(Path(parsed.path), embedded)
+    lookup = lookup_identity(parsed, embedded)
+    sources: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    source_status: dict[str, str] = {}
+    if lookup.issue:
+        sources["open_library"] = []
+        source_status["open_library"] = "skipped for a filename classified as a single issue"
+    else:
+        try:
+            sources["open_library"] = search_open_library(lookup)
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            errors["open_library"] = str(exc)
+            sources["open_library"] = []
+    if lookup.issue:
+        sources["google_books"] = []
+        source_status["google_books"] = "skipped for a filename classified as a single issue"
+    elif not sources["open_library"] and GOOGLE_BOOKS_API_KEY:
+        try:
+            sources["google_books"] = search_google_books(lookup)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                errors["google_books"] = "Rate limited by Google Books; try again later."
+            else:
+                errors["google_books"] = str(exc)
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            errors["google_books"] = str(exc)
+    else:
+        sources["google_books"] = []
+        if not GOOGLE_BOOKS_API_KEY:
+            source_status["google_books"] = "disabled; set GOOGLE_BOOKS_API_KEY to enable it"
+    try:
+        sources["gcd"] = search_gcd(lookup)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            errors["gcd"] = "GCD anonymous API rate limit reached; cached results remain available."
+        else:
+            errors["gcd"] = str(exc)
+        sources["gcd"] = []
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        errors["gcd"] = str(exc)
+        sources["gcd"] = []
+    for candidate in sources["gcd"]:
+        confidence = assess_identity_confidence(parsed, embedded, candidate)
+        if confidence:
+            candidate["identity_confidence"] = confidence
+    ranked_candidates = []
+    for rank, candidate in enumerate(sources.get("open_library", [])):
+        candidate = dict(candidate)
+        similarity = difflib.SequenceMatcher(
+            None, normalized_title(candidate.get("title")), normalized_title(lookup.title)
+        ).ratio()
+        # Edition endpoints are relatively slow. Inspect only the two strongest
+        # search results; GCD independently validates the collection volume.
+        if lookup.volume and similarity >= 0.8 and rank < 2:
+            try:
+                candidate["matched_edition"] = find_open_library_volume_edition(candidate, lookup.volume)
+            except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+                candidate["matched_edition"] = None
+        candidate["match_score"], candidate["match_reasons"] = score_candidate(lookup, candidate, rank)
+        ranked_candidates.append(candidate)
+    ranked_candidates.sort(key=lambda item: item["match_score"], reverse=True)
+    sources["open_library"] = ranked_candidates
+    recommendation = next(
+        (
+            candidate for candidate in ranked_candidates
+            if candidate["match_score"] >= 50
+            and (
+                (lookup.isbn and lookup.isbn in {normalize_isbn(value) for value in candidate.get("isbns", [])})
+                or difflib.SequenceMatcher(
+                    None, normalized_title(candidate.get("title")), normalized_title(lookup.title)
+                ).ratio() >= 0.8
+            )
+        ),
+        None,
+    )
+    gcd_recommendation = next(
+        (candidate for candidate in sources["gcd"] if candidate["match_score"] >= 80),
+        None,
+    )
+    if gcd_recommendation and (
+        recommendation is None
+        or gcd_recommendation["match_score"] > recommendation["match_score"]
+    ):
+        recommendation = gcd_recommendation
+    embedded_candidate = embedded_epub_candidate(lookup, embedded) or embedded_comicinfo_candidate(parsed, embedded)
+    sources["embedded"] = [embedded_candidate] if embedded_candidate else []
+    if recommendation is None and embedded_candidate:
+        recommendation = embedded_candidate
+    gcd_query = " ".join(str(x) for x in (lookup.title, lookup.volume or "", lookup.year or "") if x)
+    return {
+        "parsed": asdict(parsed),
+        "file_health": file_health,
+        "embedded_metadata": embedded,
+        "lookup_identity": asdict(lookup),
+        "candidates": sources,
+        "recommendation": recommendation,
+        "file_cover": local_cover,
+        "errors": errors,
+        "source_status": source_status,
+        "gcd_search_url": "https://www.comics.org/searchNew/?q=" + urllib.parse.quote_plus(gcd_query),
+        "note": "match_score is an internal ranking value, not a percentage. For single issues, identity_confidence explains cross-source agreement and conflicts. GCD edition data is ingested through its public API; inferred collection coverage is labeled separately.",
+    }
+
+
+def batch_enrich(folder: str, recursive: bool = True) -> list[dict[str, Any]]:
+    files = scan_folder(folder, recursive)
+    if len(files) < 2:
+        return [enrich(item) for item in files]
+    # External lookups dominate runtime. A small pool keeps the UI responsive
+    # without flooding anonymous catalog APIs.
+    worker_count = min(4, len(files))
+
+    def safe_enrich(item: ParsedFile) -> dict[str, Any]:
+        try:
+            return enrich(item)
+        except Exception as exc:
+            gcd_query = " ".join(str(x) for x in (item.title, item.volume or "", item.year or "") if x)
+            return {
+                "parsed": asdict(item),
+                "file_health": inspect_file_health(Path(item.path)),
+                "embedded_metadata": {},
+                "lookup_identity": asdict(item),
+                "candidates": {},
+                "recommendation": None,
+                "file_cover": file_cover_info(Path(item.path)),
+                "errors": {"analysis": f"Unexpected per-file error: {exc}"},
+                "source_status": {},
+                "gcd_search_url": "https://www.comics.org/searchNew/?q=" + urllib.parse.quote_plus(gcd_query),
+                "note": "This file failed independently; analysis continued for the remaining files.",
+            }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        return list(executor.map(safe_enrich, files))
+
+
+def render_batch_results(results: list[dict[str, Any]]) -> str:
+    cards = []
+    matched = sum(1 for result in results if result.get("recommendation"))
+    file_problems = sum(
+        1 for result in results if (result.get("file_health") or {}).get("status") == "error"
+    )
+    for result in results:
+        parsed = result["parsed"]
+        recommendation = result.get("recommendation")
+        raw_params = urllib.parse.urlencode({"path": parsed["path"]})
+        if recommendation:
+            edition = recommendation.get("matched_edition") or {}
+            title = recommendation.get("title") or parsed["title"]
+            subtitle = recommendation.get("subtitle")
+            if recommendation.get("record_type") == "single_issue" and recommendation.get("issue"):
+                display_title = f"{title} #{recommendation['issue']}"
+                if subtitle:
+                    display_title += f": {subtitle}"
+            else:
+                display_title = f"{title}: {subtitle}" if subtitle else title
+            isbns = edition.get("isbn_13") or edition.get("isbn_10") or recommendation.get("isbns", [])
+            coverage = edition.get("coverage", [])
+            coverage_html = ""
+            if coverage:
+                rows = []
+                for claim in coverage:
+                    issue_label = claim["start_issue"] if claim["start_issue"] == claim["end_issue"] else f"{claim['start_issue']}–{claim['end_issue']}"
+                    confidence = f" · {claim['confidence']}" if claim.get("confidence") else ""
+                    rows.append(
+                        f"<li><strong>{html.escape(claim['series'])}</strong> #{html.escape(issue_label)} "
+                        f"<span class='muted'>({len(claim['issues'])} issues{html.escape(confidence)})</span></li>"
+                    )
+                coverage_html = f"<div><h3>Collected issue coverage</h3><ul>{''.join(rows)}</ul></div>"
+            else:
+                coverage_status = recommendation.get("coverage_status") or "No structured issue coverage found in this edition record."
+                coverage_html = f"<p class='muted'>{html.escape(coverage_status)}</p>"
+            local_cover = result.get("file_cover") or {}
+            cover = local_cover.get("url") or recommendation.get("cover")
+            cover_html = f"<img class='cover' src='{html.escape(cover, quote=True)}' alt='Cover for {html.escape(display_title, quote=True)}'>" if cover else ""
+            cover_source_html = (
+                "<div class='cover-source'>Cover from comic file</div>"
+                if local_cover.get("url") else
+                (f"<div class='cover-source'>Cover from {html.escape(recommendation.get('source') or 'metadata source')}</div>" if cover else "")
+            )
+            reasons = "".join(f"<li>{html.escape(reason)}</li>" for reason in recommendation.get("match_reasons", []))
+            facts = [
+                recommendation.get("publisher"),
+                str(recommendation.get("publication_year") or ""),
+                recommendation.get("format"),
+                recommendation.get("language"),
+                f"{edition.get('number_of_pages')} pages" if edition.get("number_of_pages") else None,
+            ]
+            facts_html = " · ".join(html.escape(value) for value in facts if value)
+            isbn_html = ", ".join(html.escape(value) for value in isbns)
+            verification = recommendation.get("verification_status")
+            verification_html = f"<p class='warn'><strong>Verification:</strong> {html.escape(verification)}</p>" if verification else ""
+            identity = recommendation.get("identity_confidence") or {}
+            if identity:
+                score_label = f"{identity.get('level', 'unknown').title()} identity confidence · {identity.get('score', 0)}%"
+                evidence_items = "".join(
+                    f"<li>{html.escape(value)}</li>" for value in identity.get("corroborated_fields", [])
+                )
+                conflict_items = "".join(
+                    f"<li class='warn'>{html.escape(value)}</li>" for value in identity.get("conflicts", [])
+                )
+                limitation_items = "".join(
+                    f"<li class='muted'>{html.escape(value)}</li>" for value in identity.get("limitations", [])
+                )
+                confidence_html = (
+                    "<details><summary>Identity confidence evidence</summary><ul>"
+                    f"{evidence_items}{conflict_items}{limitation_items}</ul></details>"
+                )
+            else:
+                score_label = f"Candidate score {recommendation['match_score']}"
+                confidence_html = ""
+            source_link = (
+                f"<a target='_blank' href='{html.escape(recommendation['url'], quote=True)}'>{html.escape(recommendation.get('source') or 'Source record')}</a> · "
+                if recommendation.get("url") else ""
+            )
+            named_contents = recommendation.get("named_contents", [])
+            named_contents_html = ""
+            if named_contents:
+                named_contents_html = (
+                    "<div><h3>Named contents</h3><ul>"
+                    + "".join(f"<li>{html.escape(value)}</li>" for value in named_contents)
+                    + "</ul></div>"
+                )
+            description_html = ""
+            if recommendation.get("description"):
+                description_html = f"<details><summary>Description</summary><p>{html.escape(recommendation['description'])}</p></details>"
+            match_body = (
+                f"<div class='match-grid'><div>{cover_html}{cover_source_html}</div><div><div class='score'>{html.escape(score_label)}</div>"
+                f"<h2>{html.escape(display_title)}</h2><p>{facts_html}</p>"
+                f"<p><strong>ISBN:</strong> {isbn_html or 'Not available'}</p>"
+                f"{verification_html}{confidence_html}{coverage_html}{named_contents_html}{description_html}"
+                f"<details><summary>Why this matched</summary><ul>{reasons}</ul></details>"
+                f"<p class='links'>{source_link}"
+                f"<a target='_blank' href='{html.escape(result['gcd_search_url'], quote=True)}'>Search GCD</a> · "
+                f"<a target='_blank' href='/api/enrich?{raw_params}'>Raw JSON</a></p></div></div>"
+            )
+        else:
+            local_cover = result.get("file_cover") or {}
+            local_cover_html = (
+                f"<div><img class='cover' src='{html.escape(local_cover['url'], quote=True)}' alt='Cover from comic file'>"
+                "<div class='cover-source'>Cover from comic file</div></div>"
+                if local_cover.get("url") else ""
+            )
+            alternatives = (
+                result.get("candidates", {}).get("gcd", [])
+                + result.get("candidates", {}).get("open_library", [])
+            )[:3]
+            alternatives_html = "".join(
+                f"<li>{html.escape(candidate.get('title') or 'Untitled')}"
+                f"{': ' + html.escape(candidate.get('subtitle')) if candidate.get('subtitle') else ''}"
+                f" — score {candidate.get('match_score')}</li>" for candidate in alternatives
+            )
+            match_body = (
+                f"<div class='match-grid'>{local_cover_html}<div class='no-match'><h2>No confident match</h2>"
+                f"<p>The parsed lookup title was <code>{html.escape(result['lookup_identity']['title'])}</code>.</p>"
+                f"<ul>{alternatives_html}</ul><p><a target='_blank' href='/api/enrich?{raw_params}'>Inspect raw JSON</a></p></div></div>"
+            )
+        embedded = result.get("embedded_metadata") or {}
+        embedded_label = embedded.get("source") or "None found"
+        health = result.get("file_health") or {}
+        has_file_problem = health.get("status") == "error"
+        health_badge = (
+            f"<span class='health-pill'>{html.escape(health.get('code', 'file_error').replace('_', ' ').title())}</span>"
+            if has_file_problem else ""
+        )
+        health_alert = (
+            "<div class='archive-alert' role='alert'><strong>File problem:</strong> "
+            f"{html.escape(health.get('message') or 'The comic file failed its structural check.')}</div>"
+            if has_file_problem else ""
+        )
+        cards.append(
+            f"<article class='result-card'><header><code>{html.escape(parsed['filename'])}</code>"
+            f"<span class='status-pills'>{health_badge}<span class='source-pill'>Embedded: {html.escape(embedded_label)}</span></span>"
+            f"</header>{health_alert}{match_body}</article>"
+        )
+    problem_summary = (
+        f" <strong class='problem-count'>{file_problems} file{'s' if file_problems != 1 else ''}</strong> "
+        "failed structural checks and are flagged below."
+        if file_problems else ""
+    )
+    return (
+        f"<div class='batch-summary'><strong>{matched} of {len(results)}</strong> files have a confident recommendation. "
+        f"Results are read-only and source-attributed.{problem_summary}</div>"
+        f"<div class='results'>{''.join(cards)}</div>"
+    )
+
+
+PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comic Metadata POC</title>
+<style>
+:root { color-scheme: dark; font-family: ui-sans-serif,system-ui,sans-serif; background:#11151c; color:#eef2f7 }
+body { max-width:1180px; margin:0 auto; padding:32px 20px 80px }
+h1 { margin-bottom:4px } .sub { color:#aab6c5; margin-top:0 }
+form { display:grid; grid-template-columns:1fr auto auto auto; gap:10px; background:#1a202b; padding:16px; border-radius:12px; align-items:center }
+input[type=text] { min-width:0; padding:11px; border:1px solid #3a4556; border-radius:8px; background:#10141b; color:white }
+button { padding:10px 16px; border:0; border-radius:8px; background:#6d5dfc; color:white; font-weight:700; cursor:pointer }
+.secondary { display:inline-block; padding:10px 16px; border-radius:8px; background:#263247; color:#e8eeff; font-weight:700; text-decoration:none }
+table { width:100%; border-collapse:collapse; margin-top:20px; background:#171d27 }
+th,td { padding:10px; text-align:left; border-bottom:1px solid #2b3544; vertical-align:top }
+th { color:#aebbd0 } code { color:#b7c9ff } .warn { color:#ffca72 } a { color:#9db8ff }
+.empty,.error { padding:18px; background:#1a202b; border-radius:10px; margin-top:18px }.error { color:#ff9b9b }
+.batch-actions { margin:18px 0 }.batch-summary { margin:20px 0; padding:14px 16px; background:#1a202b; border-radius:10px }
+.results { display:grid; gap:18px }.result-card { background:#171d27; border:1px solid #2b3544; border-radius:14px; overflow:hidden }
+.result-card header { display:flex; justify-content:space-between; gap:12px; padding:12px 16px; background:#1d2532; align-items:center }
+.source-pill,.score { display:inline-block; padding:4px 8px; border-radius:999px; background:#263247; color:#c8d5e8; font-size:.82rem }
+.status-pills { display:flex; gap:7px; align-items:center; flex-wrap:wrap; justify-content:flex-end }.health-pill { display:inline-block; padding:4px 8px; border-radius:999px; background:#762f35; color:#ffd9dc; font-size:.82rem; font-weight:700 }.archive-alert { padding:12px 16px; background:#4b2228; border-top:1px solid #8f3f47; border-bottom:1px solid #8f3f47; color:#ffd9dc }.problem-count { color:#ff9b9b }
+.score { background:#244936; color:#adf0c8 }.match-grid { display:grid; grid-template-columns:140px 1fr; gap:20px; padding:20px }
+.cover { width:140px; max-height:210px; object-fit:contain; border-radius:7px; background:#202938 }.cover-source { width:140px; margin-top:6px; color:#99a8bb; font-size:.75rem; text-align:center }.match-grid h2 { margin:8px 0 4px }
+.match-grid h3 { margin-bottom:4px }.muted { color:#99a8bb }.links { margin-top:16px }.no-match { padding:20px }
+details { margin-top:12px } summary { cursor:pointer; color:#c8d5e8 }
+@media (max-width:720px) { form { grid-template-columns:1fr 1fr } input[type=text] { grid-column:1/-1 } .match-grid { grid-template-columns:1fr } .cover { width:110px } }
+</style></head><body>
+<h1>Comic Metadata POC</h1><p class="sub">Read-only filename parsing and metadata candidate lookup.</p>
+<form id="scan-form" method="get" action="/"><input id="folder" name="folder" type="text" value="__FOLDER__" placeholder="/path/to/comics" required>
+<button id="choose-folder" type="button">Choose Folder…</button>
+<label><input type="checkbox" name="recursive" value="1" __CHECKED__> Recursive</label><button type="submit">Scan folder</button></form>
+<p id="picker-status" class="sub" aria-live="polite"></p>
+__CONTENT__
+<script>
+const chooseButton = document.getElementById('choose-folder');
+const folderInput = document.getElementById('folder');
+const pickerStatus = document.getElementById('picker-status');
+chooseButton.addEventListener('click', async () => {
+  chooseButton.disabled = true;
+  pickerStatus.textContent = 'Opening Finder…';
+  try {
+    const response = await fetch('/api/pick-folder');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Folder selection failed');
+    if (result.folder) {
+      folderInput.value = result.folder;
+      pickerStatus.textContent = 'Folder selected. Choose Scan folder to continue.';
+    } else {
+      pickerStatus.textContent = 'Folder selection canceled.';
+    }
+  } catch (error) {
+    pickerStatus.textContent = error.message;
+  } finally {
+    chooseButton.disabled = false;
+  }
+});
+</script>
+</body></html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        parsed_url = urllib.parse.urlparse(self.path)
+        if parsed_url.path == "/api/v1/catalog":
+            self.send_json(catalog_store().catalog())
+            return
+        if parsed_url.path == "/api/v1/providers":
+            self.send_json(public_provider_config())
+            return
+        if parsed_url.path == "/api/v1/acquisition-services":
+            self.send_json(public_acquisition_service_config())
+            return
+        if parsed_url.path == "/api/v1/discover":
+            query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]
+            try:
+                self.send_json(discover_series(query))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            except Exception as exc:
+                self.send_json({"error": f"Series discovery is temporarily unavailable: {exc}"}, 502)
+            return
+        collection_structure = re.fullmatch(r"/api/v1/collections/(\d+)/structure", parsed_url.path)
+        if collection_structure:
+            try:
+                result = catalog_store().story_structure_proposal(int(collection_structure.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(result)
+            return
+        scan_match = re.fullmatch(r"/api/v1/scans/(\d+)", parsed_url.path)
+        if scan_match:
+            scan = catalog_store().get_scan(int(scan_match.group(1)))
+            self.send_json(scan or {"error": "Scan not found"}, 200 if scan else 404)
+            return
+        series_run_search = re.fullmatch(r"/api/v1/series/(\d+)/issue-runs", parsed_url.path)
+        if series_run_search:
+            try:
+                result = find_gcd_series_runs(int(series_run_search.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"Series-run search failed: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
+        file_match = re.fullmatch(r"/api/v1/files/(\d+)", parsed_url.path)
+        if file_match:
+            try:
+                payload = catalog_store().get_file_workbench(int(file_match.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
+        uploaded_cover_match = re.fullmatch(r"/api/v1/files/(\d+)/cover/image", parsed_url.path)
+        if uploaded_cover_match:
+            self.handle_uploaded_cover(int(uploaded_cover_match.group(1)))
+            return
+        if parsed_url.path == "/api/enrich":
+            self.handle_enrich(parsed_url)
+            return
+        if parsed_url.path == "/api/scan":
+            self.handle_scan(parsed_url)
+            return
+        if parsed_url.path == "/api/batch":
+            self.handle_batch(parsed_url)
+            return
+        if parsed_url.path == "/api/embedded-cover":
+            self.handle_file_cover(parsed_url)
+            return
+        if parsed_url.path == "/api/file-cover":
+            self.handle_file_cover(parsed_url)
+            return
+        if parsed_url.path == "/api/pick-folder":
+            self.handle_pick_folder()
+            return
+        if parsed_url.path == "/results":
+            self.handle_results(parsed_url)
+            return
+        if WEB_ROOT and WEB_ROOT.is_dir():
+            self.handle_web_asset(parsed_url.path)
+            return
+        self.handle_page(parsed_url)
+
+    def do_POST(self) -> None:
+        parsed_url = urllib.parse.urlparse(self.path)
+        cover_upload_match = re.fullmatch(r"/api/v1/files/(\d+)/cover/upload", parsed_url.path)
+        if cover_upload_match:
+            self.handle_cover_upload(int(cover_upload_match.group(1)))
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        provider_test_match = re.fullmatch(r"/api/v1/providers/([a-z_]+)/test", parsed_url.path)
+        if provider_test_match:
+            try:
+                result = test_provider_connection(provider_test_match.group(1), payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except urllib.error.HTTPError as exc:
+                message = "The provider rejected these credentials" if exc.code in {401, 403} else f"Provider request failed ({exc.code})"
+                self.send_json({"error": message}, 400 if exc.code in {401, 403} else 502)
+                return
+            except (urllib.error.URLError, TimeoutError) as exc:
+                self.send_json({"error": f"Could not reach the provider: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
+        provider_match = re.fullmatch(r"/api/v1/providers/([a-z_]+)", parsed_url.path)
+        if provider_match:
+            try:
+                result = save_provider_config(provider_match.group(1), payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        service_test_match = re.fullmatch(r"/api/v1/acquisition-services/([a-z0-9_]+)/test", parsed_url.path)
+        if service_test_match:
+            try:
+                result = test_acquisition_service_connection(service_test_match.group(1), payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except urllib.error.HTTPError as exc:
+                message = "The service rejected these credentials" if exc.code in {401, 403} else f"Service request failed ({exc.code})"
+                self.send_json({"error": message}, 400 if exc.code in {401, 403} else 502)
+                return
+            except (urllib.error.URLError, TimeoutError) as exc:
+                self.send_json({"error": f"Could not reach the service: {exc.reason if isinstance(exc, urllib.error.URLError) else exc}"}, 502)
+                return
+            self.send_json(result)
+            return
+        service_match = re.fullmatch(r"/api/v1/acquisition-services/([a-z0-9_]+)", parsed_url.path)
+        if service_match:
+            try:
+                result = save_acquisition_service_config(service_match.group(1), payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        if parsed_url.path == "/api/v1/scans":
+            folder = str(payload.get("folder") or "")
+            recursive = bool(payload.get("recursive", True))
+            try:
+                scan_id = start_catalog_scan(folder, recursive)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"id": scan_id, "status": "queued"}, 202)
+            return
+        if parsed_url.path == "/api/v1/reveal-file":
+            self.handle_reveal_file(str(payload.get("path") or ""))
+            return
+        if parsed_url.path == "/api/v1/requests":
+            try:
+                request = catalog_store().create_acquisition_request(
+                    str(payload.get("scopeType") or ""), int(payload.get("scopeId")),
+                    str(payload.get("acquisitionPreference") or "").strip() or None,
+                    payload.get("includeSpecials"),
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(request, 201)
+            return
+        if parsed_url.path == "/api/v1/discover":
+            try:
+                result = request_discovered_series(
+                    str(payload.get("provider") or "gcd"),
+                    str(payload.get("query") or ""),
+                    str(payload.get("providerSeriesId") or ""),
+                    str(payload.get("acquisitionPreference") or "either"),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"Series could not be added: {exc}"}, 502)
+                return
+            self.send_json(result, 201)
+            return
+        file_replacement = re.fullmatch(r"/api/v1/files/(\d+)/replacement", parsed_url.path)
+        if file_replacement:
+            try:
+                request = catalog_store().request_file_replacement(
+                    int(file_replacement.group(1)),
+                    str(payload.get("reason") or ""),
+                    str(payload.get("desiredLanguage") or "").strip() or None,
+                    str(payload.get("acquisitionPreference") or "either"),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(request, 201)
+            return
+        replacement_status = re.fullmatch(r"/api/v1/replacements/(\d+)/status", parsed_url.path)
+        if replacement_status:
+            try:
+                request = catalog_store().update_file_replacement_status(
+                    int(replacement_status.group(1)),
+                    str(payload.get("status") or ""),
+                    str(payload.get("error") or "").strip() or None,
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(request)
+            return
+        acquisition_job = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/status", parsed_url.path)
+        if acquisition_job:
+            try:
+                job = catalog_store().update_acquisition_job(
+                    int(acquisition_job.group(1)),
+                    str(payload.get("status") or ""),
+                    str(payload.get("detail") or "").strip() or None,
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(job)
+            return
+        acquisition_search = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/search", parsed_url.path)
+        if acquisition_search:
+            job_id = int(acquisition_search.group(1))
+            try:
+                result = search_prowlarr_releases(job_id)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except urllib.error.HTTPError as exc:
+                message = "Prowlarr rejected the request" if exc.code in {401, 403} else f"Prowlarr search failed ({exc.code})"
+                catalog_store().update_acquisition_job(job_id, "failed", message)
+                self.send_json({"error": message}, 502)
+                return
+            except (urllib.error.URLError, TimeoutError) as exc:
+                message = "Could not reach Prowlarr"
+                catalog_store().update_acquisition_job(job_id, "failed", message)
+                self.send_json({"error": message}, 502)
+                return
+            self.send_json(result)
+            return
+        acquisition_grab = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/grab", parsed_url.path)
+        if acquisition_grab:
+            job_id = int(acquisition_grab.group(1))
+            try:
+                result = send_release_to_sabnzbd(
+                    job_id, str(payload.get("candidateId") or "").strip()
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except urllib.error.HTTPError as exc:
+                message = "SABnzbd rejected the request" if exc.code in {401, 403} else f"SABnzbd request failed ({exc.code})"
+                catalog_store().update_acquisition_job(job_id, "failed", message)
+                self.send_json({"error": message}, 502)
+                return
+            except (urllib.error.URLError, TimeoutError):
+                message = "Could not reach SABnzbd"
+                catalog_store().update_acquisition_job(job_id, "failed", message)
+                self.send_json({"error": message}, 502)
+                return
+            self.send_json(result, 202)
+            return
+        collection_monitoring = re.fullmatch(
+            r"/api/v1/collections/(\d+)/monitoring", parsed_url.path
+        )
+        if collection_monitoring:
+            try:
+                result = catalog_store().set_collection_monitoring(
+                    int(collection_monitoring.group(1)),
+                    str(payload.get("acquisitionPreference") or "either"),
+                    bool(payload.get("includeSpecials", True)),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        series_monitoring = re.fullmatch(r"/api/v1/series/(\d+)/monitoring", parsed_url.path)
+        if series_monitoring:
+            try:
+                result = catalog_store().set_series_monitoring(
+                    int(series_monitoring.group(1)),
+                    str(payload.get("acquisitionPreference") or "either"),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        if parsed_url.path == "/api/v1/reviews/resolve":
+            file_path = str(payload.get("path") or "")
+            code = str(payload.get("code") or "")
+            fingerprint = str(payload.get("fingerprint") or "")
+            if not all((file_path, code, fingerprint)):
+                self.send_json({"error": "path, code, and fingerprint are required"}, 400)
+                return
+            catalog_store().resolve_review(file_path, code, fingerprint)
+            self.send_json({"status": "resolved"})
+            return
+        file_metadata_match = re.fullmatch(r"/api/v1/files/(\d+)/metadata", parsed_url.path)
+        if file_metadata_match:
+            try:
+                result = catalog_store().update_file_metadata(
+                    int(file_metadata_match.group(1)), payload.get("fields") or {},
+                    payload.get("lockedFields"), action="edit",
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_fix_match = re.fullmatch(r"/api/v1/files/(\d+)/match", parsed_url.path)
+        if file_fix_match:
+            try:
+                result = catalog_store().apply_file_match(
+                    int(file_fix_match.group(1)), str(payload.get("candidateKey") or "")
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_reset_match = re.fullmatch(r"/api/v1/files/(\d+)/metadata/reset", parsed_url.path)
+        if file_reset_match:
+            try:
+                result = catalog_store().reset_file_metadata(int(file_reset_match.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_run_match = re.fullmatch(r"/api/v1/files/(\d+)/series-run", parsed_url.path)
+        if file_run_match:
+            try:
+                run_id = payload.get("seriesId")
+                result = catalog_store().move_file_to_series_run(
+                    int(file_run_match.group(1)),
+                    int(run_id) if run_id not in {None, ""} else None,
+                    str(payload.get("title") or "").strip() or None,
+                    payload.get("year"),
+                    str(payload.get("publisher") or "").strip() or None,
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_contents_reset = re.fullmatch(r"/api/v1/files/(\d+)/contents/reset", parsed_url.path)
+        if file_contents_reset:
+            try:
+                result = catalog_store().reset_file_collection_contents(int(file_contents_reset.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_contents_match = re.fullmatch(r"/api/v1/files/(\d+)/contents", parsed_url.path)
+        if file_contents_match:
+            try:
+                result = catalog_store().set_file_collection_contents(
+                    int(file_contents_match.group(1)), int(payload.get("seriesId")),
+                    payload.get("issueNumbers") or [], bool(payload.get("included", True)),
+                    str(payload.get("note") or "").strip() or None,
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_cover_match = re.fullmatch(r"/api/v1/files/(\d+)/cover", parsed_url.path)
+        if file_cover_match:
+            try:
+                result = catalog_store().set_file_cover_preference(
+                    int(file_cover_match.group(1)), str(payload.get("source") or ""),
+                    str(payload.get("url") or "") or None,
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        issue_metadata_reset = re.fullmatch(r"/api/v1/issues/(\d+)/metadata/reset", parsed_url.path)
+        if issue_metadata_reset:
+            try:
+                result = catalog_store().reset_issue_metadata(int(issue_metadata_reset.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        issue_metadata_match = re.fullmatch(r"/api/v1/issues/(\d+)/metadata", parsed_url.path)
+        if issue_metadata_match:
+            try:
+                result = catalog_store().update_issue_metadata(
+                    int(issue_metadata_match.group(1)), payload.get("title"),
+                    payload.get("publicationYear"),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        alias_match = re.fullmatch(r"/api/v1/series/(\d+)/aliases", parsed_url.path)
+        if alias_match:
+            try:
+                alias = catalog_store().add_series_alias(int(alias_match.group(1)), str(payload.get("alias") or ""))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(alias, 201)
+            return
+        if parsed_url.path == "/api/v1/families":
+            try:
+                family = catalog_store().create_series_family(
+                    str(payload.get("name") or ""),
+                    [int(value) for value in (payload.get("runIds") or [])],
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(family, 201)
+            return
+        collection_structure = re.fullmatch(r"/api/v1/collections/(\d+)/structure", parsed_url.path)
+        if collection_structure:
+            try:
+                result = catalog_store().set_story_structure(
+                    int(collection_structure.group(1)), payload.get("arcs") or []
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        family_assignment = re.fullmatch(r"/api/v1/series/(\d+)/family", parsed_url.path)
+        if family_assignment:
+            try:
+                family_id = payload.get("familyId")
+                result = catalog_store().set_series_run_family(
+                    int(family_assignment.group(1)), int(family_id) if family_id not in {None, ""} else None,
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        issue_run_match = re.fullmatch(r"/api/v1/series/(\d+)/issue-run", parsed_url.path)
+        if issue_run_match:
+            try:
+                result = confirm_gcd_series_run(
+                    int(issue_run_match.group(1)), str(payload.get("providerSeriesId") or "")
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"Series-run confirmation failed: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
+        collection_run_match = re.fullmatch(
+            r"/api/v1/series/(\d+)/collection-structure", parsed_url.path
+        )
+        if collection_run_match:
+            try:
+                result = confirm_gcd_series_collection(
+                    int(collection_run_match.group(1)),
+                    payload.get("providerSeriesIds") or [],
+                    str(payload.get("name") or "").strip(),
+                    str(payload.get("acquisitionPreference") or "either"),
+                    bool(payload.get("includeSpecials", True)),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"Collection structure import failed: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
+        issue_sync_match = re.fullmatch(r"/api/v1/series/(\d+)/issues/sync", parsed_url.path)
+        if issue_sync_match:
+            series_id = int(issue_sync_match.group(1))
+            try:
+                result = sync_issue_catalog(series_id)
+            except ValueError as exc:
+                catalog_store().record_issue_sync_error(series_id, "provider_broker", str(exc))
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                catalog_store().record_issue_sync_error(series_id, "provider_broker", str(exc))
+                self.send_json({"error": f"Metadata refresh failed: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
+        if parsed_url.path == "/api/v1/series/merge":
+            try:
+                catalog_store().merge_series(int(payload.get("sourceId")), int(payload.get("targetId")))
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"status": "merged"})
+            return
+        self.send_json({"error": "Endpoint not found"}, 404)
+
+    def query(self, parsed_url: urllib.parse.ParseResult) -> dict[str, str]:
+        return {k: values[0] for k, values in urllib.parse.parse_qs(parsed_url.query).items()}
+
+    def send_json(self, payload: Any, status: int = 200) -> None:
+        body = json.dumps(payload, indent=2, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_web_asset(self, request_path: str) -> None:
+        """Serve the production React build and fall back to its app shell."""
+        assert WEB_ROOT is not None
+        relative = urllib.parse.unquote(request_path).lstrip("/") or "index.html"
+        requested = (WEB_ROOT / relative).resolve()
+        try:
+            requested.relative_to(WEB_ROOT)
+        except ValueError:
+            self.send_json({"error": "Asset not found"}, 404)
+            return
+        target = requested if requested.is_file() else WEB_ROOT / "index.html"
+        if not target.is_file():
+            self.send_json({"error": "Web interface is not installed"}, 404)
+            return
+        try:
+            body = target.read_bytes()
+        except OSError:
+            self.send_json({"error": "Web interface could not be read"}, 500)
+            return
+        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+            content_type += "; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if target.name != "index.html" else "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_json_body(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Invalid Content-Length") from exc
+        if length <= 0 or length > 1_000_000:
+            raise ValueError("Request body must be JSON and no larger than 1 MB")
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Request body is not valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("JSON request body must be an object")
+        return payload
+
+    def handle_scan(self, parsed_url: urllib.parse.ParseResult) -> None:
+        query = self.query(parsed_url)
+        try:
+            files = scan_folder(query.get("folder", ""), query.get("recursive") == "1")
+            self.send_json({"count": len(files), "files": [asdict(x) for x in files]})
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+
+    def handle_enrich(self, parsed_url: urllib.parse.ParseResult) -> None:
+        query = self.query(parsed_url)
+        path = Path(query.get("path", ""))
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            self.send_json({"error": "Invalid or unsupported comic or ebook file"}, 400)
+            return
+        self.send_json(enrich(parse_filename(path)))
+
+    def handle_batch(self, parsed_url: urllib.parse.ParseResult) -> None:
+        query = self.query(parsed_url)
+        try:
+            results = batch_enrich(query.get("folder", ""), query.get("recursive", "1") == "1")
+            self.send_json({"count": len(results), "results": results})
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+
+    def handle_file_cover(self, parsed_url: urllib.parse.ParseResult) -> None:
+        query = self.query(parsed_url)
+        path = Path(query.get("path", ""))
+        if not path.is_file() or path.suffix.lower() not in ZIP_COMIC_EXTENSIONS:
+            self.send_json({"error": "This comic format does not support local cover extraction yet"}, 400)
+            return
+        metadata = read_embedded_metadata(path)
+        member = find_archive_cover_member(path, metadata)
+        if not member:
+            self.send_json({"error": "No image page found inside comic file"}, 404)
+            return
+        try:
+            body = render_file_cover_thumbnail(path, member)
+        except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
+            self.send_json({"error": str(exc) or "Embedded cover could not be read"}, 422)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.send_header("X-Cover-Source", "comic-file")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_uploaded_cover(self, file_id: int) -> None:
+        path = USER_COVER_DIR / f"{file_id}.jpg"
+        if not path.is_file():
+            self.send_json({"error": "Uploaded cover was not found"}, 404)
+            return
+        try:
+            body = path.read_bytes()
+        except OSError as exc:
+            self.send_json({"error": f"Uploaded cover could not be read: {exc}"}, 500)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        # A replacement uses the same stable URL, so force clients to revalidate
+        # instead of showing the previous upload for several minutes.
+        self.send_header("Cache-Control", "private, no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_cover_upload(self, file_id: int) -> None:
+        try:
+            catalog_store().get_file_workbench(file_id)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length"}, 400)
+            return
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
+        allowed_types = {
+            "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+            "image/gif": ".gif", "image/heic": ".heic", "image/heif": ".heic",
+        }
+        if content_type not in allowed_types:
+            self.send_json({"error": "Upload a JPEG, PNG, WebP, GIF, or HEIC image"}, 415)
+            return
+        if length <= 0 or length > COVER_SOURCE_MAX_BYTES:
+            self.send_json({"error": "Uploaded cover must be no larger than 50 MB"}, 413)
+            return
+        try:
+            body = render_uploaded_cover_thumbnail(self.rfile.read(length), allowed_types[content_type])
+            USER_COVER_DIR.mkdir(parents=True, exist_ok=True)
+            destination = USER_COVER_DIR / f"{file_id}.jpg"
+            temporary = USER_COVER_DIR / f".{file_id}-{threading.get_ident()}.tmp"
+            temporary.write_bytes(body)
+            os.replace(temporary, destination)
+            result = catalog_store().set_file_cover_preference(file_id, "upload")
+        except (OSError, ValueError) as exc:
+            self.send_json({"error": str(exc)}, 422)
+            return
+        self.send_json(result, 201)
+
+    def render_page(self, folder: str, checked: str, content: str) -> None:
+        body = (
+            PAGE.replace("__FOLDER__", html.escape(folder, quote=True))
+            .replace("__CHECKED__", checked)
+            .replace("__CONTENT__", content)
+            .encode()
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_results(self, parsed_url: urllib.parse.ParseResult) -> None:
+        query = self.query(parsed_url)
+        folder = query.get("folder", "")
+        recursive = query.get("recursive", "1") == "1"
+        checked = "checked" if recursive else ""
+        try:
+            results = batch_enrich(folder, recursive)
+            content = render_batch_results(results)
+        except ValueError as exc:
+            content = f"<div class='error'>{html.escape(str(exc))}</div>"
+        self.render_page(folder, checked, content)
+
+    def handle_pick_folder(self) -> None:
+        if sys.platform != "darwin":
+            self.send_json({"error": "The system folder picker is currently supported on macOS only."}, 501)
+            return
+        script = 'POSIX path of (choose folder with prompt "Choose a comics folder")'
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.send_json({"error": f"Could not open Finder: {exc}"}, 500)
+            return
+        if result.returncode == 0:
+            self.send_json({"folder": result.stdout.strip().rstrip("/")})
+            return
+        if "User canceled" in result.stderr or "(-128)" in result.stderr:
+            self.send_json({"folder": None, "canceled": True})
+            return
+        self.send_json({"error": result.stderr.strip() or "Finder folder selection failed"}, 500)
+
+    def handle_reveal_file(self, file_path: str) -> None:
+        if sys.platform != "darwin":
+            self.send_json({"error": "Showing comic files is currently supported on macOS only."}, 501)
+            return
+        try:
+            target = catalog_store().cataloged_file_path(file_path)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 404)
+            return
+        try:
+            result = subprocess.run(
+                ["open", "-R", str(target)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.send_json({"error": f"Could not open Finder: {exc}"}, 500)
+            return
+        if result.returncode != 0:
+            self.send_json({"error": result.stderr.strip() or "Finder could not show the comic file"}, 500)
+            return
+        self.send_json({"status": "revealed", "message": f"Shown in Finder: {target.name}"})
+
+    def handle_page(self, parsed_url: urllib.parse.ParseResult) -> None:
+        query = self.query(parsed_url)
+        folder = query.get("folder", "")
+        checked = "checked" if query.get("recursive", "1") == "1" else ""
+        content = "<div class='empty'>Choose a folder containing CBR, CBZ, PDF, EPUB, CB7, or CBT files.</div>"
+        if folder:
+            try:
+                files = scan_folder(folder, checked == "checked")
+                rows = []
+                for item in files:
+                    params = urllib.parse.urlencode({"path": item.path})
+                    health = inspect_file_health(Path(item.path))
+                    warnings = list(item.warnings)
+                    if health.get("status") == "error":
+                        warnings.insert(0, f"FILE PROBLEM: {health.get('message')}")
+                    warning = "; ".join(warnings)
+                    rows.append(
+                        "<tr>"
+                        f"<td><code>{html.escape(item.filename)}</code></td>"
+                        f"<td>{html.escape(item.title)}</td>"
+                        f"<td>{item.volume or ''}</td><td>{html.escape(item.issue or '')}</td>"
+                        f"<td>{item.year or ''}</td><td>{html.escape(item.format or '')}</td>"
+                        f"<td>{html.escape(item.isbn or '')}</td>"
+                        f"<td class='warn'>{html.escape(warning)}</td>"
+                        f"<td><a target='_blank' href='/api/enrich?{params}'>Lookup JSON</a></td></tr>"
+                    )
+                content = (
+                    f"<p>Found <strong>{len(files)}</strong> supported files. No files were modified.</p>"
+                    f"<div class='batch-actions'><a class='secondary' href='/results?{urllib.parse.urlencode({'folder': folder, 'recursive': '1' if checked else '0'})}'>Analyze all files</a></div>"
+                    "<table><thead><tr><th>File</th><th>Parsed title</th><th>Vol.</th><th>Issue</th>"
+                    "<th>Year</th><th>Format</th><th>ISBN</th><th>Warnings</th><th>Metadata</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>"
+                )
+            except ValueError as exc:
+                content = f"<div class='error'>{html.escape(str(exc))}</div>"
+        self.render_page(folder, checked, content)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        print(f"{self.address_string()} - {format % args}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8787)
+    args = parser.parse_args()
+    load_persisted_remote_cache()
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"Comic Metadata POC running at http://{args.host}:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
