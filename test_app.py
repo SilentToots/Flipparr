@@ -7,12 +7,32 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import Handler, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, extract_issue_coverage, file_cover_info, find_archive_cover_member, inspect_file_health, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import Handler, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, extract_issue_coverage, file_cover_info, find_archive_cover_member, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
     def tearDown(self):
         _RELEASE_CANDIDATES.clear()
+
+    def test_fast_inventory_uses_local_evidence_without_provider_requests(self):
+        parsed = parse_filename(Path("Absolute Batman 003 (2025).cbz"))
+        embedded = {
+            "source": "ComicInfo.xml", "series": "Absolute Batman",
+            "title": "The Zoo, Part Three", "number": "3", "year": "2024",
+            "publisher": "DC Comics", "contributors": {},
+        }
+        with patch("app.inspect_file_health", return_value={"status": "ok"}), patch(
+            "app.read_embedded_metadata", return_value=embedded
+        ), patch("app.file_cover_info", return_value={"available": True}), patch(
+            "app.search_gcd"
+        ) as gcd, patch("app.search_open_library") as open_library:
+            result = inventory_file(parsed)
+
+        self.assertEqual(result["recommendation"]["title"], "Absolute Batman")
+        self.assertEqual(result["recommendation"]["issue"], "3")
+        self.assertEqual(result["source_status"]["external_metadata"], "deferred during fast library inventory")
+        gcd.assert_not_called()
+        open_library.assert_not_called()
 
     def test_prowlarr_search_returns_safe_ranked_usenet_candidates(self):
         context = {

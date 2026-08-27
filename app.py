@@ -578,13 +578,16 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
             "detail": "Release sent to SABnzbd."}
 
 
-def start_catalog_scan(folder: str, recursive: bool = True) -> int:
+def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str = "full") -> int:
     """Queue an incremental scan and return its durable scan-run id."""
+    if metadata_mode not in {"local", "full"}:
+        raise ValueError("metadataMode must be 'local' or 'full'")
     store = catalog_store()
     scan_id = store.begin_scan(folder, recursive)
+    enrich_file = inventory_file if metadata_mode == "local" else enrich
     worker = threading.Thread(
         target=store.perform_scan,
-        args=(scan_id, scan_folder, enrich),
+        args=(scan_id, scan_folder, enrich_file),
         name=f"comicarr-scan-{scan_id}",
         daemon=True,
     )
@@ -3227,6 +3230,28 @@ def embedded_comicinfo_candidate(
     }
 
 
+def inventory_file(parsed: ParsedFile) -> dict[str, Any]:
+    """Build a useful catalog record without calling external metadata services."""
+    file_health = inspect_file_health(Path(parsed.path))
+    embedded = read_embedded_metadata(Path(parsed.path))
+    local_cover = file_cover_info(Path(parsed.path), embedded)
+    lookup = lookup_identity(parsed, embedded)
+    embedded_candidate = embedded_epub_candidate(lookup, embedded) or embedded_comicinfo_candidate(parsed, embedded)
+    return {
+        "parsed": asdict(parsed),
+        "file_health": file_health,
+        "embedded_metadata": embedded,
+        "lookup_identity": asdict(lookup),
+        "candidates": {"embedded": [embedded_candidate] if embedded_candidate else []},
+        "recommendation": embedded_candidate,
+        "file_cover": local_cover,
+        "errors": {},
+        "source_status": {"external_metadata": "deferred during fast library inventory"},
+        "gcd_search_url": "https://www.comics.org/searchNew/?q=" + urllib.parse.quote_plus(lookup.title),
+        "note": "This inventory pass used filenames and metadata embedded in the comic only. External matching can be refreshed after the library is visible.",
+    }
+
+
 def enrich(parsed: ParsedFile) -> dict[str, Any]:
     file_health = inspect_file_health(Path(parsed.path))
     embedded = read_embedded_metadata(Path(parsed.path))
@@ -3726,8 +3751,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/scans":
             folder = str(payload.get("folder") or "")
             recursive = bool(payload.get("recursive", True))
+            metadata_mode = str(payload.get("metadataMode") or "full")
             try:
-                scan_id = start_catalog_scan(folder, recursive)
+                scan_id = start_catalog_scan(folder, recursive, metadata_mode)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

@@ -8,7 +8,7 @@ The catalog stores its local database at `.data/comicarr.db` by default. A libra
 
 ## Acquisition services
 
-Prowlarr and SABnzbd are configured under **Settings → Acquisition services**. Enter the NAS address and published Docker port for each service, then use **Test connection** before saving. Because the prototype backend currently runs on the Mac, use an address reachable from the Mac (for example, `http://comic-nas.local:9696`), not a Docker container name that only resolves inside the NAS Docker network.
+Prowlarr and SABnzbd are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The the NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
 
 API keys are stored only in `.data/acquisition-services.json`, which is excluded from source control and written with owner-only permissions. They are never returned to the browser after saving. The equivalent environment variables are `PROWLARR_URL`, `PROWLARR_API_KEY`, `SABNZBD_URL`, `SABNZBD_API_KEY`, and the optional `SABNZBD_CATEGORY`.
 
@@ -32,18 +32,20 @@ Open <http://127.0.0.1:4173>. The Vite development server proxies `/api` to the 
 The production container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`.
 
 1. Copy `.env.example` to `.env` on the NAS.
-2. Set `PUID` and `PGID` to the account that owns the comics directory. Over SSH, run `id YOUR_NAS_USERNAME` to find them.
-3. Set `CONFIG_PATH`, `COMICS_PATH`, and `SAB_COMPLETE_PATH` to absolute NAS paths.
+2. Review the NAS media identity (`1000:10`) and verified storage paths already provided in `.env.example`.
+3. Keep `.env` private and confirm `CONFIG_PATH`, `COMICS_PATH`, and `SAB_COMPLETE_PATH` before starting the container.
 4. From the project directory, run:
 
    ```bash
    docker compose up -d --build
    ```
 
-5. Open `http://YOUR_NAS_ADDRESS:8787`, choose **Add comics**, enter `/comics`, and scan it.
-6. Reconnect Prowlarr and SABnzbd under **Settings → Acquisition services**. Do not use `127.0.0.1` for those services from inside the container; use the NAS hostname/IP and each published port, or service names on a shared Docker network.
+5. Expose the loopback-only web app through Nginx Proxy Manager or use an SSH tunnel, choose **Add comics**, enter `/comics`, and scan it.
+6. Connect Prowlarr and SABnzbd under **Settings → Acquisition services** with `http://prowlarr:9696` and `http://sabnzbd:8080`.
 
-The SAB completed folder is deliberately mounted read-only. The importer will copy and validate a completed comic in `/comics` before any later cleanup policy is allowed to touch SAB's copy.
+The checked-in Compose example follows the NAS's home-services conventions: it runs as media user `1000:10`, stores state under `/srv/docker/sonicboom`, mounts `/srv/books/comics`, attaches to `home-services-proxy`, uses a loopback-only host port, drops privilege escalation, and limits container logs.
+
+For the first clean the NAS intake, both the comics library and SAB completed folder are deliberately mounted read-only. The importer will later copy and validate a completed comic before a separately reviewed deployment grants write access to the library; no cleanup policy may touch SAB's copy before verification.
 
 Docker runtime state, `.env`, the SQLite catalog, and locally stored API keys are excluded from Git. Before publishing this project, use a private repository and verify `git status --ignored` does not show any credential or comic-library files staged for commit.
 

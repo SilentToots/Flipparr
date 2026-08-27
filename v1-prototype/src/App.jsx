@@ -482,10 +482,10 @@ function AddComicsView({ onNavigate, onStartInventory, onScanLibrary, catalog, s
     }
   }
   return <><PageHeader eyebrow="Library setup" title="Add comics" description="Add another comics folder or scan your existing library for changes." />
-    {scanState === "scanning" ? <div className="scan-progress"><span>Reading library files and checking for changes…</span><i /></div> : null}
+    {scanState === "scanning" ? <div className="scan-progress"><span>Reading filenames, embedded metadata, covers, and file health…</span><i /></div> : null}
     {scanState === "done" ? <div className="success-banner"><CheckCircle size={19} weight="fill" /> Scan complete. Your library is up to date.</div> : null}
     {roots.length ? <section className="library-scan-panel"><div><span className="eyebrow">Existing library</span><h2>Update your library</h2><p>Check {roots.length} comic folder{roots.length === 1 ? "" : "s"} for new, changed, or damaged files.</p><small>{roots.map((root) => root.path).join(" · ")}</small></div><div className="library-scan-action"><span>Last scanned</span><strong>{lastScan}</strong><button className={`primary-button ${busy ? "loading" : ""}`} onClick={onScanLibrary} disabled={busy}>{busy ? <SpinnerGap size={19} /> : <ArrowsClockwise size={19} />}{busy ? "Scanning…" : "Scan existing folders"}</button></div></section> : null}
-    <section className="focused-panel add-panel"><div className="panel-icon"><FolderOpen size={30} weight="duotone" /></div><h2>Add another comics folder</h2><p>We’ll find issues and volumes, use covers already in the files, check for damaged archives, and match each comic.</p><label className="form-field"><span>Comics folder</span><div className="path-input"><input value={path} onChange={(event) => setPath(event.target.value)} /><button type="button" onClick={chooseFolder}>Choose folder</button></div>{pickerState ? <small>{pickerState}</small> : null}</label><label className="check-row"><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Useful when each series has its own folder</small></span></label><div className="safety-note"><ShieldCheck size={22} weight="fill" /><span><strong>Your files stay untouched</strong><small>No files will be renamed, moved, or modified during this scan.</small></span></div><div className="panel-actions"><button className={`primary-button ${busy ? "loading" : ""}`} disabled={busy || !path.trim()} onClick={() => onStartInventory(path, recursive)}>{busy ? <SpinnerGap size={19} /> : <UploadSimple size={19} />} {busy ? "Scanning…" : "Scan folder"}</button><button className="ghost-button" onClick={() => onNavigate("library")}>Cancel</button></div></section></>;
+    <section className="focused-panel add-panel"><div className="panel-icon"><FolderOpen size={30} weight="duotone" /></div><h2>Add another comics folder</h2><p>We’ll quickly inventory issues and volumes, use covers and metadata already in the files, and check for damaged archives. Online details can be refreshed after the library is visible.</p><label className="form-field"><span>Comics folder</span><div className="path-input"><input value={path} onChange={(event) => setPath(event.target.value)} /><button type="button" onClick={chooseFolder}>Choose folder</button></div>{pickerState ? <small>{pickerState}</small> : null}</label><label className="check-row"><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Useful when each series has its own folder</small></span></label><div className="safety-note"><ShieldCheck size={22} weight="fill" /><span><strong>Your files stay untouched</strong><small>No files will be renamed, moved, or modified during this scan.</small></span></div><div className="panel-actions"><button className={`primary-button ${busy ? "loading" : ""}`} disabled={busy || !path.trim()} onClick={() => onStartInventory(path, recursive)}>{busy ? <SpinnerGap size={19} /> : <UploadSimple size={19} />} {busy ? "Scanning…" : "Scan folder"}</button><button className="ghost-button" onClick={() => onNavigate("library")}>Cancel</button></div></section></>;
 }
 
 function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh }) {
@@ -1302,12 +1302,12 @@ export function App() {
     try {
       const queued = await apiRequest("/api/v1/scans", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder: target, recursive }),
+        body: JSON.stringify({ folder: target, recursive, metadataMode: "local" }),
       });
       const scan = await pollScan(queued.id);
       await loadCatalog();
       setScanState("done");
-      showToast(`Library scan complete · ${scan.changed_files} changed, ${scan.reused_files} unchanged`);
+      showToast(`Library inventory complete · ${scan.changed_files} changed, ${scan.reused_files} unchanged`);
     } catch (error) {
       setScanState("idle");
       showToast(error.message);
