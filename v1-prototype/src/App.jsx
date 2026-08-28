@@ -23,6 +23,7 @@ import {
   PencilSimple,
   Plus,
   ShieldCheck,
+  SpinnerBall,
   SpinnerGap,
   SquaresFour,
   UploadSimple,
@@ -290,8 +291,11 @@ function StatStrip({ stats }) {
 function MetadataSetupStatus({ enrichment }) {
   if (!enrichment?.total) return null;
   const processed = enrichment.complete + enrichment.review + enrichment.failed;
-  const percent = Math.round((processed / enrichment.total) * 100);
   const active = enrichment.active > 0;
+  const percent = active
+    ? Math.min(99, Math.round((processed / enrichment.total) * 100))
+    : 100;
+  const remaining = Math.max(0, enrichment.total - processed);
   const current = enrichment.nextJobs?.find((job) => job.status === "running");
   const next = enrichment.nextJobs?.find((job) => ["queued", "waiting"].includes(job.status));
   const cooldowns = enrichment.providerCooldowns || [];
@@ -304,7 +308,15 @@ function MetadataSetupStatus({ enrichment }) {
     : null;
   const availableProviderNames = (enrichment.availableProviders || []).map((provider) => METADATA_PROVIDER_LABELS[provider] || provider);
   const workingLabel = current ? `Checking ${current.title}` : degraded ? `Continuing with ${availableProviderNames.join(" and ") || "other available sources"}` : enrichment.waiting && !enrichment.queued ? "Retrying unresolved series automatically" : next ? `${next.title} is next` : "Preparing the next series";
-  const heading = paused ? "Metadata lookup is paused temporarily" : active ? "Building your comic details in the background" : enrichment.review ? "Initial metadata check finished" : "Comic details are ready";
+  const heading = paused
+    ? "Metadata lookup is paused temporarily"
+    : active && remaining === 1
+      ? "Finishing your comic details"
+      : active
+        ? "Building your comic details in the background"
+        : enrichment.review || enrichment.failed
+          ? "Initial metadata check finished"
+          : "Comic details are ready";
   const detail = paused
     ? `${processed} of ${enrichment.total} series checked · ${providerName} is limiting requests${retryTime ? ` until ${retryTime}` : ""}`
     : active
@@ -320,7 +332,7 @@ function MetadataSetupStatus({ enrichment }) {
       ? `${name} rejected its saved credentials. Reconnect it under Settings → Metadata services.`
       : `${name} is temporarily paused${time ? ` until ${time}` : ""}.`;
   });
-  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review ? "review" : "complete"}`} aria-live="polite"><span className="metadata-setup-icon">{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <SpinnerGap className="spin" size={21} /> : enrichment.review ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
+  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review || enrichment.failed ? "review" : "complete"}`} aria-live="polite"><span className={`metadata-setup-icon${active && !paused ? " active-loader" : ""}`}>{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <SpinnerBall className="metadata-loader-spin" size={30} weight="bold" aria-hidden="true" /> : enrichment.review || enrichment.failed ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
 }
 
 function Ownership({ series }) {
