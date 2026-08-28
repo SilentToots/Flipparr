@@ -790,6 +790,10 @@ class FilenameParserTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), destination.read_bytes())
             self.assertFalse(result["alreadyPresent"])
 
+    def test_organized_issue_filename_keeps_story_title_out_of_series_title(self):
+        item = parse_filename(Path("Absolute Flash (2025) #018 - Now You See Me.cbz"))
+        self.assertEqual((item.title, item.issue, item.year), ("Absolute Flash", "18", 2025))
+
     def test_sab_import_rejects_a_different_issue(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -824,6 +828,10 @@ class FilenameParserTests(unittest.TestCase):
             "destination": "/comics/Image Comics/Saga (2012)/Saga (2012) #001 - Chapter One.cbz",
             "size": 1234, "sha256": "abc123", "alreadyPresent": False,
         }
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+            "issueNumber": "1", "issueTitle": "Chapter One", "publicationYear": 2012,
+        }
         with patch("app.catalog_store", return_value=store), patch(
             "app._sab_history_slot", return_value={
                 "nzo_id": "queue-id", "status": "Completed",
@@ -836,6 +844,7 @@ class FilenameParserTests(unittest.TestCase):
         importer.assert_called_once()
         states = [call.args[1] for call in store.update_acquisition_download.call_args_list]
         self.assertEqual(states, ["completed", "importing", "imported"])
+        store.ingest_acquisition_import.assert_called_once()
         store.update_acquisition_job.assert_called_once_with(
             7, "fulfilled", "Imported and verified as Saga (2012) #001 - Chapter One.cbz"
         )

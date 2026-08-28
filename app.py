@@ -880,6 +880,24 @@ def _issue_destination(path: Path, context: dict[str, Any], library_root: Path) 
     return _series_destination_directory(context, library_root) / f"{filename}{path.suffix.lower()}"
 
 
+def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_root: Path) -> int:
+    """Catalog an imported issue using the request's trusted canonical identity."""
+    parsed = parse_filename(destination)
+    result = inventory_file(parsed)
+    return catalog_store().ingest_acquisition_import(
+        str(library_root.resolve()),
+        parsed,
+        result,
+        {
+            "seriesTitle": context.get("seriesTitle"),
+            "recordType": "issue",
+            "issueNumber": context.get("issueNumber"),
+            "publisher": context.get("publisher"),
+            "publicationYear": context.get("publicationYear"),
+        },
+    )
+
+
 def import_downloaded_comic(
     download: dict[str, Any],
     *,
@@ -978,6 +996,10 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     try:
         store.update_acquisition_download(int(download["id"]), "importing", sab_storage=storage)
         imported = import_downloaded_comic({**download, "sab_storage": storage})
+        context = store.get_acquisition_job_context(int(download["job_id"]))
+        imported["fileId"] = _catalog_imported_issue(
+            Path(imported["destination"]), context, COMIC_LIBRARY_ROOT
+        )
     except Exception as exc:
         message = str(exc)
         store.update_acquisition_download(int(download["id"]), "failed", sab_storage=storage, error=message)
@@ -1182,6 +1204,12 @@ def parse_filename(path: Path) -> ParsedFile:
             break
 
     title = raw
+    if issue_match:
+        # Organized issue filenames may include a human-readable story title
+        # after the issue token. It describes the issue, not the publication run.
+        trailing = raw[issue_match.end():]
+        if re.match(r"\s+[-–—]\s+\S", trailing):
+            title = raw[:issue_match.end()]
     if isbn_match:
         title = title.replace(isbn_match.group(0), " ")
     if issue_match:

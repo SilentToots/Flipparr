@@ -3386,7 +3386,8 @@ class CatalogStore:
         mtime_ns: int,
         fingerprint: str,
         result: dict[str, Any],
-    ) -> None:
+        identity_override: dict[str, Any] | None = None,
+    ) -> int:
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
             connection.execute(
@@ -3406,7 +3407,60 @@ class CatalogStore:
                 ),
             )
             file_id = int(connection.execute("SELECT id FROM files WHERE path=?", (parsed.path,)).fetchone()["id"])
-        self._reconcile_file_identity(file_id, asdict(parsed), result)
+            if identity_override:
+                locked = list(identity_override)
+                connection.execute(
+                    """INSERT INTO file_metadata_overrides(
+                           file_id, fields_json, locked_fields_json, match_source,
+                           created_at, updated_at
+                       ) VALUES (?, ?, ?, 'verified acquisition request', ?, ?)
+                       ON CONFLICT(file_id) DO UPDATE SET
+                           fields_json=excluded.fields_json,
+                           locked_fields_json=excluded.locked_fields_json,
+                           match_source=excluded.match_source,
+                           updated_at=excluded.updated_at""",
+                    (file_id, _json(identity_override), _json(locked), now, now),
+                )
+                connection.execute(
+                    """INSERT INTO metadata_override_history(
+                           file_id, action, fields_json, created_at
+                       ) VALUES (?, 'verified_acquisition_import', ?, ?)""",
+                    (file_id, _json(identity_override), now),
+                )
+        self._reconcile_file_identity(file_id, asdict(parsed), result, identity_override)
+        return file_id
+
+    def ingest_acquisition_import(
+        self,
+        library_root: str,
+        parsed: Any,
+        result: dict[str, Any],
+        identity_override: dict[str, Any],
+    ) -> int:
+        """Synchronously add a verified import without re-guessing its requested run."""
+        root = Path(library_root).resolve()
+        path = Path(parsed.path).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("The imported comic is outside the configured library root") from exc
+        if not path.is_file():
+            raise ValueError("The imported comic is no longer present in the library")
+        required = {"seriesTitle", "recordType", "issueNumber"}
+        if not required.issubset(identity_override) or not all(identity_override.get(key) for key in required):
+            raise ValueError("The acquisition request did not provide a complete issue identity")
+        root_id = self.register_root(str(root), True)
+        stat = path.stat()
+        fingerprint = f"{LOCAL_ANALYSIS_VERSION}:{stat.st_size}:{stat.st_mtime_ns}"
+        return self._upsert_file(
+            root_id,
+            parsed,
+            stat.st_size,
+            stat.st_mtime_ns,
+            fingerprint,
+            result,
+            identity_override,
+        )
 
     def resolve_review(self, file_path: str, code: str, fingerprint: str) -> None:
         with self._connect() as connection:

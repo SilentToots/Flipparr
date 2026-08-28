@@ -8,6 +8,54 @@ from catalog_store import CatalogStore
 
 
 class CatalogStoreTests(unittest.TestCase):
+    def test_verified_acquisition_import_uses_request_identity_instead_of_filename_guess(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            existing = root / "Absolute Flash 017 (2026).cbz"
+            imported = root / "Absolute Flash (2025) #018 - Now You See Me.cbz"
+            existing.write_bytes(b"existing")
+            imported.write_bytes(b"imported")
+            store = CatalogStore(root / "catalog.db")
+
+            existing_parsed = ParsedFile(
+                str(existing), existing.name, ".cbz", "Absolute Flash",
+                issue="17", year=2026,
+            )
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [existing_parsed], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": None, "file_cover": None,
+            })
+            series_id = int(store.catalog()["series"][0]["id"])
+            store.apply_issue_list(
+                series_id, "gcd", "221952", "https://www.comics.org/api/series/221952/",
+                [
+                    {"number": "17", "title": "In Gorilla City: Part 2 of 2", "publication_year": 2026},
+                    {"number": "18", "title": "Now You See Me", "publication_year": 2026},
+                ],
+            )
+
+            misparsed = ParsedFile(
+                str(imported), imported.name, ".cbz", "Absolute Flash Now You See Me",
+                issue="18", year=2025,
+            )
+            result = {
+                "parsed": misparsed.__dict__, "lookup_identity": misparsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": None, "file_cover": None,
+            }
+            store.ingest_acquisition_import(str(root), misparsed, result, {
+                "seriesTitle": "Absolute Flash", "recordType": "issue",
+                "issueNumber": "18", "publisher": "DC Comics", "publicationYear": 2026,
+            })
+
+            catalog = store.catalog()
+            self.assertEqual(len(catalog["series"]), 1)
+            self.assertEqual((catalog["series"][0]["title"], catalog["series"][0]["owned"]), ("Absolute Flash", 2))
+            issue = next(item for item in catalog["series"][0]["issues"] if item["number"] == "18")
+            self.assertTrue(issue["directOwned"])
+
     def test_initial_import_queues_one_durable_job_per_series_without_calling_it_a_fix(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
