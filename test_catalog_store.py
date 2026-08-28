@@ -39,6 +39,46 @@ class CatalogStoreTests(unittest.TestCase):
             reopened = CatalogStore(root / "catalog.db")
             self.assertEqual(reopened.metadata_enrichment_summary()["complete"], 1)
 
+    def test_metadata_summary_exposes_provider_cooldown_for_honest_progress(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            store.record_metadata_provider_outcome(
+                "gcd", "Grand Comics Database asked SonicBoom to pause.", 180
+            )
+            cooldown = store.metadata_enrichment_summary()["providerCooldowns"][0]
+            self.assertEqual(cooldown["provider"], "gcd")
+            self.assertIn("asked SonicBoom to pause", cooldown["error"])
+            self.assertIsNotNone(cooldown["nextRetryAt"])
+
+    def test_rescan_rehomes_misparsed_issue_and_prunes_false_series_job(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comic = root / "Fables.105.(2011).cbz"
+            comic.write_bytes(b"first")
+            store = CatalogStore(root / "catalog.db")
+
+            def result(item):
+                return {
+                    "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": None, "file_cover": None,
+                }
+
+            wrong = ParsedFile(str(comic), comic.name, ".cbz", "Fables 105", year=2011)
+            first = store.begin_scan(str(root), True)
+            store.perform_scan(first, lambda *_: [wrong], result)
+            store.enqueue_metadata_enrichment()
+            self.assertEqual(store.catalog()["series"][0]["title"], "Fables 105")
+
+            comic.write_bytes(b"second-pass")
+            corrected = ParsedFile(str(comic), comic.name, ".cbz", "Fables", issue="105", year=2011)
+            second = store.begin_scan(str(root), True)
+            store.perform_scan(second, lambda *_: [corrected], result)
+            store.enqueue_metadata_enrichment()
+            catalog = store.catalog()
+            self.assertEqual([(item["title"], item["owned"]) for item in catalog["series"]], [("Fables", 1)])
+            self.assertEqual(catalog["enrichment"]["total"], 1)
+
     def test_damaged_volume_can_be_requested_and_cancelled_as_a_replacement(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -582,6 +622,22 @@ class CatalogStoreTests(unittest.TestCase):
             )
             self.assertEqual(persisted_job["status"], "failed")
             self.assertEqual(persisted_job["attemptCount"], 1)
+
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            download = store.record_acquisition_download(job_id, "SAB-123", "Example.002.2026")
+            store.update_acquisition_download(
+                int(download["id"]), "imported", sab_storage="/downloads/Example.002.2026",
+                local_source="/downloads/Example.002.2026/Example 002.cbz",
+                destination="/comics/Example (2026)/Example (2026) #002.cbz",
+                source_size=1234, source_sha256="abc123",
+            )
+            store.update_acquisition_job(job_id, "fulfilled", "Imported and verified")
+            imported_job = next(
+                job for job in CatalogStore(root / "catalog.db").catalog()["requests"][0]["jobs"]
+                if job["id"] == str(job_id)
+            )
+            self.assertEqual(imported_job["downloadStatus"], "imported")
+            self.assertTrue(imported_job["downloadDestination"].endswith("Example (2026) #002.cbz"))
 
     def test_mixed_series_tracks_issues_volumes_and_omnibuses_separately(self):
         with tempfile.TemporaryDirectory() as folder:

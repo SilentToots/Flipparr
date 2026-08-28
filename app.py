@@ -18,6 +18,7 @@ import mimetypes
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -85,6 +86,16 @@ _CATALOG_STORE: CatalogStore | None = None
 _CATALOG_STORE_LOCK = threading.Lock()
 _ENRICHMENT_STOP = threading.Event()
 _ENRICHMENT_THREAD: threading.Thread | None = None
+_IMPORT_STOP = threading.Event()
+_IMPORT_THREAD: threading.Thread | None = None
+COMIC_LIBRARY_ROOT = Path(os.environ.get("COMICARR_LIBRARY_ROOT", "/comics"))
+SAB_COMPLETE_ROOT = Path(
+    os.environ.get("COMICARR_SAB_COMPLETE_ROOT", "/downloads/complete/comics")
+)
+IMPORT_POLL_SECONDS = max(5, int(os.environ.get("COMICARR_IMPORT_POLL_SECONDS", "15")))
+IMPORT_MIN_FREE_BYTES = max(
+    0, int(os.environ.get("COMICARR_MIN_FREE_SPACE_MB", "100")) * 1024 * 1024
+)
 FORMAT_PATTERNS = (
     ("omnibus", re.compile(r"\bomnibus\b", re.I)),
     ("compendium", re.compile(r"\bcompendium\b", re.I)),
@@ -98,13 +109,17 @@ NOISE = re.compile(
     r"noads|no ads|english|eng|v\d{2}|\d{3,4}p)\b",
     re.I,
 )
-YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
+YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?![\dA-Za-z])")
 ISBN_13 = re.compile(r"(?<!\d)(97[89](?:[ -]?\d){10})(?!\d)")
 ISBN_10 = re.compile(r"(?<!\d)(\d(?:[ -]?\d){8}[ -]?[\dXx])(?!\d)")
 VOLUME = re.compile(r"\b(?:vol(?:ume)?\.?|book)\s*[-#:]?\s*(\d+)\b", re.I)
 ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*)(\d+(?:\.\w+)?)\b", re.I)
 PADDED_ISSUE = re.compile(
     r"\b(0{1,3}\d{1,3})\b(?=\s*(?:\((?:19|20)\d{2}\)|(?:19|20)\d{2}\b|$))",
+    re.I,
+)
+UNMARKED_ISSUE = re.compile(
+    r"(?:^|\s)(\d{1,3}(?:\.\w+)?)\b(?=\s*\((?:19|20)\d{2}\))",
     re.I,
 )
 
@@ -585,6 +600,288 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
             "detail": "Release sent to SABnzbd."}
 
 
+def _safe_path_component(value: str, fallback: str = "Comic") -> str:
+    cleaned = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", " ", str(value or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    return (cleaned or fallback)[:180].rstrip(" .")
+
+
+def _issue_key(value: Any) -> str:
+    text = str(value or "").strip().casefold().lstrip("#")
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _comic_files_under(source: Path, completed_root: Path) -> list[Path]:
+    resolved_root = completed_root.resolve()
+    resolved_source = source.resolve()
+    try:
+        resolved_source.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("SABnzbd reported a download outside the mounted comics category") from exc
+    paths = [resolved_source] if resolved_source.is_file() else list(resolved_source.rglob("*"))
+    return sorted(
+        path for path in paths
+        if path.is_file() and not path.is_symlink()
+        and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        and not path.name.startswith("._")
+    )
+
+
+def _resolve_sab_download_source(
+    storage: str, release_title: str, completed_root: Path = SAB_COMPLETE_ROOT
+) -> Path:
+    root = completed_root.resolve()
+    if not root.is_dir():
+        raise ValueError("SABnzbd's completed comics folder is not mounted")
+    storage_name = Path(str(storage or "").rstrip("/\\")).name
+    candidates = [root / storage_name] if storage_name else []
+    release_name = _safe_path_component(Path(str(release_title or "")).stem, "")
+    if release_name:
+        candidates.append(root / release_name)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    wanted = {normalized_title(storage_name), normalized_title(release_name)} - {""}
+    for candidate in root.iterdir():
+        if normalized_title(candidate.name) in wanted:
+            return candidate
+    raise ValueError("The completed SABnzbd download is not visible in the mounted comics folder")
+
+
+def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    parsed = parse_filename(path)
+    result = inventory_file(parsed)
+    health = result.get("file_health") or {}
+    if health.get("status") == "error":
+        return -1000, {"path": path, "result": result, "reason": health.get("message")}
+    lookup = result.get("lookup_identity") or {}
+    embedded = result.get("embedded_metadata") or {}
+    candidate_issue = lookup.get("issue") or embedded.get("number")
+    expected_issue = context.get("issueNumber")
+    issue_match = bool(candidate_issue) and _issue_key(candidate_issue) == _issue_key(expected_issue)
+    candidate_title = lookup.get("title") or embedded.get("series") or parsed.title
+    expected_title = context.get("seriesTitle") or ""
+    title_ratio = difflib.SequenceMatcher(
+        None, normalized_title(candidate_title), normalized_title(expected_title)
+    ).ratio()
+    score = (140 if issue_match else 0) + round(title_ratio * 70)
+    return score, {
+        "path": path, "result": result, "issueMatch": issue_match,
+        "titleRatio": title_ratio, "candidateIssue": candidate_issue,
+    }
+
+
+def select_downloaded_comic(
+    source: Path, context: dict[str, Any], completed_root: Path = SAB_COMPLETE_ROOT
+) -> dict[str, Any]:
+    candidates = _comic_files_under(source, completed_root)
+    if not candidates:
+        raise ValueError("The completed download does not contain a supported comic file")
+    ranked = sorted(
+        (_download_candidate_score(path, context) for path in candidates),
+        key=lambda item: (-item[0], str(item[1]["path"])),
+    )
+    score, selected = ranked[0]
+    if score < 180 or not selected.get("issueMatch") or selected.get("titleRatio", 0) < 0.55:
+        raise ValueError(
+            f"No downloaded comic confidently matched {context.get('seriesTitle')} "
+            f"#{context.get('issueNumber')}"
+        )
+    return selected
+
+
+def _series_destination_directory(context: dict[str, Any], library_root: Path) -> Path:
+    root = library_root.resolve()
+    existing = Path(str(context.get("existingDirectory") or ""))
+    if str(existing):
+        try:
+            resolved = existing.resolve()
+            resolved.relative_to(root)
+            if resolved != root:
+                return resolved
+        except (OSError, ValueError):
+            pass
+    title = _safe_path_component(str(context.get("seriesTitle") or "Unknown series"))
+    year = context.get("seriesYear")
+    series_folder = title if not year or re.search(rf"\({re.escape(str(year))}\)$", title) else f"{title} ({year})"
+    publisher = _safe_path_component(str(context.get("publisher") or ""), "")
+    return root / publisher / series_folder if publisher else root / series_folder
+
+
+def _issue_destination(path: Path, context: dict[str, Any], library_root: Path) -> Path:
+    title = _safe_path_component(str(context.get("seriesTitle") or "Unknown series"))
+    year = context.get("seriesYear")
+    series_label = title if not year or re.search(rf"\({re.escape(str(year))}\)$", title) else f"{title} ({year})"
+    issue = str(context.get("issueNumber") or "").strip()
+    issue_label = issue.zfill(3) if issue.isdigit() else _safe_path_component(issue, "Special")
+    issue_title = _safe_path_component(str(context.get("issueTitle") or ""), "")
+    generic_title = normalized_title(issue_title) in {"", normalized_title(f"Issue {issue}")}
+    filename = f"{series_label} #{issue_label}"
+    if issue_title and not generic_title:
+        filename += f" - {issue_title}"
+    return _series_destination_directory(context, library_root) / f"{filename}{path.suffix.lower()}"
+
+
+def import_downloaded_comic(
+    download: dict[str, Any],
+    *,
+    library_root: Path = COMIC_LIBRARY_ROOT,
+    completed_root: Path = SAB_COMPLETE_ROOT,
+) -> dict[str, Any]:
+    store = catalog_store()
+    context = store.get_acquisition_job_context(int(download["job_id"]))
+    source_container = _resolve_sab_download_source(
+        str(download.get("sab_storage") or ""), str(download.get("release_title") or ""),
+        completed_root,
+    )
+    selected = select_downloaded_comic(source_container, context, completed_root)
+    source = Path(selected["path"])
+    root = library_root.resolve()
+    if not root.is_dir():
+        raise ValueError("The comics library is not mounted")
+    destination = _issue_destination(source, context, root)
+    try:
+        destination.resolve().relative_to(root)
+    except ValueError as exc:
+        raise ValueError("The generated comic destination escaped the library root") from exc
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source_size = source.stat().st_size
+    if shutil.disk_usage(destination.parent).free - source_size < IMPORT_MIN_FREE_BYTES:
+        raise ValueError("Import would leave less than the configured minimum free disk space")
+    source_hash = _sha256_file(source)
+    if destination.exists():
+        if destination.is_file() and destination.stat().st_size == source_size and _sha256_file(destination) == source_hash:
+            return {
+                "source": str(source), "destination": str(destination),
+                "size": source_size, "sha256": source_hash, "alreadyPresent": True,
+            }
+        raise ValueError("A different comic already exists at the organized destination")
+    partial = destination.with_name(
+        f".{destination.stem}.sonicboom-{os.getpid()}-{threading.get_ident()}.partial"
+        f"{destination.suffix.lower()}"
+    )
+    if partial.exists():
+        raise ValueError("A previous partial import needs review before this comic can be copied")
+    try:
+        with source.open("rb") as input_file, partial.open("xb") as output_file:
+            shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        if partial.stat().st_size != source_size or _sha256_file(partial) != source_hash:
+            raise ValueError("The copied comic did not match the SABnzbd source")
+        copied_health = inspect_file_health(partial)
+        if copied_health.get("status") == "error":
+            raise ValueError(copied_health.get("message") or "The copied comic failed validation")
+        os.replace(partial, destination)
+    except Exception:
+        if partial.exists() and partial.is_file() and partial.parent == destination.parent:
+            partial.unlink()
+        raise
+    return {
+        "source": str(source), "destination": str(destination),
+        "size": source_size, "sha256": source_hash, "alreadyPresent": False,
+    }
+
+
+def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
+    sab = _enabled_acquisition_service("sabnzbd")
+    endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+        "mode": "history", "start": 0, "limit": 1,
+        "nzo_ids": str(download["sab_nzo_id"]), "output": "json", "apikey": sab["apiKey"],
+    })
+    payload = fetch_json_with_headers(
+        endpoint, {"Accept": "application/json", "User-Agent": "Comicarr/1.0"}, timeout=30.0
+    )
+    history = payload.get("history") if isinstance(payload, dict) else None
+    slots = history.get("slots") if isinstance(history, dict) else []
+    return next(
+        (slot for slot in slots if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
+        None,
+    )
+
+
+def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
+    store = catalog_store()
+    slot = _sab_history_slot(download)
+    if not slot:
+        store.update_acquisition_download(int(download["id"]), "downloading")
+        return {"status": "downloading"}
+    sab_status = str(slot.get("status") or "").casefold()
+    storage = str(slot.get("storage") or "").strip()
+    if sab_status == "failed":
+        message = str(slot.get("fail_message") or "SABnzbd reported that the download failed")
+        store.update_acquisition_download(int(download["id"]), "failed", sab_storage=storage, error=message)
+        store.update_acquisition_job(int(download["job_id"]), "failed", message)
+        return {"status": "failed", "error": message}
+    if sab_status != "completed":
+        store.update_acquisition_download(int(download["id"]), "downloading", sab_storage=storage or None)
+        return {"status": "downloading", "sabStatus": slot.get("status")}
+    store.update_acquisition_download(int(download["id"]), "completed", sab_storage=storage)
+    try:
+        store.update_acquisition_download(int(download["id"]), "importing", sab_storage=storage)
+        imported = import_downloaded_comic({**download, "sab_storage": storage})
+    except Exception as exc:
+        message = str(exc)
+        store.update_acquisition_download(int(download["id"]), "failed", sab_storage=storage, error=message)
+        store.update_acquisition_job(int(download["job_id"]), "failed", f"Import needs attention: {message}")
+        return {"status": "failed", "error": message}
+    store.update_acquisition_download(
+        int(download["id"]), "imported", sab_storage=storage,
+        local_source=imported["source"], destination=imported["destination"],
+        source_size=imported["size"], source_sha256=imported["sha256"],
+    )
+    store.update_acquisition_job(
+        int(download["job_id"]), "fulfilled",
+        f"Imported and verified as {Path(imported['destination']).name}",
+    )
+    return {"status": "imported", **imported}
+
+
+def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> None:
+    while not stop_event.is_set():
+        try:
+            downloads = catalog_store().pending_acquisition_downloads()
+            imported_any = False
+            for download in downloads:
+                if stop_event.is_set():
+                    break
+                try:
+                    result = reconcile_acquisition_download(download)
+                    imported_any = imported_any or result.get("status") == "imported"
+                except (ValueError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
+                    # Service outages are retried. Per-download validation failures are persisted above.
+                    continue
+            if imported_any:
+                start_catalog_scan(str(COMIC_LIBRARY_ROOT), True, "local")
+        except Exception:
+            pass
+        stop_event.wait(IMPORT_POLL_SECONDS)
+
+
+def start_acquisition_import_worker() -> threading.Thread:
+    global _IMPORT_THREAD
+    if _IMPORT_THREAD and _IMPORT_THREAD.is_alive():
+        return _IMPORT_THREAD
+    _IMPORT_STOP.clear()
+    _IMPORT_THREAD = threading.Thread(
+        target=acquisition_import_worker,
+        name="sonicboom-sab-import-coordinator",
+        daemon=True,
+    )
+    _IMPORT_THREAD.start()
+    return _IMPORT_THREAD
+
+
 def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str = "full") -> int:
     """Queue an incremental scan and return its durable scan-run id."""
     if metadata_mode not in {"local", "full"}:
@@ -724,6 +1021,8 @@ def parse_filename(path: Path) -> ParsedFile:
     volume_match = VOLUME.search(raw)
     volume = int(volume_match.group(1)) if volume_match else None
     issue_match = ISSUE.search(raw) or PADDED_ISSUE.search(raw)
+    if issue_match is None and volume_match is None:
+        issue_match = UNMARKED_ISSUE.search(raw)
     issue = issue_match.group(1) if issue_match else None
     if issue and issue.isdigit():
         issue = str(int(issue))
@@ -4613,6 +4912,7 @@ def main() -> None:
     args = parser.parse_args()
     load_persisted_remote_cache()
     start_metadata_enrichment_worker()
+    start_acquisition_import_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Comic Metadata POC running at http://{args.host}:{args.port}")
     try:
@@ -4621,6 +4921,7 @@ def main() -> None:
         pass
     finally:
         _ENRICHMENT_STOP.set()
+        _IMPORT_STOP.set()
         server.server_close()
 
 

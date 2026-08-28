@@ -6,7 +6,7 @@ The repository now also contains the first functional V1 shell: a persistent cat
 
 The catalog stores its local database at `.data/comicarr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
 
-Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. SonicBoom then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. Successful remote responses are cached for seven days under the configured database directory. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
+Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. SonicBoom then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. The library banner identifies a provider-requested pause, shows the automatic retry time, and points users to optional Metron or Comic Vine setup instead of looking stuck. Successful remote responses are cached for seven days under the configured database directory. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
 
 ## Acquisition services
 
@@ -31,7 +31,7 @@ Open <http://127.0.0.1:4173>. The Vite development server proxies `/api` to the 
 
 ## Run on a NAS with Docker Compose
 
-The production container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`.
+The production container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the writable library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`.
 
 1. Copy `.env.example` to `.env` on the NAS.
 2. Review the NAS media identity (`1000:10`) and verified storage paths already provided in `.env.example`.
@@ -47,7 +47,9 @@ The production container builds the React interface and serves it from the same 
 
 The checked-in Compose example follows the NAS's home-services conventions: it runs as media user `1000:10`, stores state under `/srv/docker/sonicboom`, mounts `/srv/books/comics`, attaches to `home-services-proxy`, uses a loopback-only host port, drops privilege escalation, and limits container logs.
 
-For the first clean the NAS intake, both the comics library and SAB completed folder are deliberately mounted read-only. The importer will later copy and validate a completed comic before a separately reviewed deployment grants write access to the library; no cleanup policy may touch SAB's copy before verification.
+The completed-download importer follows SABnzbd by its stable queue ID, waits for a successful history result, and validates the selected comic against the requested series and issue. It copies into the existing series folder when one is known, otherwise using `Publisher/Series (Year)`, and names a new issue `Series (Year) #001 - Issue Title.cbz`. The copy is written to a hidden partial file, flushed, size- and SHA-256-verified, structurally checked, and atomically promoted. Imports stop if they would cross the configurable minimum-free-space threshold. Name conflicts stop for review, and SABnzbd's source copy is never deleted. The library mount is writable only for this verified import path; the SAB completed folder stays read-only.
+
+The same naming policy is intended to power a future **Organize library** function. Existing files will be handled separately through an explicit preview of old path → proposed path, conflict checks, and an undo manifest; intake does not silently reorganize a user's current library.
 
 Docker runtime state, `.env`, the SQLite catalog, and locally stored API keys are excluded from Git. Before publishing this project, use a private repository and verify `git status --ignored` does not show any credential or comic-library files staged for commit.
 
@@ -74,7 +76,7 @@ Current functional V1 scope:
 - Catalog-backed acquisition requests whose target issue sets expand automatically after verified issue-list updates.
 - A real Requests queue showing released gaps, upcoming issues, release-metadata exceptions, covered targets, and automatic fulfillment.
 - Configurable metadata providers: anonymous GCD and Open Library work without setup, while users can add, test, disable, reprioritize, replace, or remove locally stored Metron tokens and Comic Vine API keys.
-- Configurable Prowlarr and SABnzbd connections, interactive release search for individual wanted issues, credential-free candidate comparison, and explicit server-side handoff of the selected NZB to SABnzbd.
+- Configurable Prowlarr and SABnzbd connections, interactive release search for individual wanted issues, credential-free candidate comparison, explicit server-side handoff of the selected NZB to SABnzbd, completion tracking, and verified non-destructive import into the comic library.
 - A provider-backed issue refresh path that retains GCD structure and fills missing issue titles, release dates, covers, and cross-provider identities from enabled Metron and Comic Vine accounts without overwriting locked local corrections.
 
 Canonical aliases are visible in each series drawer. A manually added alias is marked confirmed and is used to resolve later files to the same internal series ID. Equivalent punctuation and joiner forms—such as `Locke & Key` and `Locke and Key`—share a normalized key, while full collected-edition titles remain stored as attributed aliases.
@@ -89,7 +91,7 @@ The collection-contents workbench displays each provider or file-derived issue c
 
 The cover picker presents every retained cover source for that file: an image readable from the comic archive, catalog art supplied by a matched metadata service, and a custom upload. Uploaded JPEG, PNG, WebP, GIF, or HEIC/HEIF art is normalized to an app-managed JPEG no larger than 600 pixels on its longest edge. Selecting or uploading artwork stores only a local preference; it never edits the original comic. **Use automatic cover** returns to the default file-first, provider-second priority.
 
-The UI still reports raw catalog ownership separately from acquisition state. Exact dates returned by the provider classify unowned issues as released gaps or upcoming releases; current-year or undated issues remain visible as release-metadata exceptions instead of being falsely queued as missing. **Acquire missing** persists monitoring and the canonical issue target set, while the Requests page recalculates covered, wanted, upcoming, and unknown counts from the current library. Schema V15 adds one durable acquisition job per released, unowned target, groups those jobs by publication run in Requests, and automatically closes them when library coverage appears. Upcoming and date-unknown targets remain monitored without becoming search jobs. Requests become active immediately; there is no requester/admin approval step. Individual jobs can now search Prowlarr interactively and send an explicitly selected Usenet result to SABnzbd. Queue/history monitoring and verified import/rename handling are the next acquisition layers and should be proven against the NAS mounts before automatic grabbing is enabled.
+The UI still reports raw catalog ownership separately from acquisition state. Exact dates returned by the provider classify unowned issues as released gaps or upcoming releases; current-year or undated issues remain visible as release-metadata exceptions instead of being falsely queued as missing. **Acquire missing** persists monitoring and the canonical issue target set, while the Requests page recalculates covered, wanted, upcoming, and unknown counts from the current library. Schema V15 adds one durable acquisition job per released, unowned target, groups those jobs by publication run in Requests, and automatically closes them when library coverage appears. Upcoming and date-unknown targets remain monitored without becoming search jobs. Requests become active immediately; there is no requester/admin approval step. Individual jobs can search Prowlarr interactively, send an explicitly selected Usenet result to SABnzbd, show download/import progress, and finish only after a verified library copy exists. Automatic grabbing remains disabled until release matching has been QA'd against representative downloads.
 
 Canonical identity endpoints used by the V1 interface:
 

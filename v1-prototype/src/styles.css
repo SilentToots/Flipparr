@@ -131,12 +131,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .stat-strip { min-height: 98px; border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: repeat(4, 1fr); background: #0f141d; }
 .metadata-setup-status { margin-bottom: 14px; min-height: 66px; padding: 13px 16px; border: 1px solid #2a3a52; border-radius: var(--radius-sm); background: #111a28; display: grid; grid-template-columns: auto 1fr minmax(120px, 22%); align-items: center; gap: 12px; }
 .metadata-setup-status.active { border-color: #4c3d7b; background: #17152a; }
+.metadata-setup-status.paused { border-color: #6c5525; background: #211b12; }
 .metadata-setup-status.review { border-color: #5a4723; background: #211b12; }
 .metadata-setup-status.complete { border-color: #28563a; background: #112319; }
 .metadata-setup-icon { width: 36px; height: 36px; border-radius: 50%; color: #bca9ff; background: rgba(139,92,246,.14); display: grid; place-items: center; }
 .metadata-setup-copy { min-width: 0; display: grid; gap: 4px; }
 .metadata-setup-status strong { color: var(--text); font-size: .92rem; }
 .metadata-setup-status small { color: var(--muted); line-height: 1.35; }
+.metadata-setup-copy .metadata-provider-help { margin-top: 4px; color: #d7bb72; }
+.metadata-pause-detail { margin: 7px 0 0; color: var(--muted); font-size: .68rem; line-height: 1.4; }
 .metadata-setup-copy details { margin-top: 2px; width: fit-content; max-width: 100%; }
 .metadata-setup-copy summary { color: #aa9bf1; cursor: pointer; font-size: .72rem; list-style-position: inside; }
 .metadata-progress-details { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -310,8 +313,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .request-job > div { display: grid; gap: 3px; }
 .request-job > div strong { color: #e1e5ec; font-size: .78rem; }
 .request-job > div span { color: var(--muted); font-size: .68rem; }
+.request-job > div .job-error { color: #ff9d96; }
 .job-state { border-radius: 11px; padding: 4px 7px; background: #222c3b; color: #aeb8c7; font-size: .66rem; font-weight: 700; white-space: nowrap; }
 .job-state.queued, .job-state.searching { background: var(--violet-soft); color: #c3b5ff; }
+.job-state.downloading, .job-state.completed, .job-state.importing { background: var(--violet-soft); color: #c3b5ff; }
+.job-state.imported { background: var(--green-soft); color: #8ee6a7; }
 .job-state.failed { background: var(--red-soft); color: #ff9d96; }
 .job-state.fulfilled { background: var(--green-soft); color: #8ee6a7; }
 .request-job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }

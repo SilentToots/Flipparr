@@ -99,6 +99,21 @@ const JOB_STATUS_LABELS = {
   cancelled: "Cancelled",
 };
 
+const DOWNLOAD_STATUS_LABELS = {
+  queued: "Waiting for SABnzbd",
+  downloading: "Downloading",
+  completed: "Download complete",
+  importing: "Adding to library",
+  imported: "Added to library",
+  failed: "Import needs attention",
+};
+
+const METADATA_PROVIDER_LABELS = {
+  gcd: "Grand Comics Database",
+  metron: "Metron",
+  comic_vine: "Comic Vine",
+};
+
 function editionKindLabel(kind) {
   return EDITION_KIND_LABELS[kind] || "Volume";
 }
@@ -279,14 +294,22 @@ function MetadataSetupStatus({ enrichment }) {
   const active = enrichment.active > 0;
   const current = enrichment.nextJobs?.find((job) => job.status === "running");
   const next = enrichment.nextJobs?.find((job) => ["queued", "waiting"].includes(job.status));
+  const cooldown = enrichment.providerCooldowns?.[0];
+  const paused = active && !current && enrichment.waiting > 0 && Boolean(cooldown);
+  const providerName = METADATA_PROVIDER_LABELS[cooldown?.provider] || cooldown?.provider || "The metadata service";
+  const retryTime = cooldown?.nextRetryAt
+    ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(cooldown.nextRetryAt))
+    : null;
   const workingLabel = current ? `Checking ${current.title}` : enrichment.waiting && !enrichment.queued ? "Waiting for a metadata service; retrying automatically" : next ? `${next.title} is next` : "Preparing the next series";
-  const heading = active ? "Building your comic details in the background" : enrichment.review ? "Initial metadata check finished" : "Comic details are ready";
-  const detail = active
+  const heading = paused ? "Metadata lookup is paused temporarily" : active ? "Building your comic details in the background" : enrichment.review ? "Initial metadata check finished" : "Comic details are ready";
+  const detail = paused
+    ? `${processed} of ${enrichment.total} series checked · ${providerName} is limiting requests${retryTime ? ` until ${retryTime}` : ""}`
+    : active
     ? `${processed} of ${enrichment.total} series checked · ${workingLabel}`
     : enrichment.review
       ? `${enrichment.complete} series identified automatically · ${enrichment.review} need a match review`
       : `${enrichment.complete} series identified automatically`;
-  return <section className={`metadata-setup-status ${active ? "active" : enrichment.review ? "review" : "complete"}`} aria-live="polite"><span className="metadata-setup-icon">{active ? <SpinnerGap className="spin" size={21} /> : enrichment.review ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small><details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> In line</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div></details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
+  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review ? "review" : "complete"}`} aria-live="polite"><span className="metadata-setup-icon">{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <SpinnerGap className="spin" size={21} /> : enrichment.review ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{paused ? <p className="metadata-pause-detail">{cooldown.error || `${providerName} asked SonicBoom to wait before making more requests.`}</p> : null}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
 }
 
 function Ownership({ series }) {
@@ -535,22 +558,25 @@ const statusLabels = request.targetType === "issue" ? { wanted: "Fix issue", sea
 
 function RequestRow({ request, onFindRelease }) {
   const [expanded, setExpanded] = useState(false);
+  const jobs = request.jobs || [];
   const ready = request.wantedIssueCount || 0;
   const upcoming = request.upcomingIssueCount || 0;
   const unknown = request.unknownReleaseIssueCount || 0;
   const queued = request.queuedJobCount || 0;
-  const searching = (request.jobs || []).filter((job) => job.status === "searching").length;
-  const failed = request.failedJobCount || 0;
+  const searching = jobs.filter((job) => job.status === "searching").length;
+  const downloading = jobs.filter((job) => ["queued", "downloading"].includes(job.downloadStatus)).length;
+  const importing = jobs.filter((job) => ["completed", "importing"].includes(job.downloadStatus)).length;
+  const failed = jobs.filter((job) => job.status === "failed" || job.downloadStatus === "failed").length;
   const scope = [
     ready ? `${ready} missing issue${ready === 1 ? "" : "s"}` : null,
     upcoming ? `${upcoming} upcoming` : null,
     unknown ? `${unknown} release date${unknown === 1 ? "" : "s"} unknown` : null,
     `${request.ownedIssueCount} of ${request.targetIssueCount} owned`,
   ].filter(Boolean).join(" · ");
-  const status = request.status === "fulfilled" ? "Complete" : failed ? "Needs attention" : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
-  const tone = request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching ? "violet" : upcoming ? "green" : "muted";
+  const status = request.status === "fulfilled" ? "Complete" : failed ? "Needs attention" : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
+  const tone = request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
   const display = { id: `request-${request.id}`, title: request.title, cover: request.cover };
-  const jobGroups = (request.jobs || []).reduce((groups, job) => {
+  const jobGroups = jobs.reduce((groups, job) => {
     const key = job.seriesId || "series";
     if (!groups[key]) groups[key] = { id: key, title: job.seriesTitle || request.title, jobs: [] };
     groups[key].jobs.push(job);
@@ -565,13 +591,13 @@ function RequestRow({ request, onFindRelease }) {
     </div>
     {expanded ? <div className="request-job-panel">
       <header><div><strong>Missing issues</strong><span>Search when you’re ready and compare Prowlarr results before anything is downloaded.</span></div><b>Following</b></header>
-      {(request.jobs || []).length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
+      {jobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
-        {group.jobs.map((job) => <div className="request-job" key={job.id}>
+        {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const displayDetail = job.downloadError || (job.downloadDestination ? `Added as ${job.downloadDestination.split("/").pop()}` : job.downloadTitle); return <div className="request-job" key={job.id}>
           <b>#{job.issueNumber}</b>
-          <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong><span>{job.reason}</span></div>
-          <span className="request-job-actions"><span className={`job-state ${job.status}`}>{JOB_STATUS_LABELS[job.status] || job.status}</span>{!["grabbed", "fulfilled", "cancelled"].includes(job.status) ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span>
-        </div>)}
+          <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong><span>{job.reason}</span>{displayDetail ? <span className={job.downloadError ? "job-error" : ""}>{displayDetail}</span> : null}</div>
+          <span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{!["grabbed", "fulfilled", "cancelled"].includes(job.status) ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span>
+        </div>; })}
       </section>)}</div> : <div className="request-job-empty"><ArrowsClockwise size={20} /><div><strong>Nothing is ready to search yet</strong><span>No action is required. Comic Library will keep checking release dates automatically.</span></div></div>}
       {upcoming || unknown ? <footer>{upcoming ? `${upcoming} upcoming issue${upcoming === 1 ? " is" : "s are"} being followed` : null}{upcoming && unknown ? " · " : null}{unknown ? `${unknown} issue${unknown === 1 ? " has" : "s have"} an unknown release date` : null}</footer> : null}
     </div> : null}
@@ -1786,10 +1812,13 @@ export function App() {
   }
   useEffect(() => { loadCatalog(); }, []);
   useEffect(() => {
-    if (!(catalog?.enrichment?.active > 0)) return undefined;
+    const activeDownload = (catalog?.requests || []).some((request) =>
+      (request.jobs || []).some((job) => ["queued", "downloading", "completed", "importing"].includes(job.downloadStatus))
+    );
+    if (!(catalog?.enrichment?.active > 0) && !activeDownload) return undefined;
     const timer = window.setInterval(() => loadCatalog(), 5000);
     return () => window.clearInterval(timer);
-  }, [catalog?.enrichment?.active]);
+  }, [catalog?.enrichment?.active, catalog?.requests]);
   const visibleSeries = catalog?.series ?? (backendStatus === "offline" ? DEMO_SERIES : []);
   const logicalSeriesCount = logicalCatalogSeries(catalog, visibleSeries).length;
   return <div className="app-shell"><Nav active={active === "search" ? "library" : active} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} /><main className="main-content">{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "add" ? <AddComicsView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "activity" ? <ActivityView /> : null}{active === "settings" ? <SettingsView catalog={catalog} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onReviewPlacement={openVolumePlacement} onRequest={() => createAcquisitionRequest(selectedCollection)} onEditIssue={openIssueWorkbench} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{placementWorkbench ? <VolumePlacementWorkbench data={placementWorkbench} busy={placementBusy} error={placementError} onClose={() => setPlacementWorkbench(null)} onSave={saveVolumePlacement} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div>;

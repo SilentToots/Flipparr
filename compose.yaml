@@ -24,9 +24,13 @@ services:
       COMICARR_PROVIDER_CONFIG: /config/metadata-providers.json
       COMICARR_ACQUISITION_CONFIG: /config/acquisition-services.json
       COMICARR_WEB_ROOT: /app/web
+      COMICARR_LIBRARY_ROOT: /comics
+      COMICARR_SAB_COMPLETE_ROOT: /downloads/complete/comics
+      COMICARR_IMPORT_POLL_SECONDS: "${IMPORT_POLL_SECONDS:-15}"
+      COMICARR_MIN_FREE_SPACE_MB: "${MIN_FREE_SPACE_MB:-100}"
     volumes:
       - "${CONFIG_PATH:-./docker-data}:/config"
-      - "${COMICS_PATH:?Set COMICS_PATH to the NAS comics directory}:/comics:ro"
+      - "${COMICS_PATH:?Set COMICS_PATH to the NAS comics directory}:/comics:rw"
       - "${SAB_COMPLETE_PATH:?Set SAB_COMPLETE_PATH to SABnzbd's completed comics directory}:/downloads/complete/comics:ro"
     networks:
       - proxy

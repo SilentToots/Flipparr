@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
+LOCAL_ANALYSIS_VERSION = 2
 
 
 def _utc_now() -> str:
@@ -513,9 +514,12 @@ class CatalogStore:
                     sab_storage TEXT,
                     local_source TEXT,
                     destination TEXT,
+                    source_size INTEGER,
+                    source_sha256 TEXT,
                     error TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    imported_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS acquisition_downloads_status
                     ON acquisition_downloads(status, updated_at);
@@ -642,6 +646,15 @@ class CatalogStore:
                 connection.execute(
                     "ALTER TABLE file_replacement_requests ADD COLUMN acquisition_preference TEXT NOT NULL DEFAULT 'either'"
                 )
+            acquisition_download_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")
+            }
+            if "source_size" not in acquisition_download_columns:
+                connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN source_size INTEGER")
+            if "source_sha256" not in acquisition_download_columns:
+                connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN source_sha256 TEXT")
+            if "imported_at" not in acquisition_download_columns:
+                connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN imported_at TEXT")
             row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
             if row is None:
                 connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -2514,6 +2527,14 @@ class CatalogStore:
             ).fetchone()
         if not row:
             raise ValueError("Acquisition job was not found")
+        with self._connect() as connection:
+            existing_file = connection.execute(
+                """SELECT files.path FROM files
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE file_identities.series_run_id=? AND files.present=1
+                   ORDER BY files.updated_at DESC, files.id DESC LIMIT 1""",
+                (row["series_id"],),
+            ).fetchone()
         return {
             "id": str(row["id"]), "requestId": str(row["request_id"]),
             "status": row["status"], "issueId": str(row["issue_id"]),
@@ -2523,6 +2544,7 @@ class CatalogStore:
             "seriesId": str(row["series_id"]), "seriesTitle": row["series_title"],
             "seriesYear": row["series_year"], "publisher": row["publisher"],
             "acquisitionPreference": row["acquisition_preference"],
+            "existingDirectory": str(Path(existing_file["path"]).parent) if existing_file else None,
         }
 
     def record_acquisition_download(
@@ -2555,6 +2577,61 @@ class CatalogStore:
             "queueId": row["sab_nzo_id"], "releaseTitle": row["release_title"],
             "status": row["status"], "updatedAt": row["updated_at"],
         }
+
+    def pending_acquisition_downloads(self) -> list[dict[str, Any]]:
+        """Return SAB downloads that still need completion tracking or a verified import."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT acquisition_downloads.*, acquisition_jobs.status AS job_status
+                   FROM acquisition_downloads
+                   JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
+                   WHERE acquisition_downloads.status IN ('queued', 'downloading', 'completed', 'importing')
+                     AND acquisition_jobs.status NOT IN ('fulfilled', 'cancelled')
+                   ORDER BY acquisition_downloads.created_at, acquisition_downloads.id"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_acquisition_download(
+        self,
+        download_id: int,
+        status: str,
+        *,
+        sab_storage: str | None = None,
+        local_source: str | None = None,
+        destination: str | None = None,
+        source_size: int | None = None,
+        source_sha256: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        allowed = {"queued", "downloading", "completed", "importing", "imported", "failed"}
+        desired = str(status or "").strip().casefold()
+        if desired not in allowed:
+            raise ValueError("Unsupported acquisition download status")
+        now = _utc_now()
+        imported_at = now if desired == "imported" else None
+        with self._write_lock, self._connect() as connection:
+            if not connection.execute(
+                "SELECT id FROM acquisition_downloads WHERE id=?", (download_id,)
+            ).fetchone():
+                raise ValueError("Acquisition download was not found")
+            connection.execute(
+                """UPDATE acquisition_downloads SET
+                       status=?, sab_storage=COALESCE(?, sab_storage),
+                       local_source=COALESCE(?, local_source),
+                       destination=COALESCE(?, destination),
+                       source_size=COALESCE(?, source_size),
+                       source_sha256=COALESCE(?, source_sha256),
+                       error=?, imported_at=COALESCE(?, imported_at), updated_at=?
+                   WHERE id=?""",
+                (
+                    desired, sab_storage, local_source, destination, source_size,
+                    source_sha256, error, imported_at, now, download_id,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM acquisition_downloads WHERE id=?", (download_id,)
+            ).fetchone()
+        return dict(row)
 
     def create_acquisition_request(
         self,
@@ -2963,6 +3040,15 @@ class CatalogStore:
         queued = 0
         retained = 0
         with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """DELETE FROM metadata_enrichment_jobs
+                   WHERE NOT EXISTS(
+                       SELECT 1 FROM file_identities
+                       JOIN files ON files.id=file_identities.file_id
+                       WHERE file_identities.series_run_id=metadata_enrichment_jobs.series_run_id
+                         AND files.present=1
+                   )"""
+            )
             sql = """
                 SELECT series_runs.id,
                        COALESCE(issue_catalog_status.status, 'unknown') AS catalog_status
@@ -3153,13 +3239,26 @@ class CatalogStore:
                        LIMIT 8"""
                 )
             ]
+            provider_cooldowns = [
+                {
+                    "provider": row["provider"], "nextRetryAt": row["next_allowed_at"],
+                    "error": row["last_error"],
+                }
+                for row in connection.execute(
+                    """SELECT provider, next_allowed_at, last_error
+                       FROM metadata_provider_state
+                       WHERE next_allowed_at IS NOT NULL AND next_allowed_at>?
+                       ORDER BY next_allowed_at""",
+                    (_utc_now(),),
+                )
+            ]
         active = counts.get("queued", 0) + counts.get("running", 0) + counts.get("waiting", 0)
         return {
             "total": total, "complete": counts.get("complete", 0),
             "queued": counts.get("queued", 0), "running": counts.get("running", 0),
             "waiting": counts.get("waiting", 0), "review": counts.get("review", 0),
             "failed": counts.get("failed", 0), "active": active,
-            "nextJobs": next_jobs,
+            "nextJobs": next_jobs, "providerCooldowns": provider_cooldowns,
         }
 
     def begin_scan(self, folder: str, recursive: bool) -> int:
@@ -3212,7 +3311,7 @@ class CatalogStore:
             for parsed in parsed_files:
                 path = Path(parsed.path)
                 stat = path.stat()
-                fingerprint = f"{stat.st_size}:{stat.st_mtime_ns}"
+                fingerprint = f"{LOCAL_ANALYSIS_VERSION}:{stat.st_size}:{stat.st_mtime_ns}"
                 seen_paths.add(str(path))
                 prior = existing.get(str(path))
                 if prior and prior["fingerprint"] == fingerprint:
@@ -3595,6 +3694,11 @@ class CatalogStore:
                     "SELECT * FROM acquisition_jobs ORDER BY created_at, id"
                 )
             ]
+            acquisition_download_rows = [
+                dict(row) for row in connection.execute(
+                    "SELECT * FROM acquisition_downloads ORDER BY created_at, id"
+                )
+            ]
             replacement_rows = [
                 dict(row) for row in connection.execute(
                     """SELECT file_replacement_requests.*, files.filename, files.path,
@@ -3975,11 +4079,15 @@ class CatalogStore:
             for run in series for issue in run.get("issues") or []
         }
         acquisition_jobs_by_request: dict[int, list[dict[str, Any]]] = {}
+        acquisition_downloads_by_job = {
+            int(row["job_id"]): row for row in acquisition_download_rows
+        }
         for job_row in acquisition_job_rows:
             issue = request_issue_lookup.get(int(job_row["issue_id"]))
             if not issue:
                 continue
             queued_date, queued_time = _display_time(job_row["created_at"])
+            download = acquisition_downloads_by_job.get(int(job_row["id"]))
             acquisition_jobs_by_request.setdefault(int(job_row["request_id"]), []).append({
                 "id": str(job_row["id"]), "issueId": str(job_row["issue_id"]),
                 "issueNumber": issue["number"], "issueTitle": issue.get("title"),
@@ -3988,6 +4096,10 @@ class CatalogStore:
                 "reason": job_row["queue_reason"],
                 "attemptCount": int(job_row["attempt_count"]),
                 "lastAttemptAt": job_row["last_attempt_at"], "error": job_row["error"],
+                "downloadStatus": download["status"] if download else None,
+                "downloadTitle": download["release_title"] if download else None,
+                "downloadDestination": download["destination"] if download else None,
+                "downloadError": download["error"] if download else None,
                 "createdAt": job_row["created_at"], "updatedAt": job_row["updated_at"],
                 "queuedDate": queued_date, "queuedTime": queued_time,
             })

@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import Handler, MetadataRateLimited, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import Handler, MetadataRateLimited, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -685,6 +685,68 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(item.title, "Birthright")
         self.assertEqual(item.issue, "6")
         self.assertIsNone(item.volume)
+
+    def test_unmarked_three_digit_issue_is_not_split_into_a_false_series(self):
+        item = parse_filename(Path("Fables.105.(2011).(Digital).(NahgaEmpire).cbz"))
+        self.assertEqual(item.title, "Fables")
+        self.assertEqual(item.issue, "105")
+        self.assertEqual(item.year, 2011)
+
+    def test_image_resolution_token_is_not_mistaken_for_publication_year(self):
+        item = parse_filename(Path("Fables.141.(2014).(2048px..c2c).cbz"))
+        self.assertEqual((item.title, item.issue, item.year), ("Fables", "141", 2014))
+
+    def test_verified_sab_import_uses_series_folder_and_keeps_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "library"
+            completed = root / "completed"
+            source_folder = completed / "Saga.001.2012"
+            library.mkdir()
+            source_folder.mkdir(parents=True)
+            source = source_folder / "Saga 001 (2012).cbz"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("001.jpg", b"comic-page")
+            store = Mock()
+            store.get_acquisition_job_context.return_value = {
+                "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+                "issueNumber": "1", "issueTitle": "Chapter One", "existingDirectory": None,
+            }
+            with patch("app.catalog_store", return_value=store):
+                result = import_downloaded_comic(
+                    {"job_id": 7, "sab_storage": str(source_folder), "release_title": "Saga.001.2012"},
+                    library_root=library, completed_root=completed,
+                )
+
+            destination = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001 - Chapter One.cbz"
+            self.assertEqual(Path(result["destination"]).resolve(), destination.resolve())
+            self.assertTrue(source.is_file())
+            self.assertTrue(destination.is_file())
+            self.assertEqual(source.read_bytes(), destination.read_bytes())
+            self.assertFalse(result["alreadyPresent"])
+
+    def test_sab_import_rejects_a_different_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "library"
+            completed = root / "completed"
+            source_folder = completed / "Saga.002.2012"
+            library.mkdir()
+            source_folder.mkdir(parents=True)
+            with zipfile.ZipFile(source_folder / "Saga 002 (2012).cbz", "w") as archive:
+                archive.writestr("001.jpg", b"comic-page")
+            store = Mock()
+            store.get_acquisition_job_context.return_value = {
+                "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+                "issueNumber": "1", "issueTitle": None, "existingDirectory": None,
+            }
+            with patch("app.catalog_store", return_value=store):
+                with self.assertRaisesRegex(ValueError, "No downloaded comic confidently matched Saga #1"):
+                    import_downloaded_comic(
+                        {"job_id": 7, "sab_storage": str(source_folder), "release_title": "Saga.002.2012"},
+                        library_root=library, completed_root=completed,
+                    )
+            self.assertEqual(list(library.rglob("*.cbz")), [])
 
     def test_segments_a_title_without_spaces(self):
         item = parse_filename(Path("strangetalentoflutherstrode_vol2.cbz"))
