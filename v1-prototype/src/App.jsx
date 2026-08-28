@@ -321,8 +321,12 @@ function MetadataSetupStatus({ enrichment }) {
     ? `${processed} of ${enrichment.total} series checked · ${providerName} is limiting requests${retryTime ? ` until ${retryTime}` : ""}`
     : active
     ? `${processed} of ${enrichment.total} series checked · ${workingLabel}`
-    : enrichment.review
-      ? `${enrichment.complete} series identified automatically · ${enrichment.review} need a match review`
+    : enrichment.review || enrichment.failed
+      ? [
+          `${enrichment.complete} series identified automatically`,
+          enrichment.review ? `${enrichment.review} need a match review` : null,
+          enrichment.failed ? `${enrichment.failed} need another metadata source or manual match` : null,
+        ].filter(Boolean).join(" · ")
       : `${enrichment.complete} series identified automatically`;
   const providerNotices = cooldowns.map((item) => {
     const name = METADATA_PROVIDER_LABELS[item.provider] || item.provider;
