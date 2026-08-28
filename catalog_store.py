@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 def _utc_now() -> str:
@@ -557,6 +557,30 @@ class CatalogStore:
                     file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
                     source TEXT NOT NULL,
                     cover_url TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
+                    id INTEGER PRIMARY KEY,
+                    series_run_id INTEGER NOT NULL UNIQUE
+                        REFERENCES series_runs(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'queued'
+                        CHECK(status IN ('queued', 'running', 'waiting', 'complete', 'review', 'failed')),
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    provider TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS metadata_enrichment_jobs_status
+                    ON metadata_enrichment_jobs(status, next_attempt_at, priority, id);
+                CREATE TABLE IF NOT EXISTS metadata_provider_state (
+                    provider TEXT PRIMARY KEY,
+                    next_allowed_at TEXT,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
                     updated_at TEXT NOT NULL
                 );
                 """
@@ -1423,6 +1447,14 @@ class CatalogStore:
                    WHERE series_run_id=? AND provider='gcd' AND confirmed=1""",
                 (series_run_id,),
             ).fetchone()
+            provider_series_ids = {
+                row["provider"]: {"id": row["provider_id"], "apiUrl": row["api_url"]}
+                for row in connection.execute(
+                    """SELECT provider, provider_id, api_url FROM series_provider_ids
+                       WHERE series_run_id=? AND confirmed=1""",
+                    (series_run_id,),
+                )
+            }
             known_issue_ids = [
                 row["provider_id"]
                 for row in connection.execute(
@@ -1500,6 +1532,9 @@ class CatalogStore:
             "aliases": aliases, "knownGcdIssueIds": known_issue_ids,
             "gcdSeriesId": gcd_series["provider_id"] if gcd_series else None,
             "gcdSeriesApiUrl": gcd_series["api_url"] if gcd_series else None,
+            "metronSeriesId": (provider_series_ids.get("metron") or {}).get("id"),
+            "comicVineVolumeId": (provider_series_ids.get("comic_vine") or {}).get("id"),
+            "providerSeriesIds": provider_series_ids,
             "gcdIssueEntries": gcd_issue_entries,
             "ownedIssueNumbers": owned_issue_numbers,
         }
@@ -2921,6 +2956,212 @@ class CatalogStore:
             )
             return int(connection.execute("SELECT id FROM library_roots WHERE path=?", (resolved,)).fetchone()["id"])
 
+    def enqueue_metadata_enrichment(self, series_run_ids: Iterable[int] | None = None) -> dict[str, int]:
+        """Queue one resumable metadata job per local publication run."""
+        requested_ids = {int(value) for value in series_run_ids or []}
+        now = _utc_now()
+        queued = 0
+        retained = 0
+        with self._write_lock, self._connect() as connection:
+            sql = """
+                SELECT series_runs.id,
+                       COALESCE(issue_catalog_status.status, 'unknown') AS catalog_status
+                FROM series_runs
+                LEFT JOIN issue_catalog_status
+                  ON issue_catalog_status.series_run_id=series_runs.id
+                WHERE EXISTS(
+                    SELECT 1 FROM file_identities
+                    JOIN files ON files.id=file_identities.file_id
+                    WHERE file_identities.series_run_id=series_runs.id AND files.present=1
+                )
+            """
+            params: tuple[Any, ...] = ()
+            if requested_ids:
+                placeholders = ",".join("?" for _ in requested_ids)
+                sql += f" AND series_runs.id IN ({placeholders})"
+                params = tuple(sorted(requested_ids))
+            for row in connection.execute(sql, params):
+                series_run_id = int(row["id"])
+                catalog_complete = row["catalog_status"] in {"complete", "complete_to_date"}
+                existing = connection.execute(
+                    "SELECT status FROM metadata_enrichment_jobs WHERE series_run_id=?",
+                    (series_run_id,),
+                ).fetchone()
+                if catalog_complete:
+                    if existing and existing["status"] != "complete":
+                        connection.execute(
+                            """UPDATE metadata_enrichment_jobs
+                               SET status='complete', last_error=NULL, next_attempt_at=NULL,
+                                   completed_at=?, updated_at=? WHERE series_run_id=?""",
+                            (now, now, series_run_id),
+                        )
+                    retained += 1
+                    continue
+                if existing:
+                    retained += 1
+                    continue
+                connection.execute(
+                    """INSERT INTO metadata_enrichment_jobs(
+                           series_run_id, status, priority, created_at, updated_at
+                       ) VALUES (?, 'queued', 100, ?, ?)""",
+                    (series_run_id, now, now),
+                )
+                queued += 1
+        return {"queued": queued, "retained": retained}
+
+    def resume_metadata_enrichment(self) -> None:
+        """Return work interrupted by a process restart to the durable queue."""
+        now = _utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE metadata_enrichment_jobs
+                   SET status='waiting', next_attempt_at=?,
+                       last_error=COALESCE(last_error, 'Interrupted by restart; retrying safely.'),
+                       updated_at=?
+                   WHERE status='running'""",
+                (now, now),
+            )
+
+    def claim_metadata_enrichment_job(self) -> dict[str, Any] | None:
+        """Atomically claim the next due series job for a single coordinator worker."""
+        now = _utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT metadata_enrichment_jobs.*, series_runs.canonical_title,
+                          series_runs.start_year, series_runs.publisher
+                   FROM metadata_enrichment_jobs
+                   JOIN series_runs ON series_runs.id=metadata_enrichment_jobs.series_run_id
+                   WHERE metadata_enrichment_jobs.status IN ('queued', 'waiting')
+                     AND (metadata_enrichment_jobs.next_attempt_at IS NULL
+                          OR metadata_enrichment_jobs.next_attempt_at<=?)
+                   ORDER BY metadata_enrichment_jobs.priority, metadata_enrichment_jobs.id
+                   LIMIT 1""",
+                (now,),
+            ).fetchone()
+            if not row:
+                connection.commit()
+                return None
+            connection.execute(
+                """UPDATE metadata_enrichment_jobs
+                   SET status='running', attempt_count=attempt_count+1,
+                       updated_at=?, last_error=NULL WHERE id=?""",
+                (now, row["id"]),
+            )
+            connection.commit()
+        result = dict(row)
+        result["status"] = "running"
+        result["attempt_count"] = int(result["attempt_count"]) + 1
+        return result
+
+    def finish_metadata_enrichment_job(
+        self,
+        job_id: int,
+        status: str,
+        provider: str | None = None,
+        error: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        if status not in {"queued", "waiting", "complete", "review", "failed"}:
+            raise ValueError("Unsupported metadata enrichment job status")
+        now_dt = dt.datetime.now(dt.timezone.utc)
+        now = now_dt.isoformat()
+        next_attempt = None
+        completed_at = now if status in {"complete", "review", "failed"} else None
+        if status == "waiting":
+            delay = max(30, int(retry_after_seconds or 300))
+            next_attempt = (now_dt + dt.timedelta(seconds=delay)).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE metadata_enrichment_jobs
+                   SET status=?, provider=?, next_attempt_at=?, last_error=?,
+                       completed_at=?, updated_at=? WHERE id=?""",
+                (status, provider, next_attempt, error, completed_at, now, job_id),
+            )
+
+    def metadata_provider_available(self, provider: str) -> bool:
+        now = _utc_now()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT next_allowed_at FROM metadata_provider_state WHERE provider=?",
+                (provider,),
+            ).fetchone()
+        return not row or not row["next_allowed_at"] or row["next_allowed_at"] <= now
+
+    def record_metadata_provider_outcome(
+        self,
+        provider: str,
+        error: str | None = None,
+        retry_after_seconds: int | None = None,
+        minimum_delay_seconds: int = 0,
+    ) -> None:
+        now_dt = dt.datetime.now(dt.timezone.utc)
+        now = now_dt.isoformat()
+        with self._connect() as connection:
+            previous = connection.execute(
+                "SELECT consecutive_failures FROM metadata_provider_state WHERE provider=?",
+                (provider,),
+            ).fetchone()
+            failures = 0 if not error else int(previous["consecutive_failures"] if previous else 0) + 1
+            next_allowed = (
+                (now_dt + dt.timedelta(seconds=max(0, int(minimum_delay_seconds)))).isoformat()
+                if minimum_delay_seconds else None
+            )
+            if error:
+                delay = max(30, int(retry_after_seconds or min(3600, 30 * (2 ** min(failures, 6)))))
+                next_allowed = (now_dt + dt.timedelta(seconds=delay)).isoformat()
+            connection.execute(
+                """INSERT INTO metadata_provider_state(
+                       provider, next_allowed_at, consecutive_failures, last_error, updated_at
+                   ) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(provider) DO UPDATE SET
+                       next_allowed_at=excluded.next_allowed_at,
+                       consecutive_failures=excluded.consecutive_failures,
+                       last_error=excluded.last_error, updated_at=excluded.updated_at""",
+                (provider, next_allowed, failures, error, now),
+            )
+
+    def metadata_enrichment_summary(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            counts = {
+                row["status"]: int(row["count"])
+                for row in connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM metadata_enrichment_jobs GROUP BY status"
+                )
+            }
+            total = sum(counts.values())
+            next_jobs = [
+                {
+                    "id": str(row["id"]), "seriesId": str(row["series_run_id"]),
+                    "title": row["canonical_title"], "status": row["status"],
+                    "provider": row["provider"], "attemptCount": int(row["attempt_count"]),
+                    "nextAttemptAt": row["next_attempt_at"], "error": row["last_error"],
+                }
+                for row in connection.execute(
+                    """SELECT metadata_enrichment_jobs.*, series_runs.canonical_title
+                       FROM metadata_enrichment_jobs
+                       JOIN series_runs ON series_runs.id=metadata_enrichment_jobs.series_run_id
+                       WHERE metadata_enrichment_jobs.status!='complete'
+                       ORDER BY CASE metadata_enrichment_jobs.status
+                                    WHEN 'running' THEN 0
+                                    WHEN 'queued' THEN 1
+                                    WHEN 'waiting' THEN 2
+                                    WHEN 'review' THEN 3
+                                    ELSE 4
+                                END,
+                                metadata_enrichment_jobs.priority, metadata_enrichment_jobs.id
+                       LIMIT 8"""
+                )
+            ]
+        active = counts.get("queued", 0) + counts.get("running", 0) + counts.get("waiting", 0)
+        return {
+            "total": total, "complete": counts.get("complete", 0),
+            "queued": counts.get("queued", 0), "running": counts.get("running", 0),
+            "waiting": counts.get("waiting", 0), "review": counts.get("review", 0),
+            "failed": counts.get("failed", 0), "active": active,
+            "nextJobs": next_jobs,
+        }
+
     def begin_scan(self, folder: str, recursive: bool) -> int:
         root_id = self.register_root(folder, recursive)
         with self._connect() as connection:
@@ -3469,7 +3710,11 @@ class CatalogStore:
                     review["replacementRequestId"] = str(active_replacement["id"])
                     review["replacementStatus"] = active_replacement["status"]
             inbox.extend(file_review)
-            group["hasProblem"] = group["hasProblem"] or health.get("status") == "error" or not recommendation or bool(file_review)
+            metadata_deferred = bool((result.get("source_status") or {}).get("external_metadata"))
+            group["hasProblem"] = (
+                group["hasProblem"] or health.get("status") == "error"
+                or (not recommendation and not metadata_deferred) or bool(file_review)
+            )
             if row["identity_confidence"] is not None:
                 group["identityConfidences"].append(int(row["identity_confidence"]))
             if row["updated_at"] > group["updatedAt"]:
@@ -3791,6 +4036,7 @@ class CatalogStore:
         inbox.sort(key=lambda item: (item["severity"] != "error", item["file"].casefold()))
         last_scan_at = next((root["last_scan_at"] for root in reversed(roots) if root["last_scan_at"]), None)
         date, clock = _display_time(last_scan_at)
+        enrichment = self.metadata_enrichment_summary()
         return {
             "schemaVersion": SCHEMA_VERSION,
             "series": series,
@@ -3799,6 +4045,7 @@ class CatalogStore:
             "replacementRequests": replacement_requests,
             "files": file_summaries,
             "inbox": inbox,
+            "enrichment": enrichment,
             "stats": {
                 "series": len(series), "families": len(families), "files": len(rows), "needAttention": len(inbox),
                 "damaged": sum(1 for item in inbox if item["severity"] == "error"),
@@ -3818,6 +4065,8 @@ class CatalogStore:
                 "unknownReleaseIssues": sum(
                     item["unknownReleaseIssueCount"] for item in requests if item["status"] == "open"
                 ),
+                "metadataPending": enrichment["active"],
+                "metadataReview": enrichment["review"],
             },
             "roots": [
                 {"id": root["id"], "path": root["path"], "recursive": bool(root["recursive"]), "lastScanAt": root["last_scan_at"]}
@@ -3865,7 +4114,8 @@ class CatalogStore:
                 health.get("message") or "The file failed a structural check.",
                 "error", category="file",
             )
-        if not recommendation and health.get("status") != "error":
+        metadata_deferred = bool((result.get("source_status") or {}).get("external_metadata"))
+        if not recommendation and health.get("status") != "error" and not metadata_deferred:
             add(
                 "no_match", "No confident metadata match",
                 "The filename and available sources did not produce a recommendation. Review the parsed identity before accepting a match.",

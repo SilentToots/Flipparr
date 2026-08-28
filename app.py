@@ -69,15 +69,22 @@ _RELEASE_CANDIDATE_TTL_SECONDS = 30 * 60
 _REMOTE_JSON_CACHE: dict[str, Any] = {}
 _REMOTE_JSON_INFLIGHT: dict[str, threading.Event] = {}
 _REMOTE_JSON_LOCK = threading.Lock()
-_REMOTE_CACHE_FILE = Path(tempfile.gettempdir()) / "comic-metadata-poc-cache-v1.json"
 _REMOTE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 _PERSIST_REMOTE_CACHE = False
 CATALOG_DATABASE_PATH = Path(
     os.environ.get("COMICARR_DATABASE", str(Path(__file__).parent / ".data" / "comicarr.db"))
 )
+_REMOTE_CACHE_FILE = Path(
+    os.environ.get(
+        "COMICARR_REMOTE_CACHE",
+        str(CATALOG_DATABASE_PATH.parent / "remote-metadata-cache.json"),
+    )
+)
 WEB_ROOT = Path(os.environ.get("COMICARR_WEB_ROOT", "")).resolve() if os.environ.get("COMICARR_WEB_ROOT") else None
 _CATALOG_STORE: CatalogStore | None = None
 _CATALOG_STORE_LOCK = threading.Lock()
+_ENRICHMENT_STOP = threading.Event()
+_ENRICHMENT_THREAD: threading.Thread | None = None
 FORMAT_PATTERNS = (
     ("omnibus", re.compile(r"\bomnibus\b", re.I)),
     ("compendium", re.compile(r"\bcompendium\b", re.I)),
@@ -585,9 +592,15 @@ def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str =
     store = catalog_store()
     scan_id = store.begin_scan(folder, recursive)
     enrich_file = inventory_file if metadata_mode == "local" else enrich
+
+    def perform() -> None:
+        store.perform_scan(scan_id, scan_folder, enrich_file)
+        completed = store.get_scan(scan_id)
+        if completed and completed.get("status") == "complete":
+            store.enqueue_metadata_enrichment()
+
     worker = threading.Thread(
-        target=store.perform_scan,
-        args=(scan_id, scan_folder, enrich_file),
+        target=perform,
         name=f"comicarr-scan-{scan_id}",
         daemon=True,
     )
@@ -1167,6 +1180,7 @@ def persist_remote_cache(snapshot: dict[str, Any]) -> None:
     }
     temporary = _REMOTE_CACHE_FILE.with_suffix(".tmp")
     try:
+        _REMOTE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(json.dumps(payload, ensure_ascii=False))
         os.replace(temporary, _REMOTE_CACHE_FILE)
     except OSError:
@@ -2913,6 +2927,212 @@ def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
     }
 
 
+class MetadataRateLimited(RuntimeError):
+    def __init__(self, provider: str, retry_after_seconds: int, message: str):
+        super().__init__(message)
+        self.provider = provider
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _rate_limit_from_error(provider: str, exc: Exception) -> MetadataRateLimited | None:
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code != 429:
+        return None
+    raw_retry = exc.headers.get("Retry-After") if exc.headers else None
+    try:
+        retry_after = max(60, int(raw_retry or 300))
+    except (TypeError, ValueError):
+        retry_after = 300
+    return MetadataRateLimited(
+        provider, retry_after,
+        f"{PROVIDER_DEFINITIONS.get(provider, {}).get('name', provider)} asked SonicBoom to pause.",
+    )
+
+
+def _series_enrichment_provider_order() -> list[tuple[str, dict[str, Any]]]:
+    """Prefer configured authenticated catalogs, retaining anonymous GCD as fallback."""
+    config = load_provider_config()
+    optional = [
+        (provider_id, values)
+        for provider_id, values in config.items()
+        if provider_id in {"metron", "comic_vine"} and values.get("enabled")
+    ]
+    optional.sort(key=lambda item: int(item[1].get("priority") or 99))
+    if (config.get("gcd") or {}).get("enabled", True):
+        optional.append(("gcd", config.get("gcd") or {}))
+    return optional
+
+
+def _apply_gcd_series_enrichment(series_run_id: int, context: dict[str, Any]) -> dict[str, Any]:
+    if context.get("gcdSeriesId"):
+        return sync_gcd_issue_catalog(series_run_id)
+    candidates = rank_gcd_series_runs(
+        context, _gcd_discovery_search_rows(str(context["title"])),
+    )
+    exact = [
+        candidate for candidate in candidates
+        if normalized_title(candidate.get("title")) == normalized_title(context.get("title"))
+        and candidate.get("fit") == "strong"
+    ]
+    if context.get("year"):
+        same_year = [candidate for candidate in exact if candidate.get("yearBegan") == context.get("year")]
+        exact = same_year or exact
+    if len(exact) != 1:
+        return {
+            "status": "review", "provider": "gcd", "candidateCount": len(exact),
+            "detail": "SonicBoom found no single high-confidence publication run and left the local grouping unchanged.",
+        }
+    candidate = exact[0]
+    provider_series_id = str(candidate["providerSeriesId"])
+    series = candidate["_series"]
+    entries, metadata = _hydrate_gcd_issue_entries_with_status(
+        _gcd_canonical_issue_entries(series), provider_series_id
+    )
+    if not entries:
+        return {
+            "status": "review", "provider": "gcd", "candidateCount": 1,
+            "detail": "The matching publication run did not contain a usable issue list.",
+        }
+    ended = _provider_year(candidate.get("yearEnded"))
+    status = "complete" if ended and ended <= time.gmtime().tm_year else "complete_to_date"
+    applied = catalog_store().apply_issue_list(
+        series_run_id, "gcd", provider_series_id, candidate.get("apiUrl") or "", entries,
+        status=status,
+        detail=f"Matched automatically during initial library enrichment with {len(entries)} known issues.",
+        source="initial import: exact title, year, publisher, and owned issue evidence",
+    )
+    return {"status": "complete", "provider": "gcd", "result": applied, "metadata": metadata}
+
+
+def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
+    """Enrich one canonical run, stopping after the first provider supplies a safe match."""
+    store = catalog_store()
+    context = store.get_series_sync_context(series_run_id)
+    errors: list[str] = []
+    deferred_limit: MetadataRateLimited | None = None
+    available_provider = False
+    for provider_id, values in _series_enrichment_provider_order():
+        if not store.metadata_provider_available(provider_id):
+            continue
+        available_provider = True
+        try:
+            if provider_id == "metron":
+                token = str(values.get("token") or "").strip()
+                if not token:
+                    continue
+                provider_series_id, api_url, entries = _metron_issue_entries(context, token)
+                result = store.apply_issue_list(
+                    series_run_id, provider_id, provider_series_id, api_url, entries,
+                    status="complete_to_date",
+                    detail=f"Matched automatically through Metron during initial library enrichment.",
+                    source="initial import: unambiguous title, year, and provider identifiers",
+                )
+            elif provider_id == "comic_vine":
+                api_key = str(values.get("apiKey") or "").strip()
+                if not api_key:
+                    continue
+                provider_series_id, api_url, entries = _comic_vine_issue_entries(context, api_key)
+                result = store.apply_issue_list(
+                    series_run_id, provider_id, provider_series_id, api_url, entries,
+                    status="complete_to_date",
+                    detail=f"Matched automatically through Comic Vine during initial library enrichment.",
+                    source="initial import: unambiguous title, year, and provider identifiers",
+                )
+            else:
+                outcome = _apply_gcd_series_enrichment(series_run_id, context)
+                if outcome["status"] == "review":
+                    store.record_metadata_provider_outcome("gcd", minimum_delay_seconds=15)
+                    if deferred_limit:
+                        break
+                    return outcome
+                result = outcome.get("result") or outcome
+            store.record_metadata_provider_outcome(
+                provider_id, minimum_delay_seconds=15 if provider_id == "gcd" else 3
+            )
+            return {"status": "complete", "provider": provider_id, "result": result}
+        except ValueError as exc:
+            # A provider can be healthy yet unable to disambiguate this one title.
+            # Keep trying fallbacks without globally cooling down that provider.
+            errors.append(f"{PROVIDER_DEFINITIONS[provider_id]['name']}: {exc}")
+        except Exception as exc:
+            limited = _rate_limit_from_error(provider_id, exc)
+            if limited:
+                store.record_metadata_provider_outcome(
+                    provider_id, str(limited), limited.retry_after_seconds
+                )
+                deferred_limit = limited
+                continue
+            message = str(exc)
+            store.record_metadata_provider_outcome(provider_id, message)
+            errors.append(f"{PROVIDER_DEFINITIONS[provider_id]['name']}: {message}")
+    if not available_provider:
+        raise MetadataRateLimited("all", 60, "Metadata providers are cooling down.")
+    if deferred_limit:
+        raise deferred_limit
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return {
+        "status": "review", "provider": None,
+        "detail": "No provider returned one unambiguous series match.",
+    }
+
+
+def run_metadata_enrichment_job(job: dict[str, Any]) -> dict[str, Any]:
+    store = catalog_store()
+    job_id = int(job["id"])
+    try:
+        outcome = enrich_catalog_series(int(job["series_run_id"]))
+    except MetadataRateLimited as exc:
+        store.finish_metadata_enrichment_job(
+            job_id, "waiting", exc.provider, str(exc), exc.retry_after_seconds
+        )
+        return {"status": "waiting", "provider": exc.provider}
+    except Exception as exc:
+        attempts = int(job.get("attempt_count") or 1)
+        status = "waiting" if attempts < 3 else "failed"
+        store.finish_metadata_enrichment_job(
+            job_id, status, error=str(exc), retry_after_seconds=min(3600, 60 * (2 ** attempts))
+        )
+        return {"status": status, "error": str(exc)}
+    status = str(outcome.get("status") or "review")
+    store.finish_metadata_enrichment_job(
+        job_id, "complete" if status == "complete" else "review",
+        outcome.get("provider"), outcome.get("detail"),
+    )
+    return outcome
+
+
+def metadata_enrichment_worker(stop_event: threading.Event = _ENRICHMENT_STOP) -> None:
+    """Process at most one series at a time; durable state handles restarts and cooldowns."""
+    store = catalog_store()
+    store.resume_metadata_enrichment()
+    store.enqueue_metadata_enrichment()
+    while not stop_event.is_set():
+        providers = [provider_id for provider_id, _values in _series_enrichment_provider_order()]
+        if providers and not any(store.metadata_provider_available(provider_id) for provider_id in providers):
+            stop_event.wait(5)
+            continue
+        job = store.claim_metadata_enrichment_job()
+        if not job:
+            stop_event.wait(5)
+            continue
+        run_metadata_enrichment_job(job)
+        stop_event.wait(1)
+
+
+def start_metadata_enrichment_worker() -> threading.Thread:
+    global _ENRICHMENT_THREAD
+    if _ENRICHMENT_THREAD and _ENRICHMENT_THREAD.is_alive():
+        return _ENRICHMENT_THREAD
+    _ENRICHMENT_STOP.clear()
+    _ENRICHMENT_THREAD = threading.Thread(
+        target=metadata_enrichment_worker,
+        name="sonicboom-metadata-coordinator",
+        daemon=True,
+    )
+    _ENRICHMENT_THREAD.start()
+    return _ENRICHMENT_THREAD
+
+
 def assess_identity_confidence(
     parsed: ParsedFile,
     embedded: dict[str, Any],
@@ -4392,6 +4612,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
     load_persisted_remote_cache()
+    start_metadata_enrichment_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Comic Metadata POC running at http://{args.host}:{args.port}")
     try:
@@ -4399,6 +4620,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        _ENRICHMENT_STOP.set()
         server.server_close()
 
 

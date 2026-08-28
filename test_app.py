@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import Handler, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, extract_issue_coverage, file_cover_info, find_archive_cover_member, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import Handler, MetadataRateLimited, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -33,6 +33,41 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(result["source_status"]["external_metadata"], "deferred during fast library inventory")
         gcd.assert_not_called()
         open_library.assert_not_called()
+
+    def test_metadata_job_respects_provider_retry_after(self):
+        store = Mock()
+        job = {"id": 8, "series_run_id": 4, "attempt_count": 1}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.enrich_catalog_series",
+            side_effect=MetadataRateLimited("gcd", 180, "Provider asked SonicBoom to pause."),
+        ):
+            result = run_metadata_enrichment_job(job)
+
+        self.assertEqual(result, {"status": "waiting", "provider": "gcd"})
+        store.finish_metadata_enrichment_job.assert_called_once_with(
+            8, "waiting", "gcd", "Provider asked SonicBoom to pause.", 180
+        )
+
+    def test_series_enrichment_stops_after_first_provider_supplies_issue_list(self):
+        store = Mock()
+        store.get_series_sync_context.return_value = {
+            "title": "Example", "year": 2024, "publisher": "Example Press",
+            "metronSeriesId": None, "comicVineVolumeId": None,
+        }
+        store.metadata_provider_available.return_value = True
+        store.apply_issue_list.return_value = {"issueCount": 2, "provider": "metron"}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order",
+            return_value=[("metron", {"token": "secret"}), ("gcd", {})],
+        ), patch("app._metron_issue_entries", return_value=(
+            "42", "https://metron.cloud/series/42/",
+            [{"number": "1"}, {"number": "2"}],
+        )), patch("app._apply_gcd_series_enrichment") as gcd:
+            result = enrich_catalog_series(7)
+
+        self.assertEqual((result["status"], result["provider"]), ("complete", "metron"))
+        gcd.assert_not_called()
+        store.apply_issue_list.assert_called_once()
 
     def test_prowlarr_search_returns_safe_ranked_usenet_candidates(self):
         context = {

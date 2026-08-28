@@ -8,6 +8,37 @@ from catalog_store import CatalogStore
 
 
 class CatalogStoreTests(unittest.TestCase):
+    def test_initial_import_queues_one_durable_job_per_series_without_calling_it_a_fix(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comics = [root / "Example 001.cbz", root / "Example 002.cbz"]
+            for comic in comics:
+                comic.write_bytes(b"comic")
+            parsed = [
+                ParsedFile(str(comic), comic.name, ".cbz", "Example", issue=str(index), year=2024)
+                for index, comic in enumerate(comics, 1)
+            ]
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: parsed, lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": None, "file_cover": None,
+                "source_status": {"external_metadata": "deferred during fast library inventory"},
+            })
+
+            queued = store.enqueue_metadata_enrichment()
+            self.assertEqual(queued, {"queued": 1, "retained": 0})
+            catalog = store.catalog()
+            self.assertEqual(catalog["stats"]["needAttention"], 0)
+            self.assertEqual(catalog["enrichment"]["active"], 1)
+
+            job = store.claim_metadata_enrichment_job()
+            self.assertEqual(job["canonical_title"], "Example")
+            store.finish_metadata_enrichment_job(int(job["id"]), "complete", "metron")
+            reopened = CatalogStore(root / "catalog.db")
+            self.assertEqual(reopened.metadata_enrichment_summary()["complete"], 1)
+
     def test_damaged_volume_can_be_requested_and_cancelled_as_a_replacement(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

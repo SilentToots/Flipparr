@@ -118,12 +118,34 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .page-actions { display: flex; gap: 9px; }
 .scan-progress, .success-banner, .backend-banner { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: .8rem; display: flex; align-items: center; gap: 9px; overflow: hidden; position: relative; }
 .scan-progress { background: #17142a; color: #c8bfff; }
+.scan-progress > span { display: grid; gap: 2px; }
+.scan-progress strong { color: var(--text); font-size: .8rem; }
+.scan-progress small { color: var(--muted); font-size: .7rem; }
+.scan-progress > b { margin-left: auto; color: #c8bfff; font-size: .74rem; }
 .scan-progress i { position: absolute; bottom: 0; left: 0; height: 2px; width: 40%; background: #9377ff; animation: scanning 1.2s ease-in-out infinite alternate; }
+.scan-progress.determinate i { animation: none; transition: width .3s ease; }
 .success-banner { background: var(--green-soft); color: #a9eaba; }
 .backend-banner { background: var(--amber-soft); color: #f2c871; }
 @keyframes scanning { from { transform: translateX(-20%); } to { transform: translateX(190%); } }
 
 .stat-strip { min-height: 98px; border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: repeat(4, 1fr); background: #0f141d; }
+.metadata-setup-status { margin-bottom: 14px; min-height: 66px; padding: 13px 16px; border: 1px solid #2a3a52; border-radius: var(--radius-sm); background: #111a28; display: grid; grid-template-columns: auto 1fr minmax(120px, 22%); align-items: center; gap: 12px; }
+.metadata-setup-status.active { border-color: #4c3d7b; background: #17152a; }
+.metadata-setup-status.review { border-color: #5a4723; background: #211b12; }
+.metadata-setup-status.complete { border-color: #28563a; background: #112319; }
+.metadata-setup-icon { width: 36px; height: 36px; border-radius: 50%; color: #bca9ff; background: rgba(139,92,246,.14); display: grid; place-items: center; }
+.metadata-setup-copy { min-width: 0; display: grid; gap: 4px; }
+.metadata-setup-status strong { color: var(--text); font-size: .92rem; }
+.metadata-setup-status small { color: var(--muted); line-height: 1.35; }
+.metadata-setup-copy details { margin-top: 2px; width: fit-content; max-width: 100%; }
+.metadata-setup-copy summary { color: #aa9bf1; cursor: pointer; font-size: .72rem; list-style-position: inside; }
+.metadata-progress-details { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.metadata-progress-details span { padding: 5px 8px; border: 1px solid rgba(159,141,240,.22); border-radius: 6px; color: var(--muted); background: rgba(7,11,18,.3); font-size: .68rem; }
+.metadata-progress-details b { margin-right: 3px; color: var(--text); font-size: inherit; }
+.metadata-setup-meter { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 9px; }
+.metadata-setup-meter > b { min-width: 34px; color: #c8bfff; font-size: .78rem; text-align: right; }
+.metadata-setup-progress { height: 6px; overflow: hidden; border-radius: 999px; background: #293344; }
+.metadata-setup-progress i { display: block; height: 100%; border-radius: inherit; background: #8b5cf6; transition: width .35s ease; }
 .stat { display: flex; align-items: center; gap: 14px; padding: 20px 24px; position: relative; }
 .stat + .stat::before { content: ""; position: absolute; left: 0; top: 22px; bottom: 22px; width: 1px; background: var(--line); }
 .stat > div { display: grid; gap: 3px; }
@@ -931,6 +953,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .discovery-grid { grid-template-columns: 1fr; }
   .discovery-results-page .discovery-result { border-right: 0; }
   .page-header { align-items: flex-start; flex-direction: column; padding-top: 26px; min-height: 100px; }
+  .metadata-setup-status { grid-template-columns: auto 1fr; }
+  .metadata-setup-meter { grid-column: 1 / -1; width: 100%; }
   .stat-strip { grid-template-columns: 1fr 1fr; }
   .stat { padding: 16px; }
   .stat + .stat::before { display: none; }

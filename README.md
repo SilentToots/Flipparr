@@ -6,6 +6,8 @@ The repository now also contains the first functional V1 shell: a persistent cat
 
 The catalog stores its local database at `.data/comicarr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
 
+Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. SonicBoom then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. Successful remote responses are cached for seven days under the configured database directory. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
+
 ## Acquisition services
 
 Prowlarr and SABnzbd are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The the NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
