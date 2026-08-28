@@ -105,6 +105,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .primary-button:hover:not(:disabled) { background: #8064e4; transform: translateY(-1px); }
 .primary-button:disabled { opacity: .64; cursor: default; }
 .primary-button.loading svg { animation: spin 1s linear infinite; }
+.spin { animation: spin .9s linear infinite; transform-origin: center; }
 .secondary-button { color: #d8dcf0; background: #222a3b; border: 1px solid #343e51; }
 .secondary-button:hover { background: #2a3448; }
 .ghost-button { background: transparent; border: 1px solid var(--line-strong); color: var(--muted-strong); }
