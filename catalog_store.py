@@ -3248,6 +3248,7 @@ class CatalogStore:
                     """SELECT provider, next_allowed_at, last_error
                        FROM metadata_provider_state
                        WHERE next_allowed_at IS NOT NULL AND next_allowed_at>?
+                         AND last_error IS NOT NULL
                        ORDER BY next_allowed_at""",
                     (_utc_now(),),
                 )

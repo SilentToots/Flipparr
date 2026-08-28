@@ -216,7 +216,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .series-identity small { color: #a5afbd; font-size: .77rem; }
 .series-identity .tag-line { min-height: 20px; display: flex; align-items: center; gap: 7px; color: #697587; }
 .series-identity .tag-line small { color: #697587; }
-.publication-status { display: inline-flex; align-items: center; justify-content: center; width: fit-content; height: 20px; min-height: 20px; box-sizing: border-box; padding: 2px 7px 0; border-radius: 999px; font-size: .65rem; font-weight: 750; line-height: 1; }
+.publication-status { display: inline-flex; align-items: center; justify-content: center; width: fit-content; height: 20px; min-height: 20px; box-sizing: border-box; padding: 0 7px; border-radius: 999px; font-size: .65rem; font-weight: 750; line-height: normal; }
 .publication-status.ongoing { border: 1px solid #59499a; background: #2b2349; color: #c5b6ff; }
 .publication-status.completed { border: 1px solid #35404f; background: #202936; color: #b8c2d0; }
 .publication-status.unknown { border: 1px solid #765c26; background: #332812; color: #e9c66d; }
@@ -472,7 +472,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .metadata-source-settings > header h2 { margin-bottom: 7px; }
 .metadata-source-settings > header p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.5; max-width: 680px; }
 .toggle-row, .provider-row { min-height: 67px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 20px; align-items: center; }
+.metadata-source-settings .provider-row { min-height: 86px; padding: 14px 0; align-items: flex-start; }
+.metadata-source-settings .provider-row > svg { flex: 0 0 auto; margin-top: 4px; }
+.metadata-source-settings .provider-row > button, .metadata-source-settings .provider-row > .provider-priority { flex: 0 0 auto; margin-top: 5px; }
 .toggle-row > span, .provider-row > span { display: grid; gap: 5px; flex: 1; }
+.metadata-source-settings .provider-row > span { gap: 7px; }
+.metadata-source-settings .provider-row small { line-height: 1.45; }
 .toggle-row small, .provider-row small { color: var(--muted); }
 .toggle-row input { position: absolute; opacity: 0; }
 .toggle-row > i { width: 40px; height: 23px; border-radius: 15px; background: #343d4c; position: relative; transition: background .15s; }

@@ -4120,11 +4120,36 @@ chooseButton.addEventListener('click', async () => {
 </body></html>"""
 
 
+def catalog_api_payload() -> dict[str, Any]:
+    """Add provider availability to the public catalog without exposing credentials."""
+    store = catalog_store()
+    payload = store.catalog()
+    enrichment = payload.get("enrichment") or {}
+    provider_ids = [provider_id for provider_id, _values in _series_enrichment_provider_order()]
+    cooldown_ids = {
+        str(item.get("provider"))
+        for item in (enrichment.get("providerCooldowns") or [])
+        if item.get("provider")
+    }
+    enrichment["enabledProviders"] = provider_ids
+    enrichment["availableProviders"] = [
+        provider_id for provider_id in provider_ids
+        if store.metadata_provider_available(provider_id)
+    ]
+    # Short success pacing delays are intentionally excluded from providerCooldowns.
+    # Only show a global pause when every enabled issue catalog has an active error.
+    enrichment["allProvidersCooling"] = bool(provider_ids) and all(
+        provider_id in cooldown_ids for provider_id in provider_ids
+    )
+    payload["enrichment"] = enrichment
+    return payload
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         if parsed_url.path == "/api/v1/catalog":
-            self.send_json(catalog_store().catalog())
+            self.send_json(catalog_api_payload())
             return
         if parsed_url.path == "/api/v1/providers":
             self.send_json(public_provider_config())

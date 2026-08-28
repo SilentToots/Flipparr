@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import Handler, MetadataRateLimited, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import Handler, MetadataRateLimited, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -68,6 +68,22 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual((result["status"], result["provider"]), ("complete", "metron"))
         gcd.assert_not_called()
         store.apply_issue_list.assert_called_once()
+
+    def test_catalog_pause_requires_every_enabled_provider_to_have_an_error_cooldown(self):
+        store = Mock()
+        store.catalog.return_value = {"enrichment": {
+            "providerCooldowns": [{"provider": "gcd", "error": "rate limited"}],
+        }}
+        store.metadata_provider_available.side_effect = lambda provider: provider != "gcd"
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order",
+            return_value=[("metron", {"token": "saved"}), ("comic_vine", {"apiKey": "saved"}), ("gcd", {})],
+        ):
+            result = catalog_api_payload()
+
+        enrichment = result["enrichment"]
+        self.assertFalse(enrichment["allProvidersCooling"])
+        self.assertEqual(enrichment["availableProviders"], ["metron", "comic_vine"])
 
     def test_prowlarr_search_returns_safe_ranked_usenet_candidates(self):
         context = {

@@ -294,13 +294,16 @@ function MetadataSetupStatus({ enrichment }) {
   const active = enrichment.active > 0;
   const current = enrichment.nextJobs?.find((job) => job.status === "running");
   const next = enrichment.nextJobs?.find((job) => ["queued", "waiting"].includes(job.status));
-  const cooldown = enrichment.providerCooldowns?.[0];
-  const paused = active && !current && enrichment.waiting > 0 && Boolean(cooldown);
+  const cooldowns = enrichment.providerCooldowns || [];
+  const cooldown = cooldowns[0];
+  const paused = active && !current && enrichment.waiting > 0 && enrichment.allProvidersCooling === true;
+  const degraded = active && !paused && cooldowns.length > 0;
   const providerName = METADATA_PROVIDER_LABELS[cooldown?.provider] || cooldown?.provider || "The metadata service";
   const retryTime = cooldown?.nextRetryAt
     ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(cooldown.nextRetryAt))
     : null;
-  const workingLabel = current ? `Checking ${current.title}` : enrichment.waiting && !enrichment.queued ? "Waiting for a metadata service; retrying automatically" : next ? `${next.title} is next` : "Preparing the next series";
+  const availableProviderNames = (enrichment.availableProviders || []).map((provider) => METADATA_PROVIDER_LABELS[provider] || provider);
+  const workingLabel = current ? `Checking ${current.title}` : degraded ? `Continuing with ${availableProviderNames.join(" and ") || "other available sources"}` : enrichment.waiting && !enrichment.queued ? "Retrying unresolved series automatically" : next ? `${next.title} is next` : "Preparing the next series";
   const heading = paused ? "Metadata lookup is paused temporarily" : active ? "Building your comic details in the background" : enrichment.review ? "Initial metadata check finished" : "Comic details are ready";
   const detail = paused
     ? `${processed} of ${enrichment.total} series checked · ${providerName} is limiting requests${retryTime ? ` until ${retryTime}` : ""}`
@@ -309,7 +312,15 @@ function MetadataSetupStatus({ enrichment }) {
     : enrichment.review
       ? `${enrichment.complete} series identified automatically · ${enrichment.review} need a match review`
       : `${enrichment.complete} series identified automatically`;
-  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review ? "review" : "complete"}`} aria-live="polite"><span className="metadata-setup-icon">{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <SpinnerGap className="spin" size={21} /> : enrichment.review ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{paused ? <p className="metadata-pause-detail">{cooldown.error || `${providerName} asked SonicBoom to wait before making more requests.`}</p> : null}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
+  const providerNotices = cooldowns.map((item) => {
+    const name = METADATA_PROVIDER_LABELS[item.provider] || item.provider;
+    const authenticationError = /(?:401|unauthori[sz]ed|authentication|credentials?)/i.test(item.error || "");
+    const time = item.nextRetryAt ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(item.nextRetryAt)) : null;
+    return authenticationError
+      ? `${name} rejected its saved credentials. Reconnect it under Settings → Metadata services.`
+      : `${name} is temporarily paused${time ? ` until ${time}` : ""}.`;
+  });
+  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review ? "review" : "complete"}`} aria-live="polite"><span className="metadata-setup-icon">{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <SpinnerGap className="spin" size={21} /> : enrichment.review ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
 }
 
 function Ownership({ series }) {
