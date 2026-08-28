@@ -67,6 +67,7 @@ _ACQUISITION_CONFIG_LOCK = threading.Lock()
 _RELEASE_CANDIDATE_LOCK = threading.Lock()
 _RELEASE_CANDIDATES: dict[str, dict[str, Any]] = {}
 _RELEASE_CANDIDATE_TTL_SECONDS = 30 * 60
+NZB_MAX_BYTES = 25 * 1024 * 1024
 _REMOTE_JSON_CACHE: dict[str, Any] = {}
 _REMOTE_JSON_INFLIGHT: dict[str, threading.Event] = {}
 _REMOTE_JSON_LOCK = threading.Lock()
@@ -294,6 +295,58 @@ def fetch_json_with_headers(url: str, headers: dict[str, str], timeout: float = 
         return json.load(response)
 
 
+def fetch_bytes_with_headers(
+    url: str,
+    headers: dict[str, str],
+    *,
+    timeout: float = 30.0,
+    max_bytes: int = NZB_MAX_BYTES,
+) -> bytes:
+    """Fetch a bounded binary response so an upstream cannot exhaust local memory."""
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = response.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise ValueError(f"Downloaded NZB exceeds the {max_bytes // (1024 * 1024)} MB safety limit")
+    return payload
+
+
+def post_multipart_file_json(
+    url: str,
+    *,
+    field_name: str,
+    filename: str,
+    content: bytes,
+    content_type: str,
+    headers: dict[str, str],
+    timeout: float = 30.0,
+) -> Any:
+    """Upload one in-memory file and decode the JSON response."""
+    boundary = f"----SonicBoom{os.urandom(12).hex()}"
+    safe_field = re.sub(r"[^A-Za-z0-9_-]", "", field_name) or "name"
+    source_name = Path(filename)
+    safe_stem = _safe_path_component(source_name.stem, "comic")[:170]
+    safe_suffix = source_name.suffix.casefold() if source_name.suffix else ".bin"
+    safe_filename = f"{safe_stem}{safe_suffix}"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{safe_field}"; filename="{safe_filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode("ascii")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            **headers,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body)),
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
 def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
     if provider_id not in {"metron", "comic_vine"}:
@@ -506,6 +559,103 @@ def _release_format_tags(title: Any) -> list[str]:
     return tags
 
 
+class ReleaseDownloadError(RuntimeError):
+    """Prowlarr could not provide a safe, valid NZB for a selected release."""
+
+
+class SABSubmissionError(RuntimeError):
+    """SABnzbd could not accept an NZB that SonicBoom already retrieved."""
+
+
+def _prowlarr_download_reference(download_url: Any) -> str:
+    """Retain only the Prowlarr-local path and non-credential query parameters."""
+    parsed = urllib.parse.urlsplit(str(download_url or "").strip())
+    if parsed.scheme and parsed.scheme.casefold() not in {"http", "https"}:
+        raise ValueError("Prowlarr returned an unsupported release download URL")
+    if not parsed.path.startswith("/"):
+        raise ValueError("Prowlarr returned an invalid release download URL")
+    query = urllib.parse.urlencode([
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        if key.casefold() not in {"apikey", "api_key"}
+    ])
+    return urllib.parse.urlunsplit(("", "", parsed.path, query, ""))
+
+
+def _fetch_selected_nzb(candidate: dict[str, Any]) -> bytes:
+    """Retrieve and validate the selected NZB through the configured Prowlarr service."""
+    prowlarr = _enabled_acquisition_service("prowlarr")
+    reference = urllib.parse.urlsplit(str(candidate.get("downloadPath") or ""))
+    base = urllib.parse.urlsplit(str(prowlarr["url"]))
+    endpoint = urllib.parse.urlunsplit((
+        base.scheme, base.netloc, reference.path, reference.query, "",
+    ))
+    try:
+        payload = fetch_bytes_with_headers(
+            endpoint,
+            {
+                "Accept": "application/x-nzb, application/xml;q=0.9, */*;q=0.1",
+                "X-Api-Key": str(prowlarr["apiKey"]),
+                "User-Agent": "SonicBoom/1.0",
+            },
+            timeout=45.0,
+            max_bytes=NZB_MAX_BYTES,
+        )
+    except urllib.error.HTTPError as exc:
+        detail = (
+            "Prowlarr rejected the NZB request"
+            if exc.code in {401, 403}
+            else f"Prowlarr could not fetch the NZB ({exc.code})"
+        )
+        raise ReleaseDownloadError(detail) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise ReleaseDownloadError("SonicBoom could not retrieve the NZB from Prowlarr") from exc
+    except ValueError as exc:
+        raise ReleaseDownloadError(str(exc)) from exc
+    if not payload.strip():
+        raise ReleaseDownloadError("Prowlarr returned an empty NZB")
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise ReleaseDownloadError("Prowlarr returned a response that is not a valid NZB") from exc
+    if root.tag.rsplit("}", 1)[-1].casefold() != "nzb":
+        raise ReleaseDownloadError("Prowlarr returned a response that is not an NZB document")
+    return payload
+
+
+def _submit_nzb_to_sabnzbd(
+    sab: dict[str, Any], title: str, payload: bytes
+) -> dict[str, Any]:
+    endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+        "mode": "addfile", "nzbname": title,
+        "cat": str(sab.get("category") or "comics"),
+        "priority": -100, "pp": -1, "output": "json", "apikey": sab["apiKey"],
+    })
+    filename = f"{_safe_path_component(title, 'comic')}.nzb"
+    try:
+        response = post_multipart_file_json(
+            endpoint,
+            field_name="name",
+            filename=filename,
+            content=payload,
+            content_type="application/x-nzb",
+            headers={"Accept": "application/json", "User-Agent": "SonicBoom/1.0"},
+            timeout=30.0,
+        )
+    except urllib.error.HTTPError as exc:
+        detail = (
+            "SABnzbd rejected the upload"
+            if exc.code in {401, 403}
+            else f"SABnzbd upload failed ({exc.code})"
+        )
+        raise SABSubmissionError(detail) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise SABSubmissionError("SonicBoom could not reach SABnzbd") from exc
+    if not isinstance(response, dict) or not response.get("status"):
+        raise SABSubmissionError("SABnzbd did not accept the uploaded NZB")
+    return response
+
+
 def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
     """Search one wanted issue and return credential-free release summaries."""
     store = catalog_store()
@@ -539,13 +689,19 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
             download_url = str(release.get("downloadUrl") or "").strip()
             if protocol != "usenet" or not title or not download_url:
                 continue
+            try:
+                download_path = _prowlarr_download_reference(download_url)
+            except ValueError:
+                continue
             score, reasons = _release_candidate_score(release, context)
             if score < 85:
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
             candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
             _RELEASE_CANDIDATES[candidate_id] = {
-                "jobId": int(job_id), "downloadUrl": download_url, "title": title,
+                "jobId": int(job_id),
+                "downloadPath": download_path,
+                "title": title,
                 "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
             }
             candidates.append({
@@ -568,7 +724,7 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
 
 
 def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
-    """Send a cached Prowlarr result to SABnzbd without exposing its URL to the browser."""
+    """Fetch a selected NZB privately, validate it, and upload the file to SABnzbd."""
     now = time.time()
     with _RELEASE_CANDIDATE_LOCK:
         candidate = _RELEASE_CANDIDATES.get(candidate_id)
@@ -576,20 +732,12 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
                 or float(candidate.get("expiresAt") or 0) <= now):
             _RELEASE_CANDIDATES.pop(candidate_id, None)
             raise ValueError("This release result expired; search again")
+    nzb_payload = _fetch_selected_nzb(candidate)
     sab = _enabled_acquisition_service("sabnzbd")
-    endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
-        "mode": "addurl", "name": candidate["downloadUrl"],
-        "nzbname": candidate["title"], "cat": str(sab.get("category") or "comics"),
-        "priority": -100, "pp": -1, "output": "json", "apikey": sab["apiKey"],
-    })
-    payload = fetch_json_with_headers(
-        endpoint, {"Accept": "application/json", "User-Agent": "Comicarr/1.0"}, timeout=30.0
-    )
-    if not isinstance(payload, dict) or not payload.get("status"):
-        raise ValueError("SABnzbd did not accept this release")
+    payload = _submit_nzb_to_sabnzbd(sab, str(candidate["title"]), nzb_payload)
     queue_ids = [str(value) for value in (payload.get("nzo_ids") or [])]
     if not queue_ids:
-        raise ValueError("SABnzbd accepted the release but did not return a queue ID")
+        raise SABSubmissionError("SABnzbd accepted the NZB but did not return a queue ID")
     detail = f"Sent to SABnzbd: {candidate['title']}"
     store = catalog_store()
     store.record_acquisition_download(job_id, queue_ids[0], candidate["title"])
@@ -4404,13 +4552,13 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
-            except urllib.error.HTTPError as exc:
-                message = "SABnzbd rejected the request" if exc.code in {401, 403} else f"SABnzbd request failed ({exc.code})"
+            except ReleaseDownloadError as exc:
+                message = str(exc)
                 catalog_store().update_acquisition_job(job_id, "failed", message)
                 self.send_json({"error": message}, 502)
                 return
-            except (urllib.error.URLError, TimeoutError):
-                message = "Could not reach SABnzbd"
+            except SABSubmissionError as exc:
+                message = str(exc)
                 catalog_store().update_acquisition_job(job_id, "failed", message)
                 self.send_json({"error": message}, 502)
                 return

@@ -1,3 +1,4 @@
+import io
 import tempfile
 import threading
 import unittest
@@ -7,7 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import Handler, MetadataRateLimited, PAGE, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -128,33 +129,47 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(candidate["formatTags"], ["Digital", "English"])
         self.assertNotIn("downloadUrl", candidate)
         self.assertNotIn("secret", str(result))
+        cached = _RELEASE_CANDIDATES[candidate["id"]]
+        self.assertEqual(cached["downloadPath"], "/api/v1/download")
+        self.assertNotIn("secret", str(cached))
         requested_url = fetch.call_args.args[0]
         self.assertIn("categories=7030", requested_url)
         self.assertEqual(fetch.call_args.args[1]["X-Api-Key"], "secret")
         self.assertEqual(store.update_acquisition_job.call_args_list[0].args[1], "searching")
         self.assertEqual(store.update_acquisition_job.call_args_list[-1].args[1], "queued")
 
-    def test_sabnzbd_grab_uses_cached_release_without_exposing_its_url(self):
+    def test_sabnzbd_grab_fetches_nzb_privately_and_uploads_a_clean_file(self):
         _RELEASE_CANDIDATES["candidate"] = {
-            "jobId": 12, "downloadUrl": "http://prowlarr/download?apikey=secret",
+            "jobId": 12, "downloadPath": "/9/download?id=42",
             "title": "Absolute Batman 004", "expiresAt": 9_999_999_999,
         }
         store = Mock()
         store.update_acquisition_job.return_value = {"id": "12", "status": "grabbed"}
         with patch("app.catalog_store", return_value=store), patch(
             "app.load_acquisition_service_config", return_value={
-                "sabnzbd": {"enabled": True, "url": "http://sab", "apiKey": "sab-secret", "category": "comics"}
+                "prowlarr": {"enabled": True, "url": "http://prowlarr:9696", "apiKey": "prowlarr-secret"},
+                "sabnzbd": {"enabled": True, "url": "http://sab", "apiKey": "sab-secret", "category": "comics"},
             }
-        ), patch("app.fetch_json_with_headers", return_value={
+        ), patch("app.fetch_bytes_with_headers", return_value=(
+            b'<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>'
+        )) as fetch, patch("app.post_multipart_file_json", return_value={
             "status": True, "nzo_ids": ["queue-id"]
-        }) as fetch:
+        }) as upload:
             result = send_release_to_sabnzbd(12, "candidate")
 
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(fetch.call_args.args[0]).query)
-        self.assertEqual(query["mode"], ["addurl"])
-        self.assertEqual(query["name"], ["http://prowlarr/download?apikey=secret"])
+        self.assertEqual(fetch.call_args.args[0], "http://prowlarr:9696/9/download?id=42")
+        self.assertEqual(fetch.call_args.args[1]["X-Api-Key"], "prowlarr-secret")
+        upload_url = upload.call_args.args[0]
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(upload_url).query)
+        self.assertEqual(query["mode"], ["addfile"])
+        self.assertEqual(query["nzbname"], ["Absolute Batman 004"])
         self.assertEqual(query["cat"], ["comics"])
         self.assertEqual(query["apikey"], ["sab-secret"])
+        self.assertEqual(upload.call_args.kwargs["field_name"], "name")
+        self.assertEqual(upload.call_args.kwargs["filename"], "Absolute Batman 004.nzb")
+        self.assertTrue(upload.call_args.kwargs["content"].startswith(b"<?xml"))
+        self.assertNotIn("prowlarr", upload_url)
+        self.assertNotIn("prowlarr-secret", str(upload.call_args))
         self.assertEqual(result["status"], "grabbed")
         self.assertEqual(result["queueIds"], ["queue-id"])
         self.assertNotIn("secret", str(result))
@@ -163,6 +178,40 @@ class FilenameParserTests(unittest.TestCase):
         )
         store.update_acquisition_job.assert_called_once()
         self.assertNotIn("candidate", _RELEASE_CANDIDATES)
+
+    def test_sabnzbd_grab_rejects_a_non_nzb_before_upload(self):
+        _RELEASE_CANDIDATES["candidate"] = {
+            "jobId": 12, "downloadPath": "/9/download", "title": "Absolute Batman 004",
+            "expiresAt": 9_999_999_999,
+        }
+        with patch("app.load_acquisition_service_config", return_value={
+            "prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"},
+            "sabnzbd": {"enabled": True, "url": "http://sab", "apiKey": "secret"},
+        }), patch("app.fetch_bytes_with_headers", return_value=b"<html>Indexer error</html>"), patch(
+            "app.post_multipart_file_json"
+        ) as upload:
+            with self.assertRaisesRegex(ReleaseDownloadError, "not an NZB document"):
+                send_release_to_sabnzbd(12, "candidate")
+        upload.assert_not_called()
+
+    def test_multipart_nzb_upload_uses_the_sab_file_field(self):
+        with patch("app.urllib.request.urlopen", return_value=io.BytesIO(b'{"status": true}')) as open_url:
+            result = post_multipart_file_json(
+                "http://sab/api?mode=addfile",
+                field_name="name",
+                filename="Absolute Batman 004.nzb",
+                content=b"<nzb></nzb>",
+                content_type="application/x-nzb",
+                headers={"Accept": "application/json"},
+            )
+
+        request = open_url.call_args.args[0]
+        body = request.data
+        self.assertTrue(request.get_header("Content-type").startswith("multipart/form-data; boundary="))
+        self.assertIn(b'Content-Disposition: form-data; name="name"; filename="Absolute Batman 004.nzb"', body)
+        self.assertIn(b"Content-Type: application/x-nzb", body)
+        self.assertIn(b"<nzb></nzb>", body)
+        self.assertEqual(result, {"status": True})
 
     def test_sabnzbd_grab_rejects_an_unknown_candidate(self):
         with self.assertRaisesRegex(ValueError, "expired"):
@@ -763,6 +812,61 @@ class FilenameParserTests(unittest.TestCase):
                         library_root=library, completed_root=completed,
                     )
             self.assertEqual(list(library.rglob("*.cbz")), [])
+
+    def test_completed_sab_job_is_only_fulfilled_after_verified_library_import(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+            "release_title": "Saga.001.2012", "sab_storage": None,
+        }
+        store = Mock()
+        imported = {
+            "source": "/downloads/complete/comics/Saga.001.2012/Saga.001.2012.cbz",
+            "destination": "/comics/Image Comics/Saga (2012)/Saga (2012) #001 - Chapter One.cbz",
+            "size": 1234, "sha256": "abc123", "alreadyPresent": False,
+        }
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/Saga.001.2012",
+            },
+        ), patch("app.import_downloaded_comic", return_value=imported) as importer:
+            result = reconcile_acquisition_download(download)
+
+        self.assertEqual(result["status"], "imported")
+        importer.assert_called_once()
+        states = [call.args[1] for call in store.update_acquisition_download.call_args_list]
+        self.assertEqual(states, ["completed", "importing", "imported"])
+        store.update_acquisition_job.assert_called_once_with(
+            7, "fulfilled", "Imported and verified as Saga (2012) #001 - Chapter One.cbz"
+        )
+
+    def test_completed_sab_job_stays_failed_when_post_processing_fails(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+            "release_title": "Saga.001.2012", "sab_storage": None,
+        }
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/Saga.001.2012",
+            },
+        ), patch(
+            "app.import_downloaded_comic",
+            side_effect=ValueError("Downloaded archive did not match Saga #1"),
+        ):
+            result = reconcile_acquisition_download(download)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("did not match", result["error"])
+        self.assertEqual(
+            store.update_acquisition_download.call_args_list[-1].args[1], "failed"
+        )
+        store.update_acquisition_job.assert_called_once_with(
+            7,
+            "failed",
+            "Import needs attention: Downloaded archive did not match Saga #1",
+        )
 
     def test_segments_a_title_without_spaces(self):
         item = parse_filename(Path("strangetalentoflutherstrode_vol2.cbz"))
