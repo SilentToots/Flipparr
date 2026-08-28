@@ -288,10 +288,33 @@ function StatStrip({ stats }) {
   return <section className="stat-strip" aria-label="Library summary">{cards.map(({ icon: Icon, value, label, tone }) => <div className={`stat ${tone}`} key={label}><Icon size={27} weight="duotone" /><div><strong>{value}</strong><span>{label}</span></div></div>)}</section>;
 }
 
-function MetadataSetupStatus({ enrichment }) {
-  if (!enrichment?.total) return null;
+function MetadataSetupStatus({ enrichment, lastScanAt }) {
+  const active = (enrichment?.active ?? 0) > 0;
+  const completionSignature = enrichment?.total && !active
+    ? [lastScanAt || "initial", enrichment.total, enrichment.complete, enrichment.review, enrichment.failed].join(":")
+    : "";
+  const [dismissedSignature, setDismissedSignature] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("sonicboom.metadata-check-dismissed") || "";
+  });
+
+  useEffect(() => {
+    if (!active) return;
+    window.localStorage.removeItem("sonicboom.metadata-check-dismissed");
+    setDismissedSignature("");
+  }, [active]);
+
+  useEffect(() => {
+    if (!completionSignature || enrichment?.review || enrichment?.failed || dismissedSignature === completionSignature) return undefined;
+    const timer = window.setTimeout(() => {
+      window.localStorage.setItem("sonicboom.metadata-check-dismissed", completionSignature);
+      setDismissedSignature(completionSignature);
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [completionSignature, dismissedSignature, enrichment?.failed, enrichment?.review]);
+
+  if (!enrichment?.total || (!active && dismissedSignature === completionSignature)) return null;
   const processed = enrichment.complete + enrichment.review + enrichment.failed;
-  const active = enrichment.active > 0;
   const percent = active
     ? Math.min(99, Math.round((processed / enrichment.total) * 100))
     : 100;
@@ -336,7 +359,11 @@ function MetadataSetupStatus({ enrichment }) {
       ? `${name} rejected its saved credentials. Reconnect it under Settings → Metadata services.`
       : `${name} is temporarily paused${time ? ` until ${time}` : ""}.`;
   });
-  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review || enrichment.failed ? "review" : "complete"}`} aria-live="polite"><span className={`metadata-setup-icon${active && !paused ? " active-loader" : ""}`}>{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <BracketsRound className="metadata-loader-spin" size={25} weight="bold" aria-hidden="true" /> : enrichment.review || enrichment.failed ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
+  const dismiss = () => {
+    window.localStorage.setItem("sonicboom.metadata-check-dismissed", completionSignature);
+    setDismissedSignature(completionSignature);
+  };
+  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review || enrichment.failed ? "review settled" : "complete settled"}`} aria-live="polite"><span className={`metadata-setup-icon${active && !paused ? " active-loader" : ""}`}>{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <BracketsRound className="metadata-loader-spin" size={25} weight="bold" aria-hidden="true" /> : enrichment.review || enrichment.failed ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div>{active ? <div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div> : <button type="button" className="metadata-setup-dismiss" onClick={dismiss} aria-label="Dismiss metadata check summary" title="Dismiss"><X size={17} /></button>}</section>;
 }
 
 function Ownership({ series }) {
@@ -493,7 +520,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
       {!initialLoading ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
-      <MetadataSetupStatus enrichment={catalog?.enrichment} />
+      <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} />
       <StatStrip stats={{ ...(catalog?.stats ?? { files: series.reduce((count, item) => count + item.owned, 0), needAttention: 0, damaged: 0 }), series: series.length }} />
       <div className="library-tools"><div className="scope-toggle" aria-label="Choose catalog grouping"><button className={scope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={scope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div>{scope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select><option>Title (A–Z)</option><option>Recently added</option><option>Needs attention</option></select></label><button className="filter-button"><Funnel size={18} /> Filter series</button></div>
       {scope === "collections" ? (families.length ? <CollectionGroups families={families} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : series.length ? <SeriesList series={series} onOpen={(item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : <CatalogEmpty onAdd={() => onNavigate("add")} />}
