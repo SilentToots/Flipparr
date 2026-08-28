@@ -434,6 +434,23 @@ function DiscoveryResults({ query, results, state, error, provider, yearHint, bu
   </section>;
 }
 
+function LibraryLoadingSkeleton() {
+  return <div className="library-loading" role="status" aria-live="polite" aria-busy="true">
+    <section className="library-loading-message">
+      <span className="library-loading-icon"><SpinnerGap className="spin" size={21} /></span>
+      <span><strong>Loading your library…</strong><small>Bringing in your comic runs, covers, and collection status.</small></span>
+    </section>
+    <section className="library-loading-stats" aria-hidden="true">
+      {[0, 1, 2, 3].map((item) => <span key={item}><i /><b /></span>)}
+    </section>
+    <div className="library-loading-tools" aria-hidden="true"><i /><i /><i /></div>
+    <section className="library-loading-table" aria-hidden="true">
+      <header><i /><i /><i /><i /></header>
+      {[0, 1, 2, 3, 4].map((item) => <article key={item}><span className="library-loading-cover" /><span className="library-loading-copy"><i /><i /><i /></span><span className="library-loading-progress"><i /><i /></span><span className="library-loading-cell" /><span className="library-loading-cell short" /></article>)}
+    </section>
+  </div>;
+}
+
 function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus }) {
   const [query, setQuery] = useState("");
   const [view, setView] = useState("list");
@@ -441,16 +458,20 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const fallbackSeries = backendStatus === "offline" ? DEMO_SERIES : [];
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
+  const initialLoading = backendStatus === "loading" && !catalog;
   return (
     <>
       <div className="topbar"><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
       <PageHeader title="Your library" description="See what you own, what’s missing, and what needs your attention." />
+      {initialLoading ? <LibraryLoadingSkeleton /> : null}
+      {!initialLoading ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} />
       <StatStrip stats={{ ...(catalog?.stats ?? { files: series.reduce((count, item) => count + item.owned, 0), needAttention: 0, damaged: 0 }), series: series.length }} />
       <div className="library-tools"><div className="scope-toggle" aria-label="Choose catalog grouping"><button className={scope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={scope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div>{scope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select><option>Title (A–Z)</option><option>Recently added</option><option>Needs attention</option></select></label><button className="filter-button"><Funnel size={18} /> Filter series</button></div>
       {scope === "collections" ? (families.length ? <CollectionGroups families={families} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : series.length ? <SeriesList series={series} onOpen={(item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : <CatalogEmpty onAdd={() => onNavigate("add")} />}
       <AttentionPanel items={catalog?.inbox ?? []} onReview={() => onNavigate("metadata")} />
+      </> : null}
     </>
   );
 }
