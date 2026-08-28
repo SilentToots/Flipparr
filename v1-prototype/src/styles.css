@@ -136,7 +136,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .metadata-setup-status.review { border-color: #5a4723; background: #211b12; }
 .metadata-setup-status.complete { border-color: #28563a; background: #112319; }
 .metadata-setup-icon { width: 36px; height: 36px; border-radius: 50%; color: #bca9ff; background: rgba(139,92,246,.14); display: grid; place-items: center; }
-.metadata-setup-icon.active-loader { width: 44px; height: 44px; background: rgba(139,92,246,.12); }
+.metadata-setup-icon.active-loader { width: 44px; height: 44px; border: 4px solid rgba(188,169,255,.25); background: rgba(139,92,246,.06); }
 .metadata-loader-spin { animation: metadata-loader-spin .85s linear infinite; transform-origin: center; }
 @keyframes metadata-loader-spin { to { transform: rotate(360deg); } }
 .metadata-setup-copy { min-width: 0; display: grid; gap: 4px; }

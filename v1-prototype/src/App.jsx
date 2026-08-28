@@ -5,6 +5,7 @@ import {
   ArrowRight,
   BookOpen,
   Books,
+  BracketsRound,
   CaretDown,
   ChartLineUp,
   ChatCircle,
@@ -23,7 +24,6 @@ import {
   PencilSimple,
   Plus,
   ShieldCheck,
-  SpinnerBall,
   SpinnerGap,
   SquaresFour,
   UploadSimple,
@@ -332,7 +332,7 @@ function MetadataSetupStatus({ enrichment }) {
       ? `${name} rejected its saved credentials. Reconnect it under Settings → Metadata services.`
       : `${name} is temporarily paused${time ? ` until ${time}` : ""}.`;
   });
-  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review || enrichment.failed ? "review" : "complete"}`} aria-live="polite"><span className={`metadata-setup-icon${active && !paused ? " active-loader" : ""}`}>{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <SpinnerBall className="metadata-loader-spin" size={30} weight="bold" aria-hidden="true" /> : enrichment.review || enrichment.failed ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
+  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review || enrichment.failed ? "review" : "complete"}`} aria-live="polite"><span className={`metadata-setup-icon${active && !paused ? " active-loader" : ""}`}>{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <BracketsRound className="metadata-loader-spin" size={25} weight="bold" aria-hidden="true" /> : enrichment.review || enrichment.failed ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}. Your files and covers are already available.</small>{paused ? <small className="metadata-provider-help">SonicBoom will retry automatically. Adding or reconnecting Metron or Comic Vine under Settings → Metadata services can let intake continue with another catalog.</small> : degraded ? <small className="metadata-provider-help">One source needs attention, but SonicBoom is continuing with the other enabled metadata services.</small> : null}<details><summary>View progress details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}</details></div><div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div></section>;
 }
 
 function Ownership({ series }) {
