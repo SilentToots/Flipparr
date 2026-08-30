@@ -164,9 +164,9 @@ are defined. CI now includes a clean-install smoke test covering readiness,
 non-root execution, repeatable migrations, verified backup creation, and state
 survival after container replacement. The complete pull-request workflow passed
 on August 30, 2026 with Python 3.13, 188 repository tests, the image build, and
-the container smoke test. Gate 1 remains open only until PR #1 is merged and the
-same required workflow passes on `main`; it is not deployed over the live V1
-installation. See `docs/V2_RELEASE_FOUNDATION.md`.
+the container smoke test. PR #1 was merged and the same workflow passed on
+`main` in run 33315695668, closing Gate 1. V2 is still isolated and has not been
+deployed over the live V1 installation. See `docs/V2_RELEASE_FOUNDATION.md`.
 
 ### Gate 2 — Catalog correctness
 
@@ -180,8 +180,10 @@ relationships, resumable provider-import coordinator, recorded provider fixture,
 versioned GCD local-export adapter, redacted progress telemetry, scheduler
 wake-up contract, and executable golden-manifest comparison contract are
 complete and locally tested. The bounded, versioned GCD extractor is implemented
-and verified against a current-schema contract fixture. Gate 2 remains open:
-real-snapshot GCD extraction, authenticated Metron/Comic Vine adapters,
+and verified against a current-schema contract fixture. A fail-closed,
+redacted real-snapshot evidence harness is also implemented, but has not yet
+been executed against an authenticated real GCD dump. Gate 2 remains open:
+real-snapshot GCD evidence, authenticated Metron/Comic Vine adapters,
 production scheduling, evidence resolution, clean inventory, real fixture
 projections, and the NAS shadow results are not yet complete. See
 `docs/GATE_2_CATALOG_CONTRACT.md` and `docs/PROVIDER_IMPORT_V2.md`.
