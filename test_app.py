@@ -1530,6 +1530,14 @@ class FilenameParserTests(unittest.TestCase):
         item = parse_filename(Path("lockeandkey_heavenandearth_headgames.epub"))
         self.assertEqual(item.title, "locke and key heaven and earth head games")
 
+    def test_compound_segmentation_does_not_read_a_host_dictionary(self):
+        with patch.object(Path, "read_text", side_effect=AssertionError("host dictionary read")):
+            birthright = parse_filename(Path("Birthright 0006 (2015).cbz"))
+            head_games = parse_filename(Path("lockeandkey_headgames.epub"))
+
+        self.assertEqual(birthright.title, "Birthright")
+        self.assertEqual(head_games.title, "locke and key head games")
+
     def test_batch_enrichment_uses_bounded_parallel_workers_and_preserves_order(self):
         files = [parse_filename(Path(f"Book Vol {number}.cbz")) for number in range(1, 5)]
         barrier = threading.Barrier(4)

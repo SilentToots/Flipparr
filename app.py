@@ -1567,28 +1567,17 @@ def find_isbn(value: str) -> re.Match[str] | None:
     return None
 
 
-_FALLBACK_SEGMENT_WORDS = {
-    "a", "and", "batman", "bastards", "birth", "earth", "heaven", "key", "locke",
-    "luther", "of", "right", "southern", "strange", "strode", "talent", "the",
-}
-_SEGMENT_WORDS: set[str] | None = None
+SEGMENTATION_LEXICON_VERSION = 1
+_SEGMENT_WORDS = frozenset({
+    "a", "and", "bastards", "batman", "birth", "birthright", "earth", "game",
+    "head", "heaven", "key", "locke", "luther", "of", "right", "southern",
+    "strange", "strode", "talent", "the",
+})
 
 
-def segmentation_words() -> set[str]:
-    global _SEGMENT_WORDS
-    if _SEGMENT_WORDS is not None:
-        return _SEGMENT_WORDS
-    words = set(_FALLBACK_SEGMENT_WORDS)
-    for dictionary_path in (Path("/usr/share/dict/words"), Path("/usr/share/dict/propernames")):
-        try:
-            words.update(
-                value.lower() for value in dictionary_path.read_text(errors="ignore").splitlines()
-                if value.isalpha()
-            )
-        except OSError:
-            continue
-    _SEGMENT_WORDS = words
-    return words
+def segmentation_words() -> frozenset[str]:
+    """Return the versioned, platform-independent filename segmentation lexicon."""
+    return _SEGMENT_WORDS
 
 
 def split_compound_token(token: str) -> str:
