@@ -162,9 +162,11 @@ migration safeguards, durable leases, health endpoints, structured logging, and
 verified online-backup skeleton are complete. CI and the isolated V2 Dockerfile
 are defined. CI now includes a clean-install smoke test covering readiness,
 non-root execution, repeatable migrations, verified backup creation, and state
-survival after container replacement. Gate 1 remains open until that workflow
-passes; it is not deployed over the live V1 installation. See
-`docs/V2_RELEASE_FOUNDATION.md`.
+survival after container replacement. The complete pull-request workflow passed
+on August 30, 2026 with Python 3.13, 188 repository tests, the image build, and
+the container smoke test. Gate 1 remains open only until PR #1 is merged and the
+same required workflow passes on `main`; it is not deployed over the live V1
+installation. See `docs/V2_RELEASE_FOUNDATION.md`.
 
 ### Gate 2 — Catalog correctness
 
