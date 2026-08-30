@@ -1,4 +1,5 @@
 import datetime as dt
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,58 @@ from catalog_store import CatalogStore
 
 
 class CatalogStoreTests(unittest.TestCase):
+    def test_operation_context_releases_its_sqlite_connection(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            connection = store._connect()
+
+            with connection:
+                self.assertEqual(connection.execute("SELECT 1").fetchone()[0], 1)
+
+            with self.assertRaisesRegex(sqlite3.ProgrammingError, "closed database"):
+                connection.execute("SELECT 1")
+
+    def test_library_roots_can_be_managed_without_changing_comic_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            first = base / "comics"
+            second = base / "archive"
+            first.mkdir()
+            second.mkdir()
+            comic = first / "Example 001.cbz"
+            comic.write_bytes(b"comic")
+            store = CatalogStore(base / "catalog.db")
+
+            first_scan = store.begin_scan(str(first), True)
+            store.perform_scan(first_scan, lambda *_: [
+                ParsedFile(str(comic), comic.name, ".cbz", "Example", issue="1")
+            ], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": None, "file_cover": None,
+            })
+            second_id = store.register_root(str(second), False)
+            updated = store.update_root(second_id, True)
+            self.assertEqual(updated["recursive"], 1)
+
+            first_id = next(root["id"] for root in store.catalog()["roots"] if Path(root["path"]) == first.resolve())
+            removed = store.remove_root(first_id)
+            self.assertEqual(removed["removedFileRecords"], 1)
+            self.assertFalse(removed["filesChanged"])
+            self.assertTrue(comic.exists())
+            self.assertEqual([Path(root["path"]) for root in store.catalog()["roots"]], [second.resolve()])
+
+    def test_library_roots_reject_overlapping_folders(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "comics"
+            child = root / "publisher"
+            child.mkdir(parents=True)
+            store = CatalogStore(Path(folder) / "catalog.db")
+            store.register_root(str(root), True)
+
+            with self.assertRaisesRegex(ValueError, "cannot overlap"):
+                store.register_root(str(child), True)
+
     def test_verified_acquisition_import_uses_request_identity_instead_of_filename_guess(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -98,6 +151,481 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertIn("asked SonicBoom to pause", cooldown["error"])
             self.assertIsNotNone(cooldown["nextRetryAt"])
 
+    def test_same_title_provider_runs_remain_distinct_and_are_retry_safe(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            first = store.ensure_provider_series_run(
+                "gcd", "137831", "Farmhand", 2018, "Image"
+            )
+            store.apply_issue_list(
+                int(first["id"]), "gcd", "137831",
+                "https://www.comics.org/api/series/137831/",
+                [{"number": "1", "provider_id": "210001", "title": "The Farm"}],
+            )
+
+            second = store.ensure_provider_series_run(
+                "gcd", "230002", "Farmhand", 2025, "Image"
+            )
+            self.assertNotEqual(first["id"], second["id"])
+            store.apply_issue_list(
+                int(second["id"]), "gcd", "230002",
+                "https://www.comics.org/api/series/230002/",
+                [{"number": "1", "provider_id": "310001", "title": "New Growth"}],
+            )
+
+            retried = store.ensure_provider_series_run(
+                "gcd", "230002", "Farmhand", 2025, "Image"
+            )
+            self.assertEqual(retried["id"], second["id"])
+            farmhand_runs = [
+                item for item in store.catalog()["series"] if item["title"] == "Farmhand"
+            ]
+            self.assertEqual(len(farmhand_runs), 2)
+            self.assertEqual(
+                {item["issueCatalog"]["providerSeriesId"] for item in farmhand_runs},
+                {"137831", "230002"},
+            )
+
+    def test_same_title_local_runs_from_different_eras_do_not_merge(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            old_file = root / "Batman 001 (1940).cbz"
+            new_file = root / "Batman 001 (2025).cbz"
+            old_file.write_bytes(b"old")
+            new_file.write_bytes(b"new")
+            parsed = [
+                ParsedFile(str(old_file), old_file.name, ".cbz", "Batman", issue="1", year=1940),
+                ParsedFile(str(new_file), new_file.name, ".cbz", "Batman", issue="1", year=2025),
+            ]
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: parsed, lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Batman",
+                    "subtitle": f"Issue {item.issue}", "issue": item.issue,
+                    "publication_year": item.year, "record_type": "single_issue",
+                },
+                "file_cover": None,
+            })
+
+            runs = [item for item in store.catalog()["series"] if item["title"] == "Batman"]
+            self.assertEqual(len(runs), 2)
+            self.assertEqual({int(item["year"]) for item in runs}, {1940, 2025})
+
+    def test_later_issue_publication_year_does_not_split_one_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = root / "Birthright 001 (2014).cbz"
+            later = root / "Birthright 031 (2021).cbz"
+            first.write_bytes(b"first")
+            later.write_bytes(b"later")
+            parsed = [
+                ParsedFile(str(first), first.name, ".cbz", "Birthright", issue="1", year=2014),
+                ParsedFile(str(later), later.name, ".cbz", "Birthright", issue="31", year=2021),
+            ]
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: parsed, lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Birthright",
+                    "issue": item.issue, "publication_year": item.year,
+                    "record_type": "single_issue", "publisher": "Image Comics",
+                },
+                "file_cover": None,
+            })
+
+            runs = [item for item in store.catalog()["series"] if item["title"] == "Birthright"]
+            self.assertEqual(len(runs), 1)
+            self.assertEqual((int(runs[0]["year"]), runs[0]["owned"]), (2014, 2))
+
+    def test_later_issue_does_not_repopulate_a_legacy_year_split(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = root / "Birthright 001 (2014).cbz"
+            later = root / "Birthright 031 (2021).cbz"
+            first.write_bytes(b"first")
+            store = CatalogStore(root / "catalog.db")
+
+            def enrich(item):
+                return {
+                    "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "source": "ComicInfo.xml", "title": "Birthright",
+                        "issue": item.issue, "publication_year": item.year,
+                        "record_type": "single_issue", "publisher": "Image Comics",
+                    },
+                    "file_cover": None,
+                }
+
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(
+                scan,
+                lambda *_: [ParsedFile(str(first), first.name, ".cbz", "Birthright", issue="1", year=2014)],
+                enrich,
+            )
+            with store._connect() as connection:
+                now = "2026-08-28T00:00:00+00:00"
+                cursor = connection.execute(
+                    """INSERT INTO series_runs(
+                           canonical_title, canonical_key, start_year, publisher, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("Birthright", "birthright::year:2021", 2021, "Image Comics", now, now),
+                )
+                legacy_split_id = int(cursor.lastrowid)
+
+            later.write_bytes(b"later")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(
+                scan,
+                lambda *_: [
+                    ParsedFile(str(first), first.name, ".cbz", "Birthright", issue="1", year=2014),
+                    ParsedFile(str(later), later.name, ".cbz", "Birthright", issue="31", year=2021),
+                ],
+                enrich,
+            )
+
+            with store._connect() as connection:
+                later_run_id = int(connection.execute(
+                    """SELECT file_identities.series_run_id
+                       FROM file_identities JOIN files ON files.id=file_identities.file_id
+                       WHERE files.path=?""",
+                    (str(later),),
+                ).fetchone()["series_run_id"])
+                canonical_run_id = int(connection.execute(
+                    "SELECT id FROM series_runs WHERE canonical_key='birthright'"
+                ).fetchone()["id"])
+            self.assertEqual(later_run_id, canonical_run_id)
+            self.assertNotEqual(later_run_id, legacy_split_id)
+
+    def test_collected_edition_year_does_not_create_a_second_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            issue = root / "Example 001 (2014).cbz"
+            volume = root / "Example Vol 4 (2022).cbz"
+            issue.write_bytes(b"issue")
+            volume.write_bytes(b"volume")
+            parsed = [
+                ParsedFile(str(issue), issue.name, ".cbz", "Example", issue="1", year=2014),
+                ParsedFile(str(volume), volume.name, ".cbz", "Example", volume=4, year=2022),
+            ]
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: parsed, lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Example",
+                    "issue": item.issue, "publication_year": item.year,
+                    "record_type": "single_issue" if item.issue else "collected_edition",
+                    "publisher": "Example Press",
+                },
+                "file_cover": None,
+            })
+
+            runs = [item for item in store.catalog()["series"] if item["title"] == "Example"]
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(int(runs[0]["year"]), 2014)
+            self.assertEqual(len(runs[0]["fileDetails"]), 2)
+
+    def test_duplicate_run_merge_preserves_issue_and_request_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            target = store.ensure_provider_series_run(
+                "gcd", "birthright-original", "birth right", 2014, "Image Comics"
+            )
+            source = store.ensure_provider_series_run(
+                "gcd", "birthright-late-split", "Birthright", 2021, "Image Comics"
+            )
+            store.apply_issue_list(
+                int(target["id"]), "gcd", "birthright-original", None,
+                [{"number": "1", "provider_id": "birthright-1", "title": "Homecoming"}],
+            )
+            store.apply_issue_list(
+                int(source["id"]), "gcd", "birthright-late-split", None,
+                [{"number": "31", "provider_id": "birthright-31", "title": "Family Tree"}],
+            )
+            store.set_series_monitoring(int(source["id"]))
+
+            now = dt.datetime.now(dt.timezone.utc).isoformat()
+            with store._connect() as connection:
+                source_issue = connection.execute(
+                    "SELECT id FROM issues WHERE series_run_id=? AND issue_number='31'",
+                    (int(source["id"]),),
+                ).fetchone()
+                request_id = int(connection.execute(
+                    """INSERT INTO acquisition_requests(
+                           scope_type, series_run_id, status, acquisition_preference,
+                           include_specials, created_at, updated_at
+                       ) VALUES ('series', ?, 'open', 'either', 1, ?, ?)""",
+                    (int(source["id"]), now, now),
+                ).lastrowid)
+                connection.execute(
+                    "INSERT INTO acquisition_request_issues(request_id, issue_id, created_at) VALUES (?, ?, ?)",
+                    (request_id, int(source_issue["id"]), now),
+                )
+                job_id = int(connection.execute(
+                    """INSERT INTO acquisition_jobs(
+                           request_id, issue_id, status, created_at, updated_at
+                       ) VALUES (?, ?, 'fulfilled', ?, ?)""",
+                    (request_id, int(source_issue["id"]), now, now),
+                ).lastrowid)
+                connection.execute(
+                    "INSERT INTO acquisition_job_events(job_id, status, detail, created_at) VALUES (?, 'fulfilled', 'Imported', ?)",
+                    (job_id, now),
+                )
+
+            preview = store.series_merge_preview(int(source["id"]), int(target["id"]))
+            self.assertTrue(preview["requiresProviderConfirmation"])
+            with self.assertRaisesRegex(ValueError, "different provider identities"):
+                store.merge_series(int(source["id"]), int(target["id"]))
+
+            result = store.merge_series(
+                int(source["id"]), int(target["id"]), allow_provider_conflicts=True
+            )
+            self.assertEqual(result["status"], "merged")
+            catalog = store.catalog()
+            birthright_runs = [
+                item for item in catalog["series"]
+                if item["title"].casefold().replace(" ", "") == "birthright"
+            ]
+            self.assertEqual(len(birthright_runs), 1)
+            self.assertEqual((birthright_runs[0]["title"], int(birthright_runs[0]["year"])), ("Birthright", 2014))
+            self.assertEqual({item["number"] for item in birthright_runs[0]["issues"]}, {"1", "31"})
+            self.assertEqual(birthright_runs[0]["monitoringStatus"], "monitored")
+
+            with store._connect() as connection:
+                request = connection.execute(
+                    "SELECT series_run_id FROM acquisition_requests WHERE id=?", (request_id,)
+                ).fetchone()
+                job = connection.execute(
+                    """SELECT acquisition_jobs.issue_id, issues.series_run_id
+                       FROM acquisition_jobs JOIN issues ON issues.id=acquisition_jobs.issue_id
+                       WHERE acquisition_jobs.id=?""",
+                    (job_id,),
+                ).fetchone()
+                event_count = int(connection.execute(
+                    "SELECT COUNT(*) AS count FROM acquisition_job_events WHERE job_id=?", (job_id,)
+                ).fetchone()["count"])
+            self.assertEqual(int(request["series_run_id"]), int(target["id"]))
+            self.assertEqual(int(job["series_run_id"]), int(target["id"]))
+            self.assertGreaterEqual(event_count, 2)
+
+    def test_issue_list_rejects_provider_run_from_conflicting_era_without_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comic = root / "Batman 001 (2025).cbz"
+            comic.write_bytes(b"comic")
+            item = ParsedFile(str(comic), comic.name, ".cbz", "Batman", issue="1", year=2025)
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Batman",
+                    "subtitle": "Vast Colors in the Dark", "issue": "1",
+                    "publication_year": 2025, "record_type": "single_issue",
+                },
+                "file_cover": None,
+            })
+            run_id = int(store.catalog()["series"][0]["id"])
+
+            with self.assertRaisesRegex(ValueError, "1940 publication run"):
+                store.apply_issue_list(
+                    run_id, "comic_vine", "796", "https://example.test/796",
+                    [
+                        {"number": "1", "title": "The Legend of the Batman",
+                         "publication_year": 1940, "publication_date": "1940-04-25",
+                         "provider_id": "100"},
+                        {"number": "2", "publication_year": 1940, "provider_id": "101"},
+                    ],
+                )
+
+            catalog = store.catalog()["series"][0]
+            self.assertEqual(int(catalog["year"]), 2025)
+            self.assertEqual(catalog["issues"][0]["title"], "Vast Colors in the Dark")
+            self.assertIsNone(catalog["issueCatalog"].get("provider"))
+
+    def test_provider_run_mismatch_repair_preserves_owned_issues_and_removes_stale_jobs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comic = root / "Batman 001 (2025).cbz"
+            comic.write_bytes(b"comic")
+            item = ParsedFile(str(comic), comic.name, ".cbz", "Batman", issue="1", year=2025)
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Batman",
+                    "subtitle": "Vast Colors in the Dark", "issue": "1",
+                    "publication_year": 2025, "record_type": "single_issue",
+                },
+                "file_cover": None,
+            })
+            run_id = int(store.catalog()["series"][0]["id"])
+            now = dt.datetime.now(dt.timezone.utc).isoformat()
+            with store._connect() as connection:
+                owned_issue_id = int(connection.execute(
+                    "SELECT id FROM issues WHERE series_run_id=? AND issue_number='1'", (run_id,)
+                ).fetchone()["id"])
+                connection.execute(
+                    "UPDATE issues SET publication_year=1940, publication_date='1940-04-25' WHERE id=?",
+                    (owned_issue_id,),
+                )
+                connection.execute(
+                    "INSERT INTO issue_provider_ids(issue_id, provider, provider_id, updated_at) VALUES (?, 'comic_vine', '100', ?)",
+                    (owned_issue_id, now),
+                )
+                stale_issue_id = int(connection.execute(
+                    """INSERT INTO issues(series_run_id, issue_number, title, publication_year,
+                                           publication_date, created_at, updated_at)
+                       VALUES (?, '13', 'Batman Makes His Mark', 1941, '1941-03-01', ?, ?)""",
+                    (run_id, now, now),
+                ).lastrowid)
+                connection.execute(
+                    "INSERT INTO issue_provider_ids(issue_id, provider, provider_id, updated_at) VALUES (?, 'comic_vine', '113', ?)",
+                    (stale_issue_id, now),
+                )
+                connection.execute(
+                    """INSERT INTO series_provider_ids(series_run_id, provider, provider_id,
+                                                       confirmed, source, updated_at)
+                       VALUES (?, 'comic_vine', '796', 1, 'bad match', ?)""",
+                    (run_id, now),
+                )
+                connection.execute(
+                    """INSERT INTO issue_catalog_status(series_run_id, status, provider,
+                                                        provider_series_id, issue_count, last_synced_at)
+                       VALUES (?, 'complete_to_date', 'comic_vine', '796', 716, ?)""",
+                    (run_id, now),
+                )
+                request_id = int(connection.execute(
+                    """INSERT INTO acquisition_requests(scope_type, series_run_id, status,
+                                                        acquisition_preference, include_specials,
+                                                        created_at, updated_at)
+                       VALUES ('series', ?, 'open', 'either', 1, ?, ?)""",
+                    (run_id, now, now),
+                ).lastrowid)
+                connection.execute(
+                    "INSERT INTO acquisition_request_issues(request_id, issue_id, created_at) VALUES (?, ?, ?)",
+                    (request_id, stale_issue_id, now),
+                )
+                connection.execute(
+                    """INSERT INTO acquisition_jobs(request_id, issue_id, status, created_at, updated_at)
+                       VALUES (?, ?, 'queued', ?, ?)""",
+                    (request_id, stale_issue_id, now, now),
+                )
+
+            repaired = store.repair_provider_run_mismatch(run_id)
+            self.assertEqual(repaired["status"], "repaired")
+            self.assertEqual(repaired["removedProviderOnlyIssues"], 1)
+            self.assertEqual(repaired["removedQueuedJobs"], 1)
+            run = store.catalog()["series"][0]
+            self.assertEqual(int(run["year"]), 2025)
+            self.assertEqual([issue["number"] for issue in run["issues"]], ["1"])
+            self.assertEqual(run["issues"][0]["title"], "Vast Colors in the Dark")
+            self.assertEqual(run["issues"][0]["publicationYear"], 2025)
+            self.assertIsNone(run["issues"][0]["publicationDate"])
+            self.assertIsNone(run["issueCatalog"].get("provider"))
+
+    def test_stale_fileless_provider_run_can_be_retired_without_merging_its_catalog(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = CatalogStore(root / "catalog.db")
+            stale = store.ensure_provider_series_run(
+                "comic_vine", "796", "Batman", 1940, "DC Comics"
+            )
+            store.apply_issue_list(
+                int(stale["id"]), "comic_vine", "796", "https://example.test/796",
+                [
+                    {"number": "1", "title": "The Legend of the Batman",
+                     "publication_year": 1940, "publication_date": "1940-04-25",
+                     "provider_id": "100"},
+                    {"number": "13", "title": "Batman Makes His Mark",
+                     "publication_year": 1941, "provider_id": "113"},
+                ],
+            )
+            # Reproduce the legacy hybrid state: the local file's year had
+            # overlaid the provider year, while the provider date still proved
+            # this was the 1940 catalog.
+            with store._connect() as connection:
+                connection.execute(
+                    """UPDATE issues SET publication_year=2025
+                       WHERE series_run_id=? AND issue_number='1'""",
+                    (int(stale["id"]),),
+                )
+            request = store.create_acquisition_request(
+                "series", int(stale["id"]), "issues"
+            )
+
+            comic = root / "Batman 001 (2025).cbz"
+            comic.write_bytes(b"comic")
+            item = ParsedFile(str(comic), comic.name, ".cbz", "Batman", issue="1", year=2025)
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Batman",
+                    "subtitle": "Vast Colors in the Dark", "issue": "1",
+                    "publication_year": 2025, "record_type": "single_issue",
+                },
+                "file_cover": None,
+            })
+            current = next(
+                run for run in store.catalog()["series"]
+                if run["title"] == "Batman" and int(run["year"]) == 2025
+            )
+            self.assertTrue(
+                store.get_series_sync_context(int(current["id"]))["strictYear"]
+            )
+
+            repaired = store.retire_stale_provider_run(
+                int(stale["id"]), int(current["id"])
+            )
+
+            self.assertEqual(repaired["status"], "repaired")
+            self.assertEqual(repaired["removedProviderIssues"], 2)
+            self.assertEqual(repaired["requestId"], request["id"])
+            batman = [run for run in store.catalog()["series"] if run["title"] == "Batman"]
+            self.assertEqual(len(batman), 1)
+            self.assertEqual((int(batman[0]["year"]), batman[0]["owned"]), (2025, 1))
+            self.assertEqual(batman[0]["monitoringStatus"], "monitored")
+            self.assertIsNone(batman[0]["issueCatalog"].get("provider"))
+            with store._connect() as connection:
+                moved_request = connection.execute(
+                    "SELECT series_run_id FROM acquisition_requests WHERE id=?",
+                    (int(request["id"]),),
+                ).fetchone()
+                self.assertEqual(int(moved_request["series_run_id"]), int(current["id"]))
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) AS count FROM issues WHERE publication_year=1940"
+                    ).fetchone()["count"],
+                    0,
+                )
+
+    def test_issue_provider_refresh_replaces_stale_identity_without_constraint_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            run = store.ensure_provider_series_run(
+                "gcd", "42", "Refresh Example", 2024, "Example Press"
+            )
+            for provider_issue_id in ("1001", "1002"):
+                store.apply_issue_list(
+                    int(run["id"]), "gcd", "42",
+                    "https://www.comics.org/api/series/42/",
+                    [{"number": "1", "provider_id": provider_issue_id}],
+                )
+            context = store.get_series_sync_context(int(run["id"]))
+            self.assertEqual(context["knownGcdIssueIds"], ["1002"])
+
     def test_rescan_rehomes_misparsed_issue_and_prunes_false_series_job(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -127,7 +655,7 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual([(item["title"], item["owned"]) for item in catalog["series"]], [("Fables", 1)])
             self.assertEqual(catalog["enrichment"]["total"], 1)
 
-    def test_damaged_volume_can_be_requested_and_cancelled_as_a_replacement(self):
+    def test_damaged_volume_requires_mapped_contents_before_replacement(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             comic = root / "Example Vol 1.cbz"
@@ -150,23 +678,77 @@ class CatalogStoreTests(unittest.TestCase):
             review = catalog["inbox"][0]
             self.assertEqual((review["category"], review["fileId"]), ("file", catalog["files"][0]["id"]))
 
-            replacement = store.request_file_replacement(
-                int(review["fileId"]), "wrong_language", "English", "volumes"
-            )
-            self.assertEqual(replacement["targetType"], "volume")
-            self.assertEqual(replacement["status"], "wanted")
-            self.assertEqual(replacement["desiredLanguage"], "English")
-            self.assertEqual(replacement["acquisitionPreference"], "volumes")
-            self.assertEqual(replacement["coverageTarget"], "Complete the run")
+            with self.assertRaisesRegex(ValueError, "mapped"):
+                store.request_file_replacement(
+                    int(review["fileId"]), "wrong_language", "English", "issues"
+                )
             self.assertTrue(comic.exists())
-            refreshed = store.catalog()
-            self.assertEqual(refreshed["inbox"][0]["replacementStatus"], "wanted")
-            self.assertEqual(refreshed["stats"]["openRequests"], 1)
+
+    def test_damaged_issue_creates_hidden_replacement_jobs_despite_existing_ownership(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comic = root / "Example 001.cbz"
+            comic.write_bytes(b"broken")
+            parsed = ParsedFile(str(comic), comic.name, ".cbz", "Example", issue="1", year=2024)
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [parsed], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__, "embedded_metadata": {},
+                "file_health": {"status": "error", "code": "corrupt_archive", "message": "Corrupt"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "publication_year": 2024,
+                },
+                "file_cover": None,
+            })
+            file_id = int(store.catalog()["files"][0]["id"])
+
+            replacement = store.request_file_replacement(file_id, "corrupt", None, "issues")
+            self.assertEqual(replacement["status"], "wanted")
+            self.assertEqual(replacement["jobCount"], 1)
+            self.assertEqual(replacement["jobs"][0]["status"], "queued")
+            self.assertIn("Replacement needed", replacement["jobs"][0]["reason"])
+            catalog = store.catalog()
+            self.assertEqual(catalog["requests"], [])
+            self.assertEqual(catalog["stats"]["openRequests"], 1)
 
             cancelled = store.update_file_replacement_status(int(replacement["id"]), "cancelled")
             self.assertEqual(cancelled["status"], "cancelled")
+            self.assertEqual(cancelled["jobs"][0]["status"], "cancelled")
             self.assertTrue(comic.exists())
-            self.assertEqual(store.catalog()["stats"]["openRequests"], 0)
+
+    def test_active_legacy_replacement_is_backfilled_with_durable_jobs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comic = root / "Example 001.cbz"
+            comic.write_bytes(b"broken")
+            parsed = ParsedFile(str(comic), comic.name, ".cbz", "Example", issue="1", year=2024)
+            database = root / "catalog.db"
+            store = CatalogStore(database)
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [parsed], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__, "embedded_metadata": {},
+                "file_health": {"status": "error", "code": "corrupt_archive", "message": "Corrupt"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "publication_year": 2024,
+                },
+                "file_cover": None,
+            })
+            file_id = int(store.catalog()["files"][0]["id"])
+            with store._connect() as connection:
+                connection.execute(
+                    """INSERT INTO file_replacement_requests(
+                           file_id, reason_code, desired_language, acquisition_preference,
+                           status, created_at, updated_at
+                       ) VALUES (?, 'corrupt', NULL, 'either', 'wanted', ?, ?)""",
+                    (file_id, "2026-08-28T12:00:00+00:00", "2026-08-28T12:00:00+00:00"),
+                )
+
+            migrated = CatalogStore(database).catalog()["replacementRequests"][0]
+            self.assertIsNotNone(migrated["acquisitionRequestId"])
+            self.assertEqual(migrated["jobCount"], 1)
+            self.assertEqual(migrated["jobs"][0]["status"], "queued")
 
     def test_cataloged_file_path_only_returns_present_library_files(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -388,7 +970,51 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertTrue(all(issue["collectionOwned"] for issue in series["issues"]))
             self.assertEqual(series["editions"][0]["coverageGroups"][0]["issueLabel"], "5–8")
             self.assertTrue(series["editions"][0]["coverageGroups"][0]["resolved"])
+            self.assertEqual(series["editions"][0]["contentsStatus"], "verified")
+            self.assertEqual(series["editions"][0]["contentsIssueCount"], 4)
+            self.assertEqual(series["editions"][0]["seriesPlacementStatus"], "matched")
             self.assertFalse(series["issueCatalog"]["syncReady"])
+
+    def test_partial_reprint_evidence_does_not_mark_the_issue_owned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "example_sampler_vol1.cbz"
+            path.write_bytes(b"collection")
+            item = ParsedFile(str(path), path.name, ".cbz", "Example", volume=1)
+            store = CatalogStore(root / "catalog.db")
+
+            def enrichment(parsed):
+                return {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "title": "Example", "subtitle": "Sampler", "source": "Metron",
+                        "matched_edition": {"coverage": [{
+                            "series": "Example", "issues": ["1"],
+                            "source": "Metron reprints", "confidence": "provider confirmed",
+                            "source_text": "Includes one story from Example #1",
+                            "relation_kind": "partial_story",
+                        }]},
+                    },
+                    "file_cover": None,
+                }
+
+            first_scan = store.begin_scan(str(root), True)
+            store.perform_scan(first_scan, lambda *_: [item], enrichment)
+            first = store.catalog()["series"][0]
+            self.assertFalse(first["issues"][0]["collectionOwned"])
+            self.assertEqual(first["editions"][0]["contentsStatus"], "partial")
+            self.assertEqual(first["editions"][0]["contentsIssueCount"], 0)
+            self.assertEqual(
+                first["editions"][0]["coverageGroups"][0]["relationKind"],
+                "partial_story",
+            )
+
+            second_scan = store.begin_scan(str(root), True)
+            store.perform_scan(second_scan, lambda *_: [item], enrichment)
+            rescanned = store.catalog()["series"][0]
+            self.assertEqual(len(rescanned["editions"][0]["coverage"]), 1)
+            self.assertFalse(rescanned["issues"][0]["collectionOwned"])
 
     def test_imported_run_claims_a_clearly_matching_local_volume(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -602,6 +1228,64 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(retained["status"], "complete_to_date")
             self.assertEqual(retained["error"], "temporary rate limit")
 
+    def test_explicit_embedded_issue_match_preserves_external_provider_identity(self):
+        cases = (
+            ("metron", "https://metron.cloud/issue/151432/", "151432"),
+            (
+                "comic_vine",
+                "https://comicvine.gamespot.com/issue/4000-123456/",
+                "123456",
+            ),
+        )
+        for expected_provider, provider_url, expected_id in cases:
+            with self.subTest(provider=expected_provider), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                path = root / "Batman 001 (2025).cbz"
+                path.write_bytes(b"comic")
+                item = ParsedFile(str(path), path.name, ".cbz", "Batman", issue="1", year=2025)
+                candidate = {
+                    "source": "ComicInfo.xml",
+                    "source_id": "12829",
+                    "record_type": "single_issue",
+                    "title": "Batman",
+                    "subtitle": "Vast Colors in the Dark",
+                    "issue": "1",
+                    "publisher": "DC Comics",
+                    "publication_year": 2025,
+                    "url": provider_url,
+                }
+                store = CatalogStore(root / "catalog.db")
+                scan = store.begin_scan(str(root), True)
+                store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": candidate, "candidates": {"embedded": [candidate]},
+                    "file_cover": None,
+                })
+                series = store.catalog()["series"][0]
+                self.assertFalse(series["issueCatalog"]["syncReady"])
+
+                file_id = int(store.catalog()["files"][0]["id"])
+                selected = store.get_file_workbench(file_id)["candidates"][0]
+                store.apply_file_match(file_id, selected["key"])
+
+                issue_catalog = store.catalog()["series"][0]["issueCatalog"]
+                self.assertTrue(issue_catalog["syncReady"])
+                self.assertEqual(issue_catalog["anchorProviders"], [expected_provider])
+                with store._connect() as connection:
+                    provider = connection.execute(
+                        "SELECT provider, provider_id FROM issue_provider_ids"
+                    ).fetchone()
+                self.assertEqual(
+                    (provider["provider"], provider["provider_id"]),
+                    (expected_provider, expected_id),
+                )
+
+                reopened = CatalogStore(root / "catalog.db")
+                reopened_catalog = reopened.catalog()["series"][0]["issueCatalog"]
+                self.assertTrue(reopened_catalog["syncReady"])
+                self.assertEqual(reopened_catalog["anchorProviders"], [expected_provider])
+
     def test_acquisition_request_persists_release_aware_wanted_issues_and_expands(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -672,7 +1356,25 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(persisted_job["attemptCount"], 1)
 
             store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
-            download = store.record_acquisition_download(job_id, "SAB-123", "Example.002.2026")
+            download = store.record_acquisition_download(
+                job_id, "SAB-123", "Example.002.2026", "release-key-123"
+            )
+            self.assertEqual(
+                store.rejected_acquisition_release_keys(job_id), set()
+            )
+            failure = store.record_acquisition_release_failure(
+                job_id, "failed-release-key", "Example.002.bad", "Incomplete Usenet post"
+            )
+            self.assertEqual(failure["failureCount"], 1)
+            reopened_store = CatalogStore(root / "catalog.db")
+            self.assertEqual(
+                reopened_store.rejected_acquisition_release_keys(job_id),
+                {"failed-release-key"},
+            )
+            self.assertEqual(
+                reopened_store.rejected_acquisition_releases(job_id)[0]["release_title"],
+                "Example.002.bad",
+            )
             store.update_acquisition_download(
                 int(download["id"]), "imported", sab_storage="/downloads/Example.002.2026",
                 local_source="/downloads/Example.002.2026/Example 002.cbz",
@@ -686,6 +1388,95 @@ class CatalogStoreTests(unittest.TestCase):
             )
             self.assertEqual(imported_job["downloadStatus"], "imported")
             self.assertTrue(imported_job["downloadDestination"].endswith("Example (2026) #002.cbz"))
+
+            retry_job_id = int(next(job["id"] for job in reopened["jobs"] if int(job["id"]) != job_id))
+            store.update_acquisition_job(retry_job_id, "searching", "Indexer search started")
+            store.update_acquisition_job(retry_job_id, "failed", "Prowlarr timed out")
+            research = store.retry_acquisition_job(retry_job_id)
+            self.assertEqual(research["action"], "research")
+            self.assertEqual(research["status"], "queued")
+
+            store.update_acquisition_job(retry_job_id, "grabbed", "Replacement release sent to SABnzbd")
+            retry_download = store.record_acquisition_download(
+                retry_job_id, "SAB-456", "Example.005.2026"
+            )
+            store.update_acquisition_download(
+                int(retry_download["id"]), "failed",
+                local_source="/downloads/Example.005.2026/Example 005.cbz",
+                error="Destination was temporarily unavailable",
+                failure_stage="import",
+            )
+            store.update_acquisition_job(
+                retry_job_id, "failed", "Destination was temporarily unavailable"
+            )
+            failed_import = next(
+                job for job in store.catalog()["requests"][0]["jobs"]
+                if job["id"] == str(retry_job_id)
+            )
+            self.assertEqual(failed_import["downloadFailureStage"], "import")
+            reprocess = store.retry_acquisition_job(retry_job_id)
+            self.assertEqual(reprocess["action"], "reprocess")
+            self.assertEqual(reprocess["status"], "grabbed")
+            pending = next(
+                download for download in store.pending_acquisition_downloads()
+                if int(download["job_id"]) == retry_job_id
+            )
+            self.assertEqual(pending["status"], "completed")
+            self.assertIsNone(pending["error"])
+            self.assertIsNone(pending["failure_stage"])
+
+    def test_up_to_date_run_can_be_followed_and_refreshes_reopen_wanted_issues(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "Example 001.cbz"
+            path.write_bytes(b"comic")
+            item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+            series_id = int(store.catalog()["series"][0]["id"])
+            today = dt.datetime.now().astimezone().date()
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [{
+                    "number": "1", "provider_id": "101",
+                    "publication_date": str(today - dt.timedelta(days=30)),
+                    "publication_year": today.year,
+                }],
+            )
+
+            request = store.create_acquisition_request("series", series_id, "issues")
+            self.assertEqual(request["status"], "fulfilled")
+            self.assertEqual(request["storedStatus"], "open")
+            self.assertEqual(request["monitoringStatus"], "monitored")
+            self.assertEqual(request["jobCount"], 0)
+
+            store.queue_monitored_series_refresh(series_id)
+            claimed = store.claim_monitored_series_refresh()
+            self.assertEqual(int(claimed["series_run_id"]), series_id)
+            store.finish_monitored_series_refresh(series_id, "gcd")
+            self.assertEqual(store.catalog()["series"][0]["monitorRefresh"]["status"], "complete")
+
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [{
+                    "number": "2", "provider_id": "102",
+                    "publication_date": str(today - dt.timedelta(days=1)),
+                    "publication_year": today.year,
+                }],
+            )
+            reopened = store.catalog()["requests"][0]
+            self.assertEqual(reopened["status"], "open")
+            self.assertEqual(reopened["wantedIssueCount"], 1)
+            self.assertEqual(reopened["jobs"][0]["issueNumber"], "2")
 
     def test_mixed_series_tracks_issues_volumes_and_omnibuses_separately(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -814,6 +1605,183 @@ class CatalogStoreTests(unittest.TestCase):
             rescanned = store.get_file_workbench(file_id)
             self.assertEqual(rescanned["selectedCandidateKey"], candidate_key)
             self.assertEqual(rescanned["matchSource"], "Test Catalog")
+
+    def test_series_title_correction_heals_connected_volume_set(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            items = []
+            for volume in (1, 2, 3):
+                path = root / f"alexandada_vol{volume}.cbz"
+                path.write_bytes(b"comic")
+                items.append(
+                    ParsedFile(
+                        str(path), path.name, ".cbz", "alexandada", volume=volume
+                    )
+                )
+
+            def enrich(parsed):
+                return {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": None, "file_cover": None,
+                }
+
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: items, enrich)
+            file_id = int(store.catalog()["series"][0]["fileDetails"][0]["id"])
+
+            corrected = store.update_file_metadata(file_id, {
+                "seriesTitle": "Alex + Ada", "title": "Alex + Ada Volume 1",
+                "recordType": "edition", "volumeNumber": 1,
+                "publisher": "Image", "publicationYear": 2014,
+            })
+
+            self.assertEqual(corrected["seriesHealing"]["status"], "healed")
+            self.assertEqual(corrected["seriesHealing"]["healedFileCount"], 3)
+            catalog = store.catalog()
+            self.assertEqual(len(catalog["series"]), 1)
+            self.assertEqual(catalog["series"][0]["title"], "Alex + Ada")
+            self.assertEqual(catalog["series"][0]["inventory"]["editionCount"], 3)
+
+    def test_equivalent_edition_files_are_one_logical_volume(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            items = []
+            for filename in ("alexandada_vol1.cbz", "AlexAndAda_Vol1_1420484117.cbz"):
+                path = root / filename
+                path.write_bytes(b"comic")
+                items.append(ParsedFile(str(path), path.name, ".cbz", "Alex + Ada", volume=1))
+
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: items, lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Alex + Ada", "publisher": "Image", "source": "Local metadata",
+                },
+                "file_cover": None,
+            })
+
+            series = store.catalog()["series"][0]
+            self.assertEqual(series["inventory"]["editionCount"], 1)
+            self.assertEqual(len(series["editions"]), 1)
+            self.assertEqual(series["editions"][0]["copyCount"], 2)
+            self.assertEqual(len(series["editions"][0]["fileIds"]), 2)
+            self.assertEqual(len(series["editions"][0]["files"]), 2)
+            self.assertEqual(len(series["editions"][0]["editionIds"]), 2)
+            self.assertEqual(series["editions"][0]["contentsStatus"], "unknown")
+            self.assertEqual(series["editions"][0]["contentsIssueCount"], 0)
+
+    def test_same_numbered_volume_groups_provider_title_variants_within_one_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            items = []
+            for filename in ("alexandada_vol1.cbz", "AlexAndAda_Vol1.cbz"):
+                path = root / filename
+                path.write_bytes(b"comic")
+                items.append(ParsedFile(str(path), path.name, ".cbz", "Alex + Ada", volume=1))
+
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            titles = iter(("Alex + Ada", "Alex and Ada: The Complete Collection"))
+            store.perform_scan(scan, lambda *_: items, lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": next(titles), "publisher": "Image", "source": "Test provider",
+                },
+                "file_cover": None,
+            })
+
+            series = store.catalog()["series"][0]
+            self.assertEqual(series["inventory"]["editionCount"], 1)
+            self.assertEqual(series["editions"][0]["copyCount"], 2)
+
+    def test_placeholder_run_rename_moves_aliases_and_survives_rescan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            items = []
+            for volume in (1, 2):
+                path = root / f"wrongtitle_vol{volume}.cbz"
+                path.write_bytes(b"comic")
+                items.append(
+                    ParsedFile(
+                        str(path), path.name, ".cbz", "wrongtitle", volume=volume
+                    )
+                )
+
+            def enrich(parsed):
+                return {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": None, "file_cover": None,
+                }
+
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: items, enrich)
+            file_id = int(store.catalog()["series"][0]["fileDetails"][0]["id"])
+            corrected = store.update_file_metadata(file_id, {
+                "seriesTitle": "Right Series", "title": "Right Series Volume 1",
+                "recordType": "edition", "volumeNumber": 1,
+            })
+            self.assertEqual(corrected["seriesHealing"]["healedFileCount"], 2)
+
+            rescan = store.begin_scan(str(root), True)
+            store.perform_scan(rescan, lambda *_: items, enrich)
+            catalog = store.catalog()
+            self.assertEqual(len(catalog["series"]), 1)
+            self.assertEqual(catalog["series"][0]["title"], "Right Series")
+            self.assertEqual(catalog["series"][0]["inventory"]["editionCount"], 2)
+
+    def test_fix_match_search_prefers_corrections_and_retains_selectable_results(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "adafterdeathhc.cbz"
+            path.write_bytes(b"comic")
+            item = ParsedFile(str(path), path.name, ".cbz", "adafterdeathhc", volume=1)
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": None, "candidates": {}, "file_cover": None,
+            })
+            file_id = int(store.catalog()["series"][0]["fileDetails"][0]["id"])
+
+            store.update_file_metadata(file_id, {
+                "seriesTitle": "A.D.: After Death", "title": "A.D.: After Death",
+                "recordType": "edition", "volumeNumber": 1,
+                "publisher": "Image Comics", "publicationYear": 2016,
+                "format": "hardcover", "editionKind": "hardcover",
+            })
+            corrected = store.get_file_workbench(file_id)
+            self.assertEqual(corrected["suggestedSearchQuery"], "A.D.: After Death 2016")
+
+            searched = store.retain_file_search_candidates(
+                file_id,
+                "A.D. After Death 2016",
+                [{
+                    "source": "Test Catalog", "source_id": "ad-2016",
+                    "title": "A.D.: After Death", "subtitle": "The Complete Collection",
+                    "publisher": "Image Comics", "publication_year": 2016,
+                    "cover": "https://covers.example/ad-after-death.jpg",
+                    "matched_edition": {"coverage": []},
+                }],
+                providers_checked=["Test Catalog"],
+                errors=[],
+            )
+            self.assertEqual(searched["candidateSearch"]["query"], "A.D. After Death 2016")
+            self.assertEqual(searched["candidateSearch"]["resultCount"], 1)
+            candidate = next(
+                option for option in searched["candidates"]
+                if option.get("source_id") == "ad-2016"
+            )
+            matched = store.apply_file_match(file_id, candidate["key"])
+            self.assertEqual(matched["matchSource"], "Test Catalog")
+            self.assertEqual(matched["current"]["seriesTitle"], "A.D.: After Death")
 
     def test_metadata_conflict_contains_file_specific_comparison_evidence(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,0 +1,132 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f1f3f7;
+  background: #0b0e14;
+  font-synthesis: none;
+
+  /* Primitive color tokens */
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f1f3f7;
+  --color-neutral-300: #b8c0cc;
+  --color-neutral-400: #8e9aab;
+  --color-neutral-700: #333e50;
+  --color-neutral-800: #252e3c;
+  --color-neutral-900: #151c28;
+  --color-neutral-925: #111722;
+  --color-neutral-950: #0c1017;
+  --color-violet-400: #9e87ff;
+  --color-violet-500: #8064e4;
+  --color-violet-600: #7454df;
+  --color-green-500: #4ed377;
+  --color-amber-500: #f4b740;
+  --color-red-500: #f06b62;
+
+  /* Semantic color tokens */
+  --bg: var(--color-neutral-950);
+  --sidebar: #0d1119;
+  --surface: var(--color-neutral-925);
+  --surface-raised: var(--color-neutral-900);
+  --surface-soft: #192130;
+  --line: var(--color-neutral-800);
+  --line-strong: var(--color-neutral-700);
+  --text: var(--color-neutral-50);
+  --muted: var(--color-neutral-400);
+  --muted-strong: var(--color-neutral-300);
+  --focus-ring: var(--color-violet-400);
+  --violet: var(--color-violet-600);
+  --violet-soft: #282043;
+  --green: var(--color-green-500);
+  --green-soft: #173224;
+  --amber: var(--color-amber-500);
+  --amber-soft: #3a2b16;
+  --red: var(--color-red-500);
+  --red-soft: #3d2023;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Shape and control tokens */
+  --radius-sm: 7px;
+  --radius: 11px;
+  --radius-lg: 15px;
+  --radius-pill: 999px;
+  --control-height-sm: 32px;
+  --control-height-md: 42px;
+  --control-gap: var(--space-2);
+  --control-padding-sm: 10px;
+  --control-padding-md: var(--space-4);
+  --control-font-sm: .72rem;
+  --control-font-md: .83rem;
+
+  /* Button component tokens */
+  --button-primary-bg: var(--violet);
+  --button-primary-bg-hover: var(--color-violet-500);
+  --button-primary-text: var(--color-neutral-0);
+  --button-secondary-bg: #222a3b;
+  --button-secondary-bg-hover: #2a3448;
+  --button-secondary-border: #343e51;
+  --button-secondary-text: #d8dcf0;
+  --button-ghost-bg-hover: var(--surface-soft);
+  --button-ghost-border: var(--line-strong);
+  --button-ghost-text: var(--muted-strong);
+  --button-danger-bg: #2d191b;
+  --button-danger-border: #67393a;
+  --button-danger-text: #ffaaa5;
+  --button-disabled-opacity: .64;
+
+  /* Status component tokens */
+  --status-height: 23px;
+  --status-padding-inline: var(--space-2);
+  --status-font-size: .69rem;
+  --status-gap: var(--space-1);
+  --status-amber-bg: var(--amber-soft);
+  --status-amber-text: #ffd275;
+  --status-violet-bg: var(--violet-soft);
+  --status-violet-text: #c0afff;
+  --status-red-bg: var(--red-soft);
+  --status-red-text: #ff9d96;
+  --status-green-bg: var(--green-soft);
+  --status-green-text: #8ee6a7;
+  --status-muted-bg: #222b39;
+  --status-muted-text: #aeb8c7;
+
+  /* Motion tokens */
+  --motion-duration-fast: 140ms;
+  --motion-duration-standard: 220ms;
+  --motion-duration-loader: 880ms;
+  --motion-ease-standard: cubic-bezier(.2, .8, .2, 1);
+
+  /* Loading-indicator component tokens */
+  --loader-size-xs: 14px;
+  --loader-size-sm: 16px;
+  --loader-size-md: 18px;
+  --loader-size-lg: 22px;
+  --loader-size-xl: 28px;
+  --loader-mark-width: 14%;
+  --loader-mark-height: 31%;
+  --loader-mark-radius: var(--radius-pill);
+  --loader-muted-opacity: .18;
+}
+
+@media (max-width: 620px) {
+  :root {
+    --control-height-md: 44px;
+    --control-gap: var(--space-2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 1ms;
+    --motion-duration-standard: 1ms;
+    --motion-duration-loader: 1600ms;
+  }
+}
