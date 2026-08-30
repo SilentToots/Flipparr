@@ -8,12 +8,174 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_issue_entries, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+import app
+from app import CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
+    def setUp(self):
+        app._PROVIDER_JSON_CACHE.clear()
+        app._PROVIDER_JSON_INFLIGHT.clear()
+        app._PROVIDER_NEXT_REQUEST_AT.clear()
+        self.provider_wait = patch("app._wait_for_provider_slot")
+        self.provider_persist = patch("app.persist_provider_cache")
+        self.provider_wait.start()
+        self.provider_persist.start()
+
     def tearDown(self):
+        self.provider_persist.stop()
+        self.provider_wait.stop()
         _RELEASE_CANDIDATES.clear()
+
+    def test_authenticated_provider_requests_are_cached_and_coalesced(self):
+        payload = {"results": [{"id": 7}]}
+        with patch("app.fetch_json_with_headers", return_value=payload) as fetch:
+            first = app.fetch_provider_json(
+                "metron", "https://metron.cloud/api/series/?q=Batman", "secret-token"
+            )
+            second = app.fetch_provider_json(
+                "metron", "https://metron.cloud/api/series/?q=Batman", "secret-token"
+            )
+
+        self.assertEqual(first, payload)
+        self.assertEqual(second, payload)
+        fetch.assert_called_once()
+
+    def test_provider_cache_key_never_contains_api_credentials(self):
+        key = app._provider_cache_key(
+            "comic_vine",
+            "https://comicvine.gamespot.com/api/search/?api_key=very-secret&query=Batman",
+            "very-secret",
+        )
+
+        self.assertNotIn("very-secret", key)
+        self.assertNotIn("api_key", key)
+
+    def test_comic_vine_embedded_rate_limit_enters_cooldown(self):
+        payload = {"status_code": 107, "error": "Rate limit exceeded"}
+        with patch("app.fetch_json_with_headers", return_value=payload), self.assertRaises(
+            MetadataRateLimited
+        ) as raised:
+            app.fetch_provider_json(
+                "comic_vine",
+                "https://comicvine.gamespot.com/api/search/?api_key=secret&query=Batman",
+                "secret",
+            )
+
+        self.assertEqual(raised.exception.provider, "comic_vine")
+        self.assertGreater(app._PROVIDER_NEXT_REQUEST_AT["comic_vine"], 0)
+
+    def test_fix_match_issue_search_uses_configured_provider_before_gcd(self):
+        store = Mock()
+        store.get_file_workbench.return_value = {
+            "file": {"id": "7", "path": "/comics/Batman #01.cbz", "filename": "Batman #01.cbz"},
+            "current": {
+                "seriesTitle": "Batman", "title": "Batman", "recordType": "issue",
+                "issueNumber": "1", "publicationYear": 2025, "publisher": "DC Comics",
+                "format": "saddle-stitched",
+            },
+            "override": {},
+        }
+        store.retain_file_search_candidates.return_value = {"retained": True}
+        entries = [{
+            "number": "1", "provider_id": "991", "title": "Vast Colors in the Dark",
+            "publication_date": "2025-03-26", "publication_year": 2025,
+            "cover": "https://metron.example/batman-1.jpg",
+            "api_url": "https://metron.example/issue/991/",
+        }]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order",
+            return_value=[("metron", {"token": "saved"}), ("gcd", {})],
+        ), patch(
+            "app._metron_issue_entries",
+            return_value=("2025", "https://metron.example/series/2025/", entries),
+        ) as metron, patch("app._gcd_discovery_search_rows") as gcd:
+            result = search_file_match_candidates(7, "Batman 2025")
+
+        self.assertEqual(result, {"retained": True})
+        metron.assert_called_once()
+        gcd.assert_not_called()
+        retained = store.retain_file_search_candidates.call_args.args
+        self.assertEqual(retained[1], "Batman 2025")
+        self.assertEqual(retained[2][0]["source"], "Metron")
+        self.assertEqual(retained[2][0]["issue"], "1")
+        self.assertEqual(retained[2][0]["subtitle"], "Vast Colors in the Dark")
+        self.assertEqual(store.retain_file_search_candidates.call_args.kwargs["providers_checked"], ["Metron"])
+
+    def test_fix_match_issue_search_falls_through_provider_errors(self):
+        store = Mock()
+        store.get_file_workbench.return_value = {
+            "file": {"id": "7", "path": "/comics/Batman #01.cbz", "filename": "Batman #01.cbz"},
+            "current": {
+                "seriesTitle": "Batman", "title": "Batman", "recordType": "issue",
+                "issueNumber": "1", "publicationYear": 2025, "publisher": "DC Comics",
+            },
+            "override": {},
+        }
+        store.retain_file_search_candidates.return_value = {"retained": True}
+        entries = [{
+            "number": "1", "provider_id": "441", "title": "Vast Colors in the Dark",
+            "publication_date": "2025-03-26", "publication_year": 2025,
+            "cover": "https://comicvine.example/batman-1.jpg",
+            "api_url": "https://comicvine.example/issue/441/",
+        }]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order",
+            return_value=[
+                ("metron", {"token": "saved"}),
+                ("comic_vine", {"apiKey": "saved"}),
+                ("gcd", {}),
+            ],
+        ), patch("app._metron_issue_entries", side_effect=ValueError("rate limited")), patch(
+            "app._comic_vine_issue_entries",
+            return_value=("88", "https://comicvine.example/volume/88/", entries),
+        ), patch("app._gcd_discovery_search_rows") as gcd:
+            search_file_match_candidates(7, "Batman 2025")
+
+        gcd.assert_not_called()
+        call = store.retain_file_search_candidates.call_args
+        self.assertEqual(call.kwargs["providers_checked"], ["Metron", "Comic Vine"])
+        self.assertEqual(call.kwargs["errors"], [{"provider": "Metron", "error": "rate limited"}])
+        self.assertEqual(call.args[2][0]["source"], "Comic Vine")
+
+    def test_fix_match_volume_stops_after_strong_structured_metron_match(self):
+        store = Mock()
+        store.get_file_workbench.return_value = {
+            "file": {"id": "9", "path": "/comics/Alex and Ada Vol 1.cbz", "filename": "Alex and Ada Vol 1.cbz"},
+            "current": {
+                "seriesTitle": "Alex + Ada", "title": "Alex + Ada",
+                "recordType": "collected_edition", "volumeNumber": 1,
+                "publicationYear": 2014, "publisher": "Image Comics",
+            },
+            "override": {},
+        }
+        store.retain_file_search_candidates.return_value = {"retained": True}
+        candidate = {
+            "source": "Metron", "source_id": "900", "title": "Alex + Ada",
+            "volume": 1, "match_score": 105, "cover": "https://covers/v1.jpg",
+            "matched_edition": {"coverage": [{
+                "series": "Alex + Ada", "issues": ["1", "2", "3", "4", "5"],
+                "relation_kind": "full_issue",
+            }]},
+        }
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.load_provider_config",
+            return_value={"metron": {"enabled": True, "token": "saved"}},
+        ), patch(
+            "app._metron_collected_edition_candidates", return_value=[candidate]
+        ) as metron, patch("app.search_open_library") as open_library, patch(
+            "app.search_gcd"
+        ) as gcd, patch("app.discover_metron_series") as generic_metron:
+            result = search_file_match_candidates(9, "Alex + Ada Volume 1")
+
+        self.assertEqual(result, {"retained": True})
+        metron.assert_called_once()
+        open_library.assert_not_called()
+        gcd.assert_not_called()
+        generic_metron.assert_not_called()
+        call = store.retain_file_search_candidates.call_args
+        self.assertEqual(call.args[2], [candidate])
+        self.assertEqual(call.kwargs["providers_checked"], ["Metron"])
 
     def test_fast_inventory_uses_local_evidence_without_provider_requests(self):
         parsed = parse_filename(Path("Absolute Batman 003 (2025).cbz"))
@@ -173,9 +335,9 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(result["status"], "grabbed")
         self.assertEqual(result["queueIds"], ["queue-id"])
         self.assertNotIn("secret", str(result))
-        store.record_acquisition_download.assert_called_once_with(
-            12, "queue-id", "Absolute Batman 004"
-        )
+        download_call = store.record_acquisition_download.call_args.args
+        self.assertEqual(download_call[:3], (12, "queue-id", "Absolute Batman 004"))
+        self.assertRegex(download_call[3], r"^[a-f0-9]{64}$")
         store.update_acquisition_job.assert_called_once()
         self.assertNotIn("candidate", _RELEASE_CANDIDATES)
 
@@ -216,6 +378,42 @@ class FilenameParserTests(unittest.TestCase):
     def test_sabnzbd_grab_rejects_an_unknown_candidate(self):
         with self.assertRaisesRegex(ValueError, "expired"):
             send_release_to_sabnzbd(12, "missing")
+
+    def test_prowlarr_search_excludes_a_release_that_previously_failed(self):
+        context = {
+            "issueNumber": "95", "publicationYear": 2010,
+            "seriesTitle": "Fables", "seriesYear": 2002,
+        }
+        failed_title = "Fables.095.(2010).(Digital).(NahgaEmpire)"
+        store = Mock()
+        store.get_acquisition_job_context.return_value = context
+        store.rejected_acquisition_releases.return_value = [{
+            "release_key": "different-provider-key",
+            "release_title": failed_title,
+        }]
+        releases = [
+            {
+                "guid": "failed", "title": failed_title,
+                "protocol": "usenet", "downloadUrl": "http://prowlarr/failed",
+                "indexer": "Indexer A", "size": 40_000_000,
+                "categories": [{"id": 7030}],
+            },
+            {
+                "guid": "fallback", "title": "Fables 095 (2010) (Digital) (Empire)",
+                "protocol": "usenet", "downloadUrl": "http://prowlarr/fallback",
+                "indexer": "Indexer B", "size": 39_000_000,
+                "categories": [{"id": 7030}],
+            },
+        ]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.load_acquisition_service_config", return_value={
+                "prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"}
+            },
+        ), patch("app.fetch_json_with_headers", return_value=releases):
+            result = search_prowlarr_releases(12)
+
+        self.assertEqual(result["candidateCount"], 1)
+        self.assertEqual(result["candidates"][0]["title"], releases[1]["title"])
 
     def test_year_qualified_discovery_ranks_same_name_runs_by_publication_year(self):
         rows = [
@@ -416,7 +614,9 @@ class FilenameParserTests(unittest.TestCase):
             {"issueCount": 2, "missingTitleCount": 2, "missingDateCount": 1, "missingTitleIssues": ["1", "2"], "missingDateIssues": ["2"]},
             {"issueCount": 2, "missingTitleCount": 1, "missingDateCount": 0, "missingTitleIssues": ["2"], "missingDateIssues": []},
         ]
-        store.get_series_sync_context.return_value = {"title": "Example", "year": 2026}
+        store.get_series_sync_context.return_value = {
+            "title": "Example", "year": 2026, "knownGcdIssueIds": ["101"],
+        }
         with patch("app.catalog_store", return_value=store), patch(
             "app.sync_gcd_issue_catalog",
             return_value={"provider": "gcd", "issueCount": 2, "metadata": {"status": "partial"}},
@@ -429,6 +629,54 @@ class FilenameParserTests(unittest.TestCase):
         detail = store.update_issue_catalog_detail.call_args.args[1]
         self.assertIn("Still unavailable", detail)
         self.assertIn("#2", detail)
+
+    def test_provider_broker_checks_metron_and_comic_vine_before_gcd(self):
+        store = Mock()
+        store.metadata_provider_available.return_value = True
+        store.issue_metadata_summary.side_effect = [
+            {"issueCount": 2, "missingTitleCount": 2, "missingDateCount": 2,
+             "missingTitleIssues": ["1", "2"], "missingDateIssues": ["1", "2"]},
+            {"issueCount": 2, "missingTitleCount": 0, "missingDateCount": 0,
+             "missingTitleIssues": [], "missingDateIssues": []},
+        ]
+        store.get_series_sync_context.return_value = {
+            "title": "Example", "year": 2026, "knownGcdIssueIds": ["101"],
+        }
+        store.apply_issue_list.side_effect = [
+            {"provider": "metron", "issueCount": 2, "titleCount": 2},
+            {"provider": "comic_vine", "issueCount": 2, "titleCount": 2},
+        ]
+        calls = []
+
+        def metron(*_args):
+            calls.append("metron")
+            return "20", "https://metron/20", [{"number": "1"}, {"number": "2"}]
+
+        def comic_vine(*_args):
+            calls.append("comic_vine")
+            return "30", "https://comicvine/30", [{"number": "1"}, {"number": "2"}]
+
+        def gcd(*_args):
+            calls.append("gcd")
+            return {"provider": "gcd", "issueCount": 2, "titleCount": 2,
+                    "metadata": {"status": "complete"}}
+
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.load_provider_config", return_value={
+                "metron": {"enabled": True, "priority": 20, "token": "token"},
+                "comic_vine": {"enabled": True, "priority": 30, "apiKey": "key"},
+                "gcd": {"enabled": True, "priority": 10},
+            },
+        ), patch("app._metron_issue_entries", side_effect=metron), patch(
+            "app._comic_vine_issue_entries", side_effect=comic_vine
+        ), patch("app.sync_gcd_issue_catalog", side_effect=gcd):
+            result = sync_issue_catalog(7)
+
+        self.assertEqual(calls, ["metron", "comic_vine", "gcd"])
+        self.assertEqual(
+            [provider["provider"] for provider in result["providers"]],
+            ["metron", "comic_vine", "gcd"],
+        )
 
     def test_optional_provider_configuration_is_local_and_masked(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch(
@@ -516,6 +764,71 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(entries[0]["cover"], "https://covers/1.jpg")
         self.assertIn("gcd_id=216143", fetch.call_args_list[0].args[0])
 
+    def test_metron_reprints_preserve_full_and_partial_relationships(self):
+        coverage = _metron_reprint_coverage([
+            {"issue": {"series": {"name": "Alex + Ada"}, "number": "1"}},
+            {"issue": {"series": {"name": "Alex + Ada"}, "number": "2"}},
+            {
+                "issue": {"series": {"name": "Image Firsts: Alex + Ada"}, "number": "1"},
+                "relation_type": "partial story",
+            },
+        ])
+
+        full = next(item for item in coverage if item["series"] == "Alex + Ada")
+        partial = next(item for item in coverage if item["series"].startswith("Image Firsts"))
+        self.assertEqual(full["issues"], ["1", "2"])
+        self.assertEqual(full["relation_kind"], "full_issue")
+        self.assertEqual(partial["relation_kind"], "partial_story")
+
+    def test_metron_collected_edition_candidate_requires_structured_reprints(self):
+        parsed = app.ParsedFile(
+            "/comics/Alex and Ada Vol 1.cbz", "Alex and Ada Vol 1.cbz", ".cbz",
+            "Alex + Ada", volume=1, isbn="9781632150066",
+        )
+        responses = [
+            {
+                "results": [{
+                    "id": 900, "series": {"name": "Alex + Ada"}, "number": "1",
+                }],
+                "next": None,
+            },
+            {
+                "id": 900, "series": {"name": "Alex + Ada"}, "number": "1",
+                "title": "Volume One", "isbn": "978-1-63215-006-6", "page_count": 128,
+                "publisher": {"name": "Image Comics"},
+                "image": "https://metron.example/alex-ada-v1.jpg",
+                "resource_url": "https://metron.example/issue/900/",
+                "reprints": [
+                    {"issue": {"series": {"name": "Alex + Ada"}, "number": str(number)}}
+                    for number in range(1, 6)
+                ],
+            },
+        ]
+        with patch("app.fetch_provider_json", side_effect=responses) as fetch:
+            candidates = _metron_collected_edition_candidates(parsed, "token")
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate["record_type"], "collected_edition")
+        self.assertEqual(candidate["cover"], "https://metron.example/alex-ada-v1.jpg")
+        self.assertEqual(candidate["matched_edition"]["isbn_13"], ["9781632150066"])
+        self.assertEqual(
+            candidate["matched_edition"]["coverage"][0]["issues"],
+            ["1", "2", "3", "4", "5"],
+        )
+        self.assertIn("series_q=Alex+%2B+Ada", fetch.call_args_list[0].args[1])
+
+    def test_metron_collected_edition_without_reprints_is_not_a_coverage_match(self):
+        parsed = app.ParsedFile(
+            "/comics/Example Vol 1.cbz", "Example Vol 1.cbz", ".cbz", "Example", volume=1,
+        )
+        responses = [
+            {"results": [{"id": 12, "series": {"name": "Example"}, "number": "1"}], "next": None},
+            {"id": 12, "series": {"name": "Example"}, "number": "1", "reprints": []},
+        ]
+        with patch("app.fetch_provider_json", side_effect=responses):
+            self.assertEqual(_metron_collected_edition_candidates(parsed, "token"), [])
+
     def test_comic_vine_returns_named_issue_metadata(self):
         context = {"title": "Absolute Batman", "year": 2024}
         responses = [
@@ -527,6 +840,53 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(volume_id, "88")
         self.assertEqual(entries[0]["title"], "The Zoo")
         self.assertEqual(entries[0]["publication_year"], 2024)
+
+    def test_fix_match_strict_year_rejects_wrong_comic_vine_run(self):
+        context = {"title": "Batman", "year": 2025, "strictYear": True}
+        response = {
+            "status_code": 1,
+            "results": [{
+                "id": 88, "name": "Batman", "start_year": 1940,
+                "publisher": {"name": "DC Comics"},
+            }],
+        }
+        with patch("app.fetch_json_with_headers", return_value=response) as fetch:
+            with self.assertRaisesRegex(ValueError, "requested publication year"):
+                _comic_vine_issue_entries(context, "key")
+        fetch.assert_called_once()
+
+    def test_comic_vine_strict_year_selects_current_same_name_run(self):
+        context = {"title": "Batman", "year": 2025, "strictYear": True}
+        responses = [
+            {"status_code": 1, "results": [
+                {"id": 796, "name": "Batman", "start_year": 1940,
+                 "publisher": {"name": "DC Comics"}},
+                {"id": 160672, "name": "Batman", "start_year": 2025,
+                 "publisher": {"name": "DC Comics"},
+                 "site_detail_url": "https://comicvine/160672"},
+            ]},
+            {"status_code": 1, "results": [
+                {"id": 9001, "name": "Vast Colors in the Dark",
+                 "issue_number": "1", "store_date": "2025-09-03"},
+            ], "number_of_total_results": 1},
+        ]
+        with patch("app.fetch_json_with_headers", side_effect=responses) as fetch:
+            volume_id, _, entries = _comic_vine_issue_entries(context, "key")
+        self.assertEqual(volume_id, "160672")
+        self.assertEqual(entries[0]["publication_year"], 2025)
+        search_url = fetch.call_args_list[0].args[0]
+        self.assertIn("/search/?", search_url)
+        self.assertIn("resources=volume", search_url)
+
+    def test_fix_match_strict_year_rejects_wrong_metron_run(self):
+        context = {"title": "Batman", "year": 2025, "strictYear": True}
+        response = {
+            "results": [{"id": 77, "series": "Batman (1940)", "year_began": 1940}],
+        }
+        with patch("app.fetch_json_with_headers", return_value=response) as fetch:
+            with self.assertRaisesRegex(ValueError, "requested publication year"):
+                _metron_issue_entries(context, "token")
+        fetch.assert_called_once()
 
     def test_comic_vine_prefers_canonical_issue_count_over_incorrect_local_year(self):
         context = {
@@ -557,7 +917,9 @@ class FilenameParserTests(unittest.TestCase):
             {"issueCount": 2, "missingTitleCount": 2, "rawMissingTitleCount": 2,
              "missingDateCount": 0, "missingTitleIssues": ["1", "2"], "missingDateIssues": []},
         ]
-        store.get_series_sync_context.return_value = {"title": "Example", "year": 2020}
+        store.get_series_sync_context.return_value = {
+            "title": "Example", "year": 2020, "knownGcdIssueIds": ["101"],
+        }
         store.apply_issue_list.return_value = {
             "provider": "metron", "issueCount": 2, "titleCount": 0,
         }
@@ -573,7 +935,7 @@ class FilenameParserTests(unittest.TestCase):
             result = sync_issue_catalog(7)
         self.assertEqual(result["metadata"]["titlePolicy"], "numbered_only")
         self.assertEqual(result["metadata"]["missingTitleCount"], 0)
-        self.assertEqual(store.apply_issue_list.call_args.kwargs["status"], "complete")
+        self.assertEqual(store.apply_issue_list.call_args.kwargs["status"], "complete_to_date")
         detail_call = store.update_issue_catalog_detail.call_args
         self.assertEqual(detail_call.kwargs["title_policy"], "numbered_only")
 
@@ -790,9 +1152,115 @@ class FilenameParserTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), destination.read_bytes())
             self.assertFalse(result["alreadyPresent"])
 
+    def test_verified_replacement_swaps_original_into_hidden_quarantine(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "library"
+            completed = root / "completed"
+            source_folder = completed / "Saga.001.2012"
+            destination = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbz"
+            destination.parent.mkdir(parents=True)
+            source_folder.mkdir(parents=True)
+            destination.write_bytes(b"damaged-original")
+            source = source_folder / "Saga 001 (2012).cbz"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("001.jpg", b"replacement-page")
+            store = Mock()
+            store.get_acquisition_job_context.return_value = {
+                "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+                "issueNumber": "1", "issueTitle": None, "existingDirectory": str(destination.parent),
+                "replacementId": "9", "replacementFileId": "4",
+                "replacementFilePath": str(destination),
+            }
+            store.replacement_for_job.return_value = {
+                "id": 9, "original_path": str(destination), "library_root": str(library),
+            }
+            with patch("app.catalog_store", return_value=store):
+                result = import_downloaded_comic(
+                    {"job_id": 7, "sab_storage": str(source_folder), "release_title": "Saga.001.2012"},
+                    library_root=library, completed_root=completed,
+                )
+
+            quarantine = library / ".sonicboom" / "quarantine" / "9" / "Image Comics" / "Saga (2012)" / destination.name
+            self.assertEqual(quarantine.read_bytes(), b"damaged-original")
+            self.assertEqual(destination.read_bytes(), source.read_bytes())
+            self.assertEqual(Path(result["quarantineOriginal"]).resolve(), quarantine.resolve())
+            store.record_replacement_quarantine.assert_called_once()
+            replacement_call = store.record_replacement_quarantine.call_args.args
+            self.assertEqual(replacement_call[0], 9)
+            self.assertEqual(Path(replacement_call[1]).resolve(), destination.resolve())
+            self.assertEqual(Path(replacement_call[2]).resolve(), quarantine.resolve())
+
+    def test_invalid_replacement_never_moves_original(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "library"
+            completed = root / "completed"
+            source_folder = completed / "Saga.001.2012"
+            destination = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbz"
+            destination.parent.mkdir(parents=True)
+            source_folder.mkdir(parents=True)
+            destination.write_bytes(b"damaged-original")
+            source = source_folder / "Saga 001 (2012).cbz"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("notes.txt", b"no comic pages")
+            store = Mock()
+            store.get_acquisition_job_context.return_value = {
+                "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+                "issueNumber": "1", "issueTitle": None, "existingDirectory": str(destination.parent),
+                "replacementId": "9", "replacementFileId": "4",
+                "replacementFilePath": str(destination),
+            }
+            with (
+                patch("app.catalog_store", return_value=store),
+                patch("app.select_downloaded_comic", return_value={"path": source}),
+            ):
+                with self.assertRaisesRegex(ValueError, "image pages"):
+                    import_downloaded_comic(
+                        {"job_id": 7, "sab_storage": str(source_folder), "release_title": "Saga.001.2012"},
+                        library_root=library, completed_root=completed,
+                    )
+            self.assertEqual(destination.read_bytes(), b"damaged-original")
+            self.assertFalse((library / ".sonicboom").exists())
+
     def test_organized_issue_filename_keeps_story_title_out_of_series_title(self):
         item = parse_filename(Path("Absolute Flash (2025) #018 - Now You See Me.cbz"))
         self.assertEqual((item.title, item.issue, item.year), ("Absolute Flash", "18", 2025))
+
+    def test_issue_filename_ignores_truncated_release_group(self):
+        item = parse_filename(Path("Chew 015 (2010) (D) (Kingpin-Empire.cbr"))
+        self.assertEqual((item.title, item.issue, item.year), ("Chew", "15", 2010))
+
+    def test_sab_import_accepts_exact_issue_with_truncated_release_group(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "library"
+            completed = root / "completed"
+            source_folder = completed / "Chew 015 (2010) (D) (Kingpin-Empire"
+            library.mkdir()
+            source_folder.mkdir(parents=True)
+            source = source_folder / "Chew 015 (2010) (D) (Kingpin-Empire.cbz"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("001.jpg", b"comic-page")
+            store = Mock()
+            store.get_acquisition_job_context.return_value = {
+                "seriesTitle": "Chew", "seriesYear": 2009, "publisher": "Image",
+                "issueNumber": "15", "issueTitle": "Just Desserts, 5 of 5",
+                "existingDirectory": None,
+            }
+            with patch("app.catalog_store", return_value=store):
+                result = import_downloaded_comic(
+                    {"job_id": 7, "sab_storage": str(source_folder),
+                     "release_title": "Chew 015 (2010) (D) (Kingpin-Empire"},
+                    library_root=library, completed_root=completed,
+                )
+
+            destination = (
+                library / "Image" / "Chew (2009)"
+                / "Chew (2009) #015 - Just Desserts, 5 of 5.cbz"
+            )
+            self.assertEqual(Path(result["destination"]).resolve(), destination.resolve())
+            self.assertTrue(destination.is_file())
 
     def test_sab_import_rejects_a_different_issue(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -832,6 +1300,7 @@ class FilenameParserTests(unittest.TestCase):
             "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
             "issueNumber": "1", "issueTitle": "Chapter One", "publicationYear": 2012,
         }
+        store.replacement_for_job.return_value = None
         with patch("app.catalog_store", return_value=store), patch(
             "app._sab_history_slot", return_value={
                 "nzo_id": "queue-id", "status": "Completed",
@@ -848,6 +1317,132 @@ class FilenameParserTests(unittest.TestCase):
         store.update_acquisition_job.assert_called_once_with(
             7, "fulfilled", "Imported and verified as Saga (2012) #001 - Chapter One.cbz"
         )
+
+    def test_failed_sab_download_automatically_uses_the_next_strong_release(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "failed-queue-id",
+            "release_title": "Fables.095.failed", "release_key": "failed-key",
+        }
+        store = Mock()
+        store.record_acquisition_release_failure.return_value = {"failureCount": 1}
+        fallback = {"id": "fallback-candidate", "title": "Fables.095.fallback"}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "failed-queue-id", "status": "Failed", "storage": "",
+                "fail_message": "Repair failed, not enough repair blocks",
+            },
+        ), patch("app.search_prowlarr_releases", return_value={
+            "candidateCount": 1, "candidates": [fallback],
+        }) as search, patch("app.send_release_to_sabnzbd", return_value={
+            "status": "grabbed", "queueIds": ["fallback-queue-id"],
+        }) as send:
+            result = reconcile_acquisition_download(download)
+
+        self.assertEqual(result["status"], "fallback_queued")
+        self.assertTrue(result["automaticFallback"])
+        store.update_acquisition_download.assert_called_once_with(
+            31, "failed", sab_storage="",
+            error="Repair failed, not enough repair blocks", failure_stage="download",
+        )
+        store.record_acquisition_release_failure.assert_called_once_with(
+            7, "failed-key", "Fables.095.failed",
+            "Repair failed, not enough repair blocks",
+        )
+        search.assert_called_once_with(7)
+        send.assert_called_once_with(7, "fallback-candidate")
+
+    def test_failed_sab_download_stops_after_three_failed_releases(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "failed-queue-id",
+            "release_title": "Fables.095.failed", "release_key": "failed-key",
+        }
+        store = Mock()
+        store.record_acquisition_release_failure.return_value = {"failureCount": 3}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "failed-queue-id", "status": "Failed", "storage": "",
+                "fail_message": "Aborted, cannot be completed",
+            },
+        ), patch("app.search_prowlarr_releases") as search, patch(
+            "app.send_release_to_sabnzbd"
+        ) as send:
+            result = reconcile_acquisition_download(download)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["automaticFallback"])
+        self.assertIn("stopped after 3 failed releases", result["error"])
+        search.assert_not_called()
+        send.assert_not_called()
+        self.assertEqual(store.update_acquisition_job.call_args.args[1], "failed")
+
+    def test_collected_volume_stays_active_until_every_replacement_issue_is_imported(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+            "release_title": "Saga.001.2012", "sab_storage": None,
+        }
+        imported = {
+            "source": "/downloads/complete/comics/Saga.001.2012/Saga.001.2012.cbz",
+            "destination": "/comics/Image Comics/Saga (2012)/Saga (2012) #001.cbz",
+            "size": 1234, "sha256": "abc123", "alreadyPresent": False,
+        }
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+            "issueNumber": "1", "issueTitle": None, "publicationYear": 2012,
+        }
+        store.replacement_for_job.return_value = {
+            "id": 9, "unfinished_jobs": 5,
+            "original_path": "/comics/Image Comics/Saga (2012)/Saga Vol. 1.cbz",
+        }
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/Saga.001.2012",
+            },
+        ), patch("app.import_downloaded_comic", return_value=imported), patch(
+            "app._move_original_to_quarantine"
+        ) as quarantine_original:
+            result = reconcile_acquisition_download(download)
+
+        self.assertEqual(result["status"], "imported")
+        quarantine_original.assert_not_called()
+        store.record_replacement_quarantine.assert_not_called()
+        store.complete_file_replacement.assert_not_called()
+
+    def test_last_replacement_issue_completes_the_recoverable_swap(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+            "release_title": "Saga.006.2012", "sab_storage": None,
+        }
+        quarantine = "/comics/.sonicboom/quarantine/9/Image Comics/Saga (2012)/Saga Vol. 1.cbz"
+        imported = {
+            "source": "/downloads/complete/comics/Saga.006.2012/Saga.006.2012.cbz",
+            "destination": "/comics/Image Comics/Saga (2012)/Saga (2012) #006.cbz",
+            "size": 1234, "sha256": "abc123", "alreadyPresent": False,
+        }
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+            "issueNumber": "6", "issueTitle": None, "publicationYear": 2012,
+        }
+        store.replacement_for_job.return_value = {
+            "id": 9, "unfinished_jobs": 0, "quarantine_path": quarantine,
+            "original_path": "/comics/Image Comics/Saga (2012)/Saga Vol. 1.cbz",
+        }
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/Saga.006.2012",
+            },
+        ), patch("app.import_downloaded_comic", return_value=imported), patch(
+            "app._move_original_to_quarantine"
+        ) as quarantine_original:
+            result = reconcile_acquisition_download(download)
+
+        self.assertTrue(result["replacementCompleted"])
+        self.assertEqual(result["quarantineOriginal"], quarantine)
+        quarantine_original.assert_not_called()
+        store.complete_file_replacement.assert_called_once_with(9, quarantine)
 
     def test_completed_sab_job_stays_failed_when_post_processing_fails(self):
         download = {
@@ -876,6 +1471,54 @@ class FilenameParserTests(unittest.TestCase):
             "failed",
             "Import needs attention: Downloaded archive did not match Saga #1",
         )
+
+    def test_completed_sab_job_waits_when_finished_file_is_not_mounted_yet(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+            "release_title": "Saga.001.2012", "sab_storage": None,
+        }
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/Saga.001.2012",
+            },
+        ), patch(
+            "app.import_downloaded_comic",
+            side_effect=CompletedDownloadNotVisible(
+                "The completed SABnzbd download is not visible in the mounted comics folder"
+            ),
+        ):
+            result = reconcile_acquisition_download(download)
+
+        self.assertEqual(result["status"], "waiting_for_files")
+        self.assertEqual(
+            store.update_acquisition_download.call_args_list[-1].args[1],
+            "waiting_for_files",
+        )
+        store.update_acquisition_job.assert_called_once_with(
+            7,
+            "grabbed",
+            "SABnzbd finished; waiting for the completed file to appear in SonicBoom",
+        )
+
+    def test_resolves_sab_host_file_path_inside_category_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "comics"
+            release = root / "Fables.072.(2008).(Digital).(NahgaEmpire)"
+            release.mkdir(parents=True)
+            comic = release / "Fables.072.(2008).(Digital).(NahgaEmpire).cbz"
+            comic.write_bytes(b"comic")
+
+            resolved = _resolve_sab_download_source(
+                "/data/downloads/usenet/complete/comics/"
+                "Fables.072.(2008).(Digital).(NahgaEmpire)/"
+                "Fables.072.(2008).(Digital).(NahgaEmpire).cbz",
+                "Fables.072.(2008).(Digital).(NahgaEmpire)",
+                root,
+            )
+
+        self.assertEqual(resolved, comic.resolve())
 
     def test_segments_a_title_without_spaces(self):
         item = parse_filename(Path("strangetalentoflutherstrode_vol2.cbz"))
@@ -927,6 +1570,16 @@ class FilenameParserTests(unittest.TestCase):
             files = scan_folder(folder)
             self.assertEqual(len(files), 2)
             self.assertEqual({item.extension for item in files}, {".cbz", ".epub"})
+
+    def test_scan_ignores_sonicboom_quarantine(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "Current 001.cbz").touch()
+            hidden = root / ".sonicboom" / "quarantine" / "4"
+            hidden.mkdir(parents=True)
+            (hidden / "Old 001.cbz").touch()
+            files = scan_folder(folder)
+            self.assertEqual([item.filename for item in files], ["Current 001.cbz"])
 
     def test_page_template_does_not_interpret_css_braces(self):
         rendered = PAGE.replace("__FOLDER__", "/tmp/comics").replace("__CHECKED__", "checked").replace("__CONTENT__", "ok")

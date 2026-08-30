@@ -1,8 +1,30 @@
-# Comic Metadata POC
+# SonicBoom
 
-The repository now also contains the first functional V1 shell: a persistent catalog and metadata inbox layered over the original read-only metadata POC. The React interface is in `v1-prototype/`; the local Python service owns scanning, enrichment, cover thumbnails, and SQLite persistence.
+SonicBoom is a pre-release, self-hosted comic catalog and acquisition product.
+It is being developed toward an installable user release, not as a POC or UI
+prototype. The approved delivery approach, supported first-release target, and
+release gates are documented in [`docs/RELEASE_TRACK.md`](docs/RELEASE_TRACK.md).
 
-## V1 catalog
+The current V1 implementation is retained as a maintenance and regression
+reference while the release foundation and Catalog Core v2 are built directly
+in their target architecture. The existing React directory remains named
+`v1-prototype/` for repository continuity; the name does not define the current
+product stage. Catalog v2 is specified in
+[`docs/CATALOG_CORE_V2.md`](docs/CATALOG_CORE_V2.md). The isolated Gate 1
+runtime, configuration, migration, job, health, backup, and verification
+contracts are documented in
+[`docs/V2_RELEASE_FOUNDATION.md`](docs/V2_RELEASE_FOUNDATION.md).
+The in-progress Gate 2 reference-catalog and golden-library contracts are
+documented in
+[`docs/GATE_2_CATALOG_CONTRACT.md`](docs/GATE_2_CATALOG_CONTRACT.md).
+The resumable provider adapter and rate-control contract is documented in
+[`docs/PROVIDER_IMPORT_V2.md`](docs/PROVIDER_IMPORT_V2.md).
+Its versioned, attributed GCD local-export adapter is implemented in V2; the
+separate bounded extractor is now implemented and contract-tested. A real local
+GCD snapshot smoke test and authenticated Metron/Comic Vine adapters remain
+Gate 2 work.
+
+## Current V1 reference implementation
 
 The catalog stores its local database at `.data/comicarr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
 
@@ -29,9 +51,9 @@ npm run dev
 
 Open <http://127.0.0.1:4173>. The Vite development server proxies `/api` to the local service on port 8787. Use **Add comics** to select a folder through Finder or enter an absolute path. The inventory remains read-only.
 
-## Run on a NAS with Docker Compose
+## QA deployment on a NAS with Docker Compose
 
-The production container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the writable library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`.
+The current QA container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the writable library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`. This deployment is useful for regression and integration testing but is not the supported user release described in `docs/RELEASE_TRACK.md`.
 
 1. Copy `.env.example` to `.env` on the NAS.
 2. Review the NAS media identity (`1000:10`) and verified storage paths already provided in `.env.example`.
@@ -51,11 +73,13 @@ SonicBoom retrieves a selected NZB from Prowlarr through the private configured 
 
 The completed-download importer follows SABnzbd by its stable queue ID, waits for a successful history result, and validates the selected comic against the requested series and issue. It copies into the existing series folder when one is known, otherwise using `Publisher/Series (Year)`, and names a new issue `Series (Year) #001 - Issue Title.cbz`. The copy is written to a hidden partial file, flushed, size- and SHA-256-verified, structurally checked, and atomically promoted. Imports stop if they would cross the configurable minimum-free-space threshold. Name conflicts stop for review, and SABnzbd's source copy is never deleted. SonicBoom marks the request fulfilled and rescans the library only after this verified import succeeds. The library mount is writable only for this verified import path; the SAB completed folder stays read-only.
 
+Damaged-file replacement uses the same durable acquisition jobs, but it does not count the damaged copy as satisfying those jobs. A replacement can start only after SonicBoom has mapped the file to specific issues; collected-volume replacement therefore requests its verified issue contents rather than guessing from a filename. The existing comic remains active until every required download is validated and imported. SonicBoom then moves it into `.sonicboom/quarantine/<replacement-id>/` under the library root and completes the replacement request. Failed validation leaves the original untouched, and a failed catalog swap restores it automatically while retaining the rejected copy for inspection.
+
 The same naming policy is intended to power a future **Organize library** function. Existing files will be handled separately through an explicit preview of old path → proposed path, conflict checks, and an undo manifest; intake does not silently reorganize a user's current library.
 
 Docker runtime state, `.env`, the SQLite catalog, and locally stored API keys are excluded from Git. Before publishing this project, use a private repository and verify `git status --ignored` does not show any credential or comic-library files staged for commit.
 
-Current functional V1 scope:
+Current functional V1 reference scope (maintenance only):
 
 - Persistent SQLite catalog with schema versioning.
 - Canonical series runs, normalized aliases, and per-file identity assignments with source evidence.
@@ -125,7 +149,12 @@ POST /api/v1/files/{file_id}/contents
 POST /api/v1/files/{file_id}/contents/reset
 ```
 
-A read-only local proof of concept that scans comic filenames and returns metadata candidates. It does not rename, move, edit, or delete comic files.
+## Historical metadata scanner
+
+The repository began with a read-only local metadata experiment that scans comic
+filenames and returns candidates. This historical path does not define the
+current SonicBoom product architecture or release readiness. It does not rename,
+move, edit, or delete comic files.
 
 ## Run
 
@@ -151,7 +180,7 @@ Single-issue recommendations include a separate `identity_confidence` assessment
 
 Long alphabetic filename tokens are segmented with a local dictionary and reported with a verification warning—for example, `strangetalentoflutherstrode` becomes `strange talent of luther strode`. Folder analysis uses four bounded workers, shares remote-response caches across files, coalesces duplicate requests, and limits slow edition-detail lookups. A failure on one file no longer stops the rest of the batch.
 
-Successful external responses are cached locally for seven days so restarting the POC does not repeatedly consume anonymous API limits. When GCD is unavailable or rate-limited, a single issue with matching filename and ComicInfo.xml series/number remains a medium-confidence recommendation instead of disappearing. This fallback is explicitly marked as not externally confirmed.
+Successful external responses are cached locally for seven days so restarting the scanner does not repeatedly consume anonymous API limits. When GCD is unavailable or rate-limited, a single issue with matching filename and ComicInfo.xml series/number remains a medium-confidence recommendation instead of disappearing. This fallback is explicitly marked as not externally confirmed.
 
 GCD is used specifically for collected-edition records. When a requested volume matches a GCD collection descriptor, the result can include its cover, ISBN, page count, publisher, creators, and named stories. Issue coverage is returned only when the number of comic stories in that collection agrees with the complete issue list of a same-named GCD limited series. That relationship is marked `inferred`; it is not presented as an explicit GCD reprint link.
 

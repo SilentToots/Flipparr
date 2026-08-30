@@ -1,5 +1,18 @@
 # SonicBoom Collaboration Principles
 
+## Product stage and delivery target
+
+- SonicBoom is a **pre-release product on a production track**, not a proof of concept or a disposable prototype. The delivery target is an installable, self-hosted, single-user Docker release for a NAS-hosted comic library.
+- Design and implementation decisions must move the product toward the release gates in `docs/RELEASE_TRACK.md`. A feature is not complete merely because it works in the current developer environment or demo UI.
+- Build significant new functionality in the approved V2 target architecture. Keep V1 maintenance-only except for security fixes, data-loss risks, and blockers to V2 validation; do not refactor V1 as an intermediate destination.
+- Preserve verified user behavior and integrations through explicit adapters or ports, not by carrying forward V1 catalog state, accidental coupling, or prototype shortcuts.
+- Experimental spikes are allowed only when they are clearly labeled, isolated, time-bounded, and either discarded or brought through the same tests, migrations, recovery behavior, observability, security, accessibility, documentation, and release review as production code.
+- Release work must include clean-install, upgrade, backup/restore, rollback, restart recovery, provider-outage, and realistic-library validation. Silent data reassignment, unexplained background work, and manual database repair are release blockers.
+
 - Challenge assumptions instead of defaulting to agreement. When a proposed direction conflicts with established best practice, creates avoidable risk, or does not fit SonicBoom's stated product goals, explain the concern, its likely impact, and a stronger alternative.
 - Keep tradeoffs concrete so the user can make an informed product decision. The user retains final decision authority and may knowingly choose a different tradeoff.
 - After the user makes an informed choice, follow that direction unless a safety, authorization, or technical constraint prevents it; in that case, state the constraint plainly.
+- Before implementing a significant feature, integration, workflow, data-model change, or architectural decision, research the relevant constraints and established best practices first. Prefer current primary sources such as official documentation, specifications, accessibility standards, and provider policies; do not wait for production or QA failures to discover documented limitations.
+- Apply that research across the whole product, not only external integrations. Evaluate maintainable architecture, data integrity and migrations, security and privacy, performance and concurrency, caching and failure recovery, testing and observability, deployment and rollback, accessibility, responsive behavior, design tokens, reusable components, established UX conventions, clear terminology, feedback states, and error recovery as relevant to the work.
+- Before building, summarize material findings, risks, and tradeoffs and adjust the implementation approach accordingly. Distinguish an established standard or documented constraint from a product preference, and identify how the behavior will be tested or verified. Keep this proportional: routine low-risk edits do not require unnecessary research, but assumptions with meaningful product, data, operational, or UX impact must be validated.
+- Batch small UI polish, spacing, copy, and animation changes into a shared QA deployment instead of rebuilding and deploying the NAS after every individual tweak. Deploy immediately only when a backend or security fix, a blocker, or the next live QA step depends on the change.

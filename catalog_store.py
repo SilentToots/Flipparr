@@ -15,8 +15,19 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 27
 LOCAL_ANALYSIS_VERSION = 2
+MONITORED_RUN_REFRESH_HOURS = 24
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """Commit or roll back a transaction, then release its SQLite handle."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
 
 
 def _utc_now() -> str:
@@ -37,7 +48,11 @@ def _load_json(value: str | None, fallback: Any) -> Any:
 
 
 def _normalized(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold().replace("&", " and "))
+    # Comic titles routinely use ``+`` and ``&`` interchangeably (for example
+    # ``Alex + Ada``). Treat both as the word "and" so a display-title cleanup
+    # does not split one local run into two canonical identities.
+    normalized = str(value or "").casefold().replace("&", " and ").replace("+", " and ")
+    return re.sub(r"[^a-z0-9]+", "", normalized)
 
 
 def _normalized_publisher(value: Any) -> str:
@@ -64,9 +79,13 @@ def _canonical_series_title(title: Any, is_issue: bool) -> str:
     return value or str(title or "Unknown series")
 
 
-def _display_title_rank(value: str) -> tuple[int, int]:
-    """Prefer concise publisher styling, including '&' over the word 'and'."""
-    return (1 if "&" in value else 0, -len(value))
+def _display_title_rank(value: str) -> tuple[int, int, int]:
+    """Prefer readable publisher styling over compact filename-derived text."""
+    return (
+        1 if any(separator in value for separator in ("&", "+")) else 0,
+        1 if re.search(r"\s", value) else 0,
+        -len(value),
+    )
 
 
 def _suggest_arc_name(collection_name: str, run_title: str) -> str:
@@ -90,23 +109,216 @@ def _natural_issue_key(value: Any) -> tuple[Any, ...]:
     )
 
 
+def _valid_year(value: Any) -> int | None:
+    """Return a plausible publication year without accepting booleans or noise."""
+    if isinstance(value, bool):
+        return None
+    try:
+        year = int(str(value).strip()[:4])
+    except (TypeError, ValueError):
+        return None
+    return year if 1800 <= year <= 2200 else None
+
+
+def _years_compatible(first: Any, second: Any, tolerance: int = 3) -> bool:
+    """Treat nearby dates as one run while separating reboots with the same title."""
+    first_year = _valid_year(first)
+    second_year = _valid_year(second)
+    return first_year is None or second_year is None or abs(first_year - second_year) <= tolerance
+
+
+def _issue_number_value(value: Any) -> float | None:
+    match = re.match(r"^\s*#?\s*(\d+(?:\.\d+)?)", str(value or ""))
+    return float(match.group(1)) if match else None
+
+
+def _claim_run_anchor_year(claim: dict[str, Any]) -> int | None:
+    """Return a year that can identify a publication run's starting era.
+
+    A later issue's publication year is useful for choosing between already
+    known runs, but it is not the run's start year. Collected-edition years are
+    even less useful because trades are routinely published years after their
+    underlying series began. Only an opening numbered issue may create or move
+    a run's era boundary.
+    """
+    if claim.get("kind") != "issue":
+        return None
+    issue_number = _issue_number_value(claim.get("issue"))
+    if issue_number is None or not 1 <= issue_number <= 3:
+        return None
+    return _valid_year(claim.get("year"))
+
+
+def _issue_list_start_year(entries: list[dict[str, Any]]) -> int | None:
+    """Infer a provider run's era from its opening numbered issues."""
+    opening_years = []
+    all_years = []
+    for entry in entries:
+        year = _valid_year(entry.get("publication_year") or entry.get("publication_date"))
+        if year is None:
+            continue
+        all_years.append(year)
+        issue_number = _issue_number_value(entry.get("number"))
+        if issue_number is not None and 1 <= issue_number <= 3:
+            opening_years.append(year)
+    return min(opening_years or all_years) if (opening_years or all_years) else None
+
+
 def _coverage_groups(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str, str, bool], list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, str, bool, str], list[dict[str, Any]]] = {}
     for claim in claims:
-        key = (claim["seriesLabel"], claim["source"], claim["confidence"], claim["resolved"])
+        key = (
+            claim["seriesLabel"], claim["source"], claim["confidence"], claim["resolved"],
+            str(claim.get("relationKind") or "full_issue"),
+        )
         grouped.setdefault(key, []).append(claim)
     summaries = []
-    for (series_label, source, confidence, resolved), members in grouped.items():
+    for (series_label, source, confidence, resolved, relation_kind), members in grouped.items():
         numbers = sorted({member["issueNumber"] for member in members}, key=_natural_issue_key)
         issue_label = numbers[0] if len(numbers) == 1 else f"{numbers[0]}–{numbers[-1]}"
         summaries.append(
             {
                 "seriesLabel": series_label, "issues": numbers, "issueLabel": issue_label,
                 "source": source, "confidence": confidence, "resolved": resolved,
+                "relationKind": relation_kind,
                 "evidence": next((member["evidence"] for member in members if member.get("evidence")), None),
             }
         )
     return summaries
+
+
+def _coverage_relation_kind(claim: dict[str, Any]) -> str:
+    """Normalize provider coverage semantics before they can affect ownership."""
+    value = str(
+        claim.get("relation_kind") or claim.get("relationKind") or "full_issue"
+    ).strip().casefold().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "full": "full_issue", "issue": "full_issue", "reprint": "full_issue",
+        "partial": "partial_story", "story": "partial_story",
+        "extract": "excerpt",
+    }
+    normalized = aliases.get(value, value)
+    return normalized if normalized in {"full_issue", "partial_story", "excerpt", "unknown"} else "unknown"
+
+
+def _logical_volume_key(edition: dict[str, Any]) -> str:
+    """Return the collected-work slot shared by equivalent edition records.
+
+    ``editions`` intentionally retains ISBNs, formats, providers, and individual
+    files. Those are publication/copy facts, not the user's logical volume
+    count. This helper is applied within one canonical publication run, so a
+    numbered volume and kind are enough to share a slot even when providers use
+    different display titles. Unnumbered works stay conservative and use ISBN
+    or title.
+    """
+    title = _normalized(edition.get("title")) or "untitled"
+    kind = str(edition.get("editionKind") or "edition")
+    volume = edition.get("volume")
+    if volume not in {None, ""}:
+        return f"numbered:{volume}:{kind}"
+    isbns = sorted(str(value) for value in (edition.get("isbns") or []) if value)
+    if isbns:
+        return f"isbn:{isbns[0]}"
+    subtitle = _normalized(edition.get("subtitle"))
+    return f"title:{title}:{subtitle}:{kind}"
+
+
+def _group_logical_volumes(editions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse publication editions/copies into user-facing collected works."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for edition in editions:
+        grouped.setdefault(_logical_volume_key(edition), []).append(edition)
+
+    logical_volumes: list[dict[str, Any]] = []
+    for logical_key, members in grouped.items():
+        def quality(item: dict[str, Any]) -> tuple[int, ...]:
+            return (
+                int(any(group.get("resolved") for group in item.get("coverageGroups") or [])),
+                int(str(item.get("source") or "").casefold() not in {"", "local metadata"}),
+                int(bool(item.get("cover"))),
+                int(bool(item.get("isbns"))),
+                int(bool(item.get("subtitle"))),
+                int(bool(item.get("publisher"))),
+                int(bool(item.get("publicationYear"))),
+            )
+
+        representative = max(members, key=quality)
+        claims: list[dict[str, Any]] = []
+        seen_claims: set[tuple[Any, ...]] = set()
+        for member in members:
+            for claim in member.get("coverage") or []:
+                claim_key = (
+                    claim.get("seriesLabel"), claim.get("issueNumber"),
+                    bool(claim.get("resolved")), claim.get("source"),
+                )
+                if claim_key not in seen_claims:
+                    claims.append(claim)
+                    seen_claims.add(claim_key)
+
+        merged = dict(representative)
+        resolved_issue_keys = {
+            (str(claim.get("seriesLabel") or "").casefold(), str(claim.get("issueNumber") or ""))
+            for claim in claims
+            if claim.get("resolved")
+            and claim.get("relationKind", "full_issue") == "full_issue"
+            and claim.get("issueNumber") not in {None, ""}
+        }
+        has_unresolved_claims = any(not claim.get("resolved") for claim in claims)
+        has_partial_claims = any(
+            claim.get("relationKind", "full_issue") != "full_issue"
+            for claim in claims
+        )
+        if resolved_issue_keys and (has_unresolved_claims or has_partial_claims):
+            contents_status = "partial"
+        elif resolved_issue_keys:
+            contents_status = "verified"
+        elif has_partial_claims:
+            contents_status = "partial"
+        elif claims:
+            contents_status = "unresolved"
+        else:
+            contents_status = "unknown"
+        merged.update(
+            {
+                "logicalVolumeKey": logical_key,
+                "editionIds": [member["id"] for member in members],
+                "editionRecordCount": len(members),
+                "copyCount": len({file_id for member in members for file_id in member.get("fileIds") or []}),
+                "fileIds": list(dict.fromkeys(
+                    file_id for member in members for file_id in member.get("fileIds") or []
+                )),
+                "files": list(dict.fromkeys(
+                    filename for member in members for filename in member.get("files") or []
+                )),
+                "isbns": list(dict.fromkeys(
+                    isbn for member in members for isbn in member.get("isbns") or []
+                )),
+                "cover": next((
+                    member.get("cover")
+                    for member in sorted(members, key=quality, reverse=True)
+                    if member.get("cover")
+                ), None),
+                "coverage": claims,
+                "coverageGroups": _coverage_groups(claims),
+                "contentsStatus": contents_status,
+                "contentsIssueCount": len(resolved_issue_keys),
+                "seriesPlacementStatus": "matched",
+                "coverageOverrideCount": sum(
+                    int(member.get("coverageOverrideCount") or 0) for member in members
+                ),
+            }
+        )
+        logical_volumes.append(merged)
+
+    logical_volumes.sort(
+        key=lambda item: (
+            item.get("volume") is None,
+            _natural_issue_key(
+                item.get("volume") if item.get("volume") is not None else item.get("title")
+            ),
+        )
+    )
+    return logical_volumes
 
 
 def _display_time(timestamp: str | None) -> tuple[str, str]:
@@ -184,6 +396,62 @@ def _edition_kind(
     return "edition"
 
 
+def _candidate_issue_provider_identity(
+    candidate: dict[str, Any], *, allow_embedded_url: bool = False
+) -> dict[str, str | None] | None:
+    """Return durable provider identity carried by a selected issue candidate.
+
+    Provider candidates name their source directly. Embedded ComicInfo metadata
+    is intentionally weaker, so its URL is accepted only after an explicit Fix
+    Match action confirms that the user chose it.
+    """
+    source = str(candidate.get("source") or "").strip().casefold()
+    provider = {
+        "grand comics database": "gcd",
+        "gcd": "gcd",
+        "metron": "metron",
+        "comic vine": "comic_vine",
+        "comic_vine": "comic_vine",
+    }.get(source)
+    provider_id = str(candidate.get("source_id") or "").strip() or None
+    url = str(candidate.get("url") or candidate.get("web") or "").strip() or None
+
+    if not provider and allow_embedded_url and url:
+        patterns = (
+            ("gcd", r"(?:comics\.org)/(?:api/)?issue/(\d+)/?"),
+            ("metron", r"(?:metron\.cloud)/(?:api/)?issue/(\d+)/?"),
+            ("comic_vine", r"(?:comicvine\.gamespot\.com)/issue/4000-(\d+)/?"),
+        )
+        for candidate_provider, pattern in patterns:
+            match = re.search(pattern, url, flags=re.IGNORECASE)
+            if match:
+                provider = candidate_provider
+                provider_id = match.group(1)
+                break
+
+    if not provider or not provider_id:
+        return None
+    series_id_keys = {
+        "gcd": ("provider_series_id", "gcd_series_id"),
+        "metron": ("provider_series_id", "metron_series_id"),
+        "comic_vine": ("provider_series_id", "comicvine_volume_id"),
+    }[provider]
+    provider_series_id = next(
+        (
+            str(candidate.get(key)).strip()
+            for key in series_id_keys
+            if candidate.get(key) not in {None, ""}
+        ),
+        None,
+    )
+    return {
+        "provider": provider,
+        "providerId": provider_id,
+        "apiUrl": url,
+        "providerSeriesId": provider_series_id,
+    }
+
+
 class CatalogStore:
     """SQLite-backed catalog with one connection per operation/thread."""
 
@@ -193,9 +461,14 @@ class CatalogStore:
         self._write_lock = threading.Lock()
         self._migrate()
         self._reconcile_all_identities()
+        self._backfill_legacy_replacement_requests()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
+        connection = sqlite3.connect(
+            self.database_path,
+            timeout=30,
+            factory=_ClosingConnection,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
@@ -384,6 +657,8 @@ class CatalogStore:
                     source TEXT NOT NULL,
                     confidence TEXT NOT NULL,
                     resolution_status TEXT NOT NULL,
+                    relation_kind TEXT NOT NULL DEFAULT 'full_issue'
+                        CHECK(relation_kind IN ('full_issue', 'partial_story', 'excerpt', 'unknown')),
                     evidence TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(edition_id, series_label, issue_number, source)
@@ -509,26 +784,42 @@ class CatalogStore:
                     job_id INTEGER NOT NULL UNIQUE REFERENCES acquisition_jobs(id) ON DELETE CASCADE,
                     sab_nzo_id TEXT NOT NULL UNIQUE,
                     release_title TEXT NOT NULL,
+                    release_key TEXT,
                     status TEXT NOT NULL DEFAULT 'queued'
-                        CHECK(status IN ('queued', 'downloading', 'completed', 'importing', 'imported', 'failed')),
+                        CHECK(status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files', 'imported', 'failed')),
                     sab_storage TEXT,
                     local_source TEXT,
                     destination TEXT,
                     source_size INTEGER,
                     source_sha256 TEXT,
                     error TEXT,
+                    failure_stage TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     imported_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS acquisition_downloads_status
                     ON acquisition_downloads(status, updated_at);
+                CREATE TABLE IF NOT EXISTS acquisition_release_failures (
+                    id INTEGER PRIMARY KEY,
+                    job_id INTEGER NOT NULL REFERENCES acquisition_jobs(id) ON DELETE CASCADE,
+                    release_key TEXT NOT NULL,
+                    release_title TEXT NOT NULL,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(job_id, release_key)
+                );
+                CREATE INDEX IF NOT EXISTS acquisition_release_failures_job
+                    ON acquisition_release_failures(job_id, updated_at);
                 CREATE TABLE IF NOT EXISTS file_replacement_requests (
                     id INTEGER PRIMARY KEY,
                     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
                     reason_code TEXT NOT NULL,
                     desired_language TEXT,
                     acquisition_preference TEXT NOT NULL DEFAULT 'either',
+                    acquisition_request_id INTEGER REFERENCES acquisition_requests(id) ON DELETE SET NULL,
+                    quarantine_path TEXT,
                     status TEXT NOT NULL DEFAULT 'wanted'
                         CHECK(status IN ('wanted', 'searching', 'grabbed', 'failed', 'fulfilled', 'cancelled')),
                     error TEXT,
@@ -587,6 +878,19 @@ class CatalogStore:
                     last_error TEXT,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS series_monitor_refreshes (
+                    series_run_id INTEGER PRIMARY KEY
+                        REFERENCES series_runs(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'scheduled'
+                        CHECK(status IN ('scheduled', 'running', 'waiting', 'complete')),
+                    last_checked_at TEXT,
+                    next_check_at TEXT NOT NULL,
+                    last_provider TEXT,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS series_monitor_refreshes_due
+                    ON series_monitor_refreshes(status, next_check_at);
                 """
             )
             edition_columns = {row["name"] for row in connection.execute("PRAGMA table_info(editions)")}
@@ -639,12 +943,30 @@ class CatalogStore:
                 connection.execute(
                     "ALTER TABLE issue_catalog_status ADD COLUMN title_policy TEXT NOT NULL DEFAULT 'unknown'"
                 )
+            coverage_claim_columns = {
+                row["name"] for row in connection.execute(
+                    "PRAGMA table_info(edition_coverage_claims)"
+                )
+            }
+            if "relation_kind" not in coverage_claim_columns:
+                connection.execute(
+                    "ALTER TABLE edition_coverage_claims "
+                    "ADD COLUMN relation_kind TEXT NOT NULL DEFAULT 'full_issue'"
+                )
             replacement_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(file_replacement_requests)")
             }
             if "acquisition_preference" not in replacement_columns:
                 connection.execute(
                     "ALTER TABLE file_replacement_requests ADD COLUMN acquisition_preference TEXT NOT NULL DEFAULT 'either'"
+                )
+            if "acquisition_request_id" not in replacement_columns:
+                connection.execute(
+                    "ALTER TABLE file_replacement_requests ADD COLUMN acquisition_request_id INTEGER REFERENCES acquisition_requests(id) ON DELETE SET NULL"
+                )
+            if "quarantine_path" not in replacement_columns:
+                connection.execute(
+                    "ALTER TABLE file_replacement_requests ADD COLUMN quarantine_path TEXT"
                 )
             acquisition_download_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")
@@ -655,6 +977,105 @@ class CatalogStore:
                 connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN source_sha256 TEXT")
             if "imported_at" not in acquisition_download_columns:
                 connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN imported_at TEXT")
+            if "failure_stage" not in acquisition_download_columns:
+                connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN failure_stage TEXT")
+            if "release_key" not in acquisition_download_columns:
+                connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN release_key TEXT")
+
+            # Preserve failures recorded before release-level fallback existed.
+            # The legacy key is internal; title matching also prevents the same
+            # failed Usenet post from being selected through another indexer.
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO acquisition_release_failures (
+                    job_id,
+                    release_key,
+                    release_title,
+                    error,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    job_id,
+                    COALESCE(NULLIF(release_key, ''), 'legacy-sab:' || sab_nzo_id),
+                    release_title,
+                    error,
+                    updated_at,
+                    updated_at
+                FROM acquisition_downloads
+                WHERE status = 'failed'
+                  AND failure_stage = 'download'
+                """
+            )
+            acquisition_download_sql = str(connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='acquisition_downloads'"
+            ).fetchone()["sql"] or "")
+            if "waiting_for_files" not in acquisition_download_sql:
+                # SQLite cannot alter a CHECK constraint in place. Preserve every
+                # durable SAB/import field while widening the existing state machine.
+                connection.executescript(
+                    """
+                    CREATE TABLE acquisition_downloads_next (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL UNIQUE REFERENCES acquisition_jobs(id) ON DELETE CASCADE,
+                        sab_nzo_id TEXT NOT NULL UNIQUE,
+                        release_title TEXT NOT NULL,
+                        release_key TEXT,
+                        status TEXT NOT NULL DEFAULT 'queued'
+                            CHECK(status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files', 'imported', 'failed')),
+                        sab_storage TEXT,
+                        local_source TEXT,
+                        destination TEXT,
+                        source_size INTEGER,
+                        source_sha256 TEXT,
+                        error TEXT,
+                        failure_stage TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        imported_at TEXT
+                    );
+                    INSERT INTO acquisition_downloads_next(
+                        id, job_id, sab_nzo_id, release_title, release_key, status, sab_storage,
+                        local_source, destination, source_size, source_sha256, error,
+                        failure_stage, created_at, updated_at, imported_at
+                    )
+                    SELECT id, job_id, sab_nzo_id, release_title, release_key, status, sab_storage,
+                           local_source, destination, source_size, source_sha256, error,
+                           failure_stage, created_at, updated_at, imported_at
+                    FROM acquisition_downloads;
+                    DROP TABLE acquisition_downloads;
+                    ALTER TABLE acquisition_downloads_next RENAME TO acquisition_downloads;
+                    CREATE INDEX acquisition_downloads_status
+                        ON acquisition_downloads(status, updated_at);
+                    """
+                )
+            monitor_now = _utc_now()
+            monitor_next = (
+                dt.datetime.now(dt.timezone.utc)
+                + dt.timedelta(hours=MONITORED_RUN_REFRESH_HOURS)
+            ).isoformat()
+            connection.execute(
+                """INSERT OR IGNORE INTO series_monitor_refreshes(
+                       series_run_id, status, next_check_at, updated_at
+                   )
+                   SELECT series_run_id, 'scheduled', ?, ?
+                   FROM acquisition_requests
+                   WHERE scope_type='series' AND status='open'""",
+                (monitor_next, monitor_now),
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO series_monitor_refreshes(
+                       series_run_id, status, next_check_at, updated_at
+                   )
+                   SELECT series_family_memberships.series_run_id, 'scheduled', ?, ?
+                   FROM acquisition_requests
+                   JOIN series_family_memberships
+                     ON series_family_memberships.series_family_id=
+                        acquisition_requests.series_family_id
+                   WHERE acquisition_requests.scope_type='collection'
+                     AND acquisition_requests.status='open'""",
+                (monitor_next, monitor_now),
+            )
             row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
             if row is None:
                 connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -672,6 +1093,34 @@ class CatalogStore:
                 _load_json(row["parsed_json"], {}),
                 _load_json(row["result_json"], {}),
             )
+
+    def _backfill_legacy_replacement_requests(self) -> None:
+        """Attach pre-V25 replacement rows to durable acquisition requests once."""
+        with self._connect() as connection:
+            legacy = list(connection.execute(
+                """SELECT id, file_id, reason_code, desired_language, acquisition_preference
+                   FROM file_replacement_requests
+                   WHERE acquisition_request_id IS NULL
+                     AND status NOT IN ('fulfilled', 'cancelled')
+                   ORDER BY id"""
+            ))
+        for row in legacy:
+            try:
+                self.request_file_replacement(
+                    int(row["file_id"]),
+                    str(row["reason_code"]),
+                    row["desired_language"],
+                    str(row["acquisition_preference"] or "either"),
+                )
+            except ValueError as exc:
+                now = _utc_now()
+                with self._write_lock, self._connect() as connection:
+                    connection.execute(
+                        """UPDATE file_replacement_requests
+                           SET status='failed', error=?, updated_at=?
+                           WHERE id=? AND acquisition_request_id IS NULL""",
+                        (f"Replacement setup needs review: {exc}", now, int(row["id"])),
+                    )
 
     def _identity_claim(
         self, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None
@@ -715,6 +1164,9 @@ class CatalogStore:
             basis.append(recommendation["source"])
         if override:
             basis.append("Manual correction")
+        provider_identity = (
+            _candidate_issue_provider_identity(recommendation) if is_issue else None
+        )
         return {
             "raw_title": str(raw_title),
             "series_title": series_title,
@@ -724,17 +1176,181 @@ class CatalogStore:
             "volume": override.get("volumeNumber") if "volumeNumber" in override else identity.get("volume") or parsed.get("volume"),
             "year": override.get("publicationYear") if "publicationYear" in override else recommendation.get("publication_year") or identity.get("year"),
             "publisher": override.get("publisher") if "publisher" in override else recommendation.get("publisher") or embedded.get("publisher"),
+            "provider": (provider_identity or {}).get("provider"),
+            "provider_series_id": (provider_identity or {}).get("providerSeriesId"),
             "confidence": 100 if override else confidence,
             "basis": list(dict.fromkeys(basis)),
+        }
+
+    def _local_run_start_year(
+        self, connection: sqlite3.Connection, series_run_id: int
+    ) -> int | None:
+        """Infer a run's start only from locally owned opening issues.
+
+        A random later issue cannot identify when a long-running series began.
+        Issues #1-#3 can, and manual corrections take precedence over embedded
+        or parsed values.
+        """
+        years: list[int] = []
+        rows = connection.execute(
+            """SELECT file_identities.issue_number, files.parsed_json, files.result_json,
+                      file_metadata_overrides.fields_json,
+                      file_metadata_overrides.match_candidate_json
+               FROM file_identities
+               JOIN files ON files.id=file_identities.file_id
+               LEFT JOIN file_metadata_overrides
+                 ON file_metadata_overrides.file_id=files.id
+               WHERE file_identities.series_run_id=?
+                 AND file_identities.identity_kind='issue'
+                 AND files.present=1""",
+            (series_run_id,),
+        ).fetchall()
+        for row in rows:
+            issue_number = _issue_number_value(row["issue_number"])
+            if issue_number is None or not 1 <= issue_number <= 3:
+                continue
+            parsed = _load_json(row["parsed_json"], {})
+            result = _load_json(row["result_json"], {})
+            override = _load_json(row["fields_json"], {})
+            selected = _load_json(row["match_candidate_json"], None)
+            recommendation = selected or result.get("recommendation") or {}
+            embedded = result.get("embedded_metadata") or {}
+            identity = result.get("lookup_identity") or {}
+            year = next((candidate for candidate in (
+                _valid_year(override.get("publicationYear")),
+                _valid_year(recommendation.get("publication_year")),
+                _valid_year(embedded.get("year") or embedded.get("date")),
+                _valid_year(identity.get("year")),
+                _valid_year(parsed.get("year")),
+            ) if candidate is not None), None)
+            if year is not None:
+                years.append(year)
+        return min(years) if years else None
+
+    def _local_issue_values(
+        self, connection: sqlite3.Connection, issue_id: int
+    ) -> dict[str, Any]:
+        """Return the strongest file-owned values for an existing issue."""
+        row = connection.execute(
+            """SELECT files.parsed_json, files.result_json,
+                      file_metadata_overrides.fields_json,
+                      file_metadata_overrides.match_candidate_json
+               FROM file_issue_links
+               JOIN files ON files.id=file_issue_links.file_id
+               LEFT JOIN file_metadata_overrides
+                 ON file_metadata_overrides.file_id=files.id
+               WHERE file_issue_links.issue_id=? AND files.present=1
+               LIMIT 1""",
+            (issue_id,),
+        ).fetchone()
+        if row is None:
+            return {}
+        parsed = _load_json(row["parsed_json"], {})
+        result = _load_json(row["result_json"], {})
+        override = _load_json(row["fields_json"], {})
+        selected = _load_json(row["match_candidate_json"], None)
+        recommendation = selected or result.get("recommendation") or {}
+        embedded = result.get("embedded_metadata") or {}
+        title = next((str(value).strip() for value in (
+            override.get("subtitle"), recommendation.get("subtitle"),
+            recommendation.get("story_title"), embedded.get("title"),
+        ) if str(value or "").strip()), None)
+        year = next((candidate for candidate in (
+            _valid_year(override.get("publicationYear")),
+            _valid_year(recommendation.get("publication_year")),
+            _valid_year(embedded.get("year") or embedded.get("date")),
+            _valid_year(parsed.get("year")),
+        ) if candidate is not None), None)
+        return {
+            "title": title, "publication_year": year,
+            "publication_date": recommendation.get("publication_date"),
+            "cover": recommendation.get("cover"),
         }
 
     def _resolve_series_run(self, connection: sqlite3.Connection, claim: dict[str, Any]) -> int:
         raw_key = _normalized(claim["raw_title"])
         canonical_key = _normalized(claim["series_title"])
-        row = connection.execute(
-            "SELECT series_run_id FROM series_aliases WHERE normalized_alias=?",
-            (canonical_key,),
-        ).fetchone()
+        observed_year = _valid_year(claim.get("year"))
+        anchor_year = _claim_run_anchor_year(claim)
+        normalized_publisher = _normalized_publisher(claim.get("publisher"))
+        claim_provider = str(claim.get("provider") or "").strip()
+        claim_provider_series_id = str(claim.get("provider_series_id") or "").strip()
+
+        def matching_runs() -> list[sqlite3.Row]:
+            candidates = [
+                candidate for candidate in connection.execute(
+                    "SELECT * FROM series_runs ORDER BY id"
+                ).fetchall()
+                if _normalized(candidate["canonical_title"]) == canonical_key
+            ]
+            if anchor_year is not None:
+                candidates = [
+                    candidate for candidate in candidates
+                    if _years_compatible(candidate["start_year"], anchor_year)
+                ]
+            return candidates
+
+        def candidate_rank(candidate: sqlite3.Row) -> tuple[int, int, int, int, int]:
+            start_year = _valid_year(candidate["start_year"])
+            publisher_match = bool(
+                normalized_publisher
+                and _normalized_publisher(candidate["publisher"]) == normalized_publisher
+            )
+            # An issue published in 2025 should prefer a known 2025 relaunch
+            # over a 1940 run. It must not, however, create a new 2025 run merely
+            # because the only known run began earlier.
+            plausible = observed_year is None or start_year is None or start_year <= observed_year + 1
+            distance = abs(observed_year - start_year) if observed_year is not None and start_year is not None else 9999
+            if anchor_year is None:
+                # Later issues and collected editions describe publication
+                # dates, not run boundaries. Prefer the durable base identity
+                # over legacy ``::year`` splits, then the earliest plausible
+                # run. Choosing the closest year here previously repopulated
+                # bad bulk-intake splits on every metadata refresh.
+                base_identity = candidate["canonical_key"] == canonical_key
+                earliest = -(start_year if start_year is not None else 9999)
+                return (
+                    1 if publisher_match else 0,
+                    1 if base_identity else 0,
+                    1 if plausible else 0,
+                    earliest,
+                    -int(candidate["id"]),
+                )
+            return (
+                1 if publisher_match else 0,
+                1,
+                1 if plausible else 0,
+                -distance,
+                -int(candidate["id"]),
+            )
+
+        # A provider's series/volume identity is stronger than a title and
+        # publication year. It also lets a later issue select a genuine reboot
+        # without teaching the resolver that every issue year is a new run.
+        row = None
+        provider_anchored = False
+        if claim_provider and claim_provider_series_id:
+            provider_row = connection.execute(
+                """SELECT series_provider_ids.series_run_id
+                   FROM series_provider_ids
+                   JOIN series_runs ON series_runs.id=series_provider_ids.series_run_id
+                   WHERE series_provider_ids.provider=?
+                     AND series_provider_ids.provider_id=?""",
+                (claim_provider, claim_provider_series_id),
+            ).fetchone()
+            if provider_row:
+                provider_series = connection.execute(
+                    "SELECT canonical_title FROM series_runs WHERE id=?",
+                    (provider_row["series_run_id"],),
+                ).fetchone()
+                if provider_series and _normalized(provider_series["canonical_title"]) == canonical_key:
+                    row = provider_row
+                    provider_anchored = True
+        if row is None:
+            row = connection.execute(
+                "SELECT series_run_id FROM series_aliases WHERE normalized_alias=?",
+                (canonical_key,),
+            ).fetchone()
         if row is None and raw_key != canonical_key:
             row = connection.execute(
                 "SELECT series_run_id FROM series_aliases WHERE normalized_alias=?",
@@ -744,10 +1360,31 @@ class CatalogStore:
         if row:
             series_run_id = int(row["series_run_id"])
             series = connection.execute("SELECT * FROM series_runs WHERE id=?", (series_run_id,)).fetchone()
+            candidates = matching_runs()
+            if provider_anchored:
+                pass
+            elif anchor_year is not None and not _years_compatible(series["start_year"], anchor_year):
+                # Identical titles are routinely relaunched decades apart. A
+                # global title alias is useful for discovery but must never be
+                # sufficient to merge two publication eras.
+                compatible = max(candidates, key=candidate_rank) if candidates else None
+                row = {"series_run_id": int(compatible["id"])} if compatible else None
+            elif anchor_year is None and len(candidates) > 1:
+                # A later issue cannot establish a new era. In the absence of
+                # a provider series ID, prefer the durable base run rather than
+                # reinforcing a synthetic year split.
+                compatible = max(candidates, key=candidate_rank)
+                row = {"series_run_id": int(compatible["id"])}
+        elif matching_runs():
+            compatible = max(matching_runs(), key=candidate_rank)
+            row = {"series_run_id": int(compatible["id"])}
+        if row:
+            series_run_id = int(row["series_run_id"])
+            series = connection.execute("SELECT * FROM series_runs WHERE id=?", (series_run_id,)).fetchone()
             title = series["canonical_title"]
             if _normalized(title) == canonical_key and _display_title_rank(claim["series_title"]) > _display_title_rank(title):
                 title = claim["series_title"]
-            years = [value for value in (series["start_year"], claim.get("year")) if isinstance(value, int) and value > 0]
+            years = [value for value in (series["start_year"], anchor_year) if isinstance(value, int) and value > 0]
             start_year = min(years) if years else series["start_year"]
             publisher = series["publisher"] or claim.get("publisher")
             connection.execute(
@@ -755,10 +1392,23 @@ class CatalogStore:
                 (title, start_year, publisher, now, series_run_id),
             )
         else:
+            run_key = canonical_key
+            if connection.execute(
+                "SELECT 1 FROM series_runs WHERE canonical_key=?", (run_key,)
+            ).fetchone():
+                year_key = anchor_year or "unknown"
+                base_key = f"{canonical_key}::year:{year_key}"
+                run_key = base_key
+                suffix = 2
+                while connection.execute(
+                    "SELECT 1 FROM series_runs WHERE canonical_key=?", (run_key,)
+                ).fetchone():
+                    run_key = f"{base_key}:{suffix}"
+                    suffix += 1
             cursor = connection.execute(
                 """INSERT INTO series_runs(canonical_title, canonical_key, start_year, publisher, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (claim["series_title"], canonical_key, claim.get("year"), claim.get("publisher"), now, now),
+                (claim["series_title"], run_key, anchor_year, claim.get("publisher"), now, now),
             )
             series_run_id = int(cursor.lastrowid)
         for alias, source in ((claim["series_title"], "canonical hint"), (claim["raw_title"], "catalog claim")):
@@ -819,6 +1469,143 @@ class CatalogStore:
             )
         self._sync_file_catalog_entity(file_id, parsed, result, override)
 
+    def _heal_connected_placeholder_run(
+        self,
+        file_id: int,
+        source_run_id: int | None,
+        requested_series_title: str | None,
+    ) -> dict[str, Any] | None:
+        """Carry a manual run correction across safely connected local files.
+
+        A filename-derived placeholder is one local identity, even when it owns
+        several volume files. Correcting one member should therefore correct the
+        run, not strand that file in a second run. Confirmed/provider-backed,
+        followed, collected, or independently locked runs remain separate and
+        require an explicit merge because those relationships may be meaningful.
+        """
+        requested_title = re.sub(r"\s+", " ", str(requested_series_title or "")).strip()
+        if source_run_id is None or not requested_title:
+            return None
+        with self._write_lock, self._connect() as connection:
+            target_identity = connection.execute(
+                "SELECT series_run_id FROM file_identities WHERE file_id=?", (file_id,)
+            ).fetchone()
+            source = connection.execute(
+                "SELECT * FROM series_runs WHERE id=?", (source_run_id,)
+            ).fetchone()
+            if not target_identity or not source:
+                return None
+            target_run_id = int(target_identity["series_run_id"])
+            file_rows = list(connection.execute(
+                """SELECT file_identities.file_id
+                   FROM file_identities
+                   JOIN files ON files.id=file_identities.file_id
+                   WHERE file_identities.series_run_id=? AND files.present=1
+                   ORDER BY file_identities.file_id""",
+                (source_run_id,),
+            ))
+            connected_count = len(file_rows)
+            if target_run_id == source_run_id:
+                return {
+                    "status": "healed",
+                    "healedFileCount": connected_count,
+                    "seriesId": str(target_run_id),
+                    "title": requested_title,
+                    "detail": "The corrected title applies to the connected run.",
+                }
+            original_connected_count = connected_count + 1
+            if original_connected_count == 1:
+                # Preserve the previous alias/run so Restore provider metadata can
+                # put a single-file correction back exactly where it came from.
+                return None
+
+            blockers: list[str] = []
+            if source["monitoring_status"] != "cataloged":
+                blockers.append("the original run is being followed")
+            if connection.execute(
+                "SELECT 1 FROM series_provider_ids WHERE series_run_id=? AND confirmed=1 LIMIT 1",
+                (source_run_id,),
+            ).fetchone():
+                blockers.append("the original run has a confirmed catalog identity")
+            if connection.execute(
+                "SELECT 1 FROM series_family_memberships WHERE series_run_id=? LIMIT 1",
+                (source_run_id,),
+            ).fetchone():
+                blockers.append("the original run belongs to a collection")
+            if connection.execute(
+                "SELECT 1 FROM acquisition_requests WHERE series_run_id=? AND status='open' LIMIT 1",
+                (source_run_id,),
+            ).fetchone():
+                blockers.append("the original run has an active request")
+            if connection.execute(
+                """SELECT 1
+                   FROM issue_metadata_overrides
+                   JOIN issues ON issues.id=issue_metadata_overrides.issue_id
+                   WHERE issues.series_run_id=? LIMIT 1""",
+                (source_run_id,),
+            ).fetchone():
+                blockers.append("the original run contains manually edited issue details")
+
+            for row in connection.execute(
+                """SELECT file_metadata_overrides.fields_json,
+                          file_metadata_overrides.locked_fields_json
+                   FROM file_metadata_overrides
+                   JOIN file_identities
+                     ON file_identities.file_id=file_metadata_overrides.file_id
+                   WHERE file_identities.series_run_id=?
+                     AND file_metadata_overrides.file_id<>?""",
+                (source_run_id, file_id),
+            ):
+                locked = _load_json(row["locked_fields_json"], [])
+                fields = _load_json(row["fields_json"], {})
+                if (
+                    "seriesTitle" in locked
+                    and _normalized(fields.get("seriesTitle")) != _normalized(requested_title)
+                ):
+                    blockers.append("another connected file has its own locked series title")
+                    break
+
+            if blockers:
+                return {
+                    "status": "review_required",
+                    "healedFileCount": 1,
+                    "connectedFileCount": original_connected_count,
+                    "seriesId": str(target_run_id),
+                    "title": requested_title,
+                    "detail": "; ".join(dict.fromkeys(blockers)),
+                }
+
+            sibling_ids = [
+                int(row["file_id"]) for row in file_rows if int(row["file_id"]) != file_id
+            ]
+            now = _utc_now()
+            for sibling_id in sibling_ids:
+                connection.execute(
+                    """INSERT INTO metadata_override_history(file_id, action, fields_json, created_at)
+                       VALUES (?, 'series_heal', ?, ?)""",
+                    (
+                        sibling_id,
+                        _json({
+                            "seriesTitle": requested_title,
+                            "sourceSeriesId": str(source_run_id),
+                            "targetSeriesId": str(target_run_id),
+                        }),
+                        now,
+                    ),
+                )
+
+        # merge_series owns its own transaction/lock. The guarded source run is
+        # local-only, so moving its aliases, issues, editions, and file identities
+        # is the durable equivalent of healing every connected file individually.
+        self.merge_series(source_run_id, target_run_id)
+        return {
+            "status": "healed",
+            "healedFileCount": original_connected_count,
+            "seriesId": str(target_run_id),
+            "title": requested_title,
+            "detail": "Connected files were moved to the corrected run.",
+        }
+
     def _sync_file_catalog_entity(
         self, file_id: int, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None
     ) -> None:
@@ -866,16 +1653,56 @@ class CatalogStore:
                 issue_id = int(connection.execute(
                     "SELECT id FROM issues WHERE series_run_id=? AND issue_number=?", (series_run_id, issue_number)
                 ).fetchone()["id"])
-                if recommendation.get("source") == "Grand Comics Database" and recommendation.get("source_id"):
-                    provider_id = str(recommendation["source_id"])
-                    connection.execute(
-                        """INSERT INTO issue_provider_ids(issue_id, provider, provider_id, api_url, updated_at)
-                           VALUES (?, 'gcd', ?, ?, ?)
-                           ON CONFLICT(provider, provider_id) DO UPDATE SET
-                               issue_id=excluded.issue_id, api_url=excluded.api_url, updated_at=excluded.updated_at""",
-                        (issue_id, provider_id, f"https://www.comics.org/api/issue/{provider_id}/", now),
+                explicit_match = bool(connection.execute(
+                    """SELECT 1 FROM metadata_override_history
+                       WHERE file_id=? AND action='fix_match' LIMIT 1""",
+                    (file_id,),
+                ).fetchone())
+                provider_identity = _candidate_issue_provider_identity(
+                    recommendation, allow_embedded_url=explicit_match
+                )
+                if provider_identity:
+                    provider = str(provider_identity["provider"])
+                    provider_id = str(provider_identity["providerId"])
+                    self._upsert_issue_provider_id(
+                        connection, issue_id, provider, provider_id,
+                        provider_identity.get("apiUrl"), now,
                     )
+                    provider_series_id = provider_identity.get("providerSeriesId")
+                    if provider_series_id:
+                        owner = connection.execute(
+                            """SELECT series_run_id FROM series_provider_ids
+                               WHERE provider=? AND provider_id=?""",
+                            (provider, provider_series_id),
+                        ).fetchone()
+                        if owner is None or int(owner["series_run_id"]) == series_run_id:
+                            connection.execute(
+                                """INSERT INTO series_provider_ids(
+                                       series_run_id, provider, provider_id, api_url,
+                                       confirmed, source, updated_at
+                                   ) VALUES (?, ?, ?, ?, 1, ?, ?)
+                                   ON CONFLICT(series_run_id, provider) DO UPDATE SET
+                                       provider_id=excluded.provider_id,
+                                       api_url=COALESCE(excluded.api_url, series_provider_ids.api_url),
+                                       confirmed=1, source=excluded.source,
+                                       updated_at=excluded.updated_at""",
+                                (
+                                    series_run_id, provider, provider_series_id,
+                                    provider_identity.get("apiUrl"),
+                                    "confirmed through explicit issue match", now,
+                                ),
+                            )
+                previous_edition = connection.execute(
+                    "SELECT edition_id FROM file_edition_links WHERE file_id=?", (file_id,)
+                ).fetchone()
                 connection.execute("DELETE FROM file_edition_links WHERE file_id=?", (file_id,))
+                if previous_edition:
+                    connection.execute(
+                        """DELETE FROM editions WHERE id=? AND NOT EXISTS(
+                               SELECT 1 FROM file_edition_links WHERE edition_id=?
+                           )""",
+                        (previous_edition["edition_id"], previous_edition["edition_id"]),
+                    )
                 connection.execute(
                     """INSERT INTO file_issue_links(file_id, issue_id) VALUES (?, ?)
                        ON CONFLICT(file_id) DO UPDATE SET issue_id=excluded.issue_id""",
@@ -929,12 +1756,22 @@ class CatalogStore:
             edition_id = int(connection.execute(
                 "SELECT id FROM editions WHERE edition_key=?", (edition_key,)
             ).fetchone()["id"])
+            previous_edition = connection.execute(
+                "SELECT edition_id FROM file_edition_links WHERE file_id=?", (file_id,)
+            ).fetchone()
             connection.execute("DELETE FROM file_issue_links WHERE file_id=?", (file_id,))
             connection.execute(
                 """INSERT INTO file_edition_links(file_id, edition_id) VALUES (?, ?)
                    ON CONFLICT(file_id) DO UPDATE SET edition_id=excluded.edition_id""",
                 (file_id, edition_id),
             )
+            if previous_edition and int(previous_edition["edition_id"]) != edition_id:
+                connection.execute(
+                    """DELETE FROM editions WHERE id=? AND NOT EXISTS(
+                           SELECT 1 FROM file_edition_links WHERE edition_id=?
+                       )""",
+                    (previous_edition["edition_id"], previous_edition["edition_id"]),
+                )
             connection.execute("DELETE FROM edition_coverage_claims WHERE edition_id=?", (edition_id,))
             coverage = (recommendation.get("matched_edition") or {}).get("coverage") or recommendation.get("coverage") or []
             aliases = {
@@ -949,6 +1786,7 @@ class CatalogStore:
                 resolved = _normalized(series_label) in aliases
                 confidence = str(claim.get("confidence") or ("explicit" if claim.get("source") else "unverified"))
                 claim_source = str(claim.get("source") or source)
+                relation_kind = _coverage_relation_kind(claim)
                 for issue_number in claim.get("issues") or []:
                     issue_id = None
                     if resolved:
@@ -965,12 +1803,12 @@ class CatalogStore:
                     connection.execute(
                         """INSERT INTO edition_coverage_claims(
                                edition_id, issue_id, series_label, issue_number, source,
-                               confidence, resolution_status, evidence, created_at
-                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               confidence, resolution_status, relation_kind, evidence, created_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             edition_id, issue_id, series_label, str(issue_number), claim_source,
                             confidence, "resolved" if resolved else "unresolved",
-                            claim.get("source_text"), now,
+                            relation_kind, claim.get("source_text"), now,
                         ),
                     )
 
@@ -1118,6 +1956,10 @@ class CatalogStore:
             "parsed": _load_json(row["parsed_json"], {}),
             "embedded": result.get("embedded_metadata") or {},
             "candidates": candidates,
+            "suggestedSearchQuery": self._suggested_file_search_query(
+                current, _load_json(row["fields_json"], {})
+            ),
+            "candidateSearch": result.get("manual_candidate_search") or {},
             "covers": {
                 "selectedSource": row["cover_source"] or "auto",
                 "selectedUrl": row["preferred_cover_url"],
@@ -1126,6 +1968,57 @@ class CatalogStore:
             "collectionContents": collection_contents,
             "seriesOptions": series_options,
         }
+
+    @staticmethod
+    def _suggested_file_search_query(
+        current: dict[str, Any], overrides: dict[str, Any]
+    ) -> str:
+        """Prefer the collector's latest correction when proposing a new match search."""
+        title = (
+            overrides.get("seriesTitle") or overrides.get("title")
+            or current.get("seriesTitle") or current.get("title") or ""
+        )
+        title = re.sub(r"\s+", " ", str(title)).strip()
+        year = overrides.get("publicationYear") or current.get("publicationYear")
+        if year and str(year) not in title:
+            return f"{title} {year}".strip()
+        return title
+
+    def retain_file_search_candidates(
+        self,
+        file_id: int,
+        query: str,
+        candidates: list[dict[str, Any]],
+        providers_checked: list[str] | None = None,
+        errors: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Retain explicit Fix Match results so selection remains server-authoritative."""
+        cleaned_query = re.sub(r"\s+", " ", str(query or "")).strip()
+        if len(cleaned_query) < 2:
+            raise ValueError("Enter at least two characters to search for a match")
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT result_json FROM files WHERE id=? AND present=1", (file_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("Library file was not found")
+            result = _load_json(row["result_json"], {})
+            pools = dict(result.get("candidates") or {})
+            pools["manual_search"] = [
+                candidate for candidate in candidates if isinstance(candidate, dict)
+            ]
+            result["candidates"] = pools
+            result["manual_candidate_search"] = {
+                "query": cleaned_query,
+                "resultCount": len(pools["manual_search"]),
+                "providersChecked": providers_checked or [],
+                "errors": errors or [],
+                "searchedAt": _utc_now(),
+            }
+            connection.execute(
+                "UPDATE files SET result_json=? WHERE id=?", (_json(result), file_id)
+            )
+        return self.get_file_workbench(file_id)
 
     def _candidate_selection_fields(
         self, candidate: dict[str, Any], current: dict[str, Any]
@@ -1228,6 +2121,7 @@ class CatalogStore:
                 "issueNumber": str(claim["issue_number"]),
                 "source": claim["source"], "confidence": claim["confidence"],
                 "resolved": claim["resolution_status"] == "resolved",
+                "relationKind": claim["relation_kind"],
                 "evidence": claim["evidence"],
                 "included": not override or override["action"] != "remove",
                 "manual": False,
@@ -1244,6 +2138,7 @@ class CatalogStore:
                 "seriesLabel": series["canonical_title"] if series else "Unknown series",
                 "issueNumber": key[1], "source": "Manual correction",
                 "confidence": "manual", "resolved": True,
+                "relationKind": "full_issue",
                 "evidence": override["note"], "included": override["action"] == "add",
                 "manual": True, "overrideNote": override["note"],
             })
@@ -1254,7 +2149,11 @@ class CatalogStore:
             "seriesId": str(edition["series_run_id"]),
             "items": contents,
             "hasOverrides": bool(overrides),
-            "includedCount": sum(1 for item in contents if item["included"] and item["resolved"]),
+            "includedCount": sum(
+                1 for item in contents
+                if item["included"] and item["resolved"]
+                and item.get("relationKind") == "full_issue"
+            ),
         }
 
     def set_file_collection_contents(
@@ -1293,6 +2192,7 @@ class CatalogStore:
                     """SELECT 1 FROM edition_coverage_claims
                        JOIN issues ON issues.id=edition_coverage_claims.issue_id
                        WHERE edition_coverage_claims.edition_id=?
+                         AND edition_coverage_claims.relation_kind='full_issue'
                          AND issues.series_run_id=? AND issues.issue_number=?""",
                     (edition_id, series_run_id, issue_number),
                 ).fetchone()
@@ -1388,6 +2288,7 @@ class CatalogStore:
                 cleaned[key] = None
         locked = [field for field in (locked_fields or list(cleaned)) if field in cleaned]
         now = _utc_now()
+        source_run_id: int | None = None
         with self._write_lock, self._connect() as connection:
             row = connection.execute(
                 """SELECT files.parsed_json, files.result_json,
@@ -1398,6 +2299,10 @@ class CatalogStore:
             ).fetchone()
             if not row:
                 raise ValueError("Library file was not found")
+            source_identity = connection.execute(
+                "SELECT series_run_id FROM file_identities WHERE file_id=?", (file_id,)
+            ).fetchone()
+            source_run_id = int(source_identity["series_run_id"]) if source_identity else None
             connection.execute(
                 """INSERT INTO file_metadata_overrides(
                        file_id, fields_json, locked_fields_json, match_source, match_source_id,
@@ -1422,7 +2327,13 @@ class CatalogStore:
         if effective_candidate:
             effective_result = {**effective_result, "recommendation": effective_candidate}
         self._reconcile_file_identity(file_id, _load_json(row["parsed_json"], {}), effective_result, cleaned)
-        return self.get_file_workbench(file_id)
+        series_healing = self._heal_connected_placeholder_run(
+            file_id, source_run_id, cleaned.get("seriesTitle")
+        )
+        workbench = self.get_file_workbench(file_id)
+        if series_healing:
+            workbench["seriesHealing"] = series_healing
+        return workbench
 
     def apply_file_match(self, file_id: int, candidate_key: str) -> dict[str, Any]:
         workbench = self.get_file_workbench(file_id)
@@ -1518,6 +2429,7 @@ class CatalogStore:
                                JOIN files ON files.id=file_edition_links.file_id
                                WHERE edition_coverage_claims.issue_id=issues.id
                                  AND edition_coverage_claims.resolution_status='resolved'
+                                 AND edition_coverage_claims.relation_kind='full_issue'
                                  AND files.present=1
                                  AND NOT EXISTS(
                                      SELECT 1 FROM edition_coverage_overrides
@@ -1542,6 +2454,11 @@ class CatalogStore:
         return {
             "id": int(series["id"]), "title": series["canonical_title"],
             "year": series["start_year"], "publisher": series["publisher"],
+            # A year-qualified canonical key exists specifically because the
+            # normalized title belongs to more than one publication era.  In
+            # that case provider matching must not fall back to another era
+            # merely because it has the same title and publisher.
+            "strictYear": "::year:" in str(series["canonical_key"] or ""),
             "aliases": aliases, "knownGcdIssueIds": known_issue_ids,
             "gcdSeriesId": gcd_series["provider_id"] if gcd_series else None,
             "gcdSeriesApiUrl": gcd_series["api_url"] if gcd_series else None,
@@ -1567,8 +2484,22 @@ class CatalogStore:
             raise ValueError("Unsupported issue catalog status")
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
-            if not connection.execute("SELECT id FROM series_runs WHERE id=?", (series_run_id,)).fetchone():
+            series = connection.execute(
+                "SELECT id, canonical_title, start_year FROM series_runs WHERE id=?",
+                (series_run_id,),
+            ).fetchone()
+            if not series:
                 raise ValueError("Canonical series was not found")
+            provider_start_year = _issue_list_start_year(entries)
+            local_start_year = self._local_run_start_year(connection, series_run_id)
+            expected_start_year = local_start_year or _valid_year(series["start_year"])
+            if not _years_compatible(expected_start_year, provider_start_year):
+                raise ValueError(
+                    f"{provider.replace('_', ' ').title()} returned a {provider_start_year} "
+                    f"publication run, but local opening issues identify "
+                    f"{series['canonical_title']} as {expected_start_year}. "
+                    "SonicBoom left the catalog unchanged."
+                )
             connection.execute(
                 """INSERT INTO series_provider_ids(
                        series_run_id, provider, provider_id, api_url, confirmed, source, updated_at
@@ -1602,12 +2533,9 @@ class CatalogStore:
                     (series_run_id, issue_number),
                 ).fetchone()["id"])
                 if entry.get("provider_id"):
-                    connection.execute(
-                        """INSERT INTO issue_provider_ids(issue_id, provider, provider_id, api_url, updated_at)
-                           VALUES (?, ?, ?, ?, ?)
-                           ON CONFLICT(provider, provider_id) DO UPDATE SET
-                               issue_id=excluded.issue_id, api_url=excluded.api_url, updated_at=excluded.updated_at""",
-                        (issue_id, provider, str(entry["provider_id"]), entry.get("api_url"), now),
+                    self._upsert_issue_provider_id(
+                        connection, issue_id, provider, str(entry["provider_id"]),
+                        entry.get("api_url"), now,
                     )
                 active_requests = connection.execute(
                     """SELECT acquisition_requests.id
@@ -1662,14 +2590,320 @@ class CatalogStore:
                 if entry.get("publication_year") not in {None, ""}
             ]
             if publication_years:
+                resolved_start_year = local_start_year or min(publication_years)
                 connection.execute(
                     "UPDATE series_runs SET start_year=?, updated_at=? WHERE id=?",
-                    (min(publication_years), now, series_run_id),
+                    (resolved_start_year, now, series_run_id),
                 )
         return {
             "seriesId": str(series_run_id), "status": status,
             "issueCount": len(entries), "provider": provider,
             "titleCount": sum(bool(str(entry.get("title") or "").strip()) for entry in entries),
+        }
+
+    def repair_provider_run_mismatch(self, series_run_id: int) -> dict[str, Any]:
+        """Remove a provider catalog whose era conflicts with owned opening issues.
+
+        The operation is intentionally conservative: it only runs when files
+        for issue #1-#3 provide a start year and the active provider catalog is
+        separated from it by more than three years. Owned issues and manual
+        corrections are retained; provider-only issues and their queued jobs
+        are removed through foreign-key cascades.
+        """
+        now = _utc_now()
+        repaired = False
+        removed_issues = 0
+        removed_jobs = 0
+        provider = None
+        local_start_year = None
+        provider_start_year = None
+        with self._write_lock, self._connect() as connection:
+            series = connection.execute(
+                "SELECT id, canonical_title, start_year FROM series_runs WHERE id=?",
+                (series_run_id,),
+            ).fetchone()
+            if not series:
+                raise ValueError("Canonical series was not found")
+            status = connection.execute(
+                "SELECT provider, provider_series_id FROM issue_catalog_status WHERE series_run_id=?",
+                (series_run_id,),
+            ).fetchone()
+            local_start_year = self._local_run_start_year(connection, series_run_id)
+            if status is None or local_start_year is None or not status["provider"]:
+                return {"status": "unchanged", "seriesId": str(series_run_id)}
+            provider = str(status["provider"])
+            provider_years = [
+                # Exact provider dates survive some older hybrid matches even
+                # when a local file year has already overlaid publication_year.
+                # Prefer that date when determining which era the provider
+                # catalog actually describes.
+                _valid_year(row["publication_date"]) or _valid_year(row["publication_year"])
+                for row in connection.execute(
+                    """SELECT issues.issue_number, issues.publication_year, issues.publication_date
+                       FROM issues
+                       JOIN issue_provider_ids ON issue_provider_ids.issue_id=issues.id
+                       WHERE issues.series_run_id=? AND issue_provider_ids.provider=?""",
+                    (series_run_id, provider),
+                ).fetchall()
+                if (_issue_number_value(row["issue_number"]) is not None
+                    and 1 <= _issue_number_value(row["issue_number"]) <= 3)
+            ]
+            provider_years = [year for year in provider_years if year is not None]
+            provider_start_year = min(provider_years) if provider_years else None
+            if _years_compatible(local_start_year, provider_start_year):
+                return {
+                    "status": "unchanged", "seriesId": str(series_run_id),
+                    "localStartYear": local_start_year,
+                    "providerStartYear": provider_start_year,
+                }
+
+            removable = connection.execute(
+                """SELECT issues.id
+                   FROM issues
+                   WHERE issues.series_run_id=?
+                     AND EXISTS(
+                         SELECT 1 FROM issue_provider_ids
+                         WHERE issue_provider_ids.issue_id=issues.id
+                           AND issue_provider_ids.provider=?
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1 FROM file_issue_links
+                         JOIN files ON files.id=file_issue_links.file_id
+                         WHERE file_issue_links.issue_id=issues.id AND files.present=1
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1 FROM edition_coverage_claims
+                         WHERE edition_coverage_claims.issue_id=issues.id
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1 FROM edition_coverage_overrides
+                         WHERE edition_coverage_overrides.series_run_id=issues.series_run_id
+                           AND edition_coverage_overrides.issue_number=issues.issue_number
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1 FROM issue_metadata_overrides
+                         WHERE issue_metadata_overrides.issue_id=issues.id
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1 FROM issue_provider_ids AS other_provider
+                         WHERE other_provider.issue_id=issues.id
+                           AND other_provider.provider!=?
+                     )""",
+                (series_run_id, provider, provider),
+            ).fetchall()
+            removable_ids = [int(row["id"]) for row in removable]
+            if removable_ids:
+                placeholders = ",".join("?" for _ in removable_ids)
+                removed_jobs = int(connection.execute(
+                    f"SELECT COUNT(*) AS count FROM acquisition_jobs WHERE issue_id IN ({placeholders})",
+                    removable_ids,
+                ).fetchone()["count"])
+                connection.execute(
+                    f"DELETE FROM issues WHERE id IN ({placeholders})", removable_ids
+                )
+                removed_issues = len(removable_ids)
+
+            retained = connection.execute(
+                """SELECT DISTINCT issues.id
+                   FROM issues
+                   JOIN file_issue_links ON file_issue_links.issue_id=issues.id
+                   JOIN files ON files.id=file_issue_links.file_id
+                   WHERE issues.series_run_id=? AND files.present=1""",
+                (series_run_id,),
+            ).fetchall()
+            for issue in retained:
+                issue_id = int(issue["id"])
+                local = self._local_issue_values(connection, issue_id)
+                connection.execute(
+                    """UPDATE issues SET
+                           title=COALESCE(?, title), publication_year=COALESCE(?, publication_year),
+                           publication_date=?, cover=?, updated_at=?
+                       WHERE id=?""",
+                    (
+                        local.get("title"), local.get("publication_year"),
+                        local.get("publication_date"), local.get("cover"), now, issue_id,
+                    ),
+                )
+            connection.execute(
+                """DELETE FROM issue_provider_ids
+                   WHERE provider=? AND issue_id IN(
+                       SELECT id FROM issues WHERE series_run_id=?
+                   )""",
+                (provider, series_run_id),
+            )
+            connection.execute(
+                "DELETE FROM series_provider_ids WHERE series_run_id=? AND provider=?",
+                (series_run_id, provider),
+            )
+            connection.execute(
+                "DELETE FROM issue_catalog_status WHERE series_run_id=?", (series_run_id,)
+            )
+            connection.execute(
+                "UPDATE series_runs SET start_year=?, updated_at=? WHERE id=?",
+                (local_start_year, now, series_run_id),
+            )
+            repaired = True
+        if repaired:
+            self.reconcile_acquisition_jobs()
+        return {
+            "status": "repaired" if repaired else "unchanged",
+            "seriesId": str(series_run_id), "provider": provider,
+            "localStartYear": local_start_year,
+            "providerStartYear": provider_start_year,
+            "removedProviderOnlyIssues": removed_issues,
+            "removedQueuedJobs": removed_jobs,
+        }
+
+    def retire_stale_provider_run(
+        self, source_run_id: int, target_run_id: int
+    ) -> dict[str, Any]:
+        """Retire a provider-only run after local files were split into the right era.
+
+        This is deliberately stricter than a normal merge. A normal merge would
+        copy the source catalog into the target and recreate the exact mismatch
+        we are trying to repair. Here the source must be fileless, the target
+        must contain owned files, the display titles must agree, and the source
+        provider era must conflict with the target's locally observed era.
+        Monitoring and one open request are retained, but stale provider issues
+        and their jobs are discarded so the target can be enriched afresh.
+        """
+        if source_run_id == target_run_id:
+            raise ValueError("Source and target series must be different")
+        now = _utc_now()
+        transferred_request_id: int | None = None
+        removed_issue_count = 0
+        removed_job_count = 0
+        with self._write_lock, self._connect() as connection:
+            source = connection.execute(
+                "SELECT * FROM series_runs WHERE id=?", (source_run_id,)
+            ).fetchone()
+            target = connection.execute(
+                "SELECT * FROM series_runs WHERE id=?", (target_run_id,)
+            ).fetchone()
+            if not source or not target:
+                raise ValueError("One of the canonical series was not found")
+            if _normalized(source["canonical_title"]) != _normalized(target["canonical_title"]):
+                raise ValueError("Only duplicate titles from different publication eras can be repaired")
+
+            source_owned = int(connection.execute(
+                """SELECT
+                       (SELECT COUNT(*) FROM file_identities WHERE series_run_id=?) +
+                       (SELECT COUNT(*) FROM editions WHERE series_run_id=?) +
+                       (SELECT COUNT(*) FROM file_issue_links
+                          JOIN issues ON issues.id=file_issue_links.issue_id
+                         WHERE issues.series_run_id=?) AS count""",
+                (source_run_id, source_run_id, source_run_id),
+            ).fetchone()["count"])
+            target_owned = int(connection.execute(
+                "SELECT COUNT(*) AS count FROM file_identities WHERE series_run_id=?",
+                (target_run_id,),
+            ).fetchone()["count"])
+            if source_owned or not target_owned:
+                raise ValueError(
+                    "The stale run must contain no local comics and the corrected run must contain local comics"
+                )
+
+            status = connection.execute(
+                "SELECT provider FROM issue_catalog_status WHERE series_run_id=?",
+                (source_run_id,),
+            ).fetchone()
+            if not status or not status["provider"]:
+                raise ValueError("The stale run does not have a provider catalog to retire")
+            provider = str(status["provider"])
+            provider_years = [
+                _valid_year(row["publication_date"]) or _valid_year(row["publication_year"])
+                for row in connection.execute(
+                    """SELECT issues.issue_number, issues.publication_year, issues.publication_date
+                       FROM issues
+                       JOIN issue_provider_ids ON issue_provider_ids.issue_id=issues.id
+                       WHERE issues.series_run_id=? AND issue_provider_ids.provider=?""",
+                    (source_run_id, provider),
+                )
+                if (_issue_number_value(row["issue_number"]) is not None
+                    and 1 <= _issue_number_value(row["issue_number"]) <= 3)
+            ]
+            provider_years = [year for year in provider_years if year is not None]
+            provider_start_year = min(provider_years) if provider_years else _valid_year(source["start_year"])
+            target_start_year = self._local_run_start_year(connection, target_run_id)
+            if target_start_year is None:
+                target_start_year = _valid_year(target["start_year"])
+            if _years_compatible(target_start_year, provider_start_year):
+                raise ValueError("The provider catalog does not conflict with the corrected local run")
+
+            source_requests = connection.execute(
+                """SELECT * FROM acquisition_requests
+                   WHERE series_run_id=? AND status='open' ORDER BY id""",
+                (source_run_id,),
+            ).fetchall()
+            target_request = connection.execute(
+                """SELECT id FROM acquisition_requests
+                   WHERE series_run_id=? AND status='open' ORDER BY id LIMIT 1""",
+                (target_run_id,),
+            ).fetchone()
+            if source_requests:
+                keeper = source_requests[0]
+                removed_job_count = int(connection.execute(
+                    "SELECT COUNT(*) AS count FROM acquisition_jobs WHERE request_id=?",
+                    (int(keeper["id"]),),
+                ).fetchone()["count"])
+                connection.execute(
+                    "DELETE FROM acquisition_jobs WHERE request_id=?", (int(keeper["id"]),)
+                )
+                connection.execute(
+                    "DELETE FROM acquisition_request_issues WHERE request_id=?",
+                    (int(keeper["id"]),),
+                )
+                if target_request:
+                    connection.execute(
+                        "DELETE FROM acquisition_requests WHERE id=?", (int(keeper["id"]),)
+                    )
+                    transferred_request_id = int(target_request["id"])
+                else:
+                    connection.execute(
+                        """UPDATE acquisition_requests
+                           SET series_run_id=?, updated_at=? WHERE id=?""",
+                        (target_run_id, now, int(keeper["id"])),
+                    )
+                    transferred_request_id = int(keeper["id"])
+                for duplicate in source_requests[1:]:
+                    connection.execute(
+                        "DELETE FROM acquisition_requests WHERE id=?", (int(duplicate["id"]),)
+                    )
+
+            removed_issue_count = int(connection.execute(
+                "SELECT COUNT(*) AS count FROM issues WHERE series_run_id=?",
+                (source_run_id,),
+            ).fetchone()["count"])
+            connection.execute(
+                """UPDATE series_runs
+                   SET monitoring_status=CASE
+                         WHEN ?='monitored' THEN 'monitored' ELSE monitoring_status END,
+                       acquisition_preference=CASE
+                         WHEN ?='monitored' THEN ? ELSE acquisition_preference END,
+                       start_year=COALESCE(?, start_year), updated_at=?
+                   WHERE id=?""",
+                (
+                    source["monitoring_status"], source["monitoring_status"],
+                    source["acquisition_preference"], target_start_year, now, target_run_id,
+                ),
+            )
+            connection.execute(
+                """UPDATE series_aliases
+                   SET series_run_id=?, source='stale provider run repair', confirmed=1
+                   WHERE series_run_id=?""",
+                (target_run_id, source_run_id),
+            )
+            connection.execute("DELETE FROM series_runs WHERE id=?", (source_run_id,))
+
+        self.reconcile_acquisition_jobs()
+        return {
+            "status": "repaired", "sourceSeriesId": str(source_run_id),
+            "targetSeriesId": str(target_run_id), "provider": provider,
+            "targetStartYear": target_start_year,
+            "retiredProviderStartYear": provider_start_year,
+            "removedProviderIssues": removed_issue_count,
+            "removedQueuedJobs": removed_job_count,
+            "requestId": str(transferred_request_id) if transferred_request_id else None,
         }
 
     def update_issue_metadata(
@@ -1757,16 +2991,51 @@ class CatalogStore:
                 (provider, str(provider_series_id)),
             ).fetchone()
             if existing is None:
-                existing = connection.execute(
+                title_match = connection.execute(
                     "SELECT * FROM series_runs WHERE canonical_key=?", (canonical_key,)
                 ).fetchone()
+                # The first provider run may safely anchor an existing local
+                # filename-derived run. A second provider run with the same
+                # display title is a distinct publication run and must not be
+                # collapsed into that identity (Farmhand is one real example).
+                conflicting_provider_identity = None
+                if title_match is not None:
+                    conflicting_provider_identity = connection.execute(
+                        """SELECT provider_id FROM series_provider_ids
+                           WHERE series_run_id=? AND provider=? AND provider_id!=?""",
+                        (int(title_match["id"]), provider, str(provider_series_id)),
+                    ).fetchone()
+                if (
+                    conflicting_provider_identity is None
+                    and title_match is not None
+                    and _years_compatible(title_match["start_year"], year)
+                ):
+                    existing = title_match
             created = existing is None
             if created:
+                run_key = canonical_key
+                if connection.execute(
+                    "SELECT 1 FROM series_runs WHERE canonical_key=?", (run_key,)
+                ).fetchone():
+                    # canonical_key is an internal identity, not display copy.
+                    # Include the provider identity only when two real runs
+                    # normalize to the same human-facing title.
+                    provider_key = _normalized(provider) or "provider"
+                    provider_id_key = _normalized(provider_series_id) or "run"
+                    run_key = f"{canonical_key}::{provider_key}:{provider_id_key}"
+                    suffix = 2
+                    candidate_key = run_key
+                    while connection.execute(
+                        "SELECT 1 FROM series_runs WHERE canonical_key=?", (candidate_key,)
+                    ).fetchone():
+                        candidate_key = f"{run_key}:{suffix}"
+                        suffix += 1
+                    run_key = candidate_key
                 cursor = connection.execute(
                     """INSERT INTO series_runs(
                            canonical_title, canonical_key, start_year, publisher, created_at, updated_at
                        ) VALUES (?, ?, ?, ?, ?, ?)""",
-                    (title, canonical_key, year, publisher, now, now),
+                    (title, run_key, year, publisher, now, now),
                 )
                 run_id = int(cursor.lastrowid)
             else:
@@ -2155,12 +3424,13 @@ class CatalogStore:
                         connection.execute(
                             """INSERT INTO edition_coverage_claims(
                                    edition_id, issue_id, series_label, issue_number, source,
-                                   confidence, resolution_status, evidence, created_at
-                               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                   confidence, resolution_status, relation_kind, evidence, created_at
+                               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 new_edition_id, claim["issue_id"], claim["series_label"],
                                 claim["issue_number"], claim["source"], claim["confidence"],
-                                claim["resolution_status"], claim["evidence"], now,
+                                claim["resolution_status"], claim["relation_kind"],
+                                claim["evidence"], now,
                             ),
                         )
                     connection.execute(
@@ -2318,6 +3588,24 @@ class CatalogStore:
                    WHERE id=?""",
                 (preference, int(bool(include_specials)), now, series_family_id),
             )
+            next_check = (
+                dt.datetime.now(dt.timezone.utc)
+                + dt.timedelta(hours=MONITORED_RUN_REFRESH_HOURS)
+            ).isoformat()
+            run_ids = [
+                int(row["series_run_id"])
+                for row in connection.execute(
+                    "SELECT series_run_id FROM series_family_memberships WHERE series_family_id=?",
+                    (series_family_id,),
+                )
+            ]
+            connection.executemany(
+                """INSERT INTO series_monitor_refreshes(
+                       series_run_id, status, next_check_at, updated_at
+                   ) VALUES (?, 'scheduled', ?, ?)
+                   ON CONFLICT(series_run_id) DO NOTHING""",
+                [(run_id, next_check, now) for run_id in run_ids],
+            )
         return {
             "id": str(series_family_id), "name": family["name"],
             "acquisitionPreference": preference, "includeSpecials": bool(include_specials),
@@ -2343,11 +3631,126 @@ class CatalogStore:
                    WHERE id=?""",
                 (preference, now, series_run_id),
             )
+            next_check = (
+                dt.datetime.now(dt.timezone.utc)
+                + dt.timedelta(hours=MONITORED_RUN_REFRESH_HOURS)
+            ).isoformat()
+            connection.execute(
+                """INSERT INTO series_monitor_refreshes(
+                       series_run_id, status, next_check_at, updated_at
+                   ) VALUES (?, 'scheduled', ?, ?)
+                   ON CONFLICT(series_run_id) DO NOTHING""",
+                (series_run_id, next_check, now),
+            )
         return {
             "id": str(series_run_id), "name": run["canonical_title"],
             "acquisitionPreference": preference, "includeSpecials": True,
             "monitoringStatus": "monitored",
         }
+
+    def claim_monitored_series_refresh(self) -> dict[str, Any] | None:
+        """Claim one due ongoing run without reopening the initial-import progress UI."""
+        now_dt = dt.datetime.now(dt.timezone.utc)
+        now = now_dt.isoformat()
+        safety_retry = (now_dt + dt.timedelta(minutes=30)).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT series_monitor_refreshes.*, series_runs.canonical_title
+                   FROM series_monitor_refreshes
+                   JOIN series_runs ON series_runs.id=series_monitor_refreshes.series_run_id
+                   JOIN issue_catalog_status
+                     ON issue_catalog_status.series_run_id=series_monitor_refreshes.series_run_id
+                   WHERE series_monitor_refreshes.status IN ('scheduled', 'waiting', 'complete')
+                     AND series_monitor_refreshes.next_check_at<=?
+                     AND issue_catalog_status.status='complete_to_date'
+                     AND (
+                         series_runs.monitoring_status='monitored'
+                         OR EXISTS(
+                             SELECT 1 FROM series_family_memberships
+                             JOIN series_families
+                               ON series_families.id=series_family_memberships.series_family_id
+                             WHERE series_family_memberships.series_run_id=series_runs.id
+                               AND series_families.monitoring_status='monitored'
+                         )
+                     )
+                     AND EXISTS(
+                         SELECT 1 FROM acquisition_requests
+                         WHERE acquisition_requests.status='open' AND (
+                             (acquisition_requests.scope_type='series'
+                              AND acquisition_requests.series_run_id=series_runs.id)
+                             OR
+                             (acquisition_requests.scope_type='collection'
+                              AND EXISTS(
+                                  SELECT 1 FROM series_family_memberships
+                                  WHERE series_family_memberships.series_run_id=series_runs.id
+                                    AND series_family_memberships.series_family_id=
+                                        acquisition_requests.series_family_id
+                              ))
+                         )
+                     )
+                   ORDER BY series_monitor_refreshes.next_check_at,
+                            series_monitor_refreshes.series_run_id
+                   LIMIT 1""",
+                (now,),
+            ).fetchone()
+            if not row:
+                connection.commit()
+                return None
+            connection.execute(
+                """UPDATE series_monitor_refreshes
+                   SET status='running', next_check_at=?, last_error=NULL, updated_at=?
+                   WHERE series_run_id=?""",
+                (safety_retry, now, row["series_run_id"]),
+            )
+            connection.commit()
+        result = dict(row)
+        result["status"] = "running"
+        return result
+
+    def queue_monitored_series_refresh(self, series_run_id: int) -> None:
+        """Make a followed run eligible for an immediate background catalog check."""
+        now = _utc_now()
+        with self._connect() as connection:
+            if not connection.execute(
+                "SELECT id FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone():
+                raise ValueError("Canonical series run was not found")
+            connection.execute(
+                """INSERT INTO series_monitor_refreshes(
+                       series_run_id, status, next_check_at, updated_at
+                   ) VALUES (?, 'scheduled', ?, ?)
+                   ON CONFLICT(series_run_id) DO UPDATE SET
+                       status='scheduled', next_check_at=excluded.next_check_at,
+                       last_error=NULL, updated_at=excluded.updated_at""",
+                (series_run_id, now, now),
+            )
+
+    def finish_monitored_series_refresh(
+        self,
+        series_run_id: int,
+        provider: str | None = None,
+        error: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        """Schedule the next provider check for an ongoing followed run."""
+        now_dt = dt.datetime.now(dt.timezone.utc)
+        now = now_dt.isoformat()
+        if error:
+            delay = max(300, int(retry_after_seconds or 3600))
+            status = "waiting"
+        else:
+            delay = MONITORED_RUN_REFRESH_HOURS * 60 * 60
+            status = "complete"
+        next_check = (now_dt + dt.timedelta(seconds=delay)).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE series_monitor_refreshes
+                   SET status=?, last_checked_at=?, next_check_at=?, last_provider=?,
+                       last_error=?, updated_at=?
+                   WHERE series_run_id=?""",
+                (status, now, next_check, provider, error, now, series_run_id),
+            )
 
     def reconcile_acquisition_jobs(self, request_id: int | None = None) -> dict[str, int]:
         """Keep durable jobs aligned with release, ownership, and request state."""
@@ -2359,6 +3762,8 @@ class CatalogStore:
             rows = connection.execute(
                 f"""SELECT acquisition_request_issues.request_id,
                            acquisition_requests.status AS request_status,
+                           file_replacement_requests.id AS replacement_request_id,
+                           file_replacement_requests.status AS replacement_status,
                            issues.id AS issue_id, issues.publication_date,
                            issues.publication_year,
                            EXISTS(
@@ -2373,6 +3778,7 @@ class CatalogStore:
                                JOIN files ON files.id=file_edition_links.file_id
                                WHERE edition_coverage_claims.issue_id=issues.id
                                  AND edition_coverage_claims.resolution_status='resolved'
+                                 AND edition_coverage_claims.relation_kind='full_issue'
                                  AND files.present=1
                                  AND NOT EXISTS(
                                      SELECT 1 FROM edition_coverage_overrides
@@ -2396,6 +3802,8 @@ class CatalogStore:
                     JOIN acquisition_requests
                       ON acquisition_requests.id=acquisition_request_issues.request_id
                     JOIN issues ON issues.id=acquisition_request_issues.issue_id
+                    LEFT JOIN file_replacement_requests
+                      ON file_replacement_requests.acquisition_request_id=acquisition_requests.id
                     WHERE 1=1 {request_filter}""",
                 parameters,
             ).fetchall()
@@ -2412,10 +3820,19 @@ class CatalogStore:
             for row in rows:
                 key = (int(row["request_id"]), int(row["issue_id"]))
                 job = existing.get(key)
+                replacement = row["replacement_request_id"] is not None
+                replacement_status = str(row["replacement_status"] or "")
                 owned = bool(row["direct_owned"] or row["collection_owned"])
                 release_state = _issue_release_state(row["publication_date"], row["publication_year"])
-                if row["request_status"] == "cancelled":
+                if row["request_status"] == "cancelled" or replacement_status == "cancelled":
                     desired, reason = "cancelled", "Request cancelled"
+                elif row["request_status"] == "fulfilled" or replacement_status == "fulfilled":
+                    desired, reason = "fulfilled", "Replacement completed"
+                elif replacement:
+                    # A replacement target is intentionally searched even though the damaged
+                    # file currently satisfies ownership. Its presence is also sufficient
+                    # evidence that the issue has been released.
+                    desired, reason = "queued", "Replacement needed for the existing library copy"
                 elif owned:
                     desired, reason = "fulfilled", "Issue is covered by the library"
                 elif release_state == "released":
@@ -2516,12 +3933,19 @@ class CatalogStore:
                           series_runs.id AS series_id,
                           series_runs.canonical_title AS series_title,
                           series_runs.start_year AS series_year,
-                          series_runs.publisher
+                          series_runs.publisher,
+                          file_replacement_requests.id AS replacement_id,
+                          file_replacement_requests.file_id AS replacement_file_id,
+                          replacement_files.path AS replacement_file_path
                    FROM acquisition_jobs
                    JOIN acquisition_requests
                      ON acquisition_requests.id=acquisition_jobs.request_id
                    JOIN issues ON issues.id=acquisition_jobs.issue_id
                    JOIN series_runs ON series_runs.id=issues.series_run_id
+                   LEFT JOIN file_replacement_requests
+                     ON file_replacement_requests.acquisition_request_id=acquisition_requests.id
+                   LEFT JOIN files AS replacement_files
+                     ON replacement_files.id=file_replacement_requests.file_id
                    WHERE acquisition_jobs.id=?""",
                 (job_id,),
             ).fetchone()
@@ -2544,11 +3968,20 @@ class CatalogStore:
             "seriesId": str(row["series_id"]), "seriesTitle": row["series_title"],
             "seriesYear": row["series_year"], "publisher": row["publisher"],
             "acquisitionPreference": row["acquisition_preference"],
+            "replacementId": str(row["replacement_id"]) if row["replacement_id"] is not None else None,
+            "replacementFileId": (
+                str(row["replacement_file_id"]) if row["replacement_file_id"] is not None else None
+            ),
+            "replacementFilePath": row["replacement_file_path"],
             "existingDirectory": str(Path(existing_file["path"]).parent) if existing_file else None,
         }
 
     def record_acquisition_download(
-        self, job_id: int, sab_nzo_id: str, release_title: str
+        self,
+        job_id: int,
+        sab_nzo_id: str,
+        release_title: str,
+        release_key: str | None = None,
     ) -> dict[str, Any]:
         """Persist the SAB identity needed to reconcile queue, history, and imports."""
         queue_id = str(sab_nzo_id or "").strip()
@@ -2561,13 +3994,18 @@ class CatalogStore:
                 raise ValueError("Acquisition job was not found")
             connection.execute(
                 """INSERT INTO acquisition_downloads(
-                       job_id, sab_nzo_id, release_title, status, created_at, updated_at
-                   ) VALUES (?, ?, ?, 'queued', ?, ?)
+                       job_id, sab_nzo_id, release_title, release_key,
+                       status, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
                    ON CONFLICT(job_id) DO UPDATE SET
                        sab_nzo_id=excluded.sab_nzo_id,
                        release_title=excluded.release_title,
-                       status='queued', error=NULL, updated_at=excluded.updated_at""",
-                (job_id, queue_id, title, now, now),
+                       release_key=excluded.release_key,
+                       status='queued', error=NULL, failure_stage=NULL,
+                       sab_storage=NULL, local_source=NULL, destination=NULL,
+                       source_size=NULL, source_sha256=NULL, imported_at=NULL,
+                       updated_at=excluded.updated_at""",
+                (job_id, queue_id, title, str(release_key or "").strip() or None, now, now),
             )
             row = connection.execute(
                 "SELECT * FROM acquisition_downloads WHERE job_id=?", (job_id,)
@@ -2578,6 +4016,60 @@ class CatalogStore:
             "status": row["status"], "updatedAt": row["updated_at"],
         }
 
+    def record_acquisition_release_failure(
+        self,
+        job_id: int,
+        release_key: str,
+        release_title: str,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one unusable release so automatic retries never select it again."""
+        key = str(release_key or "").strip()
+        title = str(release_title or "").strip()
+        if not key or not title:
+            raise ValueError("A failed release needs a stable identity and title")
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            if not connection.execute(
+                "SELECT id FROM acquisition_jobs WHERE id=?", (job_id,)
+            ).fetchone():
+                raise ValueError("Acquisition job was not found")
+            connection.execute(
+                """INSERT INTO acquisition_release_failures(
+                       job_id, release_key, release_title, error, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(job_id, release_key) DO UPDATE SET
+                       release_title=excluded.release_title,
+                       error=excluded.error,
+                       updated_at=excluded.updated_at""",
+                (job_id, key, title, error, now, now),
+            )
+            count = int(connection.execute(
+                "SELECT COUNT(*) AS count FROM acquisition_release_failures WHERE job_id=?",
+                (job_id,),
+            ).fetchone()["count"])
+        return {"jobId": str(job_id), "releaseKey": key, "failureCount": count}
+
+    def rejected_acquisition_release_keys(self, job_id: int) -> set[str]:
+        """Return release identities that previously failed for this wanted issue."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT release_key FROM acquisition_release_failures WHERE job_id=?",
+                (job_id,),
+            ).fetchall()
+        return {str(row["release_key"]) for row in rows}
+
+    def rejected_acquisition_releases(self, job_id: int) -> list[dict[str, Any]]:
+        """Return failed release identities and titles for search de-duplication."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT release_key, release_title, error, updated_at
+                   FROM acquisition_release_failures
+                   WHERE job_id=? ORDER BY updated_at, id""",
+                (job_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def pending_acquisition_downloads(self) -> list[dict[str, Any]]:
         """Return SAB downloads that still need completion tracking or a verified import."""
         with self._connect() as connection:
@@ -2585,7 +4077,18 @@ class CatalogStore:
                 """SELECT acquisition_downloads.*, acquisition_jobs.status AS job_status
                    FROM acquisition_downloads
                    JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
-                   WHERE acquisition_downloads.status IN ('queued', 'downloading', 'completed', 'importing')
+                   WHERE (
+                       acquisition_downloads.status IN (
+                           'queued', 'downloading', 'completed', 'importing', 'waiting_for_files'
+                       )
+                       OR (
+                           acquisition_downloads.status='failed'
+                           AND acquisition_downloads.failure_stage='import'
+                           AND acquisition_downloads.error=(
+                               'The completed SABnzbd download is not visible in the mounted comics folder'
+                           )
+                       )
+                   )
                      AND acquisition_jobs.status NOT IN ('fulfilled', 'cancelled')
                    ORDER BY acquisition_downloads.created_at, acquisition_downloads.id"""
             ).fetchall()
@@ -2602,8 +4105,12 @@ class CatalogStore:
         source_size: int | None = None,
         source_sha256: str | None = None,
         error: str | None = None,
+        failure_stage: str | None = None,
     ) -> dict[str, Any]:
-        allowed = {"queued", "downloading", "completed", "importing", "imported", "failed"}
+        allowed = {
+            "queued", "downloading", "completed", "importing", "waiting_for_files",
+            "imported", "failed",
+        }
         desired = str(status or "").strip().casefold()
         if desired not in allowed:
             raise ValueError("Unsupported acquisition download status")
@@ -2621,17 +4128,63 @@ class CatalogStore:
                        destination=COALESCE(?, destination),
                        source_size=COALESCE(?, source_size),
                        source_sha256=COALESCE(?, source_sha256),
-                       error=?, imported_at=COALESCE(?, imported_at), updated_at=?
+                       error=?, failure_stage=?,
+                       imported_at=COALESCE(?, imported_at), updated_at=?
                    WHERE id=?""",
                 (
                     desired, sab_storage, local_source, destination, source_size,
-                    source_sha256, error, imported_at, now, download_id,
+                    source_sha256, error, failure_stage, imported_at, now, download_id,
                 ),
             )
             row = connection.execute(
                 "SELECT * FROM acquisition_downloads WHERE id=?", (download_id,)
             ).fetchone()
         return dict(row)
+
+    def retry_acquisition_job(self, job_id: int) -> dict[str, Any]:
+        """Retry a failed import in place, or return a failed download to release search."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            job = connection.execute(
+                "SELECT * FROM acquisition_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if not job:
+                raise ValueError("Acquisition job was not found")
+            if job["status"] != "failed":
+                raise ValueError("Only a failed acquisition job can be retried")
+            download = connection.execute(
+                "SELECT * FROM acquisition_downloads WHERE job_id=?", (job_id,)
+            ).fetchone()
+            retry_import = bool(
+                download
+                and download["status"] == "failed"
+                and download["failure_stage"] == "import"
+            )
+            if retry_import:
+                connection.execute(
+                    """UPDATE acquisition_downloads
+                       SET status='completed', error=NULL, failure_stage=NULL, updated_at=?
+                       WHERE id=?""",
+                    (now, int(download["id"])),
+                )
+                desired = "grabbed"
+                detail = "Retrying the verified SABnzbd download import"
+                action = "reprocess"
+            else:
+                desired = "queued"
+                detail = "Ready to search for another release"
+                action = "research"
+            connection.execute(
+                """UPDATE acquisition_jobs
+                   SET status=?, queue_reason=?, error=NULL, updated_at=? WHERE id=?""",
+                (desired, detail, now, job_id),
+            )
+            connection.execute(
+                """INSERT INTO acquisition_job_events(job_id, status, detail, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (job_id, desired, detail, now),
+            )
+        return {"id": str(job_id), "status": desired, "action": action, "detail": detail}
 
     def create_acquisition_request(
         self,
@@ -2677,8 +4230,6 @@ class CatalogStore:
             raise ValueError("Acquisition preference must be volumes, issues, or either")
         if not issues:
             raise ValueError("Find and confirm the canonical issue list before acquiring missing comics")
-        if not any(issue.get("ownership") == "unowned" for issue in issues):
-            raise ValueError("Every known issue in this selection is already covered")
 
         if scope == "collection":
             self.set_collection_monitoring(scope_id, preference, include)
@@ -2743,6 +4294,10 @@ class CatalogStore:
         preference = str(acquisition_preference or "either").strip().casefold()
         if preference not in {"either", "issues", "volumes"}:
             raise ValueError("Replacement preference must be issues, volumes, or either")
+        if preference == "volumes":
+            raise ValueError(
+                "Volume acquisition is not available yet. Choose issues or either so SonicBoom can replace the mapped issues safely."
+            )
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
             file_row = connection.execute(
@@ -2750,27 +4305,92 @@ class CatalogStore:
             ).fetchone()
             if not file_row:
                 raise ValueError("Library file was not found")
+            targets = list(connection.execute(
+                """SELECT DISTINCT issues.id, issues.series_run_id
+                   FROM file_issue_links
+                   JOIN issues ON issues.id=file_issue_links.issue_id
+                   WHERE file_issue_links.file_id=?
+                   UNION
+                   SELECT DISTINCT issues.id, issues.series_run_id
+                   FROM file_edition_links
+                   JOIN edition_coverage_claims
+                     ON edition_coverage_claims.edition_id=file_edition_links.edition_id
+                   JOIN issues ON issues.id=edition_coverage_claims.issue_id
+                   WHERE file_edition_links.file_id=?
+                     AND edition_coverage_claims.resolution_status='resolved'
+                     AND edition_coverage_claims.relation_kind='full_issue'
+                     AND NOT EXISTS(
+                         SELECT 1 FROM edition_coverage_overrides
+                         WHERE edition_coverage_overrides.edition_id=file_edition_links.edition_id
+                           AND edition_coverage_overrides.series_run_id=issues.series_run_id
+                           AND edition_coverage_overrides.issue_number=issues.issue_number
+                           AND edition_coverage_overrides.action='remove'
+                     )
+                   UNION
+                   SELECT DISTINCT issues.id, issues.series_run_id
+                   FROM file_edition_links
+                   JOIN edition_coverage_overrides
+                     ON edition_coverage_overrides.edition_id=file_edition_links.edition_id
+                    AND edition_coverage_overrides.action='add'
+                   JOIN issues
+                     ON issues.series_run_id=edition_coverage_overrides.series_run_id
+                    AND issues.issue_number=edition_coverage_overrides.issue_number
+                   WHERE file_edition_links.file_id=?""",
+                (file_id, file_id, file_id),
+            ))
+            if not targets:
+                raise ValueError(
+                    "SonicBoom cannot replace this comic safely until its issue contents are mapped. Open the volume and confirm its issues first."
+                )
             existing = connection.execute(
-                "SELECT id FROM file_replacement_requests WHERE file_id=?", (file_id,)
+                "SELECT * FROM file_replacement_requests WHERE file_id=?", (file_id,)
             ).fetchone()
+            acquisition_request_id = None
+            if (
+                existing
+                and existing["acquisition_request_id"] is not None
+                and existing["status"] not in {"cancelled", "fulfilled"}
+            ):
+                acquisition_request_id = int(existing["acquisition_request_id"])
+                connection.execute(
+                    """UPDATE acquisition_requests
+                       SET status='open', acquisition_preference=?, updated_at=? WHERE id=?""",
+                    (preference, now, acquisition_request_id),
+                )
+            else:
+                cursor = connection.execute(
+                    """INSERT INTO acquisition_requests(
+                           scope_type, series_run_id, series_family_id, status,
+                           acquisition_preference, include_specials, created_at, updated_at
+                       ) VALUES ('series', ?, NULL, 'open', ?, 0, ?, ?)""",
+                    (int(targets[0]["series_run_id"]), preference, now, now),
+                )
+                acquisition_request_id = int(cursor.lastrowid)
+            connection.executemany(
+                """INSERT OR IGNORE INTO acquisition_request_issues(request_id, issue_id, created_at)
+                   VALUES (?, ?, ?)""",
+                [(acquisition_request_id, int(target["id"]), now) for target in targets],
+            )
             if existing:
                 request_id = int(existing["id"])
                 connection.execute(
                     """UPDATE file_replacement_requests
                        SET reason_code=?, desired_language=?, acquisition_preference=?,
+                           acquisition_request_id=?, quarantine_path=NULL,
                            status='wanted', error=NULL, updated_at=?
                        WHERE id=?""",
-                    (reason, language, preference, now, request_id),
+                    (reason, language, preference, acquisition_request_id, now, request_id),
                 )
             else:
                 cursor = connection.execute(
                     """INSERT INTO file_replacement_requests(
                            file_id, reason_code, desired_language, acquisition_preference,
-                           status, created_at, updated_at
-                       ) VALUES (?, ?, ?, ?, 'wanted', ?, ?)""",
-                    (file_id, reason, language, preference, now, now),
+                           acquisition_request_id, status, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, 'wanted', ?, ?)""",
+                    (file_id, reason, language, preference, acquisition_request_id, now, now),
                 )
                 request_id = int(cursor.lastrowid)
+        self.reconcile_acquisition_jobs(acquisition_request_id)
         refreshed = self.catalog()
         return next(
             item for item in refreshed["replacementRequests"] if item["id"] == str(request_id)
@@ -2786,7 +4406,7 @@ class CatalogStore:
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT id FROM file_replacement_requests WHERE id=?", (request_id,)
+                "SELECT id, acquisition_request_id FROM file_replacement_requests WHERE id=?", (request_id,)
             ).fetchone()
             if not row:
                 raise ValueError("Replacement request was not found")
@@ -2795,10 +4415,119 @@ class CatalogStore:
                    SET status=?, error=?, updated_at=? WHERE id=?""",
                 (desired, str(error or "").strip() or None if desired == "failed" else None, now, request_id),
             )
+            if row["acquisition_request_id"] is not None and desired in {"cancelled", "fulfilled"}:
+                connection.execute(
+                    "UPDATE acquisition_requests SET status=?, updated_at=? WHERE id=?",
+                    (desired, now, int(row["acquisition_request_id"])),
+                )
+                if desired == "cancelled":
+                    connection.execute(
+                        """UPDATE acquisition_jobs SET status='cancelled', queue_reason='Request cancelled',
+                                  error=NULL, updated_at=?
+                           WHERE request_id=? AND status NOT IN ('fulfilled', 'cancelled')""",
+                        (now, int(row["acquisition_request_id"])),
+                    )
         refreshed = self.catalog()
         return next(
             item for item in refreshed["replacementRequests"] if item["id"] == str(request_id)
         )
+
+    def replacement_for_job(self, job_id: int) -> dict[str, Any] | None:
+        """Return replacement/quarantine context for a durable acquisition job."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT file_replacement_requests.id,
+                          file_replacement_requests.file_id,
+                          file_replacement_requests.acquisition_request_id,
+                          file_replacement_requests.status,
+                          file_replacement_requests.quarantine_path,
+                          files.path AS original_path,
+                          library_roots.path AS library_root,
+                          (SELECT COUNT(*) FROM acquisition_jobs AS replacement_jobs
+                           WHERE replacement_jobs.request_id=file_replacement_requests.acquisition_request_id
+                             AND replacement_jobs.status!='fulfilled') AS unfinished_jobs
+                   FROM acquisition_jobs
+                   JOIN file_replacement_requests
+                     ON file_replacement_requests.acquisition_request_id=acquisition_jobs.request_id
+                   JOIN files ON files.id=file_replacement_requests.file_id
+                   JOIN library_roots ON library_roots.id=files.root_id
+                   WHERE acquisition_jobs.id=?
+                   """,
+                (job_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_replacement_quarantine(
+        self, replacement_id: int, original_path: str, quarantine_path: str
+    ) -> None:
+        """Move the original catalog record out of the active library namespace."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT file_id FROM file_replacement_requests WHERE id=?", (replacement_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("Replacement request was not found")
+            connection.execute(
+                """UPDATE files SET path=?, filename=?, present=0, updated_at=?
+                   WHERE id=? AND path=?""",
+                (quarantine_path, Path(quarantine_path).name, now, int(row["file_id"]), original_path),
+            )
+            connection.execute(
+                "UPDATE file_replacement_requests SET quarantine_path=?, updated_at=? WHERE id=?",
+                (quarantine_path, now, replacement_id),
+            )
+
+    def restore_replacement_original(
+        self, replacement_id: int, quarantine_path: str, original_path: str,
+        failed_new_path: str | None = None,
+    ) -> None:
+        """Restore catalog state when a recoverable filesystem swap fails."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT file_id FROM file_replacement_requests WHERE id=?", (replacement_id,)
+            ).fetchone()
+            if row:
+                if failed_new_path:
+                    connection.execute(
+                        """UPDATE files SET path=?, filename=?, present=0, updated_at=?
+                           WHERE path=? AND id!=?""",
+                        (
+                            failed_new_path, Path(failed_new_path).name, now,
+                            original_path, int(row["file_id"]),
+                        ),
+                    )
+                connection.execute(
+                    """UPDATE files SET path=?, filename=?, present=1, updated_at=?
+                       WHERE id=? AND path=?""",
+                    (original_path, Path(original_path).name, now, int(row["file_id"]), quarantine_path),
+                )
+                connection.execute(
+                    "UPDATE file_replacement_requests SET quarantine_path=NULL, updated_at=? WHERE id=?",
+                    (now, replacement_id),
+                )
+
+    def complete_file_replacement(self, replacement_id: int, quarantine_path: str) -> None:
+        """Mark a fully verified replacement and its hidden acquisition request complete."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT acquisition_request_id FROM file_replacement_requests WHERE id=?",
+                (replacement_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Replacement request was not found")
+            connection.execute(
+                """UPDATE file_replacement_requests
+                   SET status='fulfilled', quarantine_path=?, error=NULL, updated_at=? WHERE id=?""",
+                (quarantine_path, now, replacement_id),
+            )
+            if row["acquisition_request_id"] is not None:
+                connection.execute(
+                    "UPDATE acquisition_requests SET status='fulfilled', updated_at=? WHERE id=?",
+                    (now, int(row["acquisition_request_id"])),
+                )
 
     def story_structure_proposal(self, series_family_id: int) -> dict[str, Any]:
         catalog = self.catalog()
@@ -2948,15 +4677,137 @@ class CatalogStore:
                 (family_id, family_id),
             )
 
-    def merge_series(self, source_id: int, target_id: int) -> None:
+    def _series_merge_preview(
+        self, connection: sqlite3.Connection, source_id: int, target_id: int
+    ) -> dict[str, Any]:
+        if source_id == target_id:
+            raise ValueError("Source and target series must be different")
+        source = connection.execute("SELECT * FROM series_runs WHERE id=?", (source_id,)).fetchone()
+        target = connection.execute("SELECT * FROM series_runs WHERE id=?", (target_id,)).fetchone()
+        if not source or not target:
+            raise ValueError("One of the series runs was not found")
+
+        source_providers = {
+            row["provider"]: row for row in connection.execute(
+                "SELECT * FROM series_provider_ids WHERE series_run_id=?", (source_id,)
+            )
+        }
+        target_providers = {
+            row["provider"]: row for row in connection.execute(
+                "SELECT * FROM series_provider_ids WHERE series_run_id=?", (target_id,)
+            )
+        }
+        provider_conflicts = [
+            {
+                "provider": provider,
+                "sourceId": str(source_row["provider_id"]),
+                "targetId": str(target_providers[provider]["provider_id"]),
+            }
+            for provider, source_row in source_providers.items()
+            if provider in target_providers
+            and str(source_row["provider_id"]) != str(target_providers[provider]["provider_id"])
+        ]
+        source_family = connection.execute(
+            "SELECT series_family_id FROM series_family_memberships WHERE series_run_id=?", (source_id,)
+        ).fetchone()
+        target_family = connection.execute(
+            "SELECT series_family_id FROM series_family_memberships WHERE series_run_id=?", (target_id,)
+        ).fetchone()
+        source_arc = connection.execute(
+            "SELECT story_arc_id FROM story_arc_run_memberships WHERE series_run_id=?", (source_id,)
+        ).fetchone()
+        target_arc = connection.execute(
+            "SELECT story_arc_id FROM story_arc_run_memberships WHERE series_run_id=?", (target_id,)
+        ).fetchone()
+        blockers = []
+        if source_family and target_family and source_family["series_family_id"] != target_family["series_family_id"]:
+            blockers.append("The runs belong to different collections")
+        if source_arc and target_arc and source_arc["story_arc_id"] != target_arc["story_arc_id"]:
+            blockers.append("The runs belong to different story groups")
+        source_open_request = connection.execute(
+            "SELECT id FROM acquisition_requests WHERE series_run_id=? AND status='open' LIMIT 1", (source_id,)
+        ).fetchone()
+        target_open_request = connection.execute(
+            "SELECT id FROM acquisition_requests WHERE series_run_id=? AND status='open' LIMIT 1", (target_id,)
+        ).fetchone()
+        if source_open_request and target_open_request:
+            blockers.append("Both runs have active wanted lists")
+        overlapping_job_count = int(connection.execute(
+            """SELECT COUNT(*) AS count
+               FROM issues AS source_issue
+               JOIN issues AS target_issue
+                 ON target_issue.series_run_id=?
+                AND target_issue.issue_number=source_issue.issue_number
+               JOIN acquisition_jobs AS source_job ON source_job.issue_id=source_issue.id
+               JOIN acquisition_jobs AS target_job
+                 ON target_job.issue_id=target_issue.id
+                AND target_job.request_id=source_job.request_id
+               WHERE source_issue.series_run_id=?""",
+            (target_id, source_id),
+        ).fetchone()["count"])
+        if overlapping_job_count:
+            blockers.append(
+                "The same issue has download history on both runs; finish or cancel one copy first"
+            )
+
+        def counts(run_id: int) -> dict[str, int]:
+            return {
+                "files": int(connection.execute(
+                    "SELECT COUNT(*) AS count FROM file_identities WHERE series_run_id=?", (run_id,)
+                ).fetchone()["count"]),
+                "issues": int(connection.execute(
+                    "SELECT COUNT(*) AS count FROM issues WHERE series_run_id=?", (run_id,)
+                ).fetchone()["count"]),
+                "volumes": int(connection.execute(
+                    "SELECT COUNT(*) AS count FROM editions WHERE series_run_id=?", (run_id,)
+                ).fetchone()["count"]),
+            }
+
+        def summary(row: sqlite3.Row) -> dict[str, Any]:
+            return {
+                "id": str(row["id"]), "title": row["canonical_title"],
+                "year": row["start_year"], "publisher": row["publisher"],
+                "counts": counts(int(row["id"])),
+            }
+
+        return {
+            "source": summary(source),
+            "target": summary(target),
+            "providerConflicts": provider_conflicts,
+            "blockers": blockers,
+            "canMerge": not blockers and not provider_conflicts,
+            "requiresProviderConfirmation": bool(provider_conflicts) and not blockers,
+        }
+
+    def series_merge_preview(self, source_id: int, target_id: int) -> dict[str, Any]:
+        with self._connect() as connection:
+            return self._series_merge_preview(connection, source_id, target_id)
+
+    def merge_series(
+        self, source_id: int, target_id: int, allow_provider_conflicts: bool = False
+    ) -> dict[str, Any]:
         if source_id == target_id:
             raise ValueError("Source and target series must be different")
         with self._write_lock, self._connect() as connection:
+            preview = self._series_merge_preview(connection, source_id, target_id)
+            if preview["blockers"]:
+                raise ValueError("Cannot combine these runs: " + "; ".join(preview["blockers"]))
+            if preview["providerConflicts"] and not allow_provider_conflicts:
+                providers = ", ".join(item["provider"] for item in preview["providerConflicts"])
+                raise ValueError(
+                    "The runs have different provider identities for " + providers
+                    + ". Review the warning and explicitly confirm the merge."
+                )
             source = connection.execute("SELECT * FROM series_runs WHERE id=?", (source_id,)).fetchone()
             target = connection.execute("SELECT * FROM series_runs WHERE id=?", (target_id,)).fetchone()
             if not source or not target:
                 raise ValueError("One of the canonical series was not found")
-            aliases = list(connection.execute("SELECT * FROM series_aliases WHERE series_run_id=?", (source_id,)))
+            # Requests belong to the logical run. Move their complete history,
+            # not only the currently open wanted list, before re-homing issues.
+            connection.execute(
+                "UPDATE acquisition_requests SET series_run_id=?, updated_at=? WHERE series_run_id=?",
+                (target_id, _utc_now(), source_id),
+            )
             connection.execute("UPDATE file_identities SET series_run_id=?, updated_at=? WHERE series_run_id=?", (target_id, _utc_now(), source_id))
             for issue in connection.execute("SELECT * FROM issues WHERE series_run_id=?", (source_id,)):
                 target_issue = connection.execute(
@@ -2964,6 +4815,41 @@ class CatalogStore:
                     (target_id, issue["issue_number"]),
                 ).fetchone()
                 if target_issue:
+                    # Preserve request membership before removing the duplicate
+                    # issue record. INSERT OR IGNORE makes repeated repair safe.
+                    for request_issue in connection.execute(
+                        "SELECT request_id, created_at FROM acquisition_request_issues WHERE issue_id=?",
+                        (issue["id"],),
+                    ).fetchall():
+                        connection.execute(
+                            "INSERT OR IGNORE INTO acquisition_request_issues(request_id, issue_id, created_at) VALUES (?, ?, ?)",
+                            (request_issue["request_id"], target_issue["id"], request_issue["created_at"]),
+                        )
+                    connection.execute("DELETE FROM acquisition_request_issues WHERE issue_id=?", (issue["id"],))
+                    # The preview rejects the only unsafe collision: two jobs
+                    # for the same request/issue. Preserve remaining jobs and
+                    # their download/event history by changing the issue key.
+                    connection.execute(
+                        "UPDATE acquisition_jobs SET issue_id=?, updated_at=? WHERE issue_id=?",
+                        (target_issue["id"], _utc_now(), issue["id"]),
+                    )
+                    source_override = connection.execute(
+                        "SELECT * FROM issue_metadata_overrides WHERE issue_id=?", (issue["id"],)
+                    ).fetchone()
+                    target_override = connection.execute(
+                        "SELECT 1 FROM issue_metadata_overrides WHERE issue_id=?", (target_issue["id"],)
+                    ).fetchone()
+                    if source_override and not target_override:
+                        connection.execute(
+                            "UPDATE issue_metadata_overrides SET issue_id=? WHERE issue_id=?",
+                            (target_issue["id"], issue["id"]),
+                        )
+                    elif source_override:
+                        connection.execute("DELETE FROM issue_metadata_overrides WHERE issue_id=?", (issue["id"],))
+                    connection.execute(
+                        "UPDATE issue_metadata_override_history SET issue_id=? WHERE issue_id=?",
+                        (target_issue["id"], issue["id"]),
+                    )
                     connection.execute("UPDATE file_issue_links SET issue_id=? WHERE issue_id=?", (target_issue["id"], issue["id"]))
                     connection.execute("UPDATE edition_coverage_claims SET issue_id=? WHERE issue_id=?", (target_issue["id"], issue["id"]))
                     for provider_id in connection.execute(
@@ -2984,6 +4870,21 @@ class CatalogStore:
                 else:
                     connection.execute("UPDATE issues SET series_run_id=?, updated_at=? WHERE id=?", (target_id, _utc_now(), issue["id"]))
             connection.execute("UPDATE editions SET series_run_id=?, updated_at=? WHERE series_run_id=?", (target_id, _utc_now(), source_id))
+            # Coverage corrections describe the edition, not the accidental run
+            # split. Re-home them and collapse exact duplicates.
+            for override in connection.execute(
+                "SELECT * FROM edition_coverage_overrides WHERE series_run_id=?", (source_id,)
+            ).fetchall():
+                connection.execute(
+                    """INSERT OR IGNORE INTO edition_coverage_overrides(
+                           edition_id, series_run_id, issue_number, action, note, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        override["edition_id"], target_id, override["issue_number"], override["action"],
+                        override["note"], override["created_at"], override["updated_at"],
+                    ),
+                )
+            connection.execute("DELETE FROM edition_coverage_overrides WHERE series_run_id=?", (source_id,))
             target_provider_names = {
                 row["provider"] for row in connection.execute(
                     "SELECT provider FROM series_provider_ids WHERE series_run_id=?", (target_id,)
@@ -3010,14 +4911,85 @@ class CatalogStore:
                     "UPDATE issue_catalog_status SET series_run_id=? WHERE series_run_id=?",
                     (target_id, source_id),
                 )
-            for alias in aliases:
+            # Aliases are globally unique. Inserting the source aliases here only
+            # conflicts with their existing rows and then loses them when the
+            # source run is deleted. Reassign the durable rows instead so future
+            # filename scans keep resolving to the healed canonical run.
+            connection.execute(
+                """UPDATE series_aliases
+                   SET series_run_id=?, source='manual merge', confirmed=1
+                   WHERE series_run_id=?""",
+                (target_id, source_id),
+            )
+            source_family = connection.execute(
+                "SELECT series_family_id FROM series_family_memberships WHERE series_run_id=?", (source_id,)
+            ).fetchone()
+            target_family = connection.execute(
+                "SELECT 1 FROM series_family_memberships WHERE series_run_id=?", (target_id,)
+            ).fetchone()
+            if source_family and not target_family:
                 connection.execute(
-                    """INSERT INTO series_aliases(series_run_id, alias, normalized_alias, source, confirmed, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(normalized_alias) DO NOTHING""",
-                    (target_id, alias["alias"], alias["normalized_alias"], "manual merge", 1, _utc_now()),
+                    "UPDATE series_family_memberships SET series_run_id=? WHERE series_run_id=?",
+                    (target_id, source_id),
                 )
+            else:
+                connection.execute("DELETE FROM series_family_memberships WHERE series_run_id=?", (source_id,))
+            source_arc = connection.execute(
+                "SELECT story_arc_id FROM story_arc_run_memberships WHERE series_run_id=?", (source_id,)
+            ).fetchone()
+            target_arc = connection.execute(
+                "SELECT 1 FROM story_arc_run_memberships WHERE series_run_id=?", (target_id,)
+            ).fetchone()
+            if source_arc and not target_arc:
+                connection.execute(
+                    "UPDATE story_arc_run_memberships SET series_run_id=? WHERE series_run_id=?",
+                    (target_id, source_id),
+                )
+            else:
+                connection.execute("DELETE FROM story_arc_run_memberships WHERE series_run_id=?", (source_id,))
+            connection.execute(
+                "DELETE FROM metadata_enrichment_jobs WHERE series_run_id=?", (source_id,)
+            )
+            connection.execute(
+                "DELETE FROM series_monitor_refreshes WHERE series_run_id=?", (source_id,)
+            )
+            if source["monitoring_status"] == "monitored":
+                connection.execute(
+                    "UPDATE series_runs SET monitoring_status='monitored', updated_at=? WHERE id=?",
+                    (_utc_now(), target_id),
+                )
+            # Keep the strongest human-facing identity after the merge. A
+            # filename-derived placeholder such as "birth right" should not
+            # win over a provider-confirmed "Birthright", while the earliest
+            # known start remains the run boundary.
+            def title_quality(value: str | None) -> tuple[int, int, int]:
+                text = str(value or "").strip()
+                return (
+                    int(bool(text) and not text.islower()),
+                    int(bool(text) and " " not in text),
+                    len(text),
+                )
+
+            merged_title = target["canonical_title"]
+            if title_quality(source["canonical_title"]) > title_quality(merged_title):
+                merged_title = source["canonical_title"]
+            known_start_years = [
+                int(value) for value in (target["start_year"], source["start_year"])
+                if value is not None
+            ]
+            merged_start_year = min(known_start_years) if known_start_years else None
+            merged_publisher = target["publisher"] or source["publisher"]
+            connection.execute(
+                """UPDATE series_runs
+                   SET canonical_title=?, start_year=?, publisher=?, updated_at=?
+                   WHERE id=?""",
+                (merged_title, merged_start_year, merged_publisher, _utc_now(), target_id),
+            )
             connection.execute("DELETE FROM series_runs WHERE id=?", (source_id,))
+            return {
+                "status": "merged", "seriesId": str(target_id),
+                "title": merged_title, "preview": preview,
+            }
 
     def register_root(self, folder: str, recursive: bool) -> int:
         resolved = str(Path(folder).expanduser().resolve())
@@ -3025,6 +4997,15 @@ class CatalogStore:
             raise ValueError("Library folder does not exist or is not a directory")
         now = _utc_now()
         with self._connect() as connection:
+            for row in connection.execute("SELECT id, path FROM library_roots"):
+                existing = Path(row["path"])
+                candidate = Path(resolved)
+                if candidate == existing:
+                    continue
+                if candidate.is_relative_to(existing) or existing.is_relative_to(candidate):
+                    raise ValueError(
+                        f"Library folders cannot overlap. {resolved} overlaps the existing source {existing}."
+                    )
             connection.execute(
                 """INSERT INTO library_roots(path, recursive, created_at)
                    VALUES (?, ?, ?)
@@ -3032,6 +5013,46 @@ class CatalogStore:
                 (resolved, int(recursive), now),
             )
             return int(connection.execute("SELECT id FROM library_roots WHERE path=?", (resolved,)).fetchone()["id"])
+
+    def update_root(self, root_id: int, recursive: bool) -> dict[str, Any]:
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM library_roots WHERE id=?", (root_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("Library folder was not found")
+            connection.execute(
+                "UPDATE library_roots SET recursive=? WHERE id=?",
+                (int(recursive), root_id),
+            )
+            result = dict(row)
+            result["recursive"] = int(recursive)
+            return result
+
+    def remove_root(self, root_id: int) -> dict[str, Any]:
+        """Stop tracking one library root without changing anything on disk."""
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM library_roots WHERE id=?", (root_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("Library folder was not found")
+            active_scan = connection.execute(
+                "SELECT id FROM scan_runs WHERE root_id=? AND status IN ('queued', 'scanning') LIMIT 1",
+                (root_id,),
+            ).fetchone()
+            if active_scan:
+                raise ValueError("Wait for this folder's scan to finish before removing it")
+            file_count = int(connection.execute(
+                "SELECT COUNT(*) FROM files WHERE root_id=?", (root_id,)
+            ).fetchone()[0])
+            connection.execute("DELETE FROM library_roots WHERE id=?", (root_id,))
+            return {
+                "id": int(root_id),
+                "path": row["path"],
+                "removedFileRecords": file_count,
+                "filesChanged": False,
+            }
 
     def enqueue_metadata_enrichment(self, series_run_ids: Iterable[int] | None = None) -> dict[str, int]:
         """Queue one resumable metadata job per local publication run."""
@@ -3262,6 +5283,48 @@ class CatalogStore:
             "nextJobs": next_jobs, "providerCooldowns": provider_cooldowns,
         }
 
+    @staticmethod
+    def _upsert_issue_provider_id(
+        connection: sqlite3.Connection,
+        issue_id: int,
+        provider: str,
+        provider_id: str,
+        api_url: str | None,
+        updated_at: str,
+    ) -> None:
+        """Attach one provider identity without tripping either uniqueness rule.
+
+        Provider refreshes can legitimately replace the external ID previously
+        attached to an issue. Likewise, identity reconciliation can move a known
+        external ID to a newly canonicalized issue. SQLite UPSERT can target only
+        one of those constraints at a time, so reconcile both rows explicitly.
+        """
+        issue_row = connection.execute(
+            "SELECT id FROM issue_provider_ids WHERE issue_id=? AND provider=?",
+            (issue_id, provider),
+        ).fetchone()
+        provider_row = connection.execute(
+            "SELECT id FROM issue_provider_ids WHERE provider=? AND provider_id=?",
+            (provider, provider_id),
+        ).fetchone()
+        if issue_row and provider_row and int(issue_row["id"]) != int(provider_row["id"]):
+            connection.execute("DELETE FROM issue_provider_ids WHERE id=?", (issue_row["id"],))
+            issue_row = None
+        row = provider_row or issue_row
+        if row:
+            connection.execute(
+                """UPDATE issue_provider_ids
+                   SET issue_id=?, provider_id=?, api_url=?, updated_at=? WHERE id=?""",
+                (issue_id, provider_id, api_url, updated_at, row["id"]),
+            )
+        else:
+            connection.execute(
+                """INSERT INTO issue_provider_ids(
+                       issue_id, provider, provider_id, api_url, updated_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (issue_id, provider, provider_id, api_url, updated_at),
+            )
+
     def begin_scan(self, folder: str, recursive: bool) -> int:
         root_id = self.register_root(folder, recursive)
         with self._connect() as connection:
@@ -3290,6 +5353,7 @@ class CatalogStore:
         scan = self.get_scan(scan_id)
         if not scan:
             return
+
         root_id = int(scan["root_id"])
         folder = scan["root_path"]
         with self._connect() as connection:
@@ -3525,6 +5589,10 @@ class CatalogStore:
                    )
                    ORDER BY canonical_title COLLATE NOCASE"""
             ))
+            monitor_refresh_by_series = {
+                int(row["series_run_id"]): dict(row)
+                for row in connection.execute("SELECT * FROM series_monitor_refreshes")
+            }
             rows = list(connection.execute(
                 """SELECT files.*,
                           file_identities.series_run_id,
@@ -3592,22 +5660,27 @@ class CatalogStore:
                     "missingDateCount": missing_date_count,
                     "metadataIssueCount": total_count,
                 })
-            issue_anchor_counts = {
-                int(row["series_run_id"]): int(row["anchor_count"])
-                for row in connection.execute(
-                    """SELECT issues.series_run_id, COUNT(DISTINCT issue_provider_ids.provider_id) AS anchor_count
-                       FROM issue_provider_ids
-                       JOIN issues ON issues.id=issue_provider_ids.issue_id
-                       WHERE issue_provider_ids.provider='gcd'
-                       GROUP BY issues.series_run_id"""
+            issue_anchor_counts: dict[int, dict[str, Any]] = {}
+            for row in connection.execute(
+                """SELECT issues.series_run_id, issue_provider_ids.provider,
+                          COUNT(DISTINCT issue_provider_ids.provider_id) AS anchor_count
+                   FROM issue_provider_ids
+                   JOIN issues ON issues.id=issue_provider_ids.issue_id
+                   GROUP BY issues.series_run_id, issue_provider_ids.provider"""
+            ):
+                summary = issue_anchor_counts.setdefault(
+                    int(row["series_run_id"]), {"count": 0, "providers": []}
                 )
-            }
-            for series_run_id, anchor_count in issue_anchor_counts.items():
+                summary["count"] += int(row["anchor_count"] or 0)
+                summary["providers"].append(str(row["provider"]))
+            for series_run_id, summary in issue_anchor_counts.items():
                 issue_catalog_map.setdefault(series_run_id, {"status": "unknown"})
-                issue_catalog_map[series_run_id]["anchorCount"] = anchor_count
-                issue_catalog_map[series_run_id]["syncReady"] = anchor_count > 0
+                issue_catalog_map[series_run_id]["anchorCount"] = summary["count"]
+                issue_catalog_map[series_run_id]["anchorProviders"] = summary["providers"]
+                issue_catalog_map[series_run_id]["syncReady"] = summary["count"] > 0
             for item in issue_catalog_map.values():
                 item.setdefault("anchorCount", 0)
+                item.setdefault("anchorProviders", [])
                 item.setdefault("syncReady", False)
                 item.setdefault("metadataComplete", False)
                 item.setdefault("missingTitleCount", 0)
@@ -3630,6 +5703,7 @@ class CatalogStore:
                               JOIN files ON files.id=file_edition_links.file_id
                               WHERE edition_coverage_claims.issue_id=issues.id
                                 AND edition_coverage_claims.resolution_status='resolved'
+                                AND edition_coverage_claims.relation_kind='full_issue'
                                 AND files.present=1
                                 AND NOT EXISTS(
                                     SELECT 1 FROM edition_coverage_overrides
@@ -3706,14 +5780,14 @@ class CatalogStore:
                         "seriesLabel": claim["seriesLabel"], "issueNumber": claim["issueNumber"],
                         "source": claim["source"], "confidence": claim["confidence"],
                         "resolved": claim["resolved"], "evidence": claim["evidence"],
-                        "manual": claim["manual"],
+                        "relationKind": claim["relationKind"], "manual": claim["manual"],
                     }
                     for claim in contents_payload["items"] if claim["included"]
                 ]
-                filenames = [
-                    file_row["filename"]
+                edition_files = [
+                    {"id": str(file_row["id"]), "filename": file_row["filename"]}
                     for file_row in connection.execute(
-                        """SELECT files.filename FROM files
+                        """SELECT files.id, files.filename FROM files
                            JOIN file_edition_links ON file_edition_links.file_id=files.id
                            WHERE file_edition_links.edition_id=? AND files.present=1""",
                         (edition["id"],),
@@ -3728,20 +5802,31 @@ class CatalogStore:
                         "isbns": _load_json(edition["isbns_json"], []), "cover": edition["cover"],
                         "source": edition["source"], "verificationStatus": edition["verification_status"],
                         "coverageStatus": edition["coverage_status"], "coverage": claims,
-                        "coverageGroups": _coverage_groups(claims), "files": filenames,
+                        "coverageGroups": _coverage_groups(claims),
+                        "fileIds": [file["id"] for file in edition_files],
+                        "files": [file["filename"] for file in edition_files],
                         "coverageOverrideCount": sum(
                             1 for claim in contents_payload["items"]
                             if claim["manual"] or not claim["included"]
                         ),
                     }
                 )
+            editions_by_series = {
+                series_run_id: _group_logical_volumes(editions)
+                for series_run_id, editions in editions_by_series.items()
+            }
             resolved = {
                 (row["file_path"], row["reason_code"], row["fingerprint"])
                 for row in connection.execute("SELECT file_path, reason_code, fingerprint FROM review_resolutions WHERE status='resolved'")
             }
             request_rows = [
                 dict(row) for row in connection.execute(
-                    "SELECT * FROM acquisition_requests ORDER BY created_at DESC, id DESC"
+                    """SELECT * FROM acquisition_requests
+                       WHERE NOT EXISTS(
+                           SELECT 1 FROM file_replacement_requests
+                           WHERE file_replacement_requests.acquisition_request_id=acquisition_requests.id
+                       )
+                       ORDER BY created_at DESC, id DESC"""
                 )
             ]
             acquisition_job_rows = [
@@ -3789,6 +5874,7 @@ class CatalogStore:
                 "publisher": run["publisher"] or "Publisher unknown",
                 "acquisitionPreference": run["acquisition_preference"],
                 "monitoringStatus": run["monitoring_status"],
+                "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
                 "updatedAt": run["updated_at"], "aliases": alias_map.get(int(run["id"]), []),
                 "identityConfidences": [], "issues": issues_by_series.get(int(run["id"]), []),
@@ -3843,6 +5929,7 @@ class CatalogStore:
                     "title": title, "year": str(year or "Unknown"),
                     "publisher": publisher, "issueNumbers": set(), "files": [], "covers": [],
                     "acquisitionPreference": "either", "monitoringStatus": "cataloged",
+                    "monitorRefresh": monitor_refresh_by_series.get(series_run_id) if series_run_id else None,
                     "hasProblem": False, "updatedAt": row["updated_at"],
                     "aliases": alias_map.get(series_run_id, []) if series_run_id else [],
                     "identityConfidences": [],
@@ -3964,6 +6051,13 @@ class CatalogStore:
                     "publisher": group["publisher"], "run": run,
                     "acquisitionPreference": group["acquisitionPreference"],
                     "monitoringStatus": group["monitoringStatus"],
+                    "monitorRefresh": {
+                        "status": group["monitorRefresh"]["status"],
+                        "lastCheckedAt": group["monitorRefresh"]["last_checked_at"],
+                        "nextCheckAt": group["monitorRefresh"]["next_check_at"],
+                        "provider": group["monitorRefresh"]["last_provider"],
+                        "error": group["monitorRefresh"]["last_error"],
+                    } if group.get("monitorRefresh") else None,
                     "tags": [display_format],
                     "owned": owned, "total": total, "catalogKnown": catalog_known,
                     "unowned": unowned, "missing": None,
@@ -4119,11 +6213,16 @@ class CatalogStore:
                 "reasonCode": row["reason_code"],
                 "reason": replacement_reason_labels.get(row["reason_code"], "Replacement requested"),
                 "acquisitionPreference": row["acquisition_preference"],
+                "acquisitionRequestId": (
+                    str(row["acquisition_request_id"])
+                    if row["acquisition_request_id"] is not None else None
+                ),
                 "coverageTarget": coverage_target,
                 "desiredLanguage": row["desired_language"], "status": row["status"],
                 "error": row["error"], "createdAt": row["created_at"],
                 "updatedAt": row["updated_at"], "requestedDate": requested_date,
                 "requestedTime": requested_time,
+                "quarantinePath": row["quarantine_path"],
                 "cover": (series_item or {}).get("cover") or (result.get("file_cover") or {}).get("url"),
             })
         request_issue_lookup = {
@@ -4155,9 +6254,23 @@ class CatalogStore:
                 "downloadTitle": download["release_title"] if download else None,
                 "downloadDestination": download["destination"] if download else None,
                 "downloadError": download["error"] if download else None,
+                "downloadFailureStage": download["failure_stage"] if download else None,
                 "createdAt": job_row["created_at"], "updatedAt": job_row["updated_at"],
                 "queuedDate": queued_date, "queuedTime": queued_time,
             })
+        for replacement in replacement_requests:
+            acquisition_request_id = replacement.get("acquisitionRequestId")
+            jobs = acquisition_jobs_by_request.get(int(acquisition_request_id), []) if acquisition_request_id else []
+            replacement["jobs"] = jobs
+            replacement["jobCount"] = len(jobs)
+            replacement["queuedJobCount"] = sum(job["status"] == "queued" for job in jobs)
+            replacement["activeJobCount"] = sum(
+                job["status"] in {"queued", "searching", "grabbed"} for job in jobs
+            )
+            replacement["failedJobCount"] = sum(
+                job["status"] == "failed" or job.get("downloadStatus") == "failed" for job in jobs
+            )
+            replacement["fulfilledJobCount"] = sum(job["status"] == "fulfilled" for job in jobs)
         requests = []
         for row in request_rows:
             if row["scope_type"] == "collection":
@@ -4187,6 +6300,9 @@ class CatalogStore:
                 "publisher": scope_item.get("publisher"), "year": scope_item.get("year"),
                 "cover": scope_item.get("cover"), "status": effective_status,
                 "storedStatus": row["status"],
+                "monitoringStatus": "monitored" if row["status"] == "open" else "stopped",
+                "publicationStatus": scope_item.get("publicationStatus", "unknown"),
+                "monitorRefresh": scope_item.get("monitorRefresh"),
                 "acquisitionPreference": row["acquisition_preference"],
                 "includeSpecials": bool(row["include_specials"]),
                 "targetIssueCount": len(targets), "ownedIssueCount": owned_count,

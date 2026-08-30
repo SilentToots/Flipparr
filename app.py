@@ -25,6 +25,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -67,12 +68,28 @@ _ACQUISITION_CONFIG_LOCK = threading.Lock()
 _RELEASE_CANDIDATE_LOCK = threading.Lock()
 _RELEASE_CANDIDATES: dict[str, dict[str, Any]] = {}
 _RELEASE_CANDIDATE_TTL_SECONDS = 30 * 60
+MAX_AUTOMATIC_RELEASE_FAILURES = 3
 NZB_MAX_BYTES = 25 * 1024 * 1024
 _REMOTE_JSON_CACHE: dict[str, Any] = {}
 _REMOTE_JSON_INFLIGHT: dict[str, threading.Event] = {}
 _REMOTE_JSON_LOCK = threading.Lock()
 _REMOTE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 _PERSIST_REMOTE_CACHE = False
+_PROVIDER_JSON_CACHE: dict[str, dict[str, Any]] = {}
+_PROVIDER_JSON_INFLIGHT: dict[str, threading.Event] = {}
+_PROVIDER_JSON_LOCK = threading.Lock()
+_PROVIDER_REQUEST_LOCK = threading.Lock()
+_PROVIDER_NEXT_REQUEST_AT: dict[str, float] = {}
+_PROVIDER_RESPONSE_HEADERS = threading.local()
+_PROVIDER_CACHE_STALE_SECONDS = 30 * 24 * 60 * 60
+_PROVIDER_MIN_INTERVAL_SECONDS = {
+    # Metron documents a sustained limit of 20 requests/minute.  A small
+    # cushion prevents clock/network jitter from putting the 20th request over.
+    "metron": max(3.2, float(os.environ.get("COMICARR_METRON_MIN_INTERVAL_SECONDS", "3.2"))),
+    # Comic Vine requires burst control in addition to its hourly resource
+    # quota.  Cached series identifiers keep sustained traffic under that cap.
+    "comic_vine": max(1.1, float(os.environ.get("COMICARR_COMIC_VINE_MIN_INTERVAL_SECONDS", "1.1"))),
+}
 CATALOG_DATABASE_PATH = Path(
     os.environ.get("COMICARR_DATABASE", str(Path(__file__).parent / ".data" / "comicarr.db"))
 )
@@ -80,6 +97,12 @@ _REMOTE_CACHE_FILE = Path(
     os.environ.get(
         "COMICARR_REMOTE_CACHE",
         str(CATALOG_DATABASE_PATH.parent / "remote-metadata-cache.json"),
+    )
+)
+_PROVIDER_CACHE_FILE = Path(
+    os.environ.get(
+        "COMICARR_PROVIDER_CACHE",
+        str(CATALOG_DATABASE_PATH.parent / "provider-metadata-cache-v1.json"),
     )
 )
 WEB_ROOT = Path(os.environ.get("COMICARR_WEB_ROOT", "")).resolve() if os.environ.get("COMICARR_WEB_ROOT") else None
@@ -156,8 +179,8 @@ PROVIDER_DEFINITIONS = {
     },
     "metron": {
         "name": "Metron", "credentialField": "token",
-        "capabilities": ["Issue titles", "Release dates", "Covers", "Creators", "Cross-provider IDs"],
-        "description": "Optional authenticated source for detailed issue metadata and cross-provider matching.",
+        "capabilities": ["Issue titles", "Release dates", "Covers", "Creators", "Collected-edition contents", "Cross-provider IDs"],
+        "description": "Optional authenticated source for detailed issue metadata, structured reprints, and cross-provider matching.",
         "defaultEnabled": False, "defaultPriority": 20,
     },
     "comic_vine": {
@@ -290,9 +313,173 @@ def _provider_headers(provider_id: str, credential: str) -> dict[str, str]:
 
 
 def fetch_json_with_headers(url: str, headers: dict[str, str], timeout: float = 12.0) -> Any:
+    _PROVIDER_RESPONSE_HEADERS.value = {}
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
+        _PROVIDER_RESPONSE_HEADERS.value = dict(response.headers.items())
         return json.load(response)
+
+
+def _provider_cache_key(provider_id: str, url: str, credential: str) -> str:
+    """Create an opaque cache key without writing API credentials to disk."""
+    parsed = urllib.parse.urlsplit(url)
+    safe_query = urllib.parse.urlencode([
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        if key.casefold() not in {"api_key", "apikey", "token", "access_token"}
+    ])
+    safe_url = urllib.parse.urlunsplit((
+        parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path, safe_query, "",
+    ))
+    credential_scope = hashlib.sha256(credential.encode("utf-8")).hexdigest()[:12]
+    return f"{provider_id}:{credential_scope}:{safe_url}"
+
+
+def _provider_cache_ttl(url: str) -> int:
+    """Keep stable identifiers longer than issue lists for ongoing runs."""
+    path = urllib.parse.urlsplit(url).path.casefold()
+    if "/search/" in path or path.rstrip("/").endswith("/series"):
+        return 7 * 24 * 60 * 60
+    if "issue_list" in path or path.rstrip("/").endswith("/issues"):
+        return 6 * 60 * 60
+    return 24 * 60 * 60
+
+
+def _provider_retry_after(provider_id: str, headers: dict[str, Any]) -> int | None:
+    lowered = {str(key).casefold(): value for key, value in (headers or {}).items()}
+    raw_retry = lowered.get("retry-after")
+    if raw_retry is not None:
+        try:
+            return max(1, int(float(str(raw_retry))))
+        except (TypeError, ValueError):
+            pass
+    reset_values = []
+    for key in (
+        "x-ratelimit-burst-reset", "x-ratelimit-sustained-reset", "x-ratelimit-reset",
+    ):
+        try:
+            reset_values.append(float(str(lowered.get(key))))
+        except (TypeError, ValueError):
+            continue
+    if reset_values:
+        return max(1, int(max(reset_values) - time.time()) + 1)
+    return 300 if provider_id == "comic_vine" else 60
+
+
+def _provider_headers_exhausted(headers: dict[str, Any]) -> bool:
+    lowered = {str(key).casefold(): value for key, value in (headers or {}).items()}
+    remaining = []
+    for key in (
+        "x-ratelimit-burst-remaining", "x-ratelimit-sustained-remaining", "x-ratelimit-remaining",
+    ):
+        try:
+            remaining.append(int(float(str(lowered.get(key)))))
+        except (TypeError, ValueError):
+            continue
+    return bool(remaining) and min(remaining) <= 0
+
+
+def _wait_for_provider_slot(provider_id: str) -> None:
+    """Serialize one provider without blocking traffic to another provider."""
+    while True:
+        with _PROVIDER_REQUEST_LOCK:
+            now = time.monotonic()
+            wait_seconds = max(0.0, _PROVIDER_NEXT_REQUEST_AT.get(provider_id, 0.0) - now)
+            if wait_seconds <= 0:
+                _PROVIDER_NEXT_REQUEST_AT[provider_id] = (
+                    now + _PROVIDER_MIN_INTERVAL_SECONDS.get(provider_id, 1.0)
+                )
+                return
+        time.sleep(wait_seconds)
+
+
+def _cool_down_provider_requests(provider_id: str, retry_after_seconds: int) -> None:
+    with _PROVIDER_REQUEST_LOCK:
+        _PROVIDER_NEXT_REQUEST_AT[provider_id] = max(
+            _PROVIDER_NEXT_REQUEST_AT.get(provider_id, 0.0),
+            time.monotonic() + max(1, retry_after_seconds),
+        )
+
+
+def fetch_provider_json(
+    provider_id: str,
+    url: str,
+    credential: str,
+    *,
+    timeout: float = 12.0,
+    force: bool = False,
+) -> Any:
+    """Cache, coalesce, and globally pace authenticated metadata requests."""
+    key = _provider_cache_key(provider_id, url, credential)
+    ttl_seconds = _provider_cache_ttl(url)
+    stale_entry: dict[str, Any] | None = None
+    used_stale_cache = False
+    while True:
+        with _PROVIDER_JSON_LOCK:
+            entry = _PROVIDER_JSON_CACHE.get(key)
+            if entry and isinstance(entry.get("data"), (dict, list)):
+                stale_entry = entry
+                if not force and time.time() - float(entry.get("saved_at") or 0) < ttl_seconds:
+                    return entry["data"]
+            event = _PROVIDER_JSON_INFLIGHT.get(key)
+            if event is None:
+                event = threading.Event()
+                _PROVIDER_JSON_INFLIGHT[key] = event
+                leader = True
+            else:
+                leader = False
+        if leader:
+            break
+        event.wait(timeout + max(_PROVIDER_MIN_INTERVAL_SECONDS.get(provider_id, 1.0), 5.0))
+
+    try:
+        _wait_for_provider_slot(provider_id)
+        _PROVIDER_RESPONSE_HEADERS.value = {}
+        if timeout == 12.0:
+            payload = fetch_json_with_headers(url, _provider_headers(provider_id, credential))
+        else:
+            payload = fetch_json_with_headers(
+                url, _provider_headers(provider_id, credential), timeout=timeout
+            )
+        response_headers = getattr(_PROVIDER_RESPONSE_HEADERS, "value", {}) or {}
+        if provider_id == "comic_vine" and str((payload or {}).get("status_code")) == "107":
+            retry_after = _provider_retry_after(provider_id, response_headers)
+            _cool_down_provider_requests(provider_id, retry_after)
+            raise MetadataRateLimited(
+                provider_id, retry_after,
+                "Comic Vine asked SonicBoom to pause after reaching its request limit.",
+            )
+        if _provider_headers_exhausted(response_headers):
+            _cool_down_provider_requests(
+                provider_id, _provider_retry_after(provider_id, response_headers)
+            )
+    except Exception as exc:
+        limited = _rate_limit_from_error(provider_id, exc)
+        if limited:
+            _cool_down_provider_requests(provider_id, limited.retry_after_seconds)
+            if stale_entry and time.time() - float(stale_entry.get("saved_at") or 0) < _PROVIDER_CACHE_STALE_SECONDS:
+                payload = stale_entry["data"]
+                used_stale_cache = True
+            else:
+                with _PROVIDER_JSON_LOCK:
+                    _PROVIDER_JSON_INFLIGHT.pop(key, None)
+                    event.set()
+                raise limited
+        else:
+            with _PROVIDER_JSON_LOCK:
+                _PROVIDER_JSON_INFLIGHT.pop(key, None)
+                event.set()
+            raise
+
+    with _PROVIDER_JSON_LOCK:
+        if not used_stale_cache:
+            _PROVIDER_JSON_CACHE[key] = {"saved_at": time.time(), "data": payload}
+        _PROVIDER_JSON_INFLIGHT.pop(key, None)
+        event.set()
+        snapshot = dict(_PROVIDER_JSON_CACHE)
+    if not used_stale_cache:
+        persist_provider_cache(snapshot)
+    return payload
 
 
 def fetch_bytes_with_headers(
@@ -358,13 +545,13 @@ def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = 
         raise ValueError(f"Enter a {PROVIDER_DEFINITIONS[provider_id]['name']} credential first")
     if provider_id == "metron":
         url = f"{METRON_API_BASE}/series/?page=1"
-        data = fetch_json_with_headers(url, _provider_headers(provider_id, credential))
+        data = fetch_provider_json(provider_id, url, credential, force=True)
         detail = f"Authenticated successfully; {int(data.get('count') or 0):,} series are available."
     else:
         url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({
             "api_key": credential, "format": "json", "limit": 1, "field_list": "id",
         })
-        data = fetch_json_with_headers(url, _provider_headers(provider_id, credential))
+        data = fetch_provider_json(provider_id, url, credential, force=True)
         if str(data.get("status_code")) != "1":
             raise ValueError(str(data.get("error") or "Comic Vine rejected the API key"))
         detail = "API key verified successfully."
@@ -582,6 +769,34 @@ def _prowlarr_download_reference(download_url: Any) -> str:
     return urllib.parse.urlunsplit(("", "", parsed.path, query, ""))
 
 
+def _release_candidate_key(release: dict[str, Any], download_path: str) -> str:
+    """Build a stable, credential-free identity for one Prowlarr search result."""
+    identity = json.dumps(
+        {
+            "guid": str(release.get("guid") or ""),
+            "indexer": str(release.get("indexer") or ""),
+            "title": str(release.get("title") or ""),
+            "size": int(release.get("size") or 0),
+            "downloadPath": download_path,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _legacy_release_key(download: dict[str, Any]) -> str:
+    """Give pre-migration downloads a durable failure identity."""
+    identity = "|".join(
+        (
+            "legacy",
+            str(download.get("release_title") or ""),
+            str(download.get("sab_nzo_id") or ""),
+        )
+    )
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
 def _fetch_selected_nzb(candidate: dict[str, Any]) -> bytes:
     """Retrieve and validate the selected NZB through the configured Prowlarr service."""
     prowlarr = _enabled_acquisition_service("prowlarr")
@@ -675,6 +890,17 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
         timeout=45.0,
     )
     releases = payload if isinstance(payload, list) else []
+    rejected_records = store.rejected_acquisition_releases(job_id)
+    if not isinstance(rejected_records, (list, tuple)):
+        rejected_records = []
+    rejected_keys = {
+        str(item.get("release_key") or "")
+        for item in rejected_records if isinstance(item, dict)
+    }
+    rejected_titles = {
+        re.sub(r"\s+", " ", str(item.get("release_title") or "")).strip().casefold()
+        for item in rejected_records if isinstance(item, dict)
+    }
     now = time.time()
     candidates = []
     with _RELEASE_CANDIDATE_LOCK:
@@ -693,6 +919,10 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
                 download_path = _prowlarr_download_reference(download_url)
             except ValueError:
                 continue
+            release_key = _release_candidate_key(release, download_path)
+            normalized_title = re.sub(r"\s+", " ", title).strip().casefold()
+            if release_key in rejected_keys or normalized_title in rejected_titles:
+                continue
             score, reasons = _release_candidate_score(release, context)
             if score < 85:
                 continue
@@ -702,6 +932,7 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
                 "jobId": int(job_id),
                 "downloadPath": download_path,
                 "title": title,
+                "releaseKey": release_key,
                 "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
             }
             candidates.append({
@@ -740,7 +971,14 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
         raise SABSubmissionError("SABnzbd accepted the NZB but did not return a queue ID")
     detail = f"Sent to SABnzbd: {candidate['title']}"
     store = catalog_store()
-    store.record_acquisition_download(job_id, queue_ids[0], candidate["title"])
+    release_key = str(candidate.get("releaseKey") or "").strip()
+    if not release_key:
+        release_key = hashlib.sha256(
+            f"candidate|{candidate.get('title')}|{candidate.get('downloadPath')}".encode()
+        ).hexdigest()
+    store.record_acquisition_download(
+        job_id, queue_ids[0], candidate["title"], release_key
+    )
     job = store.update_acquisition_job(job_id, "grabbed", detail)
     with _RELEASE_CANDIDATE_LOCK:
         _RELEASE_CANDIDATES.pop(candidate_id, None)
@@ -785,15 +1023,39 @@ def _comic_files_under(source: Path, completed_root: Path) -> list[Path]:
     )
 
 
+class CompletedDownloadNotVisible(ValueError):
+    """SAB is complete, but its finished files have not appeared in our mount yet."""
+
+
 def _resolve_sab_download_source(
     storage: str, release_title: str, completed_root: Path = SAB_COMPLETE_ROOT
 ) -> Path:
     root = completed_root.resolve()
     if not root.is_dir():
         raise ValueError("SABnzbd's completed comics folder is not mounted")
-    storage_name = Path(str(storage or "").rstrip("/\\")).name
-    candidates = [root / storage_name] if storage_name else []
-    release_name = _safe_path_component(Path(str(release_title or "")).stem, "")
+    storage_path = Path(str(storage or "").rstrip("/\\"))
+    storage_name = storage_path.name
+    candidates: list[Path] = []
+    # SAB commonly reports its own host path. Rebuild the portion beneath the
+    # configured category directory inside SonicBoom's completed-download mount.
+    storage_parts = storage_path.parts
+    category_indexes = [
+        index for index, part in enumerate(storage_parts)
+        if part.casefold() == root.name.casefold()
+    ]
+    if category_indexes:
+        relative_parts = storage_parts[category_indexes[-1] + 1:]
+        if relative_parts:
+            candidates.append(root.joinpath(*relative_parts))
+    if storage_name:
+        candidates.append(root / storage_name)
+    release_value = str(release_title or "").strip()
+    release_name = release_value
+    for extension in SUPPORTED_EXTENSIONS:
+        if release_name.casefold().endswith(extension):
+            release_name = release_name[:-len(extension)]
+            break
+    release_name = _safe_path_component(release_name, "")
     if release_name:
         candidates.append(root / release_name)
     for candidate in candidates:
@@ -803,7 +1065,9 @@ def _resolve_sab_download_source(
     for candidate in root.iterdir():
         if normalized_title(candidate.name) in wanted:
             return candidate
-    raise ValueError("The completed SABnzbd download is not visible in the mounted comics folder")
+    raise CompletedDownloadNotVisible(
+        "The completed SABnzbd download is not visible in the mounted comics folder"
+    )
 
 
 def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -898,6 +1162,65 @@ def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_
     )
 
 
+def _replacement_quarantine_path(
+    replacement_id: int, original_path: Path, library_root: Path
+) -> Path:
+    """Build a hidden, recoverable path without allowing the source to escape its root."""
+    root = library_root.resolve()
+    if original_path.is_symlink():
+        raise ValueError("SonicBoom will not quarantine a symbolic link")
+    resolved_original = original_path.resolve()
+    try:
+        relative = resolved_original.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("The replacement original is outside the configured library root") from exc
+    target = root / ".sonicboom" / "quarantine" / str(replacement_id) / relative
+    try:
+        target.resolve(strict=False).relative_to(root / ".sonicboom" / "quarantine")
+    except ValueError as exc:
+        raise ValueError("The quarantine destination escaped its managed directory") from exc
+    return target
+
+
+def _move_original_to_quarantine(
+    replacement: dict[str, Any], library_root: Path
+) -> Path:
+    original = Path(str(replacement["original_path"]))
+    target = _replacement_quarantine_path(int(replacement["id"]), original, library_root)
+    if not original.exists():
+        if target.is_file():
+            return target
+        raise ValueError("The original comic is no longer available to quarantine")
+    if target.exists():
+        raise ValueError("A quarantined original already exists and needs review")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(original, target)
+    return target
+
+
+def _rollback_replacement_swap(
+    store: CatalogStore, replacement_id: int, original_path: Path,
+    quarantine_path: Path, destination: Path,
+) -> None:
+    """Restore the original while retaining the rejected new copy for inspection."""
+    failed_new_path: Path | None = None
+    if destination.is_file():
+        failed_new_path = quarantine_path.with_name(
+            f"{quarantine_path.stem}.failed-new-{int(time.time())}-{os.getpid()}"
+            f"{destination.suffix.lower()}"
+        )
+        if failed_new_path.exists():
+            raise ValueError("A failed replacement copy already exists and needs review")
+        os.replace(destination, failed_new_path)
+    if quarantine_path.is_file() and not original_path.exists():
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(quarantine_path, original_path)
+    store.restore_replacement_original(
+        replacement_id, str(quarantine_path), str(original_path),
+        str(failed_new_path) if failed_new_path else None,
+    )
+
+
 def import_downloaded_comic(
     download: dict[str, Any],
     *,
@@ -925,19 +1248,32 @@ def import_downloaded_comic(
     if shutil.disk_usage(destination.parent).free - source_size < IMPORT_MIN_FREE_BYTES:
         raise ValueError("Import would leave less than the configured minimum free disk space")
     source_hash = _sha256_file(source)
+    replacement_id = int(context["replacementId"]) if context.get("replacementId") else None
+    replacement_original = (
+        Path(str(context["replacementFilePath"])) if context.get("replacementFilePath") else None
+    )
+    replacing_destination = bool(
+        replacement_id and replacement_original
+        and destination.resolve() == replacement_original.resolve()
+    )
     if destination.exists():
-        if destination.is_file() and destination.stat().st_size == source_size and _sha256_file(destination) == source_hash:
+        if replacing_destination:
+            if destination.stat().st_size == source_size and _sha256_file(destination) == source_hash:
+                raise ValueError("The selected release is identical to the comic being replaced")
+        elif destination.is_file() and destination.stat().st_size == source_size and _sha256_file(destination) == source_hash:
             return {
                 "source": str(source), "destination": str(destination),
                 "size": source_size, "sha256": source_hash, "alreadyPresent": True,
             }
-        raise ValueError("A different comic already exists at the organized destination")
+        else:
+            raise ValueError("A different comic already exists at the organized destination")
     partial = destination.with_name(
         f".{destination.stem}.sonicboom-{os.getpid()}-{threading.get_ident()}.partial"
         f"{destination.suffix.lower()}"
     )
     if partial.exists():
         raise ValueError("A previous partial import needs review before this comic can be copied")
+    quarantine_path: Path | None = None
     try:
         with source.open("rb") as input_file, partial.open("xb") as output_file:
             shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
@@ -948,14 +1284,28 @@ def import_downloaded_comic(
         copied_health = inspect_file_health(partial)
         if copied_health.get("status") == "error":
             raise ValueError(copied_health.get("message") or "The copied comic failed validation")
+        if replacing_destination and replacement_id and replacement_original:
+            replacement = store.replacement_for_job(int(download["job_id"]))
+            if not replacement:
+                raise ValueError("The replacement request is no longer available")
+            quarantine_path = _move_original_to_quarantine(replacement, root)
+            store.record_replacement_quarantine(
+                replacement_id, str(replacement_original), str(quarantine_path)
+            )
         os.replace(partial, destination)
     except Exception:
         if partial.exists() and partial.is_file() and partial.parent == destination.parent:
             partial.unlink()
+        if quarantine_path and replacement_id and replacement_original:
+            _rollback_replacement_swap(
+                store, replacement_id, replacement_original, quarantine_path, destination
+            )
         raise
     return {
         "source": str(source), "destination": str(destination),
         "size": source_size, "sha256": source_hash, "alreadyPresent": False,
+        "quarantineOriginal": str(quarantine_path) if quarantine_path else None,
+        "replacementId": str(replacement_id) if replacement_id else None,
     }
 
 
@@ -976,6 +1326,54 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
+def _fallback_after_sab_failure(
+    store: CatalogStore, download: dict[str, Any], message: str
+) -> dict[str, Any]:
+    """Try the next unused strong result after SAB proves a release unusable."""
+    job_id = int(download["job_id"])
+    release_key = str(download.get("release_key") or "").strip() or _legacy_release_key(download)
+    release_title = str(download.get("release_title") or "Unknown release")
+    failure = store.record_acquisition_release_failure(
+        job_id, release_key, release_title, message
+    )
+    failure_count = int(failure.get("failureCount") or 0)
+    if failure_count >= MAX_AUTOMATIC_RELEASE_FAILURES:
+        detail = (
+            f"{message}. Automatic fallback stopped after {failure_count} failed releases; "
+            "choose another release or review the indexer results."
+        )
+        store.update_acquisition_job(job_id, "failed", detail)
+        return {"status": "failed", "error": detail, "automaticFallback": False}
+
+    try:
+        search = search_prowlarr_releases(job_id)
+    except Exception as exc:
+        detail = f"{message}. SonicBoom could not search for a fallback release: {exc}"
+        store.update_acquisition_job(job_id, "failed", detail)
+        return {"status": "failed", "error": detail, "automaticFallback": False}
+    candidates = search.get("candidates") if isinstance(search, dict) else []
+    if not isinstance(candidates, list) or not candidates:
+        detail = f"{message}. No unused strong Prowlarr match remains."
+        store.update_acquisition_job(job_id, "failed", detail)
+        return {"status": "failed", "error": detail, "automaticFallback": False}
+
+    candidate = candidates[0]
+    try:
+        grabbed = send_release_to_sabnzbd(job_id, str(candidate["id"]))
+    except Exception as exc:
+        detail = f"{message}. The next release could not be sent to SABnzbd: {exc}"
+        store.update_acquisition_job(job_id, "failed", detail)
+        return {"status": "failed", "error": detail, "automaticFallback": False}
+    return {
+        "status": "fallback_queued",
+        "automaticFallback": True,
+        "failedRelease": release_title,
+        "fallbackRelease": candidate.get("title"),
+        "failureCount": failure_count,
+        "grab": grabbed,
+    }
+
+
 def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     store = catalog_store()
     slot = _sab_history_slot(download)
@@ -986,13 +1384,16 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     storage = str(slot.get("storage") or "").strip()
     if sab_status == "failed":
         message = str(slot.get("fail_message") or "SABnzbd reported that the download failed")
-        store.update_acquisition_download(int(download["id"]), "failed", sab_storage=storage, error=message)
-        store.update_acquisition_job(int(download["job_id"]), "failed", message)
-        return {"status": "failed", "error": message}
+        store.update_acquisition_download(
+            int(download["id"]), "failed", sab_storage=storage,
+            error=message, failure_stage="download",
+        )
+        return _fallback_after_sab_failure(store, download, message)
     if sab_status != "completed":
         store.update_acquisition_download(int(download["id"]), "downloading", sab_storage=storage or None)
         return {"status": "downloading", "sabStatus": slot.get("status")}
     store.update_acquisition_download(int(download["id"]), "completed", sab_storage=storage)
+    imported: dict[str, Any] | None = None
     try:
         store.update_acquisition_download(int(download["id"]), "importing", sab_storage=storage)
         imported = import_downloaded_comic({**download, "sab_storage": storage})
@@ -1000,9 +1401,34 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         imported["fileId"] = _catalog_imported_issue(
             Path(imported["destination"]), context, COMIC_LIBRARY_ROOT
         )
-    except Exception as exc:
+    except CompletedDownloadNotVisible as exc:
         message = str(exc)
-        store.update_acquisition_download(int(download["id"]), "failed", sab_storage=storage, error=message)
+        store.update_acquisition_download(
+            int(download["id"]), "waiting_for_files", sab_storage=storage,
+            error=message, failure_stage=None,
+        )
+        store.update_acquisition_job(
+            int(download["job_id"]), "grabbed",
+            "SABnzbd finished; waiting for the completed file to appear in SonicBoom",
+        )
+        return {"status": "waiting_for_files", "detail": message}
+    except Exception as exc:
+        if imported and imported.get("quarantineOriginal") and imported.get("replacementId"):
+            try:
+                _rollback_replacement_swap(
+                    store,
+                    int(imported["replacementId"]),
+                    Path(imported["destination"]),
+                    Path(imported["quarantineOriginal"]),
+                    Path(imported["destination"]),
+                )
+            except Exception as rollback_error:
+                exc = ValueError(f"{exc}; original restore also needs attention: {rollback_error}")
+        message = str(exc)
+        store.update_acquisition_download(
+            int(download["id"]), "failed", sab_storage=storage,
+            error=message, failure_stage="import",
+        )
         store.update_acquisition_job(int(download["job_id"]), "failed", f"Import needs attention: {message}")
         return {"status": "failed", "error": message}
     store.update_acquisition_download(
@@ -1014,6 +1440,30 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         int(download["job_id"]), "fulfilled",
         f"Imported and verified as {Path(imported['destination']).name}",
     )
+    replacement = store.replacement_for_job(int(download["job_id"]))
+    if replacement and int(replacement.get("unfinished_jobs") or 0) == 0:
+        try:
+            quarantine_path = imported.get("quarantineOriginal") or replacement.get("quarantine_path")
+            if not quarantine_path:
+                quarantine = _move_original_to_quarantine(replacement, COMIC_LIBRARY_ROOT)
+                quarantine_path = str(quarantine)
+                store.record_replacement_quarantine(
+                    int(replacement["id"]), replacement["original_path"], quarantine_path
+                )
+            store.complete_file_replacement(int(replacement["id"]), str(quarantine_path))
+            imported["replacementCompleted"] = True
+            imported["quarantineOriginal"] = str(quarantine_path)
+        except Exception as exc:
+            message = f"Replacement was imported, but the original could not be quarantined: {exc}"
+            store.update_acquisition_download(
+                int(download["id"]), "failed", sab_storage=storage,
+                local_source=imported["source"], destination=imported["destination"],
+                source_size=imported["size"], source_sha256=imported["sha256"],
+                error=message, failure_stage="import",
+            )
+            store.update_acquisition_job(int(download["job_id"]), "failed", message)
+            store.update_file_replacement_status(int(replacement["id"]), "failed", message)
+            return {"status": "failed", "error": message, **imported}
     return {"status": "imported", **imported}
 
 
@@ -1028,9 +1478,26 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                 try:
                     result = reconcile_acquisition_download(download)
                     imported_any = imported_any or result.get("status") == "imported"
-                except (ValueError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
-                    # Service outages are retried. Per-download validation failures are persisted above.
+                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
+                    # Transient service outages are retried without changing the durable request state.
+                    traceback.print_exc()
                     continue
+                except Exception as exc:
+                    # Never leave a request looking active when the coordinator itself failed
+                    # outside reconcile_acquisition_download's normal validation path.
+                    traceback.print_exc()
+                    message = f"Import coordinator failed: {exc}"
+                    try:
+                        store = catalog_store()
+                        store.update_acquisition_download(
+                            int(download["id"]), "failed", error=message,
+                            failure_stage="import",
+                        )
+                        store.update_acquisition_job(
+                            int(download["job_id"]), "failed", message,
+                        )
+                    except Exception:
+                        traceback.print_exc()
             if imported_any:
                 start_catalog_scan(str(COMIC_LIBRARY_ROOT), True, "local")
         except Exception:
@@ -1217,6 +1684,12 @@ def parse_filename(path: Path) -> ParsedFile:
     # Parenthesized/bracketed filename groups are normally release metadata
     # such as year, scan type, or release group—not part of the comic title.
     title = re.sub(r"\([^)]*\)|\[[^]]*\]|\{[^}]*\}", " ", title)
+    # Some indexer releases contain a truncated final release-group marker
+    # (for example ``Chew 015 (2010) (D) (Kingpin-Empire``). Treat an
+    # unmatched trailing bracket group as release metadata too. Requiring
+    # whitespace before the opener and the group to reach the end avoids
+    # stripping legitimate punctuation inside a comic title.
+    title = re.sub(r"\s+[\(\[\{][^\)\]\}]*$", " ", title)
     title = NOISE.sub(" ", title)
     title = YEAR.sub(" ", title)
     title = VOLUME.sub(" ", title)
@@ -1613,7 +2086,13 @@ def scan_folder(folder: str, recursive: bool = True) -> list[ParsedFile]:
     if not root.exists() or not root.is_dir():
         raise ValueError("Folder does not exist or is not a directory")
     iterator = root.rglob("*") if recursive else root.glob("*")
-    return [parse_filename(p) for p in iterator if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS]
+    return [
+        parse_filename(p)
+        for p in iterator
+        if ".sonicboom" not in p.relative_to(root).parts
+        and p.is_file()
+        and p.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
 
 
 def fetch_json(url: str, timeout: float = 8.0) -> Any:
@@ -1644,6 +2123,36 @@ def load_persisted_remote_cache() -> None:
                 and isinstance(entry.get("data"), (dict, list))
             ):
                 _REMOTE_JSON_CACHE[url] = entry["data"]
+
+
+def load_persisted_provider_cache() -> None:
+    try:
+        payload = json.loads(_PROVIDER_CACHE_FILE.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    cutoff = time.time() - _PROVIDER_CACHE_STALE_SECONDS
+    with _PROVIDER_JSON_LOCK:
+        for key, entry in payload.items():
+            if (
+                isinstance(key, str)
+                and isinstance(entry, dict)
+                and float(entry.get("saved_at") or 0) >= cutoff
+                and isinstance(entry.get("data"), (dict, list))
+            ):
+                _PROVIDER_JSON_CACHE[key] = {
+                    "saved_at": float(entry["saved_at"]), "data": entry["data"],
+                }
+
+
+def persist_provider_cache(snapshot: dict[str, dict[str, Any]]) -> None:
+    temporary = _PROVIDER_CACHE_FILE.with_suffix(".tmp")
+    try:
+        _PROVIDER_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(snapshot, ensure_ascii=False))
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, _PROVIDER_CACHE_FILE)
+    except OSError:
+        pass
 
 
 def persist_remote_cache(snapshot: dict[str, Any]) -> None:
@@ -2554,7 +3063,7 @@ def discover_metron_series(query: str, token: str) -> dict[str, Any]:
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
     url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode({"q": title_query})
-    payload = fetch_json_with_headers(url, _provider_headers("metron", token))
+    payload = fetch_provider_json("metron", url, token)
     library_keys = _discovery_library_keys()
     results = []
     for search_rank, row in enumerate((payload.get("results") or [])[:100]):
@@ -2592,9 +3101,8 @@ def discover_metron_series(query: str, token: str) -> dict[str, Any]:
     )
     if exact is not None:
         try:
-            detail = fetch_json_with_headers(
-                f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/",
-                _provider_headers("metron", token),
+            detail = fetch_provider_json(
+                "metron", f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/", token,
             )
             publisher_value = detail.get("publisher") or {}
             exact["publisher"] = (
@@ -2612,18 +3120,18 @@ def discover_metron_series(query: str, token: str) -> dict[str, Any]:
         # issue so an exact discovery match can show an honest comic byline
         # without hydrating every search result and overwhelming the provider.
         try:
-            issue_page = fetch_json_with_headers(
+            issue_page = fetch_provider_json(
+                "metron",
                 f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/issue_list/?page=1",
-                _provider_headers("metron", token),
+                token,
             )
             representative = next((
                 issue for issue in (issue_page.get("results") or []) if issue.get("id")
             ), None)
             if representative:
                 exact["cover"] = exact.get("cover") or representative.get("image")
-                issue_detail = fetch_json_with_headers(
-                    f"{METRON_API_BASE}/issue/{representative['id']}/",
-                    _provider_headers("metron", token),
+                issue_detail = fetch_provider_json(
+                    "metron", f"{METRON_API_BASE}/issue/{representative['id']}/", token,
                 )
                 creators = _metron_discovery_creators(issue_detail)
                 if creators:
@@ -2651,7 +3159,7 @@ def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
         "api_key": api_key, "format": "json", "resources": "volume", "query": title_query,
         "limit": 50, "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url,image",
     })
-    payload = fetch_json_with_headers(url, _provider_headers("comic_vine", api_key))
+    payload = fetch_provider_json("comic_vine", url, api_key)
     if str(payload.get("status_code")) != "1":
         raise ValueError(str(payload.get("error") or "Comic Vine series search failed"))
     library_keys = _discovery_library_keys()
@@ -2741,9 +3249,10 @@ def discover_series(query: str) -> dict[str, Any]:
                 ), None)
                 if exact is not None and not exact.get("cover"):
                     try:
-                        issue_page = fetch_json_with_headers(
+                        issue_page = fetch_provider_json(
+                            "metron",
                             f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/issue_list/?page=1",
-                            _provider_headers("metron", str(metron["token"])),
+                            str(metron["token"]),
                         )
                         cover_issue = next((
                             issue for issue in (issue_page.get("results") or []) if issue.get("image")
@@ -3080,14 +3589,18 @@ def _provider_year(*values: Any) -> int | None:
 
 
 def _fetch_provider_pages(
-    url: str, headers: dict[str, str], result_key: str = "results", max_pages: int = 20
+    provider_id: str,
+    url: str,
+    credential: str,
+    result_key: str = "results",
+    max_pages: int = 20,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     next_url: str | None = url
     for _ in range(max_pages):
         if not next_url:
             break
-        payload = fetch_json_with_headers(next_url, headers)
+        payload = fetch_provider_json(provider_id, next_url, credential)
         page_rows = payload.get(result_key) or []
         rows.extend(row for row in page_rows if isinstance(row, dict))
         next_url = payload.get("next")
@@ -3095,7 +3608,6 @@ def _fetch_provider_pages(
 
 
 def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str, list[dict[str, Any]]]:
-    headers = _provider_headers("metron", token)
     if context.get("metronSeriesId"):
         series_id = str(context["metronSeriesId"])
     else:
@@ -3105,7 +3617,7 @@ def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str
         elif context.get("year"):
             filters["year_began"] = context["year"]
         search_url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode(filters)
-        payload = fetch_json_with_headers(search_url, headers)
+        payload = fetch_provider_json("metron", search_url, token)
         candidates = payload.get("results") or []
         exact = [
             candidate for candidate in candidates
@@ -3113,14 +3625,19 @@ def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str
             == normalized_title(context["title"])
         ]
         if context.get("year"):
-            year_matches = [candidate for candidate in exact if candidate.get("year_began") == context["year"]]
+            year_matches = [
+                candidate for candidate in exact
+                if _provider_year(candidate.get("year_began")) == _provider_year(context["year"])
+            ]
+            if context.get("strictYear") and not year_matches:
+                raise ValueError("Metron did not return this title for the requested publication year")
             exact = year_matches or exact
         if len(exact) != 1:
             raise ValueError("Metron could not identify one unambiguous matching series")
         series_id = str(exact[0]["id"])
-    detail = fetch_json_with_headers(f"{METRON_API_BASE}/series/{series_id}/", headers)
+    detail = fetch_provider_json("metron", f"{METRON_API_BASE}/series/{series_id}/", token)
     issue_rows = _fetch_provider_pages(
-        f"{METRON_API_BASE}/series/{series_id}/issue_list/", headers
+        "metron", f"{METRON_API_BASE}/series/{series_id}/issue_list/", token
     )
     entries = []
     for issue in issue_rows:
@@ -3142,26 +3659,195 @@ def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str
     return series_id, source_url, entries
 
 
+def _metron_display_name(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(
+            value.get("name") or value.get("series") or value.get("title") or ""
+        ).strip()
+    return str(value or "").strip()
+
+
+def _metron_reprint_coverage(reprints: Any) -> list[dict[str, Any]]:
+    """Translate Metron's structured reprints into evidence-aware coverage.
+
+    Full-issue relationships may satisfy ownership. Explicit partial-story or
+    excerpt relationships are retained for the user, but never count as owning
+    the complete issue.
+    """
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in reprints if isinstance(reprints, list) else []:
+        item = raw if isinstance(raw, dict) else {"display": str(raw or "")}
+        nested = item.get("issue") if isinstance(item.get("issue"), dict) else item
+        series = _metron_display_name(
+            nested.get("series") or item.get("series") or item.get("series_name")
+        )
+        number = str(
+            nested.get("number") or nested.get("issue_number")
+            or item.get("number") or item.get("issue_number") or ""
+        ).strip().lstrip("#")
+        display = str(
+            item.get("display") or item.get("name") or item.get("label") or ""
+        ).strip()
+        if (not series or not number) and display:
+            match = re.match(r"^(.+?)\s+#?([0-9]+(?:\.[0-9]+)?[A-Za-z]?)$", display)
+            if match:
+                series = series or match.group(1).strip()
+                number = number or match.group(2).strip()
+        if not series or not number:
+            continue
+
+        semantic_values = [
+            item.get("relation_type"), item.get("reprint_type"), item.get("type"),
+            item.get("notes"), item.get("note"),
+        ]
+        semantics = " ".join(str(value or "") for value in semantic_values).casefold()
+        if item.get("partial") is True or "partial" in semantics or "story" in semantics:
+            relation_kind = "partial_story"
+        elif "excerpt" in semantics or "extract" in semantics:
+            relation_kind = "excerpt"
+        else:
+            relation_kind = "full_issue"
+        key = (series, relation_kind)
+        group = grouped.setdefault(key, {
+            "series": series,
+            "issues": [],
+            "source": "Metron reprints",
+            "confidence": "provider confirmed",
+            "source_text": "Structured reprint relationship supplied by Metron",
+            "relation_kind": relation_kind,
+        })
+        if number not in group["issues"]:
+            group["issues"].append(number)
+
+    def issue_sort(value: str) -> tuple[int, float, str]:
+        match = re.match(r"^(\d+(?:\.\d+)?)", value)
+        return (0, float(match.group(1)), value.casefold()) if match else (1, 0, value.casefold())
+
+    for group in grouped.values():
+        group["issues"].sort(key=issue_sort)
+    return list(grouped.values())
+
+
+def _metron_collected_edition_candidates(
+    parsed: ParsedFile, token: str, max_details: int = 4
+) -> list[dict[str, Any]]:
+    """Return exact collected-edition records with structured reprint evidence.
+
+    This is deliberately used only by explicit Fix Match today. Bulk intake
+    must not fan out into one detail request per file.
+    """
+    filters: dict[str, Any] = {"series_q": parsed.title}
+    if parsed.volume not in {None, ""}:
+        filters["number"] = parsed.volume
+    rows = _fetch_provider_pages(
+        "metron",
+        f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode(filters),
+        token,
+        max_pages=2,
+    )
+
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for rank, row in enumerate(rows):
+        series_name = _metron_display_name(row.get("series"))
+        similarity = difflib.SequenceMatcher(
+            None, normalized_title(series_name), normalized_title(parsed.title)
+        ).ratio()
+        number = str(row.get("number") or "").strip().lstrip("0") or "0"
+        wanted_number = str(parsed.volume or "").strip().lstrip("0") or "0"
+        volume_match = parsed.volume in {None, ""} or number == wanted_number
+        if similarity < 0.72 or not volume_match or not row.get("id"):
+            continue
+        ranked.append((similarity * 100 - rank, row))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+
+    candidates: list[dict[str, Any]] = []
+    for _, row in ranked[:max(1, max_details)]:
+        detail = fetch_provider_json(
+            "metron", f"{METRON_API_BASE}/issue/{row['id']}/", token
+        )
+        coverage = _metron_reprint_coverage(detail.get("reprints"))
+        if not coverage:
+            continue
+        series_name = _metron_display_name(detail.get("series") or row.get("series"))
+        similarity = difflib.SequenceMatcher(
+            None, normalized_title(series_name), normalized_title(parsed.title)
+        ).ratio()
+        raw_isbn = str(detail.get("isbn") or "")
+        isbns = []
+        for match in re.finditer(r"[0-9Xx][0-9Xx\s-]{8,20}[0-9Xx]", raw_isbn):
+            value = normalize_isbn(match.group(0))
+            if valid_isbn(value) and value not in isbns:
+                isbns.append(value)
+        exact_isbn = bool(parsed.isbn and parsed.isbn in isbns)
+        if not exact_isbn and similarity < 0.8:
+            continue
+        number = str(detail.get("number") or row.get("number") or "").strip()
+        publication_date = _provider_date(detail.get("store_date")) or _provider_date(detail.get("cover_date"))
+        score = round(similarity * 70) + 20
+        reasons = [
+            f"Metron series title similarity {round(similarity * 100)}%",
+            f"Metron supplies {sum(len(group['issues']) for group in coverage)} structured reprint relationships",
+        ]
+        if parsed.volume not in {None, ""} and number.lstrip("0") == str(parsed.volume).lstrip("0"):
+            score += 15
+            reasons.append(f"Volume number {parsed.volume} matches")
+        if exact_isbn:
+            score += 100
+            reasons.append("Exact ISBN matches")
+        publisher = _metron_display_name(detail.get("publisher")) or None
+        candidates.append({
+            "source": "Metron",
+            "source_id": str(detail.get("id") or row.get("id")),
+            "record_type": "collected_edition",
+            "title": series_name or parsed.title,
+            "subtitle": str(detail.get("title") or "").strip() or None,
+            "volume": int(number) if number.isdigit() else parsed.volume,
+            "creators": [],
+            "publisher": publisher,
+            "publication_year": _provider_year(publication_date, detail.get("cover_date")),
+            "publication_date": publication_date,
+            "isbns": isbns,
+            "cover": detail.get("image"),
+            "url": detail.get("resource_url") or f"{METRON_API_BASE}/issue/{row['id']}/",
+            "format": _metron_display_name(detail.get("format")) or parsed.format,
+            "search_query": parsed.title,
+            "match_score": score,
+            "match_reasons": reasons,
+            "verification_status": "Collected-edition contents supplied as structured Metron reprints; review before selecting",
+            "coverage_status": "provider supplied structured reprints",
+            "matched_edition": {
+                "isbn_10": [value for value in isbns if len(value) == 10],
+                "isbn_13": [value for value in isbns if len(value) == 13],
+                "number_of_pages": detail.get("page_count"),
+                "coverage": coverage,
+            },
+        })
+    return candidates
+
+
 def _comic_vine_issue_entries(
     context: dict[str, Any], api_key: str
 ) -> tuple[str, str, list[dict[str, Any]]]:
-    headers = _provider_headers("comic_vine", api_key)
     if context.get("comicVineVolumeId"):
         detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{context['comicVineVolumeId']}/?" + urllib.parse.urlencode({
             "api_key": api_key, "format": "json",
             "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url",
         })
-        payload = fetch_json_with_headers(detail_url, headers)
+        payload = fetch_provider_json("comic_vine", detail_url, api_key)
         if str(payload.get("status_code")) != "1" or not isinstance(payload.get("results"), dict):
             raise ValueError(str(payload.get("error") or "Comic Vine volume lookup failed"))
         volume = payload["results"]
     else:
-        filters = f"name:{context['title']}"
-        search_url = f"{COMIC_VINE_API_BASE}/volumes/?" + urllib.parse.urlencode({
-            "api_key": api_key, "format": "json", "filter": filters, "limit": 20,
+        # Comic Vine's filtered volume listing is not relevance ordered and
+        # can omit a recent same-name run from its first page (for example,
+        # Batman 2025 behind Batman 1940).  Its search endpoint returns a
+        # broader relevance-ranked set and is also what discovery uses.
+        search_url = f"{COMIC_VINE_API_BASE}/search/?" + urllib.parse.urlencode({
+            "api_key": api_key, "format": "json", "resources": "volume",
+            "query": context["title"], "limit": 50,
             "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url",
         })
-        payload = fetch_json_with_headers(search_url, headers)
+        payload = fetch_provider_json("comic_vine", search_url, api_key)
         if str(payload.get("status_code")) != "1":
             raise ValueError(str(payload.get("error") or "Comic Vine series search failed"))
         candidates = [
@@ -3171,6 +3857,14 @@ def _comic_vine_issue_entries(
         expected_count = len(context.get("gcdIssueEntries") or []) or len(context.get("knownGcdIssueIds") or [])
         context_year = _provider_year(context.get("year"))
         context_publisher = normalized_title(context.get("publisher"))
+        if context.get("strictYear") and context_year:
+            year_matches = [
+                candidate for candidate in candidates
+                if _provider_year(candidate.get("start_year")) == context_year
+            ]
+            if not year_matches:
+                raise ValueError("Comic Vine did not return this title for the requested publication year")
+            candidates = year_matches
 
         def candidate_rank(candidate: dict[str, Any]) -> tuple[int, int, int, int]:
             candidate_count = int(candidate.get("count_of_issues") or 0)
@@ -3202,7 +3896,7 @@ def _comic_vine_issue_entries(
     offset = 0
     for _ in range(20):
         page_url = issue_url + f"&offset={offset}"
-        page = fetch_json_with_headers(page_url, headers)
+        page = fetch_provider_json("comic_vine", page_url, api_key)
         if str(page.get("status_code")) != "1":
             raise ValueError(str(page.get("error") or "Comic Vine issue lookup failed"))
         page_rows = page.get("results") or []
@@ -3250,8 +3944,8 @@ def request_discovered_series(
     if provider == "metron":
         context["metronSeriesId"] = str(provider_series_id)
         provider_id, source_url, entries = _metron_issue_entries(context, credential)
-        detail = fetch_json_with_headers(
-            f"{METRON_API_BASE}/series/{provider_id}/", _provider_headers(provider, credential)
+        detail = fetch_provider_json(
+            provider, f"{METRON_API_BASE}/series/{provider_id}/", credential
         )
         raw_title = str(detail.get("name") or detail.get("series") or cleaned)
         title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip()
@@ -3265,7 +3959,7 @@ def request_discovered_series(
         detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
             "api_key": credential, "format": "json", "field_list": "name,start_year,publisher",
         })
-        payload = fetch_json_with_headers(detail_url, _provider_headers(provider, credential))
+        payload = fetch_provider_json(provider, detail_url, credential)
         detail = payload.get("results") or {}
         title = str(detail.get("name") or cleaned).strip()
         year = _provider_year(detail.get("start_year"))
@@ -3289,54 +3983,73 @@ def request_discovered_series(
 
 
 def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
-    """Refresh structure through GCD, then fill missing fields from enabled providers."""
+    """Refresh issue structure and details through configured providers in priority order."""
     store = catalog_store()
+    store.repair_provider_run_mismatch(series_run_id)
     before = store.issue_metadata_summary(series_run_id)
     provider_results: list[dict[str, Any]] = []
     provider_errors: list[dict[str, str]] = []
     retry_after_seconds: int | None = None
-    canonical_status: str | None = None
-    try:
-        gcd_result = sync_gcd_issue_catalog(series_run_id)
-        provider_results.append(gcd_result)
-        canonical_status = gcd_result.get("status")
-        gcd_metadata = gcd_result.get("metadata") or {}
-        if gcd_metadata.get("status") == "deferred":
-            retry_after_seconds = gcd_metadata.get("retryAfterSeconds")
-    except Exception as exc:
-        provider_errors.append({"provider": "gcd", "error": str(exc)})
-
     context = store.get_series_sync_context(series_run_id)
-    config = load_provider_config()
-    enabled = sorted(
-        (
-            (provider_id, values) for provider_id, values in config.items()
-            if provider_id in {"metron", "comic_vine"} and values.get("enabled")
-        ),
-        key=lambda item: int(item[1].get("priority") or 99),
-    )
-    for provider_id, values in enabled:
-        credential_field = str(PROVIDER_DEFINITIONS[provider_id]["credentialField"])
-        credential = str(values.get(credential_field) or "").strip()
-        if not credential:
+    for provider_id, values in _series_enrichment_provider_order():
+        if not store.metadata_provider_available(provider_id):
+            provider_errors.append({
+                "provider": provider_id,
+                "error": "Provider is cooling down after a recent rate limit or service error",
+            })
             continue
         try:
             if provider_id == "metron":
+                credential = str(values.get("token") or "").strip()
+                if not credential:
+                    continue
                 provider_series_id, api_url, entries = _metron_issue_entries(context, credential)
-            else:
+                result = store.apply_issue_list(
+                    series_run_id, provider_id, provider_series_id, api_url, entries,
+                    status="complete_to_date",
+                    detail="Issue structure and details synchronized through Metron.",
+                    source="matched automatically by canonical title, year, and cross-provider identifiers",
+                )
+            elif provider_id == "comic_vine":
+                credential = str(values.get("apiKey") or "").strip()
+                if not credential:
+                    continue
                 provider_series_id, api_url, entries = _comic_vine_issue_entries(context, credential)
-            result = store.apply_issue_list(
-                series_run_id, provider_id, provider_series_id, api_url, entries,
-                status=canonical_status if canonical_status in {"complete", "complete_to_date"} else "complete_to_date",
-                detail=(
-                    f"Issue structure retained from the canonical catalog; missing titles and dates "
-                    f"were enriched through {PROVIDER_DEFINITIONS[provider_id]['name']}."
-                ),
-                source="matched automatically by canonical title, year, and cross-provider identifiers",
-            )
+                result = store.apply_issue_list(
+                    series_run_id, provider_id, provider_series_id, api_url, entries,
+                    status="complete_to_date",
+                    detail="Issue structure and details synchronized through Comic Vine.",
+                    source="matched automatically by canonical title, year, and cross-provider identifiers",
+                )
+            else:
+                if context.get("knownGcdIssueIds") or context.get("gcdSeriesId"):
+                    result = sync_gcd_issue_catalog(series_run_id)
+                else:
+                    outcome = _apply_gcd_series_enrichment(series_run_id, context)
+                    if outcome.get("status") == "review":
+                        provider_errors.append({
+                            "provider": "gcd",
+                            "error": str(outcome.get("detail") or "No unambiguous matching publication run"),
+                        })
+                        continue
+                    result = outcome.get("result") or outcome
+                gcd_metadata = result.get("metadata") or {}
+                if gcd_metadata.get("status") == "deferred":
+                    retry_after_seconds = gcd_metadata.get("retryAfterSeconds")
             provider_results.append(result)
+            store.record_metadata_provider_outcome(
+                provider_id, minimum_delay_seconds=15 if provider_id == "gcd" else 3
+            )
             context = store.get_series_sync_context(series_run_id)
         except Exception as exc:
+            limited = _rate_limit_from_error(provider_id, exc)
+            if limited:
+                store.record_metadata_provider_outcome(
+                    provider_id, str(limited), limited.retry_after_seconds
+                )
+                retry_after_seconds = max(retry_after_seconds or 0, limited.retry_after_seconds)
+            else:
+                store.record_metadata_provider_outcome(provider_id, str(exc))
             provider_errors.append({"provider": provider_id, "error": str(exc)})
 
     if not provider_results:
@@ -3410,13 +4123,11 @@ class MetadataRateLimited(RuntimeError):
 
 
 def _rate_limit_from_error(provider: str, exc: Exception) -> MetadataRateLimited | None:
+    if isinstance(exc, MetadataRateLimited):
+        return exc
     if not isinstance(exc, urllib.error.HTTPError) or exc.code != 429:
         return None
-    raw_retry = exc.headers.get("Retry-After") if exc.headers else None
-    try:
-        retry_after = max(60, int(raw_retry or 300))
-    except (TypeError, ValueError):
-        retry_after = 300
+    retry_after = _provider_retry_after(provider, dict(exc.headers.items()) if exc.headers else {})
     return MetadataRateLimited(
         provider, retry_after,
         f"{PROVIDER_DEFINITIONS.get(provider, {}).get('name', provider)} asked SonicBoom to pause.",
@@ -3481,6 +4192,7 @@ def _apply_gcd_series_enrichment(series_run_id: int, context: dict[str, Any]) ->
 def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
     """Enrich one canonical run, stopping after the first provider supplies a safe match."""
     store = catalog_store()
+    store.repair_provider_run_mismatch(series_run_id)
     context = store.get_series_sync_context(series_run_id)
     errors: list[str] = []
     deferred_limit: MetadataRateLimited | None = None
@@ -3577,7 +4289,7 @@ def run_metadata_enrichment_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def metadata_enrichment_worker(stop_event: threading.Event = _ENRICHMENT_STOP) -> None:
-    """Process at most one series at a time; durable state handles restarts and cooldowns."""
+    """Process initial enrichment and low-frequency refreshes for followed ongoing runs."""
     store = catalog_store()
     store.resume_metadata_enrichment()
     store.enqueue_metadata_enrichment()
@@ -3587,10 +4299,28 @@ def metadata_enrichment_worker(stop_event: threading.Event = _ENRICHMENT_STOP) -
             stop_event.wait(5)
             continue
         job = store.claim_metadata_enrichment_job()
-        if not job:
+        if job:
+            run_metadata_enrichment_job(job)
+            stop_event.wait(1)
+            continue
+        monitored = store.claim_monitored_series_refresh()
+        if not monitored:
             stop_event.wait(5)
             continue
-        run_metadata_enrichment_job(job)
+        series_run_id = int(monitored["series_run_id"])
+        try:
+            outcome = enrich_catalog_series(series_run_id)
+        except MetadataRateLimited as exc:
+            store.finish_monitored_series_refresh(
+                series_run_id, exc.provider, str(exc), exc.retry_after_seconds
+            )
+        except Exception as exc:
+            store.finish_monitored_series_refresh(series_run_id, error=str(exc))
+        else:
+            store.finish_monitored_series_refresh(
+                series_run_id, str(outcome.get("provider") or "") or None
+            )
+            store.reconcile_acquisition_jobs()
         stop_event.wait(1)
 
 
@@ -4055,6 +4785,275 @@ def enrich(parsed: ParsedFile) -> dict[str, Any]:
     }
 
 
+def search_file_match_candidates(file_id: int, query: str) -> dict[str, Any]:
+    """Search enabled catalogs from Fix Match without changing the selected identity."""
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    if len(cleaned) < 2:
+        raise ValueError("Enter at least two characters to search for a match")
+    store = catalog_store()
+    workbench = store.get_file_workbench(file_id)
+    effective = {**(workbench.get("current") or {}), **(workbench.get("override") or {})}
+    _cleaned_query, title_query, year_hint = _discovery_query_parts(cleaned)
+    isbn_match = find_isbn(cleaned)
+    parsed = ParsedFile(
+        path=str((workbench.get("file") or {}).get("path") or ""),
+        filename=str((workbench.get("file") or {}).get("filename") or ""),
+        extension=Path(str((workbench.get("file") or {}).get("filename") or "")).suffix.lower(),
+        title=title_query or cleaned,
+        volume=effective.get("volumeNumber"),
+        issue=str(effective.get("issueNumber")) if effective.get("recordType") == "issue" and effective.get("issueNumber") not in {None, ""} else None,
+        year=year_hint or effective.get("publicationYear"),
+        format=effective.get("format"),
+        isbn=normalize_isbn(isbn_match.group(1)) if isbn_match else None,
+        warnings=[],
+    )
+    candidates: list[dict[str, Any]] = []
+    providers_checked: list[str] = []
+    errors: list[dict[str, str]] = []
+
+    def attempt(name: str, search: Any) -> Any:
+        providers_checked.append(name)
+        try:
+            return search()
+        except Exception as exc:
+            errors.append({"provider": name, "error": str(exc)})
+            return None
+
+    def issue_candidate(
+        provider_name: str,
+        provider_series_id: str,
+        source_url: str,
+        entries: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Convert one provider issue-list hit into a selectable Fix Match candidate."""
+        wanted_number = str(parsed.issue or "").strip().lstrip("0") or "0"
+        matched = next((
+            entry for entry in entries
+            if (str(entry.get("number") or "").strip().lstrip("0") or "0") == wanted_number
+        ), None)
+        if not matched:
+            return []
+        publication_year = matched.get("publication_year") or _provider_year(
+            matched.get("publication_date")
+        )
+        score = 90
+        reasons = [
+            f"{provider_name} issue number matches #{parsed.issue}",
+            f"Publication run matched from the Fix Match search for {cleaned}",
+        ]
+        if parsed.year and publication_year == parsed.year:
+            score += 10
+            reasons.append(f"Issue was published in {parsed.year}")
+        return [{
+            "source": provider_name,
+            "source_id": matched.get("provider_id"),
+            "provider_series_id": provider_series_id,
+            "record_type": "single_issue",
+            "title": parsed.title,
+            "subtitle": matched.get("title"),
+            "issue": str(matched.get("number") or parsed.issue),
+            "volume": None,
+            "creators": [],
+            "publisher": effective.get("publisher"),
+            "publication_year": publication_year or parsed.year,
+            "publication_date": matched.get("publication_date"),
+            "isbns": [],
+            "cover": matched.get("cover"),
+            "url": matched.get("api_url") or source_url,
+            "format": effective.get("format"),
+            "search_query": cleaned,
+            "match_score": score,
+            "match_reasons": reasons,
+            "verification_status": (
+                f"Single issue matched through {provider_name} by publication run and issue number; "
+                "review before selecting"
+            ),
+            "matched_edition": {
+                "isbn_10": [], "isbn_13": [], "number_of_pages": None, "coverage": [],
+            },
+        }]
+
+    def gcd_issue_candidates() -> list[dict[str, Any]]:
+        """Use GCD's paged, year-aware run search instead of its narrow first result page."""
+        context = {
+            "title": parsed.title,
+            "year": parsed.year,
+            "publisher": effective.get("publisher"),
+            "aliases": [],
+            "ownedIssueNumbers": [parsed.issue] if parsed.issue else [],
+        }
+        ranked_runs = rank_gcd_series_runs(
+            context, _gcd_discovery_search_rows(parsed.title)
+        )
+        results: list[dict[str, Any]] = []
+        wanted_number = str(parsed.issue or "").strip().lstrip("0") or "0"
+        for run in ranked_runs:
+            run_issue_numbers = {
+                str(value).strip().lstrip("0") or "0"
+                for value in run.get("issueNumbers") or []
+            }
+            if wanted_number not in run_issue_numbers:
+                continue
+            series = run.get("_series") or {}
+            entries = _gcd_canonical_issue_entries(series)
+            entry = next((
+                item for item in entries
+                if (str(item.get("number") or "").strip().lstrip("0") or "0") == wanted_number
+            ), None)
+            if not entry or not entry.get("api_url"):
+                continue
+            issue = fetch_gcd_json(str(entry["api_url"]))
+            candidate = gcd_candidate_from_issue(
+                parsed,
+                parsed.title,
+                series,
+                str(entry.get("descriptor") or parsed.issue),
+                issue,
+                [ranked.get("_series") or {} for ranked in ranked_runs],
+                int(run.get("matchScore") or 0),
+                [*(run.get("matchReasons") or []), "Explicit Fix Match search"],
+                record_kind="single_issue",
+            )
+            candidate["provider_series_id"] = str(run.get("providerSeriesId") or "") or None
+            candidate["verification_status"] = (
+                "Single issue returned by the GCD year-aware publication-run search; review before selecting"
+            )
+            results.append(candidate)
+            if len(results) == 3:
+                break
+        return results
+
+    if effective.get("recordType") == "issue":
+        # Fix Match follows the same provider priority as library enrichment:
+        # authenticated catalogs first, anonymous GCD only as a fallback.
+        for provider_id, values in _series_enrichment_provider_order():
+            if provider_id == "metron":
+                token = str(values.get("token") or "").strip()
+                if not token:
+                    continue
+                result = attempt("Metron", lambda: _metron_issue_entries({
+                    "title": parsed.title,
+                    "year": parsed.year,
+                    "publisher": effective.get("publisher"),
+                    "strictYear": True,
+                }, token))
+                found = issue_candidate("Metron", *result) if result else []
+            elif provider_id == "comic_vine":
+                api_key = str(values.get("apiKey") or "").strip()
+                if not api_key:
+                    continue
+                result = attempt("Comic Vine", lambda: _comic_vine_issue_entries({
+                    "title": parsed.title,
+                    "year": parsed.year,
+                    "publisher": effective.get("publisher"),
+                    "strictYear": True,
+                }, api_key))
+                found = issue_candidate("Comic Vine", *result) if result else []
+            else:
+                found = attempt("Grand Comics Database", gcd_issue_candidates) or []
+            if found:
+                candidates.extend(found)
+                break
+
+    if effective.get("recordType") != "issue":
+        config = load_provider_config()
+        metron = config.get("metron") or {}
+        strong_collected_match = False
+        if metron.get("enabled") and metron.get("token"):
+            collected = attempt(
+                "Metron",
+                lambda: _metron_collected_edition_candidates(
+                    parsed, str(metron["token"])
+                ),
+            ) or []
+            candidates.extend(collected)
+            strong_collected_match = any(
+                int(candidate.get("match_score") or 0) >= 85
+                and bool((candidate.get("matched_edition") or {}).get("coverage"))
+                for candidate in collected
+            )
+
+        # A structured edition match is stronger than a generic publication-run
+        # result and avoids spending more provider quota. Fall back to broad
+        # catalogs only when Metron cannot identify an exact collected edition.
+        if not strong_collected_match:
+            open_library = attempt("Open Library", lambda: search_open_library(parsed)) or []
+            for rank, item in enumerate(open_library):
+                candidate = dict(item)
+                candidate["match_score"], candidate["match_reasons"] = score_candidate(parsed, candidate, rank)
+                candidate["verification_status"] = "Returned by an explicit Fix Match search; review before selecting"
+                candidates.append(candidate)
+
+            optional_searches: list[tuple[str, Any]] = []
+            if metron.get("enabled") and metron.get("token"):
+                optional_searches.append(("Metron", lambda: discover_metron_series(cleaned, str(metron["token"]))))
+            comic_vine = config.get("comic_vine") or {}
+            if comic_vine.get("enabled") and comic_vine.get("apiKey"):
+                optional_searches.append(("Comic Vine", lambda: discover_comic_vine_series(cleaned, str(comic_vine["apiKey"]))))
+            for name, search in optional_searches:
+                discovery = attempt(name, search) or {}
+                for rank, item in enumerate(discovery.get("results") or []):
+                    creators = [
+                        creator.get("name") if isinstance(creator, dict) else str(creator)
+                        for creator in (item.get("creators") or [])
+                        if (creator.get("name") if isinstance(creator, dict) else str(creator)).strip()
+                    ]
+                    similarity = difflib.SequenceMatcher(
+                        None, normalized_title(item.get("title")), normalized_title(parsed.title)
+                    ).ratio()
+                    candidate = {
+                        "source": item.get("providerName") or name,
+                        "source_id": item.get("providerSeriesId"),
+                        "title": item.get("title"),
+                        "subtitle": None,
+                        "creators": creators,
+                        "publisher": item.get("publisher"),
+                        "publication_year": item.get("yearBegan"),
+                        "isbns": [],
+                        "cover": item.get("cover"),
+                        "url": item.get("url"),
+                        "search_query": cleaned,
+                        "match_score": max(20, round(similarity * 100) - rank),
+                        "match_reasons": [
+                            f"Explicit Fix Match search for {cleaned}",
+                            f"Series title similarity {round(similarity * 100)}%",
+                        ],
+                        "verification_status": "Publication run returned by an enabled metadata service; review before selecting",
+                        "matched_edition": {
+                            "isbn_10": [], "isbn_13": [], "number_of_pages": None, "coverage": [],
+                        },
+                    }
+                    candidates.append(candidate)
+
+            gcd = attempt("Grand Comics Database", lambda: search_gcd(parsed)) or []
+            for item in gcd:
+                candidate = dict(item)
+                candidate["verification_status"] = "Returned by an explicit Fix Match search; review before selecting"
+                candidates.append(candidate)
+
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (int(item.get("match_score") or 0), bool(item.get("cover"))),
+        reverse=True,
+    ):
+        key = (
+            normalized_title(candidate.get("source")),
+            str(candidate.get("source_id") or ""),
+            normalized_title(candidate.get("title")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+        if len(unique) == 24:
+            break
+    return store.retain_file_search_candidates(
+        file_id, cleaned, unique, providers_checked=providers_checked, errors=errors
+    )
+
+
 def batch_enrich(folder: str, recursive: bool = True) -> list[dict[str, Any]]:
     files = scan_folder(folder, recursive)
     if len(files) < 2:
@@ -4494,6 +5493,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(request, 201)
             return
+
         if parsed_url.path == "/api/v1/discover":
             try:
                 result = request_discovered_series(
@@ -4570,6 +5570,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        acquisition_retry = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/retry", parsed_url.path)
+        if acquisition_retry:
+            try:
+                result = catalog_store().retry_acquisition_job(
+                    int(acquisition_retry.group(1))
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result, 202 if result["action"] == "reprocess" else 200)
+            return
         acquisition_grab = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/grab", parsed_url.path)
         if acquisition_grab:
             job_id = int(acquisition_grab.group(1))
@@ -4638,6 +5649,22 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_candidate_search = re.fullmatch(
+            r"/api/v1/files/(\d+)/candidates/search", parsed_url.path
+        )
+        if file_candidate_search:
+            try:
+                result = search_file_match_candidates(
+                    int(file_candidate_search.group(1)), str(payload.get("query") or "")
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"Metadata search is temporarily unavailable: {exc}"}, 502)
                 return
             self.send_json(result)
             return
@@ -4824,13 +5851,63 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
-        if parsed_url.path == "/api/v1/series/merge":
+        if parsed_url.path == "/api/v1/series/merge/preview":
             try:
-                catalog_store().merge_series(int(payload.get("sourceId")), int(payload.get("targetId")))
+                result = catalog_store().series_merge_preview(
+                    int(payload.get("sourceId")), int(payload.get("targetId"))
+                )
             except (TypeError, ValueError) as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
-            self.send_json({"status": "merged"})
+            self.send_json(result)
+            return
+        if parsed_url.path == "/api/v1/series/merge":
+            try:
+                result = catalog_store().merge_series(
+                    int(payload.get("sourceId")),
+                    int(payload.get("targetId")),
+                    bool(payload.get("allowProviderConflicts", False)),
+                )
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        self.send_json({"error": "Endpoint not found"}, 404)
+
+    def do_PATCH(self) -> None:
+        parsed_url = urllib.parse.urlparse(self.path)
+        try:
+            payload = self.read_json_body()
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        root_match = re.fullmatch(r"/api/v1/library-roots/(\d+)", parsed_url.path)
+        if root_match:
+            try:
+                recursive = payload.get("recursive")
+                if not isinstance(recursive, bool):
+                    raise ValueError("recursive must be true or false")
+                root = catalog_store().update_root(
+                    int(root_match.group(1)), recursive
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(root)
+            return
+        self.send_json({"error": "Endpoint not found"}, 404)
+
+    def do_DELETE(self) -> None:
+        parsed_url = urllib.parse.urlparse(self.path)
+        root_match = re.fullmatch(r"/api/v1/library-roots/(\d+)", parsed_url.path)
+        if root_match:
+            try:
+                result = catalog_store().remove_root(int(root_match.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
             return
         self.send_json({"error": "Endpoint not found"}, 404)
 
@@ -5112,6 +6189,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
     load_persisted_remote_cache()
+    load_persisted_provider_cache()
     start_metadata_enrichment_worker()
     start_acquisition_import_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)

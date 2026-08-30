@@ -1,26 +1,35 @@
-# Prototype Instructions
+# SonicBoom frontend instructions
+
+This directory name is retained for repository continuity, but SonicBoom is a
+pre-release product on a production track. Frontend work must satisfy the
+product-stage rules and release gates in `../AGENTS.md` and
+`../docs/RELEASE_TRACK.md`; a screen is not complete merely because it works in
+the local preview.
 
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 
-Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
+Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable frontend-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
 
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
 
-Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same frontend build can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
 
 ## Product direction
 
 - This is a desktop-first standalone comic catalog, request portal, and metadata workbench. It must not depend on Omnibus or another reader.
 - The selected visual direction is the dark, library-first “Library Command Center” concept: persistent left navigation, restrained violet actions, green ownership states, red file-health warnings, and cover-forward series rows.
-- The primary V1 journeys are library inventory, series ownership, requests, metadata review, collection coverage, activity, and settings.
+- Mobile layouts preserve information while reducing persistent chrome: keep summary metrics in compact single rows, move dense secondary file operations behind one clearly labeled Actions menu, and center dialogs within the usable viewport above mobile navigation without wrapping button labels.
+- The primary user journeys are library inventory, series ownership, requests, metadata review, collection coverage, activity, and settings.
 - Favor explainable states and source provenance. Never hide damaged files or metadata conflicts behind a successful catalog match.
 - Comic covers are real image assets. Standard interface icons use Phosphor Icons; do not replace them with text glyphs, emoji, CSS drawings, or handcrafted SVGs.
 - Normal users should add and monitor one full comic series without maintaining provider runs, story-arc links, or edition-to-issue relationships. Discover and maintain those relationships automatically; expose individual runs and structural editing only under an explicit advanced path.
 - The primary series action is “Find full series” / “Add & monitor.” Users choose only an acquisition preference (volumes, single issues, or either) and whether specials are included. Manual metadata review is exception handling, not a prerequisite for useful ownership or request totals.
+- Treat a collected edition's series placement and its issue coverage as separate facts. An edition already attached to the correct publication run is not a metadata-placement error merely because its underlying issue range is unknown; keep it in that run and describe its contents as unverified until coverage evidence is found.
 - Every issue view must preserve the same hierarchy: group issues under their series run, miniseries, or special instead of flattening repeated numbering into one list. A single-run title uses the same component with one run section. Show provider issue/story titles and publication dates when available; never repeat a generic “Issue 1” label beside “#1.”
 - Metadata must remain correctable after ingestion. Issue-level title and date corrections are catalog-only, visibly locked against provider refreshes, and reversible back to retained provider values from the issue row.
+- Fix Match is an active recovery workflow, not only a list of candidates retained during intake. Let users search enabled metadata services from the workbench, seed that search from their latest locked metadata corrections, retain searched candidates with provider provenance, and require explicit selection before changing the catalog.
 - Missing issue titles and dates are a self-healing provider-sync concern, never routine manual work. Refresh a full series in bulk, repair incomplete issue metadata automatically when a run is opened, preserve local locks, and keep per-issue editing only as an exception tool.
-- Keep raw ownership distinct from acquisition state. Only released, unowned issues enter the wanted queue; upcoming issues remain monitored and unknown dates remain visible as metadata exceptions. “Acquire missing” must persist a request instead of acting as prototype-only navigation.
+- Keep raw ownership distinct from acquisition state. Only released, unowned issues enter the wanted queue; upcoming issues remain monitored and unknown dates remain visible as metadata exceptions. “Acquire missing” must persist a request instead of acting as demo-only navigation.
 - Treat requests as immediate single-user actions. Never introduce a Seerr-style requester/admin approval state; creating a request begins monitoring and acquisition work at once.
 - Acquisition jobs must retain issue/run hierarchy in the Requests UI. Create durable jobs only for released, unowned issues; keep upcoming and date-unknown targets visible as monitoring states, and fulfill queued jobs automatically when ownership appears.
 - Use user-facing ownership language such as “missing issues” in Requests. Reserve “released gap” and similar terms for internal implementation details.
@@ -49,5 +58,6 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Keep the full metadata progress block only while enrichment is active. When a check finishes, replace the meter with a compact, dismissible result summary; successful summaries may clear automatically, while unresolved counts remain available in expandable details and the summary returns when a new metadata run starts.
 - Use one configurable media-naming policy for new SAB imports and future library organization. Existing comics may only be renamed or moved through an explicit preview-first bulk workflow that shows old and proposed paths, identifies conflicts, records an undo manifest, and never silently deletes source files.
 - Treat Prowlarr and SABnzbd as acquisition services, separate from metadata providers. Store their API keys only in local server-side configuration, return masked connection state to the browser, and let users test each connection before release searching or downloading is enabled.
+- Prevent duplicate publication runs at the identity layer: later issue dates and collected-edition dates must never invent a new run era. When legacy or conflicting metadata still creates a split, offer a guarded merge preview that preserves files, issue coverage, wanted/download history, and provider evidence; keep manual run repair an advanced recovery action rather than routine maintenance.
 - Keep the first acquisition pass interactive: search one wanted issue, compare credible release candidates, and require an explicit “Send to SABnzbd” action. Keep Prowlarr download URLs and embedded credentials in a short-lived server-side cache; never return them to the browser. Automatic grabbing can follow only after candidate matching has been QA’d against a representative library.
 - Treat the NAS Docker deployment as the production integration environment. The app must use explicit mounts for persistent configuration, the comic library, and SABnzbd's completed comics category; container-local paths must not leak into canonical file identity. Mount SAB's completed folder read-only until the importer has copied and verified a destination file, and never commit runtime data, API credentials, or comic files to Git.
