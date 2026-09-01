@@ -37,6 +37,12 @@ from pathlib import Path
 from typing import Any
 
 from catalog_store import CatalogStore
+from catalog_core_v2.provider_evidence import (
+    COMIC_VINE_ISSUE_FIELDS,
+    COMIC_VINE_VOLUME_FIELDS,
+    metron_reprint_evidence,
+    native_issue_evidence,
+)
 
 
 SUPPORTED_EXTENSIONS = {".cbz", ".cbr", ".pdf", ".epub", ".cb7", ".cbt"}
@@ -312,10 +318,42 @@ def _provider_headers(provider_id: str, credential: str) -> dict[str, str]:
     return headers
 
 
+def _redacted_upstream_url(value: str) -> str:
+    """Remove credentials before an upstream URL can enter an exception."""
+    parsed = urllib.parse.urlsplit(str(value or ""))
+    query = urllib.parse.urlencode(
+        [
+            (key, "[REDACTED]" if key.casefold() in {
+                "api_key", "apikey", "token", "access_token"
+            } else item)
+            for key, item in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        ]
+    )
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, query, "")
+    )
+
+
+def _safe_urlopen(request: urllib.request.Request, *, timeout: float):
+    """Open one request without retaining credential-bearing URLs on failure."""
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        raise urllib.error.HTTPError(
+            _redacted_upstream_url(exc.geturl() or request.full_url),
+            exc.code,
+            exc.msg,
+            exc.headers,
+            None,
+        ) from None
+    except (urllib.error.URLError, TimeoutError):
+        raise urllib.error.URLError("upstream service unavailable") from None
+
+
 def fetch_json_with_headers(url: str, headers: dict[str, str], timeout: float = 12.0) -> Any:
     _PROVIDER_RESPONSE_HEADERS.value = {}
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _safe_urlopen(request, timeout=timeout) as response:
         _PROVIDER_RESPONSE_HEADERS.value = dict(response.headers.items())
         return json.load(response)
 
@@ -441,6 +479,8 @@ def fetch_provider_json(
             payload = fetch_json_with_headers(
                 url, _provider_headers(provider_id, credential), timeout=timeout
             )
+        if credential in json.dumps(payload, ensure_ascii=False):
+            raise ValueError("Provider returned unsafe credential-bearing data")
         response_headers = getattr(_PROVIDER_RESPONSE_HEADERS, "value", {}) or {}
         if provider_id == "comic_vine" and str((payload or {}).get("status_code")) == "107":
             retry_after = _provider_retry_after(provider_id, response_headers)
@@ -491,7 +531,7 @@ def fetch_bytes_with_headers(
 ) -> bytes:
     """Fetch a bounded binary response so an upstream cannot exhaust local memory."""
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _safe_urlopen(request, timeout=timeout) as response:
         payload = response.read(max_bytes + 1)
     if len(payload) > max_bytes:
         raise ValueError(f"Downloaded NZB exceeds the {max_bytes // (1024 * 1024)} MB safety limit")
@@ -530,7 +570,7 @@ def post_multipart_file_json(
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _safe_urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 
@@ -576,6 +616,8 @@ def _normalize_service_url(value: Any) -> str:
         raise ValueError("Enter a complete HTTP or HTTPS URL")
     if parsed.username or parsed.password:
         raise ValueError("Enter credentials in the API key field, not in the URL")
+    if parsed.query or parsed.fragment or parsed.params:
+        raise ValueError("Enter the service base URL without query parameters or fragments")
     return url
 
 
@@ -617,7 +659,9 @@ def public_acquisition_service_config() -> dict[str, Any]:
             "id": service_id, "name": definition["name"], "kind": definition["kind"],
             "description": definition["description"], "capabilities": definition["capabilities"],
             "configured": configured, "enabled": bool(values.get("enabled")) and configured,
-            "url": str(values.get("url") or definition["defaultUrl"]),
+            "url": _redacted_upstream_url(
+                str(values.get("url") or definition["defaultUrl"])
+            ).split("?", 1)[0],
             "category": str(values.get("category") or "comics") if service_id == "sabnzbd" else None,
             "credentialHint": "Saved locally" if values.get("apiKey") else None,
         })
@@ -822,9 +866,9 @@ def _fetch_selected_nzb(candidate: dict[str, Any]) -> bytes:
             if exc.code in {401, 403}
             else f"Prowlarr could not fetch the NZB ({exc.code})"
         )
-        raise ReleaseDownloadError(detail) from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise ReleaseDownloadError("SonicBoom could not retrieve the NZB from Prowlarr") from exc
+        raise ReleaseDownloadError(detail) from None
+    except (urllib.error.URLError, TimeoutError):
+        raise ReleaseDownloadError("SonicBoom could not retrieve the NZB from Prowlarr") from None
     except ValueError as exc:
         raise ReleaseDownloadError(str(exc)) from exc
     if not payload.strip():
@@ -863,9 +907,9 @@ def _submit_nzb_to_sabnzbd(
             if exc.code in {401, 403}
             else f"SABnzbd upload failed ({exc.code})"
         )
-        raise SABSubmissionError(detail) from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise SABSubmissionError("SonicBoom could not reach SABnzbd") from exc
+        raise SABSubmissionError(detail) from None
+    except (urllib.error.URLError, TimeoutError):
+        raise SABSubmissionError("SonicBoom could not reach SABnzbd") from None
     if not isinstance(response, dict) or not response.get("status"):
         raise SABSubmissionError("SABnzbd did not accept the uploaded NZB")
     return response
@@ -2092,7 +2136,7 @@ def fetch_json(url: str, timeout: float = 8.0) -> Any:
             "User-Agent": "ComicMetadataPOC/0.1 (local read-only experiment)",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _safe_urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 
@@ -3146,7 +3190,7 @@ def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
         raise ValueError("Enter at least two characters to discover a series")
     url = f"{COMIC_VINE_API_BASE}/search/?" + urllib.parse.urlencode({
         "api_key": api_key, "format": "json", "resources": "volume", "query": title_query,
-        "limit": 50, "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url,image",
+        "limit": 50, "field_list": ",".join(COMIC_VINE_VOLUME_FIELDS),
     })
     payload = fetch_provider_json("comic_vine", url, api_key)
     if str(payload.get("status_code")) != "1":
@@ -3167,6 +3211,7 @@ def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
             "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
             "cover": image.get("medium_url") or image.get("small_url"),
             "url": row.get("site_detail_url"),
+            "description": row.get("description"),
             "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
         })
     results.sort(key=lambda item: (
@@ -3657,56 +3702,27 @@ def _metron_display_name(value: Any) -> str:
 
 
 def _metron_reprint_coverage(reprints: Any) -> list[dict[str, Any]]:
-    """Translate Metron's structured reprints into evidence-aware coverage.
-
-    Full-issue relationships may satisfy ownership. Explicit partial-story or
-    excerpt relationships are retained for the user, but never count as owning
-    the complete issue.
-    """
+    """Compatibility projection of preserved, ownership-neutral V2 evidence."""
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
-    for raw in reprints if isinstance(reprints, list) else []:
-        item = raw if isinstance(raw, dict) else {"display": str(raw or "")}
-        nested = item.get("issue") if isinstance(item.get("issue"), dict) else item
-        series = _metron_display_name(
-            nested.get("series") or item.get("series") or item.get("series_name")
-        )
-        number = str(
-            nested.get("number") or nested.get("issue_number")
-            or item.get("number") or item.get("issue_number") or ""
-        ).strip().lstrip("#")
-        display = str(
-            item.get("display") or item.get("name") or item.get("label") or ""
-        ).strip()
-        if (not series or not number) and display:
-            match = re.match(r"^(.+?)\s+#?([0-9]+(?:\.[0-9]+)?[A-Za-z]?)$", display)
-            if match:
-                series = series or match.group(1).strip()
-                number = number or match.group(2).strip()
+    for item in metron_reprint_evidence(reprints):
+        series, number = item["seriesLabel"], item["issueNumber"]
         if not series or not number:
+            # Still retained in candidate.provider_evidence, not fabricated as
+            # a numbered issue merely to fit this legacy display projection.
             continue
-
-        semantic_values = [
-            item.get("relation_type"), item.get("reprint_type"), item.get("type"),
-            item.get("notes"), item.get("note"),
-        ]
-        semantics = " ".join(str(value or "") for value in semantic_values).casefold()
-        if item.get("partial") is True or "partial" in semantics or "story" in semantics:
-            relation_kind = "partial_story"
-        elif "excerpt" in semantics or "extract" in semantics:
-            relation_kind = "excerpt"
-        else:
-            relation_kind = "full_issue"
+        relation_kind = item["relationKind"]
         key = (series, relation_kind)
         group = grouped.setdefault(key, {
             "series": series,
             "issues": [],
             "source": "Metron reprints",
-            "confidence": "provider confirmed",
-            "source_text": "Structured reprint relationship supplied by Metron",
+            "confidence": "completeness unverified",
             "relation_kind": relation_kind,
+            "provider_links": [],
         })
         if number not in group["issues"]:
             group["issues"].append(number)
+        group["provider_links"].append(item)
 
     def issue_sort(value: str) -> tuple[int, float, str]:
         match = re.match(r"^(\d+(?:\.\d+)?)", value)
@@ -3714,6 +3730,10 @@ def _metron_reprint_coverage(reprints: Any) -> list[dict[str, Any]]:
 
     for group in grouped.values():
         group["issues"].sort(key=issue_sort)
+        group["source_text"] = json.dumps({
+            "source": "Metron reprints", "completeness": "unverified",
+            "relationships": group["provider_links"],
+        }, ensure_ascii=False)
     return list(grouped.values())
 
 
@@ -3754,8 +3774,14 @@ def _metron_collected_edition_candidates(
         detail = fetch_provider_json(
             "metron", f"{METRON_API_BASE}/issue/{row['id']}/", token
         )
+        evidence = native_issue_evidence("metron", detail)
+        series_type = _metron_display_name(evidence["publication"].get("series_type"))
+        if series_type.casefold() not in {"trade paperback", "hardcover", "omnibus", "collected edition"}:
+            # A single issue can itself be a reprint; that does not make it a
+            # collection. The provider's native publication type is required.
+            continue
         coverage = _metron_reprint_coverage(detail.get("reprints"))
-        if not coverage:
+        if not evidence["reprints"]:
             continue
         series_name = _metron_display_name(detail.get("series") or row.get("series"))
         similarity = difflib.SequenceMatcher(
@@ -3793,21 +3819,23 @@ def _metron_collected_edition_candidates(
             "volume": int(number) if number.isdigit() else parsed.volume,
             "creators": [],
             "publisher": publisher,
+            "description": evidence["description"],
+            "provider_evidence": evidence,
             "publication_year": _provider_year(publication_date, detail.get("cover_date")),
             "publication_date": publication_date,
             "isbns": isbns,
             "cover": detail.get("image"),
             "url": detail.get("resource_url") or f"{METRON_API_BASE}/issue/{row['id']}/",
-            "format": _metron_display_name(detail.get("format")) or parsed.format,
+            "format": series_type,
             "search_query": parsed.title,
             "match_score": score,
             "match_reasons": reasons,
-            "verification_status": "Collected-edition contents supplied as structured Metron reprints; review before selecting",
-            "coverage_status": "provider supplied structured reprints",
+            "verification_status": "Collected edition found; Metron reprint links are retained but complete issue contents still need verification",
+            "coverage_status": "reprint completeness unverified",
             "matched_edition": {
                 "isbn_10": [value for value in isbns if len(value) == 10],
                 "isbn_13": [value for value in isbns if len(value) == 13],
-                "number_of_pages": detail.get("page_count"),
+                "number_of_pages": detail.get("page") or detail.get("page_count"),
                 "coverage": coverage,
             },
         })
@@ -3820,7 +3848,7 @@ def _comic_vine_issue_entries(
     if context.get("comicVineVolumeId"):
         detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{context['comicVineVolumeId']}/?" + urllib.parse.urlencode({
             "api_key": api_key, "format": "json",
-            "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url",
+            "field_list": ",".join(COMIC_VINE_VOLUME_FIELDS),
         })
         payload = fetch_provider_json("comic_vine", detail_url, api_key)
         if str(payload.get("status_code")) != "1" or not isinstance(payload.get("results"), dict):
@@ -3834,7 +3862,7 @@ def _comic_vine_issue_entries(
         search_url = f"{COMIC_VINE_API_BASE}/search/?" + urllib.parse.urlencode({
             "api_key": api_key, "format": "json", "resources": "volume",
             "query": context["title"], "limit": 50,
-            "field_list": "id,name,start_year,publisher,count_of_issues,site_detail_url",
+            "field_list": ",".join(COMIC_VINE_VOLUME_FIELDS),
         })
         payload = fetch_provider_json("comic_vine", search_url, api_key)
         if str(payload.get("status_code")) != "1":
@@ -3878,7 +3906,7 @@ def _comic_vine_issue_entries(
     volume_id = str(volume["id"])
     issue_url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({
         "api_key": api_key, "format": "json", "filter": f"volume:{volume_id}", "limit": 100,
-        "field_list": "id,name,issue_number,cover_date,store_date,image,site_detail_url",
+        "field_list": ",".join(COMIC_VINE_ISSUE_FIELDS),
         "sort": "issue_number:asc",
     })
     rows: list[dict[str, Any]] = []
@@ -3899,11 +3927,22 @@ def _comic_vine_issue_entries(
         if not number:
             continue
         image = issue.get("image") or {}
+        evidence = native_issue_evidence("comic_vine", issue)
+        if evidence["providerPublicationId"] not in {None, volume_id}:
+            raise ValueError("Comic Vine returned an issue from a different publication container")
+        evidence["publicationContext"] = {
+            "id": volume_id, "name": volume.get("name"),
+            "start_year": volume.get("start_year"),
+            "publisher": volume.get("publisher"),
+            "description": volume.get("description"),
+        }
         publication_date = _provider_date(issue.get("store_date")) or _provider_date(issue.get("cover_date"))
         entries.append({
             "number": number, "provider_id": str(issue.get("id") or "") or None,
             "api_url": issue.get("site_detail_url"),
             "title": str(issue.get("name") or "").strip() or None,
+            "description": evidence["description"],
+            "provider_evidence": evidence,
             "publication_date": publication_date,
             "publication_year": _provider_year(publication_date, issue.get("cover_date")),
             "cover": image.get("medium_url") or image.get("small_url") or image.get("original_url"),
@@ -4840,6 +4879,8 @@ def search_file_match_candidates(file_id: int, query: str) -> dict[str, Any]:
             "record_type": "single_issue",
             "title": parsed.title,
             "subtitle": matched.get("title"),
+            "description": matched.get("description"),
+            "provider_evidence": matched.get("provider_evidence"),
             "issue": str(matched.get("number") or parsed.issue),
             "volume": None,
             "creators": [],
@@ -4958,7 +4999,10 @@ def search_file_match_candidates(file_id: int, query: str) -> dict[str, Any]:
             candidates.extend(collected)
             strong_collected_match = any(
                 int(candidate.get("match_score") or 0) >= 85
-                and bool((candidate.get("matched_edition") or {}).get("coverage"))
+                and any(
+                    claim.get("relation_kind") == "full_issue"
+                    for claim in (candidate.get("matched_edition") or {}).get("coverage") or []
+                )
                 for candidate in collected
             )
 
@@ -4995,6 +5039,7 @@ def search_file_match_candidates(file_id: int, query: str) -> dict[str, Any]:
                         "source_id": item.get("providerSeriesId"),
                         "title": item.get("title"),
                         "subtitle": None,
+                        "description": item.get("description"),
                         "creators": creators,
                         "publisher": item.get("publisher"),
                         "publication_year": item.get("yearBegan"),

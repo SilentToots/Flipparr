@@ -3,6 +3,10 @@
 .env
 .env.*
 !.env.example
+.secrets
+secrets
+*.credentials.json
+*.secret
 .data
 docker-data
 comicarr.db
@@ -19,3 +23,4 @@ audit
 testdata
 v1-prototype/node_modules
 v1-prototype/dist
+sonicboom_ui/node_modules

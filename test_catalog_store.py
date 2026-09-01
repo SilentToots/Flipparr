@@ -1,10 +1,12 @@
 import datetime as dt
+import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
-from app import ParsedFile
+from app import ParsedFile, _metron_reprint_coverage
+from catalog_core_v2.provider_evidence import native_issue_evidence
 from catalog_store import CatalogStore
 
 
@@ -974,6 +976,41 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(series["editions"][0]["contentsIssueCount"], 4)
             self.assertEqual(series["editions"][0]["seriesPlacementStatus"], "matched")
             self.assertFalse(series["issueCatalog"]["syncReady"])
+
+    def test_native_metron_evidence_survives_restart_without_claiming_ownership(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "synthetic_vol1.cbz"
+            path.write_bytes(b"collection")
+            item = ParsedFile(str(path), path.name, ".cbz", "Synthetic", volume=1)
+            detail = {"id": 900, "number": "1", "series": {"id": 90, "name": "Synthetic"},
+                      "desc": "Source prose needs validation.", "reprints": [{"id": 101, "issue": "Synthetic #1"}]}
+            evidence = native_issue_evidence("metron", detail)
+            store = CatalogStore(root / "catalog.db")
+
+            def enrichment(parsed):
+                return {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"}, "file_cover": None,
+                    "recommendation": {
+                        "title": "Synthetic", "source": "Metron", "description": evidence["description"],
+                        "provider_evidence": evidence,
+                        "matched_edition": {"coverage": _metron_reprint_coverage(detail["reprints"])},
+                    },
+                }
+
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], enrichment)
+            reopened = CatalogStore(root / "catalog.db")
+            series = reopened.catalog()["series"][0]
+            self.assertFalse(series["issues"][0]["collectionOwned"])
+            self.assertEqual(series["editions"][0]["contentsIssueCount"], 0)
+            self.assertEqual(series["editions"][0]["coverageGroups"][0]["relationKind"], "unknown")
+            with reopened._connect() as connection:
+                saved = json.loads(connection.execute("SELECT result_json FROM files").fetchone()[0])
+                self.assertEqual(saved["recommendation"]["provider_evidence"], evidence)
+                source = json.loads(connection.execute("SELECT evidence FROM edition_coverage_claims").fetchone()[0])
+                self.assertEqual(source["relationships"][0]["targetProviderId"], "101")
 
     def test_partial_reprint_evidence_does_not_mark_the_issue_owned(self):
         with tempfile.TemporaryDirectory() as folder:

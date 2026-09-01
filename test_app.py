@@ -4,6 +4,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.parse
+import traceback
 import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -50,6 +51,47 @@ class FilenameParserTests(unittest.TestCase):
 
         self.assertNotIn("very-secret", key)
         self.assertNotIn("api_key", key)
+
+    def test_legacy_transport_redacts_query_credentials_from_http_errors(self):
+        secret = "legacy-query-secret-that-must-not-escape"
+        request = urllib.request.Request(
+            "https://service.invalid/api?api_key=" + secret + "&format=json"
+        )
+        original = urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", {}, None
+        )
+        with patch("app.urllib.request.urlopen", side_effect=original), self.assertRaises(
+            urllib.error.HTTPError
+        ) as raised:
+            app._safe_urlopen(request, timeout=1)
+        rendered = "".join(
+            traceback.format_exception(
+                type(raised.exception), raised.exception, raised.exception.__traceback__
+            )
+        )
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn(secret, raised.exception.geturl())
+        self.assertIn("%5BREDACTED%5D", raised.exception.geturl())
+
+    def test_provider_reflection_is_not_cached_or_returned(self):
+        secret = "provider-reflection-secret"
+        reflected = {"error": "credential was " + secret}
+        with patch("app.fetch_json_with_headers", return_value=reflected), self.assertRaisesRegex(
+            ValueError, "unsafe credential-bearing data"
+        ):
+            app.fetch_provider_json(
+                "comic_vine",
+                "https://comicvine.gamespot.com/api/issues/?api_key=" + secret,
+                secret,
+                force=True,
+            )
+        self.assertFalse(app._PROVIDER_JSON_CACHE)
+
+    def test_service_base_url_cannot_smuggle_or_return_a_query_secret(self):
+        with self.assertRaisesRegex(ValueError, "without query parameters"):
+            app._normalize_service_url(
+                "http://sab:8080?apikey=must-not-be-a-base-url"
+            )
 
     def test_comic_vine_embedded_rate_limit_enters_cooldown(self):
         payload = {"status_code": 107, "error": "Rate limit exceeded"}
@@ -115,6 +157,8 @@ class FilenameParserTests(unittest.TestCase):
         store.retain_file_search_candidates.return_value = {"retained": True}
         entries = [{
             "number": "1", "provider_id": "441", "title": "Vast Colors in the Dark",
+            "description": "<p>Source description with a contents statement.</p>",
+            "provider_evidence": {"version": 1, "provider": "comic_vine", "providerIssueId": "441"},
             "publication_date": "2025-03-26", "publication_year": 2025,
             "cover": "https://comicvine.example/batman-1.jpg",
             "api_url": "https://comicvine.example/issue/441/",
@@ -137,6 +181,8 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(call.kwargs["providers_checked"], ["Metron", "Comic Vine"])
         self.assertEqual(call.kwargs["errors"], [{"provider": "Metron", "error": "rate limited"}])
         self.assertEqual(call.args[2][0]["source"], "Comic Vine")
+        self.assertEqual(call.args[2][0]["description"], entries[0]["description"])
+        self.assertEqual(call.args[2][0]["provider_evidence"], entries[0]["provider_evidence"])
 
     def test_fix_match_volume_stops_after_strong_structured_metron_match(self):
         store = Mock()
@@ -176,6 +222,34 @@ class FilenameParserTests(unittest.TestCase):
         call = store.retain_file_search_candidates.call_args
         self.assertEqual(call.args[2], [candidate])
         self.assertEqual(call.kwargs["providers_checked"], ["Metron"])
+
+    def test_unknown_metron_links_do_not_suppress_comic_vine_evidence(self):
+        store = Mock()
+        store.get_file_workbench.return_value = {
+            "file": {"id": "9", "path": "/comics/Synthetic Vol 1.cbz", "filename": "Synthetic Vol 1.cbz"},
+            "current": {"title": "Synthetic", "recordType": "collected_edition", "volumeNumber": 1},
+            "override": {},
+        }
+        metron_candidate = {
+            "source": "Metron", "source_id": "900", "title": "Synthetic", "match_score": 105,
+            "matched_edition": {"coverage": [{"series": "Synthetic (2014)", "issues": ["1"], "relation_kind": "unknown"}]},
+        }
+        description = "<p>Collected edition source description.</p>"
+        with patch("app.catalog_store", return_value=store), patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "saved"}, "comic_vine": {"enabled": True, "apiKey": "saved"},
+        }), patch("app._metron_collected_edition_candidates", return_value=[metron_candidate]), patch(
+            "app.search_open_library", return_value=[]
+        ), patch("app.search_gcd", return_value=[]), patch("app.discover_metron_series", return_value={"results": []}), patch(
+            "app.discover_comic_vine_series", return_value={"results": [{
+                "providerName": "Comic Vine", "providerSeriesId": "20", "title": "Synthetic", "description": description,
+            }]}
+        ) as comic_vine:
+            search_file_match_candidates(9, "Synthetic")
+        comic_vine.assert_called_once()
+        retained = store.retain_file_search_candidates.call_args.args[2]
+        candidate = next(c for c in retained if c["source"] == "Comic Vine")
+        self.assertEqual(candidate["description"], description)
+        self.assertEqual(candidate["matched_edition"]["coverage"], [])
 
     def test_fast_inventory_uses_local_evidence_without_provider_requests(self):
         parsed = parse_filename(Path("Absolute Batman 003 (2025).cbz"))
@@ -764,7 +838,7 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(entries[0]["cover"], "https://covers/1.jpg")
         self.assertIn("gcd_id=216143", fetch.call_args_list[0].args[0])
 
-    def test_metron_reprints_preserve_full_and_partial_relationships(self):
+    def test_metron_reprints_preserve_unknown_and_partial_relationships(self):
         coverage = _metron_reprint_coverage([
             {"issue": {"series": {"name": "Alex + Ada"}, "number": "1"}},
             {"issue": {"series": {"name": "Alex + Ada"}, "number": "2"}},
@@ -777,7 +851,7 @@ class FilenameParserTests(unittest.TestCase):
         full = next(item for item in coverage if item["series"] == "Alex + Ada")
         partial = next(item for item in coverage if item["series"].startswith("Image Firsts"))
         self.assertEqual(full["issues"], ["1", "2"])
-        self.assertEqual(full["relation_kind"], "full_issue")
+        self.assertEqual(full["relation_kind"], "unknown")
         self.assertEqual(partial["relation_kind"], "partial_story")
 
     def test_metron_collected_edition_candidate_requires_structured_reprints(self):
@@ -793,13 +867,15 @@ class FilenameParserTests(unittest.TestCase):
                 "next": None,
             },
             {
-                "id": 900, "series": {"name": "Alex + Ada"}, "number": "1",
-                "title": "Volume One", "isbn": "978-1-63215-006-6", "page_count": 128,
+                "id": 900, "series": {"id": 90, "name": "Alex + Ada",
+                    "series_type": {"id": 10, "name": "Trade Paperback"}}, "number": "1",
+                "title": "Volume One", "isbn": "978-1-63215-006-6", "page": 128,
+                "desc": "Collects ALEX + ADA #1-5.",
                 "publisher": {"name": "Image Comics"},
                 "image": "https://metron.example/alex-ada-v1.jpg",
                 "resource_url": "https://metron.example/issue/900/",
                 "reprints": [
-                    {"issue": {"series": {"name": "Alex + Ada"}, "number": str(number)}}
+                    {"id": 100 + number, "issue": f"Alex + Ada (2013) #{number}"}
                     for number in range(1, 6)
                 ],
             },
@@ -812,6 +888,12 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(candidate["record_type"], "collected_edition")
         self.assertEqual(candidate["cover"], "https://metron.example/alex-ada-v1.jpg")
         self.assertEqual(candidate["matched_edition"]["isbn_13"], ["9781632150066"])
+        self.assertEqual(candidate["matched_edition"]["number_of_pages"], 128)
+        self.assertEqual(candidate["provider_evidence"]["providerPublicationId"], "90")
+        self.assertEqual(candidate["description"], "Collects ALEX + ADA #1-5.")
+        self.assertEqual(candidate["format"], "Trade Paperback")
+        self.assertEqual(candidate["matched_edition"]["coverage"][0]["relation_kind"], "unknown")
+        self.assertEqual(candidate["matched_edition"]["coverage"][0]["series"], "Alex + Ada (2013)")
         self.assertEqual(
             candidate["matched_edition"]["coverage"][0]["issues"],
             ["1", "2", "3", "4", "5"],
@@ -824,10 +906,77 @@ class FilenameParserTests(unittest.TestCase):
         )
         responses = [
             {"results": [{"id": 12, "series": {"name": "Example"}, "number": "1"}], "next": None},
-            {"id": 12, "series": {"name": "Example"}, "number": "1", "reprints": []},
+            {"id": 12, "series": {"name": "Example", "series_type": {"name": "Trade Paperback"}}, "number": "1", "reprints": []},
         ]
         with patch("app.fetch_provider_json", side_effect=responses):
             self.assertEqual(_metron_collected_edition_candidates(parsed, "token"), [])
+
+    def test_metron_single_issue_reprint_is_not_mislabeled_a_collection(self):
+        parsed = app.ParsedFile("/comics/Example Vol 1.cbz", "Example Vol 1.cbz", ".cbz", "Example", volume=1)
+        responses = [
+            {"results": [{"id": 12, "series": {"name": "Example"}, "number": "1"}], "next": None},
+            {"id": 12, "series": {"name": "Example", "series_type": {"name": "Single Issue"}},
+             "number": "1", "reprints": [{"id": 1, "issue": "Example (2001) #1"}]},
+        ]
+        with patch("app.fetch_provider_json", side_effect=responses):
+            self.assertEqual(_metron_collected_edition_candidates(parsed, "token"), [])
+
+    def test_metron_unparsed_reference_is_retained_on_collected_candidate(self):
+        parsed = app.ParsedFile("/comics/Example Vol 1.cbz", "Example Vol 1.cbz", ".cbz", "Example", volume=1)
+        reprints = [{"id": 91, "issue": "Unnumbered supplement"}]
+        responses = [
+            {"results": [{"id": 12, "series": {"name": "Example"}, "number": "1"}], "next": None},
+            {"id": 12, "series": {"name": "Example", "series_type": {"name": "Trade Paperback"}},
+             "number": "1", "reprints": reprints},
+        ]
+        with patch("app.fetch_provider_json", side_effect=responses):
+            candidate = _metron_collected_edition_candidates(parsed, "token")[0]
+        self.assertEqual(candidate["matched_edition"]["coverage"], [])
+        self.assertEqual(candidate["provider_evidence"]["reprints"][0]["raw"], reprints[0])
+
+    def test_comic_vine_fetches_and_retains_descriptions_on_every_page(self):
+        description = '<p>Collects <a href="/run/4050-9/">Synthetic</a> #6-10.</p>'
+        volume = {"id": 88, "name": "Synthetic: Book Two", "start_year": "2020",
+                  "publisher": {"id": 2, "name": "Example Press"},
+                  "description": "<p>A collected edition.</p>"}
+        responses = [
+            {"status_code": 1, "results": volume},
+            {"status_code": 1, "results": [{"id": 801, "issue_number": "1", "volume": {"id": 88},
+                 "description": description}], "number_of_total_results": 2},
+            {"status_code": 1, "results": [{"id": 802, "issue_number": "2", "volume": {"id": 88},
+                 "description": None}], "number_of_total_results": 2},
+        ]
+        with patch("app.fetch_provider_json", side_effect=responses) as fetch:
+            _, _, entries = _comic_vine_issue_entries({"title": volume["name"], "comicVineVolumeId": "88"}, "key")
+        self.assertEqual(entries[0]["description"], description)
+        self.assertEqual(entries[0]["provider_evidence"]["description"], description)
+        self.assertEqual(entries[0]["provider_evidence"]["publicationContext"]["description"], volume["description"])
+        self.assertEqual(entries[0]["provider_evidence"]["providerPublicationId"], "88")
+        self.assertIsNone(entries[1]["description"])
+        self.assertTrue(entries[1]["provider_evidence"]["descriptionSupplied"])
+        for call in fetch.call_args_list:
+            fields = urllib.parse.parse_qs(urllib.parse.urlsplit(call.args[1]).query)["field_list"][0].split(",")
+            self.assertIn("description", fields)
+        self.assertIn("offset=1", fetch.call_args_list[-1].args[1])
+
+    def test_comic_vine_rejects_issue_from_another_publication(self):
+        responses = [
+            {"status_code": 1, "results": {"id": 88, "name": "Synthetic"}},
+            {"status_code": 1, "results": [{"id": 801, "issue_number": "1", "volume": {"id": 99}}],
+             "number_of_total_results": 1},
+        ]
+        with patch("app.fetch_provider_json", side_effect=responses), self.assertRaisesRegex(ValueError, "different publication"):
+            _comic_vine_issue_entries({"title": "Synthetic", "comicVineVolumeId": "88"}, "key")
+
+    def test_comic_vine_discovery_keeps_description_for_match_workbench(self):
+        row = {"id": 88, "name": "Synthetic", "start_year": "2020", "description": "<p>A collected edition.</p>"}
+        with patch("app.fetch_provider_json", return_value={"status_code": 1, "results": [row]}) as fetch, patch(
+            "app._discovery_library_keys", return_value=set()
+        ):
+            found = app.discover_comic_vine_series("Synthetic", "key")["results"]
+        self.assertEqual(found[0]["description"], row["description"])
+        fields = urllib.parse.parse_qs(urllib.parse.urlsplit(fetch.call_args.args[1]).query)["field_list"][0].split(",")
+        self.assertIn("description", fields)
 
     def test_comic_vine_returns_named_issue_metadata(self):
         context = {"title": "Absolute Batman", "year": 2024}

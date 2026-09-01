@@ -4,12 +4,27 @@ Decision date: 2026-08-29
 
 Status: approved direction for the first user release
 
+Scope amended 2026-08-31: [one run with independent Issues and Volumes](INDEPENDENT_FORMATS_SCOPE_V2.md).
+Both formats remain first-class intake and acquisition targets. Automatic
+issue-to-volume contents mapping, ownership credit and cross-format fulfillment
+are out of release scope. This decision supersedes the earlier contents-coverage
+target and related historical next steps below; implementation and validation
+are pending, not complete.
+
 ## Decision
 
-SonicBoom is a pre-release product being built for users, not a POC or a
-prototype. The first supported release is a self-hosted, single-user Docker
-application intended to run on a NAS-connected host with the application data
-on a local Docker volume and one or more mounted comic-library roots.
+SonicBoom is a pre-release product being built for public distribution, not a
+POC, experiment, or prototype. The first supported release is a self-hosted,
+single-user Docker application that anyone may install for their own comic
+library. It is intended to run on a NAS-connected host with the application
+data on a local Docker volume and one or more mounted comic-library roots.
+
+Public distribution is a design constraint from the start. Release artifacts
+must contain only code, assets, dependencies, and reference data that SonicBoom
+is permitted to redistribute, with required attribution and license notices.
+Authenticated provider dumps and user credentials are never release assets;
+where redistribution is not permitted, users configure or import the source
+locally through a documented adapter.
 
 The V2 transition will use an incremental replacement strategy:
 
@@ -56,21 +71,42 @@ The initial user release supports:
 - Docker deployment on a single host;
 - local persistent application/database storage;
 - one or more mounted comic library roots;
-- cataloging issues and collected editions with evidence-backed coverage;
+- cataloging issues and collected editions under the same run, with
+  evidence-backed identity and independent ownership/monitoring for each format;
 - discovery, following, request, Prowlarr search, SABnzbd download, validation,
   post-processing, import, replacement, and recovery;
 - provider degradation without losing local inventory or accepted corrections;
 - desktop and mobile-responsive operation for core workflows.
 
 Multi-user approvals, public Internet exposure, distributed workers,
-high-availability clustering, microservices, PostgreSQL, Redis, and a wholesale
-Tailwind rewrite are not initial-release requirements. They require a measured
-constraint or approved product requirement before adoption.
+high-availability clustering, microservices, PostgreSQL, and Redis are not
+initial-release requirements. They require a measured constraint or approved
+product requirement before adoption.
+
+The V2 production interface will use React, TypeScript, Vite, and Tailwind CSS
+as its implementation foundation. This is a V2 replacement decision, not a
+request to retrofit the maintenance-only V1 interface. Tailwind adoption starts
+when the V2 presentation capability is built and must follow
+[the V2 UI architecture](V2_UI_ARCHITECTURE.md); it does not block the current
+catalog, acquisition, import, or recovery gates.
 
 ## Architecture rules for release work
 
-- **One source of truth:** Catalog Core v2 owns canonical identity and accepted
-  coverage; replaceable reference data cannot mutate locked user state.
+- **End-to-end progress:** follow the prioritization principles in
+  [AGENTS.md](../AGENTS.md#end-to-end-progress-and-prioritization). Component
+  improvements are valuable foundations, but need bounded checkpoints against
+  the complete relevant workflow and release risks. Report engineering gains
+  separately from measured user outcomes; do not let narrow optimization
+  displace integrated validation and progress toward the full release toolset.
+- **Outcome-first UX:** design every capability as part of the user's complete
+  task, from trigger through success or recovery. Prefer safe automation and
+  strong defaults, ask only for decisions the system cannot make confidently,
+  expose product language rather than internal provider/job/schema concepts,
+  and never leave a user at a status without a clear explanation and next
+  action. Follow [the V2 UI and UX architecture](V2_UI_ARCHITECTURE.md).
+- **One source of truth:** Catalog Core v2 owns canonical identity and
+  format-specific ownership; replaceable reference data cannot mutate locked
+  user state. Shared run grouping does not imply cross-format fulfillment.
 - **Idempotent boundaries:** scan, enrichment, request, download reconciliation,
   and import can be repeated after interruption without duplicating entities or
   losing state.
@@ -88,9 +124,12 @@ constraint or approved product requirement before adoption.
 - **Bounded modules:** inventory, identity, reference data, coverage, acquisition,
   import, and presentation communicate through explicit interfaces rather than
   direct cross-module table mutation.
-- **Reusable product UI:** design tokens and responsive components are the
-  default. Loading, empty, success, degraded, and error states are shared
-  patterns and must explain whether the user needs to act.
+- **Reusable product UI:** the V2 interface uses the tokenized, mobile-first
+  Tailwind component system defined in
+  [the V2 UI architecture](V2_UI_ARCHITECTURE.md). Loading, empty, success,
+  degraded, and error states are shared component contracts and must explain
+  whether the user needs to act. Motion respects reduced-motion preferences,
+  and core workflows must reflow without lost information or functionality.
 
 ## Release definition of done
 
@@ -101,11 +140,14 @@ requires all of the following:
 ### Catalog and data integrity
 
 - A clean intake and a repeated intake of the golden library produce the same
-  canonical entities, assignments, coverage, and ownership totals.
+  canonical entities, assignments, and separate issue/volume ownership totals.
 - Files cannot be actively assigned to two editions; provider IDs cannot map to
   multiple canonical entities; duplicate runs fail closed.
 - Issue, volume, omnibus, special, and multi-run collected-edition cases pass the
-  documented golden-library expectations.
+  documented identity/placement expectations. Unknown contents cannot block an
+  otherwise identified volume; ambiguous run placement cannot silently merge runs.
+- Acquiring or owning one format cannot fulfill, suppress or create requests for
+  the other. Both formats can coexist and be monitored under one run.
 - Provider refreshes cannot overwrite locked corrections or silently move files
   and accepted coverage.
 - Database foreign-key and integrity checks pass automatically.
@@ -138,6 +180,10 @@ requires all of the following:
 
 ### Security, UX, and supportability
 
+- The [credential and API-key handling contract](SECRET_HANDLING_V2.md) passes:
+  mounted secrets are absent from source, images, environment configuration,
+  databases, caches, responses, logs and exception chains; rotation and exposure
+  response are documented. Any secret disclosure is a release blocker.
 - The applicable OWASP ASVS controls are selected and verified for the supported
   trusted-network deployment; the product does not imply safe public exposure
   without authentication and deployment guidance.
@@ -170,9 +216,337 @@ deployed over the live V1 installation. See `docs/V2_RELEASE_FOUNDATION.md`.
 
 ### Gate 2 — Catalog correctness
 
-Catalog Core v2, reference packs, evidence resolution, collected-edition
-coverage, clean intake, golden-library tests, and deterministic shadow results
-pass without manual database repair.
+2026-08-31: [format-specific acquisition intent](ACQUISITION_INTENT_V2.md)
+adds schema 8/contract 1, followed by schema 9 recoverable replacement swaps.
+Issue and Volume targets are immutable and independent
+under one run; downloader attempts are durable and secret-free; imported status
+requires an accepted current-fingerprint assignment to the exact target.
+Injected Prowlarr/SABnzbd ports now enforce bounded exact-format candidate
+selection without persisting credentials, and completed downloads can be copied
+non-destructively into an intent/attempt-specific staging root before normal V2
+archive intake. Runtime polling and final promotion are now connected as
+described below. Replacement quarantine/rollback is now implemented as described
+below; request UI and live mounted-volume validation remain open. This does not
+improve the existing 842-file NAS organization
+measurement. Gates 2 and 3 remain open; no deployment or live acquisition
+occurred.
+
+The same checkpoint now includes a bounded SAB queue/history reconciler with
+deterministic post-submit crash recovery, atomic completed-storage persistence,
+and a staging reconciler that waits for mount visibility and enters validation
+only after normal archive intake confirms the staged hash and health. Transient
+SAB outages remain retryable; terminal SAB and archive failures are typed on the
+same format-specific intent. The opt-in runtime now reads a mounted secret file,
+requires separate real completed/staging roots and schedules bounded status,
+staging and tracked-target binding passes. Issue binding creates a direct edition
+for only the requested Issue; Volume binding uses only its requested edition.
+Staging assignments remain proposed and cannot fulfill ownership. Atomic
+promotion is now connected after target binding: validated bytes are copied
+through a durable partial file into the configured library, re-inventoried,
+assigned only to the tracked target and then accepted/imported in one catalog
+transaction. Issue naming preserves the V1 series/year/number/title convention;
+Volumes receive an independent `Vol N` destination and no issue credit.
+Identical replay recovers; conflicts and low space stop in review while SAB and
+staging sources remain. The credential gate follows
+[SECRET_HANDLING_V2.md](SECRET_HANDLING_V2.md). Schema 9 now journals an exact
+replacement file, original hash/catalog snapshot and deterministic quarantine
+path before mutation. The original is atomically quarantined before new bytes
+take its path; exact catalog acceptance commits the swap, while a failed
+acceptance restores the original and retains the rejected new copy. Restart
+replay, changed-original rejection and both Issue and Volume boundaries are
+tested. **827 warning-as-error tests pass.** Request UI and Docker/NAS-mounted
+failure injection remain open; no live services or NAS files were touched.
+
+The same checkpoint now includes a loopback-only, non-cacheable request
+projection for the future V2 UI. It distinguishes download completion from
+validated acquisition, preserves the exact Issue/Volume target, translates
+typed failures and replacement recovery into product language, and excludes
+operational IDs, filesystem paths, provider URLs and credentials. Unsupported
+actions were explicitly unavailable pending a durable command/restart contract.
+**831 warning-as-error tests passed.** This was an API/read-model gain,
+not a completed request UI, live acquisition result or NAS deployment.
+
+Schema 10 now supplies that durable contract for `retry_search` and
+`retry_import`. A token-protected request queues one idempotent action for the
+exact intent revision; the bounded runtime claims it with an expiring lease,
+survives process restart and avoids repeating work when catalog state already
+advanced. An interrupted, unconfirmed SAB submission is checked three times by
+deterministic intent/attempt label and then surfaced for review without blind
+resubmission. Pending state is per request, so one retry does not animate sibling
+requests. Queued actions survive verified backup/restore and contain no provider
+URL, storage path, external queue ID or credential. **838 warning-as-error tests
+pass.** Guided candidate selection, SAB review UI, responsive React/Tailwind UI,
+mounted-volume failure injection and live acquisition remain open.
+
+Schema 11 now completes the guided candidate-selection backend. Review results
+are capped at 10 rows, expire after one hour and persist only display evidence
+plus an opaque SHA-256 key. A selected row becomes a leased action; after restart
+the worker re-runs Prowlarr and requires the same current key before fetching or
+submitting anything. Provider download paths, GUIDs, NZBs, credentials and SAB
+IDs are absent from the snapshot and public projection. A human choice may
+override title/year uncertainty but never the exact Issue/Volume number, format,
+comic category, Usenet protocol or import validator. Changed/disappeared results
+fail safely, and selection plus its candidate evidence survive verified backup.
+**841 warning-as-error repository tests pass.** The first React/TypeScript/
+Tailwind Requests slice is now production-built and covered by four component
+interaction tests. Its isolated responsive fixture passes browser checks at
+320, 408, 768 and 1440 CSS pixels without page-level horizontal overflow;
+guided release review becomes a full-height mobile dialog and centered desktop
+dialog. A separate SAB confirmation dialog explains an unconfirmed submission,
+shows only the safe release title and can requeue the existing queue/history
+check without authorizing search or resubmission. Its loader is request-scoped.
+The fixture uses a temporary database and no provider credentials, downloader,
+library path or NAS access. Live isolated acquisition and mounted-volume failure
+injection remain open; no provider, downloader, NAS or deployment state was
+changed.
+
+2026-08-31: [NAS-wide audit and V1 parity recovery](NAS_INTAKE_BASELINE_2026-08-31.md)
+reconcile 962 active files and nine managed exclusions. Filename/number clues
+agree with V1 for 941 files; this is not independent accuracy. Restored V2
+filename discovery raises query-ready metadata inputs from 468 to 842 without
+changing identity/ownership safeguards; 765 tests pass. No fresh provider fetch,
+matched-ownership gain or deployment is claimed. V1's useful intake, grouping,
+naming and folder behavior is now an explicit compatibility requirement. Restore
+that behavior on clean NAS intake before treating Gate 2 as complete.
+
+2026-08-31: the [first independent-format intake slice](INDEPENDENT_FORMATS_IMPLEMENTATION_V2.md)
+adds policy 18/schema 7, volume acceptance without contents and separate issue/
+volume ownership. Clean and upgrade replays preserve prior data and accept one
+additional difficult volume; 747 tests pass. This selected cohort is not the
+library success measure. The user requested the actual NAS folder as the primary
+baseline and separation of usable organization from exact-edition enrichment.
+Gate 2 stays open; the running pilot and NAS were not upgraded.
+
+Current acceptance contract: clean, repeatable intake correctly identifies and
+groups issues and collected editions within runs, exposes independent ownership,
+preserves user corrections and prevents duplicate runs or cross-format credits.
+Missing volume contents are not a blocker. Rebaseline the real-file cohort against
+this contract and measure accuracy separately; the historical 2/12 contents-based
+result below is not a measured edition-only acceptance rate. Gate 2 remains open.
+The active implementation sequence is in [the revised scope](INDEPENDENT_FORMATS_SCOPE_V2.md#delivery-sequence-and-acceptance).
+
+The dated checkpoints below record the previous contents-linked implementation.
+
+2026-08-31: [discovery recovery](DISCOVERY_RECOVERY_V2.md) adds shared literal-title
+prioritization, search-only book clues and validated CV catalog-addition
+compatibility. Three more successful GETs and cached replay add 51 reference
+issues and one collection record, but real-file acceptance is still 2/12
+collections; title placement remains 6/12. All 14 source hashes and four accepted
+mappings are unchanged. 734 warning-as-error tests pass. One CV lookup is deferred
+by the existing local pilot budget, not an upstream 429. Fresh file-level evidence
+and collection-context interpretation remain the next integrated work; Gate 2
+is still open and no NAS deployment occurred.
+
+2026-08-31: [live evidence discovery](LIVE_EVIDENCE_DISCOVERY_V2.md) now connects
+Metron and Comic Vine to isolated intake, with durable caching, pacing, quotas,
+candidate validation, additive reference publication and background healing.
+The bounded 14-file pass made 33 successful GETs with no rate-limit responses,
+but **no additional collections resolved**: coverage remains 2/12 and title
+placement 6/12. Nine reference issues in four runs were added, not new collected
+editions. All source hashes and accepted mappings were preserved. 726 local
+warning-as-error tests pass. Fresh book clues, candidate narrowing, collection
+interpretation/conflict reconciliation and untouched accuracy validation are
+the next integrated checkpoint. Gate 2 remains open; no NAS deployment.
+
+2026-08-31: the [isolated clean-intake runtime](INTAKE_PILOT_V2.md) now connects
+scan, combined-reference resolution, retained book evidence, durable background
+work and a small results/correction screen. The real 14-file scan yields four
+accepted files, four provisional titles, four unmatched/conflicting collections
+and two empty archives. Collection coverage remains 2/12. Placement is 6/12,
+down from 7/12 because attaching previously skipped EPUB evidence exposes a
+title conflict; the earlier result must not be reported as current coverage.
+Source hashes and canonical mappings are unchanged. All 701 warning-as-error
+tests pass. Live evidence discovery, untouched accuracy validation, Docker/remote
+CI validation and production deployment remain open. Gate 2 is not complete.
+
+2026-08-31: [provisional title attribution](PROVISIONAL_TITLE_ATTRIBUTION_V2.md)
+separates useful reversible organization from issue ownership. Same-cohort yield
+is 7/12 title placements, including five provisional files; full coverage remains
+2/12. User decisions survive healing, and no run is chosen from a title match.
+All 682 warning-as-error tests pass. UI/runtime integration, independent validation
+and the release coverage target remain open. Nothing is deployed.
+
+EPUB evidence checkpoint (2026-08-31): worker 6 adds bounded image-backed EPUB
+sampling through the shared OCR service. The real publication page is readable,
+but interpretation and missing-edition fallback still block ownership; collection
+acceptance remains 2/12. All 662 warning-as-error tests, 21 native smoke checks and
+cohort recovery checks pass. No deployment or Gate 2 sign-off. See
+[EPUB book evidence](EPUB_BOOK_EVIDENCE_V2.md).
+
+Candidate-verification checkpoint (2026-08-31): policy 15 adds provider
+corroboration for strong digital publication declarations without borrowing print
+IDs or bypassing local contents. One regression volume advances from identity to
+contents verification; acceptance remains 2/12. All 645 warning-as-error tests and
+real-file recovery checks pass. This is intermediate evidence, not production
+coverage or deployment. See [collection candidate verification](COLLECTION_CANDIDATE_VERIFICATION_V2.md).
+
+Integrated intake checkpoint (2026-08-31): policy 14 shares canonical ownership
+between exact-ID singles and volumes, enables complete Comic Vine original
+catalogs in the collection path, and preserves unclassified candidates. Single-issue
+controls improve from 0/2 to 2/2; collection acceptance stays 2/12. All 626
+warning-as-error tests and real-file recovery checks pass. Candidate-to-local-edition
+verification remains the coverage bottleneck; this is not representative accuracy,
+unattended production intake or deployment. See
+[shared reference intake](UNIFIED_REFERENCE_INTAKE_V2.md).
+
+Combined-source checkpoint (2026-08-31): 32 successful bounded Metron/Comic Vine
+requests added 228 isolated reference records without increasing the frozen
+batch's 2-of-12 collection acceptance. All 14 outcomes and baseline records are
+preserved. This identifies integration work across candidate normalization,
+edition verification, typed original-issue handling and provider-neutral catalog
+completeness; it is not a reason to continue OCR/GCD-only tuning. No resolver or
+live-library changes were made. See
+[combined-source intake audit](COMBINED_SOURCE_INTAKE_AUDIT_2026-08-31.md).
+
+Historical Gate 2 requirement (superseded 2026-08-31): Catalog Core v2, reference
+packs, evidence resolution, collected-edition coverage, clean intake,
+golden-library tests, and deterministic shadow results were required to pass
+without manual database repair. This was a requirement, not a gate-pass claim.
+
+Retired product target: **75–85% automatic collected-edition coverage** on representative
+clean intake across providers, embedded metadata and bounded local OCR, with
+accepted-mapping correctness measured separately. OCR's default inclusion requires
+real-file accuracy and NAS resource-cost validation, not a desktop-only demo. Missing
+identity/evidence remains in the denominator; an issue-only pivot is a last
+resort requiring explicit user agreement. See
+`docs/COLLECTION_COVERAGE_TARGET_V2.md` for the measurement contract.
+The OCR boundary and cost gate are in `docs/LOCAL_OCR_EVIDENCE_V2.md`.
+An opt-in worker/cache/benchmark has been tested on seven read-only NAS copies
+on macOS (368 regression tests and seven native smoke checks pass). Four of
+five readable volumes expose useful publication text, but exact automatic
+mapping, held-out accuracy, NAS resource isolation and foreground-load impact
+remain unverified. This does not close Gate 2 or prove the coverage target.
+See `docs/LOCAL_OCR_BENCHMARK_2026-08-30.md`.
+
+Follow-up: versioned indicia extraction and read-only exact-reference
+corroboration are implemented; 406 local tests and seven native smoke checks
+pass. Cached NAS replay opens no comics, calls no providers and writes no
+catalog state. Real-file acceptance still awaits identifier-poor edition
+identity, coverage-evidence reconciliation and low-quality region treatment.
+See `docs/OCR_INTERPRETATION_V2.md`; Gate 2 remains open.
+
+Coverage reconciliation follow-up: resolver policy 7 distinguishes unqualified
+native story/issue membership from explicit partial/exclusion evidence. On the
+same three captured snapshots and 268 generated candidates, accepted editions
+increase from 8 to 12 (82 to 106 unique issues), with all prior mappings unchanged.
+430 local warning-as-error tests and seven macOS native smoke checks pass.
+The same seven real-file OCR samples still yield no newly accepted/corroborated
+mapping; edition identity, OCR scope/quality and representative NAS validation
+remain open. See `docs/COVERAGE_RECONCILIATION_V2.md`. No deployment or Gate 2
+closure is claimed.
+
+Bounded OCR follow-up: worker 4 / parser 3 with reference verifier 2 handles native
+publisher-label differences within exact-linked runs and opt-in region retries.
+A same-file paired run produces the first real-file corroboration candidate
+(Saga volume 1, #1–6), with zero catalog acceptance or writes. No new ISBNs were
+recovered. Median wall time rises from 2.1473 to 2.4494 seconds and peak observed
+macOS RSS from 357 to 441 MiB; retries remain off by default. 449 warning-as-error
+tests and ten native checks pass; separate-process cache replay is deterministic.
+Independent accuracy, identifier-poor edition identity, representative coverage
+and enforced NAS operating limits remain open. No remote CI/deployment or Gate 2
+sign-off. See `docs/OCR_REGION_RECOVERY_V2.md` for paired evidence and next work.
+
+Identifier-poor digital follow-up: schema 4 / policy 8 persists file-bound local
+evidence and replay signatures; parser 4 separates geometrically distant domain
+footers while retaining all conflict checks. The real Alex + Ada volume 1 now
+imports into a fresh temporary QA catalog as one local digital edition, one 2013
+run and five owned issues, without a borrowed print ISBN or manually entered range.
+Its own declaration/contents and a same-title/volume/month/publisher provider
+contents plan must agree. Full re-observation, restart and backup/restore are
+stable. 475 warning-as-error tests and ten native checks pass. External edition
+identity remains provisional; the seven-file convenience sample is not the
+75–85% measurement corpus. Held-out accuracy, broader coverage, Linux/NAS costs
+and runtime integration remain open; no deployment. See `docs/LOCAL_DIGITAL_EDITION_V2.md`.
+
+Intake-effectiveness checkpoint (2026-08-31): a reusable no-edit batch evaluator
+now compares embedded/cached-reference resolution with retained OCR across all
+14 existing real files, including EPUB. Twelve collection candidates yield zero
+then two accepted files; the remaining first blockers are seven identity, one
+reference and two empty archives. Contents diagnostics show identity fixes alone
+will not resolve every remaining book. All 605 tests pass; full re-observation,
+restart, backup/restore and independent CLI replay agree. Policy 13 is unchanged,
+no new volume is accepted in this pass, and prior inputs/results stay frozen.
+Next checkpoints measure batch coverage and actual intervention, not test count.
+Cached replay excludes historical evidence preparation and does not validate
+production discovery/healing or the 75–85% target. Gate 2 remains open. See
+`docs/INTAKE_EFFECTIVENESS_V2.md`.
+
+Print-source intake follow-up (2026-08-31): policy 13 / proof 1 recognizes a
+file-local reproduction of a verified print source using repeated ISBN evidence,
+strong first-printing identity and matching full contents. Source ISBN/provider
+edition IDs stay in provenance, not file product identity. Saga volume 1 now
+automatically covers the 2012 run's #1–6 in clean QA; Alex + Ada retains #1–5.
+588 warning-as-error tests pass, including legacy digital-assignment compatibility;
+13-file re-observation/restart/backup and frozen parser outputs remain stable.
+One extra development volume is not representative coverage or independent
+accuracy validation. No new native OCR/provider calls or deployment; Gate 2 stays
+open. See `docs/PRINT_SOURCE_INTAKE_V2.md`.
+
+Book-first contents follow-up (2026-08-31): policy 12 accepts complete local
+contents anchored by an explicit original-run year without requiring a duplicate
+provider collection description. Original issue identities/catalog completeness,
+local conflicts, exact-ID routing and user locks remain enforced. All 568 tests
+pass, including 20 new regressions. Thirteen clean CBZ inputs retain stable
+rescan/restart/backup results, but none has an explicit run-year claim; no extra
+real volume is accepted. This is a secondary path, not proof of the coverage
+target. Its subsequent Saga ISBN/edition-role investigation is documented in the
+print-source follow-up above. No deployment; Gate 2 remains open. See `docs/BOOK_FIRST_CONTENTS_V2.md`.
+
+Declaration-layout follow-up (2026-08-31): digital declaration 2 / policy 11 reads
+bounded same-page, same-observation fields across OCR blocks. The real Curse Words
+file now has an unverified edition candidate and a specific missing-confirmation
+receipt; no additional ownership is accepted. Four clean-file intakes preserve
+rescan/restart/backup results, including Alex + Ada's five owned issues. All 548
+warning-as-error tests pass. Book-first source priority is documented separately
+from OCR confidence; current corroboration/conflict guards remain. No native OCR,
+provider calls or deployment. Gate 2 stays open; see `docs/OCR_DECLARATION_RECOVERY_V2.md`.
+
+Deskew follow-up (2026-08-31): OCR worker 5 / parser 6 / policy 10 adds one opt-in,
+geometry-selected retry for sampled no-text pages within the existing two-retry
+budget. The real Curse Words page now yields literal #11–15 text; its edition and
+qualified contents remain unresolved. Four paired files preserve original readings
+and clean intake/restart/backup behavior, including Alex + Ada's five owned issues.
+528 warning-as-error tests and 16 native Mac checks pass. No additional challenge
+volume is accepted, no Linux/NAS performance or coverage claim, no deployment.
+See `docs/OCR_DESKEW_RECOVERY_V2.md` for measured overhead and remaining work.
+
+OCR wording follow-up: parser 5 / indicia 2 recognizes shared `Collecting` and
+explicit book/volume-subject declarations without relaxing confidence, identity,
+qualification or conflict checks. Policy 9 replays old waiting receipts offline.
+517 warning-as-error tests pass; 56 historical parser output hashes are unchanged.
+Thirteen CBZ inputs retain stable fresh-intake/restart/backup results: Alex + Ada
+still owns five issues; no additional challenge volume is accepted. Skewed and
+garbled indicia remain blockers, not grammar successes. Gate 2 remains open; see
+`docs/OCR_WORDING_RECOVERY_V2.md`. No deployment or new native OCR/provider calls.
+
+Large-archive follow-up: archive policy 2 is shared across CBZ/EPUB intake and OCR.
+The deluxe regression passes full CRC validation of 482 members and bounded OCR
+of eight pages. Typed resource failures remain unvalidated, not corrupt; OCR
+cache keys include the policy so old size failures are retried. The expanded cap
+is now 4 GiB with independent member/ratio/count and cooperative time bounds.
+506 warning-as-error tests and twelve native Mac smoke checks pass. Edition
+identity still waits, with zero ownership gained. Linux/NAS operation and runtime
+integration remain open; no deployment. See `docs/LARGE_ARCHIVE_INTAKE_V2.md`.
+
+EPUB intake follow-up: shared ZIP validation now supports bounded single-package
+EPUB 2/3 metadata and reading-order observations. The private Locke & Key sample
+now validates its exact eISBN and 172 spine entries, but still waits for a matching
+reference edition; no extra owned issues or coverage percentage are claimed.
+Mixed-format duplicate handling, reference-arrival healing, replay, restart and
+backup/restore are covered by 494 passing warning-as-error tests. The original
+challenge expectations remain frozen. No live changes or deployment; Gate 2 is
+open. See `docs/EPUB_INTAKE_V2.md` for supported limits and remaining work.
+
+Unseen-file challenge follow-up: seven new NAS files (six collection candidates
+and a Batman single-issue control) were evaluated against frozen policy 8/parser 4
+and the existing three-provider QA reference snapshot. No collection was accepted.
+The pass reproduced unused EPUB identifiers, a large-book archive ceiling, missing
+contents/declaration variants, skewed-page OCR failure and reference gaps. Visual
+QA also found publisher-versus-digital-book contents disagreement. All candidates
+remain counted; no misleading accuracy or 75–85% coverage claim. Rescan, restart,
+backup/restore and 475 warning-as-error tests pass; live state is untouched.
+Next work is shared format/evidence ingestion, not additional product features.
+See `docs/HELD_OUT_COLLECTION_CHALLENGE_V2.md` for sources, limits and acceptance work.
 
 Implementation status: the canonical user-state schema, replaceable
 reference-catalog schema, immutable snapshot activation rules, typed provider
@@ -181,17 +555,103 @@ versioned GCD local-export adapter, redacted progress telemetry, scheduler
 wake-up contract, and executable golden-manifest comparison contract are
 complete and locally tested. The bounded, versioned GCD extractor is implemented
 and verified against a current-schema contract fixture. A fail-closed,
-redacted real-snapshot evidence harness is also implemented, but has not yet
-been executed against an authenticated real GCD dump. Gate 2 remains open:
-real-snapshot GCD evidence, authenticated Metron/Comic Vine adapters,
-production scheduling, evidence resolution, clean inventory, real fixture
-projections, and the NAS shadow results are not yet complete. See
+redacted real-snapshot evidence harness passed on August 30 against the
+authenticated August 29 GCD SQLite dump for Alex + Ada and Birthright.
+Deterministic extraction and checkpoint resume/replay also passed. Gate 2
+remains open. Format/extractor v2 fixes bounded unlinked-edition discovery,
+contents-note preservation, and unsafe full-reprint classification. Its real
+snapshot resolves explicit contents claims for two of eleven GCD-labeled
+collections, leaving nine unresolved; 207 local repository tests pass with
+warnings as errors. A bounded authenticated Metron/Comic Vine audit then found
+contents evidence for all nine remaining sample editions and reproduced native
+response-shape/omitted-field gaps in V1. This does not accept canonical matches
+or ownership; six Birthright candidates still need edition-identity resolution.
+See `docs/PROVIDER_COVERAGE_AUDIT_2026-08-30.md`. Cross-provider coverage,
+authenticated Metron/Comic Vine
+adapters, production scheduling, evidence resolution, clean inventory, real
+fixture projections, and the NAS shadow results are not yet complete. See
+`docs/COLLECTED_EDITION_COVERAGE.md`,
+`docs/GCD_REAL_SNAPSHOT_VALIDATION.md`,
 `docs/GATE_2_CATALOG_CONTRACT.md` and `docs/PROVIDER_IMPORT_V2.md`.
+
+The confirmed native Metron parser loss and omitted Comic Vine descriptions are
+now fixed through shared pure V2 evidence normalization and maintenance call-site
+changes. Cached real responses retain all 15 Metron links and 14 checked Comic
+Vine edition descriptions; 222 warning-as-error tests pass. This is not a
+canonical-resolution, deployment, or image-build sign-off. See
+`docs/PROVIDER_EVIDENCE_FIXES.md`.
+
+The next isolated slice now passes clean CBZ intake through exact edition identity
+and verified contents to canonical ownership. Captured Metron plus GCD evidence
+for Alex + Ada yields one original run, three editions, and 15 unique owned
+issues, unchanged after rescan/restart/duplicate files. The public regression
+suite now passes 250 tests with warnings as errors. Schema 3 adds durable local
+resolution receipts; an offline healing pass is implemented, not a live
+scheduler. The acceptance archives contain generated metadata/test pixels, not
+the user's real comics. General Comic Vine contents acceptance, filename-only
+identity, broader collected structures, runtime integration, representative file
+QA, and Docker validation remain open. Gate 2 is not closed and nothing was
+deployed. See `docs/LOCAL_INTAKE_V2.md`.
+
+The follow-up Comic Vine slice now validates scoped native HTML contents without
+inventing original issue IDs. Alex + Ada's three trades plus hardcover produce
+four editions in one run, still 15 unique owned issues. Birthright volumes 2–10
+now have scoped contents statements, but missing run/edition cross-identifiers
+still prevent automatic acceptance; no title-only joins were introduced. The
+suite passes 278 warning-as-error tests. This remains isolated captured-evidence
+QA, not real-file validation or deployment. Gate 2 remains open. Details and
+aggregate evidence: `docs/COMIC_VINE_CONTENTS_V2.md`.
+
+The identity follow-up recovers validated ISBNs from native Bookland barcode
+fields and derives missing run cross-IDs from two explicit original-issue
+anchors, without title-based joining. It also recognizes Metron's native
+`Single Issue` original type. Clean Birthright CV intake now yields nine accepted
+editions in one run, 45 unique owned issues and one honestly unresolved volume.
+The separate GCD-to-CV edition links remain open. GCD extractor 3 preserves
+identifier provenance; resolver policy 3 rechecks older receipts. 298 local
+warning-as-error tests pass. No deployment, real-file or Gate 2 sign-off.
+See `docs/IDENTITY_RECOVERY_V2.md`.
+
+The reciprocal-index follow-up reuses exact native links in original-run
+collection lists, with strict whole-item parsing, singleton-container checks
+and proof revalidation. Clean CV-identified Birthright intake now accepts ten
+editions in one run and 50 unique issues; Alex + Ada remains four editions and
+15 unique issues. Pack/proof version 2 preserves version-1 readability; resolver
+policy 4 allows healing without rescanning. 321 warning-as-error tests pass.
+No new provider calls, title-specific mappings, deployment or live-library
+changes. Separate GCD-to-CV edition identity gaps and broader/real-file intake
+validation remain open; Gate 2 is not closed. See
+`docs/RECIPROCAL_COLLECTION_INDEX_V2.md`.
+
+A broader preselected eight-run GCD cohort now measures all discovered candidates
+under native-ID, ISBN-only and title-only profiles with fresh databases. It
+exposed two shared defects: unrecognized `Collected Series` labels and a resolver
+comparison that incorrectly required per-issue reprint IDs to match. Extractor
+4 and resolver policy 5 fix these with legacy compatibility. Discovery increases
+from 257 to 268 candidates; one of 134 recognized English collections now resolves
+41 issues. This confirms GCD-only evidence remains insufficient, not a coverage
+gate pass. All 335 local warning-as-error tests pass, including existing CV
+replays. No live-library changes, new provider requests or deployment. Explicit
+publisher/year prose support, broader provider contribution and real-file/runtime
+validation remain next. See `docs/BROAD_INTAKE_QA_V2.md`.
+
+The scoped-notation follow-up adds parser 2, GCD extractor 5 and resolver policy
+6 while preserving old snapshot grammar. On the unchanged 268-candidate cohort,
+GCD-only acceptance increases to two editions/46 issues; adding exact Saga
+Metron/CV evidence accepts eight editions/82 issues. This includes six additional
+Saga trades, not a general 75–80% coverage result. The 134 English collection
+candidates include older-run negative controls, so they are not the final
+real-intake denominator. All 341 warning-as-error tests pass. Native provider
+discovery and the remaining evidence-model/parser gaps are documented in
+`docs/COLLECTION_COVERAGE_PROGRESS_2026-08-30.md`. Gate 2 remains open; no deployment.
 
 ### Gate 3 — Fulfillment correctness
 
 Prowlarr through SABnzbd through validated import and request reconciliation is
 restart-safe, idempotent, observable, and proven for issues and collected works.
+Both formats share run grouping but have explicit, independent request targets.
+Import/replacement of one cannot fulfill or mutate the other. Test this boundary
+through failures, retries and restart, not only successful downloads.
 
 ### Gate 4 — Release candidate
 

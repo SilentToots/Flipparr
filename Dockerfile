@@ -20,6 +20,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --requirement requirements.txt
 COPY app.py catalog_store.py ./
+COPY catalog_core_v2/ ./catalog_core_v2/
 COPY --from=web-build /build/v1-prototype/dist/client ./web
 
 EXPOSE 8787
