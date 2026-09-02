@@ -762,32 +762,31 @@ Gate 2 therefore remains open for a separated-label review of the full 60-run
 population. See
 `docs/evidence/nas-20260902-current-replay-parity-d128d09.json`.
 
-That private review packet is now frozen on the NAS with all 60 run groups, all
-833 accepted members and 105 bounded representative format/number checks. Review
-inputs omit V2's predicted title, era, publisher, format and number; predictions
-are stored separately and bound to the blank label template by digest. Unreviewed
-and uncertain cases cannot count as correct. The scorer reports useful grouping
-(correct title plus safe boundary) separately from exact run attribution (which
-also requires the correct era) and records the user's 70% useful-grouping floor
-without turning it into automatic gate closure. Four the NAS tests pass. Labels
-and the complete 912-test warnings-as-errors suite pass on the NAS. Labels are
-not yet established, so no independent rate is claimed. See
-`docs/GROUPING_REVIEW_V2.md`.
+The separated-label review is now complete. The original 60-run packet measured
+52 useful groups (86.7%), 27 exact title-and-era attributions (45%), one unsafe
+merge and one uncertain boundary. The unsafe merge exposed a generic
+folder-cohort defect: unnumbered subtitle publications could inherit the main
+collection title solely because numbered volume siblings existed.
 
-The consolidated checkpoint was committed as `d128d09` after 908 tests passed in
-the authoritative the NAS Docker runtime with warnings treated as errors, along
-with clean source and image-history credential scans. Replaying that exact code
-from the quiescent 962-observation inventory reproduced 833 accepted files, 128
-health blocks, one review, 60 runs, 682 issues and 148 unique volumes with clean
-integrity and stable restart projection. A read-only V1 comparison matched all
-834 healthy paths, all 819 comparable numbers and 831/833 formats. Both format
-differences are confirmed V1 issue/edition errors. The three V1-to-V2 run merges
-were reviewed as legacy duplicate/subtitle rows or one publisher-supported
-two-volume series; no unsafe V2 merge was demonstrated. This is strong behavior
-parity evidence but not independent correctness for the unchanged agreements.
-Gate 2 therefore remains open for a separated-label review of the full 60-run
-population. See
-`docs/evidence/nas-20260902-current-replay-parity-d128d09.json`.
+The corrected rule requires the current file itself to declare volume format and
+an explicit volume number before folder-title inheritance. A fresh isolated
+replay of the same 962 read-only NAS observations preserved 833 accepted files,
+682 issues and 148 unique volume slots while safely expanding the affected one
+group into a numbered six-volume main run and three separately named
+publications. The new 63-run review measured 56 useful groups (88.9%), zero
+unsafe merges, one uncertain boundary and zero unreviewed groups. All 105
+independently reviewed representative formats and numbers are correct; three
+remain unmeasured. Exact run attribution is 27/63 (42.9%), primarily because era
+evidence is missing or uncertain, and remains progressive enrichment rather than
+an intake blocker. The complete 916-test warnings-as-errors suite passes on
+the NAS. See `docs/GROUPING_REVIEW_V2.md` and
+`docs/evidence/nas-20260902-grouping-review-p29.json`.
+
+This satisfies the agreed useful-grouping floor with no demonstrated unsafe merge
+in the frozen cohort. Gate 2 remains open for its remaining functional release
+checks, including end-to-end acquisition/import recovery and responsive,
+accessible user-flow validation; it is no longer waiting on another round of
+tuning against this already reviewed grouping cohort.
 
 ### Gate 3 — Fulfillment correctness
 
