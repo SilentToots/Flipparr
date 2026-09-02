@@ -813,6 +813,18 @@ permission/storage failure injection. A real Prowlarr/SAB submission remains an
 explicitly authorized later smoke; nothing was submitted or deployed here. See
 `docs/ACQUISITION_INTENT_V2.md`.
 
+The non-root mounted-volume checkpoint now passes four isolated the NAS Docker
+scenarios. A completed Volume import survives a restart between copy and catalog
+acceptance without duplication or Issue credit. Read-only-library and injected
+low-space failures retain both completed and staged bytes, leave ownership
+unchanged and expose `Retry import`. A same-format Volume replacement imports,
+quarantines the original and creates no Issue credit. Completed storage and code
+were mounted read-only; state, staging and library were separate binds. No NAS
+comic, credential, provider, downloader, live catalog or deployment was touched.
+The mounted-volume checkpoint is closed; an explicitly authorized live
+Prowlarr/SAB smoke remains the Gate 3 exit item. See
+`docs/evidence/acquisition-mount-20260902-p30b.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
