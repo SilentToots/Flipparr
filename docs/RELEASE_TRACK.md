@@ -8,8 +8,9 @@ Scope amended 2026-08-31: [one run with independent Issues and Volumes](INDEPEND
 Both formats remain first-class intake and acquisition targets. Automatic
 issue-to-volume contents mapping, ownership credit and cross-format fulfillment
 are out of release scope. This decision supersedes the earlier contents-coverage
-target and related historical next steps below; implementation and validation
-are pending, not complete.
+target and related historical next steps below. Catalog implementation and Gate
+2 validation are complete; fulfillment and release-candidate validation remain
+open under Gates 3 and 4.
 
 ## Decision
 
@@ -214,7 +215,7 @@ the container smoke test. PR #1 was merged and the same workflow passed on
 `main` in run 33315695668, closing Gate 1. V2 is still isolated and has not been
 deployed over the live V1 installation. See `docs/V2_RELEASE_FOUNDATION.md`.
 
-### Gate 2 — Catalog correctness
+### Gate 2 — Catalog correctness (closed 2026-09-02)
 
 2026-08-31: [format-specific acquisition intent](ACQUISITION_INTENT_V2.md)
 adds schema 8/contract 1, followed by schema 9 recoverable replacement swaps.
@@ -783,10 +784,15 @@ the NAS. See `docs/GROUPING_REVIEW_V2.md` and
 `docs/evidence/nas-20260902-grouping-review-p29.json`.
 
 This satisfies the agreed useful-grouping floor with no demonstrated unsafe merge
-in the frozen cohort. Gate 2 remains open for its remaining functional release
-checks, including end-to-end acquisition/import recovery and responsive,
-accessible user-flow validation; it is no longer waiting on another round of
-tuning against this already reviewed grouping cohort.
+in the frozen cohort. A final read-only exit audit found zero duplicate normalized
+title/era groups, provider IDs, edition identifiers, file assignments, or
+multiple-primary-run editions. Every accepted or locked file has exactly one
+primary run; integrity and foreign keys pass. Explicit regressions cover
+same-title/different-era separation, independent Issue/Volume ownership, locked
+correction preservation and provider ambiguity. Gate 2 is closed. Optional exact
+era/provider enrichment continues in the background without blocking ownership.
+End-to-end acquisition/import recovery moves to Gate 3, while responsive,
+accessibility, deployment and operations validation remain Gate 4 work.
 
 ### Gate 3 — Fulfillment correctness
 
