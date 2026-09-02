@@ -885,6 +885,17 @@ The stop criterion is met. Further title/query cycling is not justified; the nex
 product decision is whether to add a demonstrably stronger comic-release source
 or defer the live-Volume proof while keeping Gate 3 open.
 
+A subsequent torrent feasibility pilot tested that alternative before building
+it. the NAS's TrackerA (`7030`) and TrackerB (`7000` Books) indexers were
+healthy and FlareSolverr-tagged, but returned zero candidates for both missing
+Volume targets across three established naming forms. TrackerF and TrackerG lack useful
+Books/Comics categories and were excluded. No torrent or magnet was submitted.
+This two-target sample does not justify a qBittorrent adapter: it adds no measured
+coverage benefit while introducing seeding and stalled-swarm lifecycle work.
+Keep the transport seam, and reconsider only after a representative read-only
+cohort demonstrates material exact-match gain. See
+`docs/evidence/torrent-coverage-20260902-p39.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
