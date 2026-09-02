@@ -1,5 +1,6 @@
 .data/
 docker-data/
+.checkpoint-output/
 .env
 .env.*
 !.env.example

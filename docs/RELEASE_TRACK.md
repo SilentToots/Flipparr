@@ -645,6 +645,108 @@ real-intake denominator. All 341 warning-as-error tests pass. Native provider
 discovery and the remaining evidence-model/parser gaps are documented in
 `docs/COLLECTION_COVERAGE_PROGRESS_2026-08-30.md`. Gate 2 remains open; no deployment.
 
+### Deferred after end-to-end functional validation — reference footprint
+
+Do not interrupt issue/volume intake, run attribution, acquisition and validated
+import work to optimize the local GCD footprint. Once those workflows are
+running end to end, measure and implement a distributable reference-data
+strategy before the release-candidate gate.
+
+The raw authenticated 2026-08-29 GCD download is approximately 1.74 GiB
+compressed and 6.23 GiB unpacked. It must not be bundled into the core container
+image or silently downloaded by every installation. Evaluate a compact,
+versioned SonicBoom reference index containing only required identity and catalog
+fields; publish it as an independently updateable optional artifact only if
+redistribution, attribution and licensing requirements are satisfied. Record its
+compressed/unpacked size, update cost, coverage on the representative NAS cohort
+and rollback behavior, then set an explicit release storage budget. Retain a
+provider-cache path for incremental enrichment so the full source snapshot is
+not a runtime prerequisite.
+
+### Latest Gate 2 checkpoint — independent volume organization
+
+Policy 25 restores safe ISBN-bearing EPUB edition metadata and closes an
+order-dependent provider/local duplicate-run defect. On a fresh isolated replay
+of all 962 the NAS observations with the enriched reference cache preloaded,
+833 files are accepted, 128 are health-blocked and one explicit volume/issue
+format contradiction requires review. The result has 60 runs, zero duplicate
+normalized-title/year groups, 682 directly owned issues, 148 unique owned volume
+slots, clean database integrity and stable restart projection. All 14 ISBN EPUBs
+gain clean edition title/publisher metadata; only 2/14 have exact GCD/Open Library
+edition identity. This is useful volume intake, not proof of broad exact provider
+coverage. Open Library exact-ISBN discovery is now connected to the production V2
+durable scheduler and cache without adding credentials or run-selection authority.
+The schema-5 upgrade preserves existing provider requests and retains the deployed
+migration-3/4 checksums. A fresh zero-network the NAS replay of the same cohort
+reproduced the outcome exactly, including clean integrity, stable restart and no
+duplicate normalized-title/year groups. This closes the scheduler wiring item but
+does not improve the 2/14 exact-ISBN ceiling. Gate 2 remains open for truth-sampled
+title/publisher/era run attribution; repeating exact ISBN lookups is not an
+accepted next step. Evidence and constraints are recorded in
+`docs/LIVE_EVIDENCE_DISCOVERY_V2.md`, `docs/INTAKE_EFFECTIVENESS_V2.md` and
+`docs/evidence/nas-20260902-open-library-scheduler-p26b.json`.
+
+The subsequent 12-volume feasibility pass made 20 successful, correctly paced
+Metron/Comic Vine calls with no operational failures and no attribution gain.
+Eleven volumes still lacked a cached run candidate. The verified private GCD
+snapshot does contain relevant original-run and collection candidates omitted by
+the bounded reference export. Gate 2's next bounded step is therefore a compact
+GCD run-candidate index and truth-sampled typed attribution—not relaxed matching
+and not another identical provider request loop. See
+`docs/evidence/nas-20260902-isbn-title-provider-p27.json`.
+
+The compact-index feasibility checkpoint is now complete. A versioned SQLite
+artifact containing only GCD publication-run candidate facts reduced the verified
+private source from 6,694,060,032 bytes to 84,774,912 bytes (1.266%) while
+retaining all 229,414 non-deleted comic-publication series. On the same 14 ISBN
+volumes, strict local-title lookup finds candidates for 11 files; the remaining
+three are present under bounded, observed title aliases. This closes candidate
+availability for the sample but does not establish accepted attribution. Locke &
+Key still requires explicit multi-run family handling, and publisher/type/era or
+independent provider evidence must resolve same-title candidates before canonical
+assignment. The artifact/manifest validator, immutable activation state and
+rollback contract pass on the NAS. Public automatic updates remain blocked on a
+signed metadata channel and final GCD distribution/attribution review; the raw
+private snapshot and generated artifact remain outside the repository and image.
+See `docs/GCD_RUN_INDEX_V2.md` and
+`docs/evidence/gcd-run-index-20260902.json`.
+
+The follow-on conservative attribution policy passes exact-ID, explicit-era,
+same-title negative, publisher-conflict, alias-precedence and multi-run-family
+tests. Its honest provider-verification result is only 1/14 ISBN files; nine files
+are safely retained in the Locke & Key family and four retain plausible but
+unverified GCD candidates. Four bounded Metron lookups by those exact GCD series
+IDs returned zero results with no operational failure, so that hypothesis is
+stopped. Gate 2 must not turn optional provider attribution into mandatory intake
+intervention. The next integrated behavior is accepted local organization with
+an explicit enrichment-pending state, background retry only when new evidence or
+a new source version exists, and a correction path that never silently moves a
+run. See `docs/evidence/gcd-run-attribution-20260902.json`.
+
+The intake projection now implements that product consequence without a schema
+migration. Accepted local placement is reported as `In library`; optional metadata
+verification has its own verified/checking/pending/unavailable state and never
+becomes required intervention. The existing durable receipt signatures gate
+offline healing, and provider responses remain behind the provider client's cache
+and researched cooldown rules. The production React/Tailwind intake screen now
+consumes that contract and reuses the shared status chip and loader. Six UI tests
+and its production build pass; the NAS passes the 24-test intake suite, 109
+adjacent identity/discovery/index regressions with warnings as errors, and the
+updated image clean-install/restart smoke. The responsive browser matrix remains
+open because the app browser blocked the temporary NAS/localhost fixture; it is
+not represented as passing. No deployment occurred.
+
+The following recovery checkpoint adds an explicit, locked run-correction seam
+for accepted issues and volumes placed in duplicate provisional runs. It previews
+only compatible existing title/era runs, requires a fresh optimistic state token,
+and applies one audited transaction without changing source files or cross-format
+ownership. Provider-confirmed identities and acquisition history fail closed and
+require separate recovery work. the NAS passes the focused correction tests, the
+25-test intake/API suite and 182 adjacent identity regressions; the React/Tailwind
+dialog passes eight UI tests and production build. See
+`docs/RUN_CORRECTION_V2.md`. Whole-run consolidation, explicit unmatch and the
+responsive visual matrix remain open, so Gate 2 remains open.
+
 ### Gate 3 — Fulfillment correctness
 
 Prowlarr through SABnzbd through validated import and request reconciliation is

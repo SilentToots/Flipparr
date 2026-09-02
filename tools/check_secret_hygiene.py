@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -42,22 +43,49 @@ PLACEHOLDER_WORDS = (
     b"<",
 )
 
+# Release verification also runs from an exported, read-only source bundle inside
+# the minimal application image. That image intentionally contains neither Git
+# nor development-only trees, so retain a bounded filesystem fallback instead of
+# adding Git to the production image solely for this check.
+FALLBACK_EXCLUDED_DIRECTORIES = {
+    ".checkpoint-output",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "data",
+    "node_modules",
+}
+
 
 def candidate_paths(root: Path) -> list[Path]:
-    result = subprocess.run(
-        [
-            "git",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ],
-        cwd=root,
-        check=True,
-        capture_output=True,
+    if shutil.which("git") is not None and (root / ".git").exists():
+        result = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        return [root / item.decode() for item in result.stdout.split(b"\0") if item]
+
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and not any(
+            part in FALLBACK_EXCLUDED_DIRECTORIES
+            for part in path.relative_to(root).parts[:-1]
+        )
     )
-    return [root / item.decode() for item in result.stdout.split(b"\0") if item]
 
 
 def findings(root: Path) -> list[tuple[Path, int, str]]:
