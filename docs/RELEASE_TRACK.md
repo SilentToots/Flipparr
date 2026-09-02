@@ -802,6 +802,17 @@ Both formats share run grouping but have explicit, independent request targets.
 Import/replacement of one cannot fulfill or mutate the other. Test this boundary
 through failures, retries and restart, not only successful downloads.
 
+The first Gate 3 preflight found and fixed a recovery-feedback mismatch: library
+destination, write and replacement-promotion failures now explain the mount or
+permission problem, confirm retention of the download, and expose the durable
+request-scoped `Retry import` action that the backend already supports. Ten
+focused and 75 adjacent warnings-as-errors tests pass on the NAS. The next
+checkpoint is an isolated non-root Docker run with an explicitly read-only
+completed-download bind and separate writable staging/library binds, followed by
+permission/storage failure injection. A real Prowlarr/SAB submission remains an
+explicitly authorized later smoke; nothing was submitted or deployed here. See
+`docs/ACQUISITION_INTENT_V2.md`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
