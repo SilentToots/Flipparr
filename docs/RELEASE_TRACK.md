@@ -747,6 +747,48 @@ dialog passes eight UI tests and production build. See
 `docs/RUN_CORRECTION_V2.md`. Whole-run consolidation, explicit unmatch and the
 responsive visual matrix remain open, so Gate 2 remains open.
 
+The consolidated checkpoint was committed as `d128d09` after 908 tests passed in
+the authoritative the NAS Docker runtime with warnings treated as errors, along
+with clean source and image-history credential scans. Replaying that exact code
+from the quiescent 962-observation inventory reproduced 833 accepted files, 128
+health blocks, one review, 60 runs, 682 issues and 148 unique volumes with clean
+integrity and stable restart projection. A read-only V1 comparison matched all
+834 healthy paths, all 819 comparable numbers and 831/833 formats. Both format
+differences are confirmed V1 issue/edition errors. The three V1-to-V2 run merges
+were reviewed as legacy duplicate/subtitle rows or one publisher-supported
+two-volume series; no unsafe V2 merge was demonstrated. This is strong behavior
+parity evidence but not independent correctness for the unchanged agreements.
+Gate 2 therefore remains open for a separated-label review of the full 60-run
+population. See
+`docs/evidence/nas-20260902-current-replay-parity-d128d09.json`.
+
+That private review packet is now frozen on the NAS with all 60 run groups, all
+833 accepted members and 105 bounded representative format/number checks. Review
+inputs omit V2's predicted title, era, publisher, format and number; predictions
+are stored separately and bound to the blank label template by digest. Unreviewed
+and uncertain cases cannot count as correct. The scorer reports useful grouping
+(correct title plus safe boundary) separately from exact run attribution (which
+also requires the correct era) and records the user's 70% useful-grouping floor
+without turning it into automatic gate closure. Four the NAS tests pass. Labels
+and the complete 912-test warnings-as-errors suite pass on the NAS. Labels are
+not yet established, so no independent rate is claimed. See
+`docs/GROUPING_REVIEW_V2.md`.
+
+The consolidated checkpoint was committed as `d128d09` after 908 tests passed in
+the authoritative the NAS Docker runtime with warnings treated as errors, along
+with clean source and image-history credential scans. Replaying that exact code
+from the quiescent 962-observation inventory reproduced 833 accepted files, 128
+health blocks, one review, 60 runs, 682 issues and 148 unique volumes with clean
+integrity and stable restart projection. A read-only V1 comparison matched all
+834 healthy paths, all 819 comparable numbers and 831/833 formats. Both format
+differences are confirmed V1 issue/edition errors. The three V1-to-V2 run merges
+were reviewed as legacy duplicate/subtitle rows or one publisher-supported
+two-volume series; no unsafe V2 merge was demonstrated. This is strong behavior
+parity evidence but not independent correctness for the unchanged agreements.
+Gate 2 therefore remains open for a separated-label review of the full 60-run
+population. See
+`docs/evidence/nas-20260902-current-replay-parity-d128d09.json`.
+
 ### Gate 3 — Fulfillment correctness
 
 Prowlarr through SABnzbd through validated import and request reconciliation is
