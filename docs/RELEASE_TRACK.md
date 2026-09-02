@@ -845,11 +845,21 @@ storage or library mount produces a bounded CBZ; and the main process fully
 revalidates it before exact Issue binding and promotion. The workflow resumed
 across three separate container runs, retained the SAB source, produced one
 accepted assignment in the isolated library, and left integrity/foreign keys
-clean. Twenty focused and 173 adjacent warnings-as-errors tests pass. This
+clean. Twenty focused and 174 adjacent warnings-as-errors tests pass. This
 closes the real Issue import proof, not Gate 3: a real Volume import and deployed
 Compose/restart exercise remain. The hardened two-service definition is now in
 `compose.v2.yaml`. See `docs/CBR_DECODER_BOUNDARY_V2.md` and
 `docs/evidence/cbr-staging-20260902-p33.json`.
+
+A representative read-only NAS Volume, Alex + Ada Volume 1, now also passes
+normal validation, exact Volume binding and isolated promotion with one accepted
+assignment and zero Issue dependencies. Its compact `alexandada_vol1` filename
+exposed and fixed a general V1-compatibility case: compact punctuation/spacing is
+accepted only when the exact format and number still agree with the immutable
+target. This proves real-file Volume import, not live provider/downloader Volume
+acquisition. Gate 3 remains open for that authorized live request and the
+deployed Compose/restart exercise. See
+`docs/evidence/real-volume-import-20260902-p35.json`.
 
 ### Gate 4 — Release candidate
 
