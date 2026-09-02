@@ -861,6 +861,30 @@ acquisition. Gate 3 remains open for that authorized live request and the
 deployed Compose/restart exercise. See
 `docs/evidence/real-volume-import-20260902-p35.json`.
 
+The authorized live Volume checkpoint then found and fixed a general search
+regression: V2 generated catalog fallback queries but sent only the first to
+Prowlarr. Searches now use the catalog contract (currently one query for Issues
+and up to two for Volumes) under one deduplicated 100-candidate aggregate budget
+and stop when an exact strong match appears. The configured indexers still
+returned no safe release: Saga Volume 10
+produced only two wrong-Volume-1 results, and the one bounded alternate,
+Absolute Batman Volume 1, returned none. The exact title/format/number gate
+rejected both; no NZB was fetched or submitted and no live state changed. Gate 3
+therefore remains open because of demonstrated configured-indexer Volume
+coverage, not importer correctness. Twenty-two focused and all 938 backend tests
+pass with warnings treated as errors on the NAS. Review indexer capabilities and
+comic-category configuration before another live attempt; do not cycle titles or
+weaken identity rules. See
+`docs/evidence/live-volume-acquisition-20260902-p38.json`.
+
+The follow-up read-only audit ruled out that basic configuration hypothesis: all
+six configured indexers are enabled Usenet sources, map Comics category `7030`,
+and have no current failure or disabled flags. A single Mylar-style `Saga v10`
+probe returned three unrelated Thor Epic Collection results and no exact target.
+The stop criterion is met. Further title/query cycling is not justified; the next
+product decision is whether to add a demonstrably stronger comic-release source
+or defer the live-Volume proof while keeping Gate 3 open.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
