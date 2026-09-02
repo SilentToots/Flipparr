@@ -825,6 +825,19 @@ The mounted-volume checkpoint is closed; an explicitly authorized live
 Prowlarr/SAB smoke remains the Gate 3 exit item. See
 `docs/evidence/acquisition-mount-20260902-p30b.json`.
 
+The authorized live the NAS smoke now proves exact candidate selection,
+credential-safe Prowlarr grabbing, confirmed SAB submission and successful
+download completion. It also exposed the remaining import blocker: the selected
+job contained one valid RAR5 CBR, while V2 currently fully validates only CBZ and
+EPUB. The isolated library/staging remained empty, ownership remained unchanged,
+and integrity/foreign keys pass. V1's RAR-header-only check is not sufficient for
+V2's validated-import guarantee. Gate 3 therefore remains open pending a
+resource-bounded CBR decoder boundary plus successful real Issue and Volume
+imports and restart reconciliation. Ninety-four adjacent warnings-as-errors
+tests pass on the NAS. See
+`docs/evidence/live-acquisition-20260902-p31f.json` and
+`docs/ACQUISITION_INTENT_V2.md`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
