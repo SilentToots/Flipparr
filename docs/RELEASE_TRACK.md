@@ -828,7 +828,7 @@ Prowlarr/SAB smoke remains the Gate 3 exit item. See
 The authorized live the NAS smoke now proves exact candidate selection,
 credential-safe Prowlarr grabbing, confirmed SAB submission and successful
 download completion. It also exposed the remaining import blocker: the selected
-job contained one valid RAR5 CBR, while V2 currently fully validates only CBZ and
+job contained one valid RAR4 CBR, while V2 currently fully validates only CBZ and
 EPUB. The isolated library/staging remained empty, ownership remained unchanged,
 and integrity/foreign keys pass. V1's RAR-header-only check is not sufficient for
 V2's validated-import guarantee. Gate 3 therefore remains open pending a
@@ -837,6 +837,19 @@ imports and restart reconciliation. Ninety-four adjacent warnings-as-errors
 tests pass on the NAS. See
 `docs/evidence/live-acquisition-20260902-p31f.json` and
 `docs/ACQUISITION_INTENT_V2.md`.
+
+The retained real RAR4 download now also passes an isolated CBR conversion and
+import boundary. The main process durably publishes a hash-bound job and waits;
+a pinned no-network decoder container with no credentials, catalog, completed
+storage or library mount produces a bounded CBZ; and the main process fully
+revalidates it before exact Issue binding and promotion. The workflow resumed
+across three separate container runs, retained the SAB source, produced one
+accepted assignment in the isolated library, and left integrity/foreign keys
+clean. Twenty focused and 173 adjacent warnings-as-errors tests pass. This
+closes the real Issue import proof, not Gate 3: a real Volume import and deployed
+Compose/restart exercise remain. The hardened two-service definition is now in
+`compose.v2.yaml`. See `docs/CBR_DECODER_BOUNDARY_V2.md` and
+`docs/evidence/cbr-staging-20260902-p33.json`.
 
 ### Gate 4 — Release candidate
 
