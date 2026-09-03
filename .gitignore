@@ -17,3 +17,7 @@ __pycache__/
 v1-prototype/node_modules/
 v1-prototype/dist/
 sonicboom_ui/node_modules/
+
+# Claude Design export runtime (regenerable, vendored)
+design/support.js
+design/.thumbnail
