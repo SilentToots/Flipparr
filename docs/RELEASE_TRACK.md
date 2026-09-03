@@ -909,6 +909,21 @@ the runtime blocks new Volume search/submission before provider traffic. Gate 3
 therefore no longer requires a live Volume release. Its remaining release proof
 is the deployed Compose/restart exercise for the supported Issue acquisition path.
 
+The first V2 QA Compose deployment on 2026-09-02 exposed and fixed two integrated
+gaps that isolated image tests did not cover. The base stack did not enable the
+intake/UI runtime, and Docker bridge NAT presented the exact bridge gateway—not
+loopback—as the ASGI client. A tracked QA override now enables the interface
+without making the public base stack depend on the NAS's private reference data.
+Docker Engine 29's loopback host bind is combined with one exact private gateway
+allowlist entry plus the existing Host, Origin and CSRF checks; a neighboring
+container remains denied with 403. Both hardened services start and restart,
+schema 11 and empty acquisition state persist, health/readiness stay green, the
+Requests contract advertises Issue acquisition and rejects Volume acquisition,
+and the 408px/1440px browser smoke passes. Seventy-two adjacent backend tests and
+ten UI component assertions pass on the NAS. This closes idle Compose/restart and
+interface reachability, not an in-flight deployed Issue acquisition/restart proof;
+Gate 3 remains open for that bounded lifecycle exercise.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
