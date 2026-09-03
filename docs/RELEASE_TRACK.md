@@ -973,6 +973,24 @@ remains open for implemented restore/rollback, upgrade, interruption, outage,
 responsive/accessibility, security and operations checks. See
 `docs/evidence/gate4-sqlite-runtime-20260903-p43.json`.
 
+The supported offline restore path now verifies the selected backup's bound
+manifest, checksum, exact schema, integrity and foreign keys and rejects journal
+sidecars. The application holds an exclusive process-lifetime database lock and
+restore must acquire the same lock, so a running app is refused between as well
+as during SQL transactions. Restore preserves the state being replaced as
+another verified backup, then stages, fsyncs and atomically installs the selected
+state. A disposable the NAS Docker volume proved clean install, backup,
+post-backup mutation, stopped-service restore, restart, selected-state recovery
+and preservation of the newer state in the safety backup. Forty-four focused
+and 957 repository warnings-as-errors tests pass. A subsequent manifest-race
+safeguard binds the staged copy to the initially verified checksum; fourteen
+focused tests and the final disposable-volume smoke pass after that bounded
+change. No live catalog was restored. See
+`docs/V2_BACKUP_RESTORE_RUNBOOK.md` and
+`docs/evidence/gate4-offline-restore-20260903-p44.json`. Gate 4 remains open for
+cross-version upgrade/code rollback, interruption, provider-outage,
+responsive/accessibility, security and operations checks.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
