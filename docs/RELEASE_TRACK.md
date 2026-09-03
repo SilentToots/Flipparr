@@ -1012,6 +1012,26 @@ verified the local and iCloud Restic repositories, resumed containers, delivered
 Kuma `up`, and exited 0. See
 `docs/evidence/gate4-checkpoint-backup-permissions-20260903-p47.json`.
 
+The first-release upgrade/rollback checkpoint then used a fresh verified online
+copy of the deployed realistic catalog as disposable the NAS state. V2 has no
+earlier public release and does not migrate V1 rows, so the supported proof is a
+stop-first replacement between the previous and current schema-compatible
+candidate images, not an invented promise to upgrade historical internal
+snapshots. All baseline counts across series, runs, editions, files,
+assignments, acquisition intents and jobs survived the upgrade; user schema 11,
+reference schema 5, integrity, foreign keys and a pre-upgrade marker remained
+valid. The prior image then reopened the post-upgrade state directly. A separate
+offline rollback restored the verified pre-upgrade backup, retained the newer
+state in a verified safety backup, restarted the prior image and removed only
+the post-upgrade marker. An invalid candidate exited 3 with the database checksum
+unchanged. Live state was never a test target and both deployed services remained
+running. This closes the first-release schema-compatible candidate
+upgrade/rollback proof. Future persistent-schema changes remain blocked until
+they add paired user/reference rollback support and their own the NAS proof.
+Public packaging must also select immutable versioned image digests. See
+`docs/V2_UPGRADE_ROLLBACK_RUNBOOK.md` and
+`docs/evidence/gate4-upgrade-rollback-20260903-p48.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
