@@ -924,6 +924,18 @@ ten UI component assertions pass on the NAS. This closes idle Compose/restart an
 interface reachability, not an in-flight deployed Issue acquisition/restart proof;
 Gate 3 remains open for that bounded lifecycle exercise.
 
+The same deployed interface then completed one read-only-source intake of the
+established 962-file NAS cohort. It accepted all 834 healthy files without
+matching intervention: 682 Issues and 152 collected editions across 63
+provisional runs. The remaining 128 rows are explicit file-health or unsupported-
+format blocks (5 unreadable archives, 70 empty archives, 48 unsupported formats,
+3 archives without comic pages and 2 missing ZIP directories), not unresolved
+healthy matches. The result contains zero exact duplicate normalized title/year/
+publisher run keys and reproduces the prior local-first baseline. Live provider
+discovery was disabled, so all 63 runs remain provisional and no provider-
+verification gain is claimed. See
+`docs/evidence/deployed-v2-qa-20260902-p41.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
