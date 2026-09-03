@@ -1049,6 +1049,23 @@ not something this container test claims to simulate. See
 `docs/V2_INTERRUPTION_RECOVERY_RUNBOOK.md` and
 `docs/evidence/gate4-interruption-recovery-20260903-p50.json`.
 
+The provider-outage checkpoint then ran the production transports with Docker
+networking disabled and unique fake credentials. Metron, Comic Vine and Open
+Library each retained one waiting request with a 60-second initial cooldown; a
+restarted client refused an immediate duplicate attempt. A Prowlarr outage saved
+the Issue request, exposed a credential-safe service explanation and retained a
+retry-search action. A SABnzbd status outage returned retry-later while leaving
+the submitted intent and exact attempt unchanged. Canonical state had an
+identical before/after signature, integrity and foreign keys passed, injected
+credentials were absent from both databases, and the corrected checkpoint
+writer produced private `0700`/`0600` artifacts. Ninety-four focused the NAS
+tests pass with warnings treated as errors. The transport and persistence part
+of provider-outage validation is complete. Building the feedback copy into the
+next immutable candidate image and exposing metadata-provider cooldown/retry in
+the responsive UI remain part of Gate 4. See
+`docs/V2_PROVIDER_OUTAGE_RUNBOOK.md` and
+`docs/evidence/gate4-provider-outage-20260903-p52.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
