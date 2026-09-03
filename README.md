@@ -63,14 +63,20 @@ The current QA container builds the React interface and serves it from the same 
 
 1. Copy `.env.example` to `.env` on the NAS.
 2. Review the NAS media identity (`1000:10`) and verified storage paths already provided in `.env.example`.
-3. Keep `.env` private and confirm `CONFIG_PATH`, `COMICS_PATH`, and `SAB_COMPLETE_PATH` before starting the container.
+3. Keep `.env` private and confirm `V2_CONFIG_PATH`, `COMICS_PATH`, and `SAB_COMPLETE_PATH` before starting the container. The QA interface also requires the prepared V2 reference database at `${V2_CONFIG_PATH}/reference.db`. Set `SONICBOOM_V2_TRUSTED_CLIENTS` to only the exact private gateway reported for `home-services-proxy`; never use a subnet or wildcard. Loopback publishing for this unauthenticated boundary requires Docker Engine 28 or newer.
 4. From the project directory, run:
 
    ```bash
-   docker compose up -d --build
+   docker compose -f compose.v2.yaml -f compose.v2.qa.yaml up -d --build
    ```
 
-5. Expose the loopback-only web app through Nginx Proxy Manager or use an SSH tunnel, choose **Add comics**, enter `/comics`, and scan it.
+5. Keep the unauthenticated QA interface loopback-only. From your workstation, open an SSH tunnel matching `SONICBOOM_V2_UI_ORIGIN`:
+
+   ```bash
+   ssh -N -L 127.0.0.1:8795:127.0.0.1:8788 <nas-host>
+   ```
+
+   Open <http://127.0.0.1:8795>, choose **Add comics**, enter `/comics`, and scan it. Do not publish this QA interface through a reverse proxy.
 6. Connect Prowlarr and SABnzbd under **Settings → Acquisition services** with `http://prowlarr:9696` and `http://sabnzbd:8080`.
 
 The checked-in Compose example follows the NAS's home-services conventions: it runs as media user `1000:10`, stores state under `/srv/docker/sonicboom`, mounts `/srv/books/comics`, attaches to `home-services-proxy`, uses a loopback-only host port, drops privilege escalation, and limits container logs.
