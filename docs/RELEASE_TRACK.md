@@ -1062,8 +1062,12 @@ writer produced private `0700`/`0600` artifacts. Ninety-four focused the NAS
 tests pass with warnings treated as errors. The final run used commit `c2eff05`
 in candidate image `sonicboom-v2:p53` without source overlays; its exported
 source bundle also passed the secret-hygiene regression, bringing the focused
-total to 97. The transport and persistence part of provider-outage validation is
-complete. Exposing metadata-provider cooldown/retry in the responsive UI remains
+total to 97. The V2 intake interface now presents provider availability,
+cooldown timing, connection failures and the bounded retry action through a
+shared mobile-first component with polite status updates and scoped loading
+feedback. All 12 frontend tests and the type-checked production build pass in
+the NAS Node 22 Docker. This completes provider-outage persistence and visible
+recovery behavior; the broader full-page responsive/accessibility matrix remains
 part of Gate 4. See
 `docs/V2_PROVIDER_OUTAGE_RUNBOOK.md` and
 `docs/evidence/gate4-provider-outage-20260903-p54.json`.
