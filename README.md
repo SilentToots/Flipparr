@@ -63,7 +63,7 @@ The current QA container builds the React interface and serves it from the same 
 
 1. Copy `.env.example` to `.env` on the NAS.
 2. Review the NAS media identity (`1000:10`) and verified storage paths already provided in `.env.example`.
-3. Keep `.env` private and confirm `V2_CONFIG_PATH`, `COMICS_PATH`, and `SAB_COMPLETE_PATH` before starting the container. The QA interface also requires the prepared V2 reference database at `${V2_CONFIG_PATH}/reference.db`. Set `SONICBOOM_V2_TRUSTED_CLIENTS` to only the exact private gateway reported for `home-services-proxy`; never use a subnet or wildcard. Loopback publishing for this unauthenticated boundary requires Docker Engine 28 or newer.
+3. Keep `.env` private and confirm `V2_CONFIG_PATH`, `COMICS_PATH`, `SAB_COMPLETE_PATH`, `ACQUISITION_CONFIG_PATH`, and `METADATA_CONFIG_PATH` before starting the container. The QA interface also requires the prepared V2 reference database at `${V2_CONFIG_PATH}/reference.db`. Metadata-provider credentials are mounted from `METADATA_CONFIG_PATH` read-only; never copy token or API-key values into Compose, `.env`, logs, or source control. Set `SONICBOOM_V2_TRUSTED_CLIENTS` to only the exact private gateway reported for `home-services-proxy`; never use a subnet or wildcard. Loopback publishing for this unauthenticated boundary requires Docker Engine 28 or newer.
 4. From the project directory, run:
 
    ```bash
