@@ -1059,12 +1059,14 @@ the submitted intent and exact attempt unchanged. Canonical state had an
 identical before/after signature, integrity and foreign keys passed, injected
 credentials were absent from both databases, and the corrected checkpoint
 writer produced private `0700`/`0600` artifacts. Ninety-four focused the NAS
-tests pass with warnings treated as errors. The transport and persistence part
-of provider-outage validation is complete. Building the feedback copy into the
-next immutable candidate image and exposing metadata-provider cooldown/retry in
-the responsive UI remain part of Gate 4. See
+tests pass with warnings treated as errors. The final run used commit `c2eff05`
+in candidate image `sonicboom-v2:p53` without source overlays; its exported
+source bundle also passed the secret-hygiene regression, bringing the focused
+total to 97. The transport and persistence part of provider-outage validation is
+complete. Exposing metadata-provider cooldown/retry in the responsive UI remains
+part of Gate 4. See
 `docs/V2_PROVIDER_OUTAGE_RUNBOOK.md` and
-`docs/evidence/gate4-provider-outage-20260903-p52.json`.
+`docs/evidence/gate4-provider-outage-20260903-p54.json`.
 
 ### Gate 4 — Release candidate
 
