@@ -985,7 +985,10 @@ and preservation of the newer state in the safety backup. Forty-four focused
 and 957 repository warnings-as-errors tests pass. A subsequent manifest-race
 safeguard binds the staged copy to the initially verified checksum; fourteen
 focused tests and the final disposable-volume smoke pass after that bounded
-change. No live catalog was restored. See
+change. Commit `f43dd87` is deployed on the NAS with both services healthy from
+one immutable release directory, clean database integrity/foreign keys, mode-0600
+runtime lock and zero service error lines. A live restore invocation was refused
+by that lock before replacement; no live catalog was restored. See
 `docs/V2_BACKUP_RESTORE_RUNBOOK.md` and
 `docs/evidence/gate4-offline-restore-20260903-p44.json`. Gate 4 remains open for
 cross-version upgrade/code rollback, interruption, provider-outage,
