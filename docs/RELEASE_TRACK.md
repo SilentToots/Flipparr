@@ -1072,6 +1072,19 @@ part of Gate 4. See
 `docs/V2_PROVIDER_OUTAGE_RUNBOOK.md` and
 `docs/evidence/gate4-provider-outage-20260903-p54.json`.
 
+SABnzbd job names now preserve crash-safe submission recovery without leaving
+SonicBoom's internal intent/attempt key in the normal downloader interface. The
+temporary key is used only until SAB returns its job ID; SonicBoom persists that
+ID before requesting a queue rename to the clean release title. Interrupted
+submission recovery follows the same order. Rename failure is presentation-only:
+the acquired job remains attached and is never resubmitted. Existing completed
+history is deliberately unchanged. Forty focused and 82 adjacent acquisition,
+Requests, runtime, staging and promotion tests pass with warnings treated as
+errors in isolated the NAS Docker. The same fresh-image run exposed and closed a
+test dependency drift by pinning the last compatible AnyIO release for the
+current Starlette test client. See
+`docs/evidence/gate4-sabnzbd-job-naming-20260903-p60.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
