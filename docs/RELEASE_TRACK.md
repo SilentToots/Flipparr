@@ -4,13 +4,15 @@ Decision date: 2026-08-29
 
 Status: approved direction for the first user release
 
-Scope amended 2026-08-31: [one run with independent Issues and Volumes](INDEPENDENT_FORMATS_SCOPE_V2.md).
-Both formats remain first-class intake and acquisition targets. Automatic
-issue-to-volume contents mapping, ownership credit and cross-format fulfillment
-are out of release scope. This decision supersedes the earlier contents-coverage
-target and related historical next steps below. Catalog implementation and Gate
-2 validation are complete; fulfillment and release-candidate validation remain
-open under Gates 3 and 4.
+Scope amended 2026-09-02: [one run with independent Issues and collected editions](INDEPENDENT_FORMATS_SCOPE_V2.md).
+Both formats remain first-class local-library intake and ownership targets;
+automatic monitoring, provider search and downloader acquisition are Issue-only
+for the first release. Automatic issue-to-volume contents mapping, missing-Volume
+catalogs, Volume acquisition, cross-format ownership credit and fulfillment are
+out of release scope. This decision supersedes earlier contents-coverage and
+live-Volume-acquisition targets below. Catalog implementation and Gate 2
+validation are complete; Issue fulfillment and release-candidate validation
+remain open under Gates 3 and 4.
 
 ## Decision
 
@@ -797,10 +799,11 @@ accessibility, deployment and operations validation remain Gate 4 work.
 ### Gate 3 — Fulfillment correctness
 
 Prowlarr through SABnzbd through validated import and request reconciliation is
-restart-safe, idempotent, observable, and proven for issues and collected works.
-Both formats share run grouping but have explicit, independent request targets.
-Import/replacement of one cannot fulfill or mutate the other. Test this boundary
-through failures, retries and restart, not only successful downloads.
+restart-safe, idempotent, observable, and proven for Issues. Issues and collected
+editions share run grouping and independent ownership, while collected editions
+enter through local-library intake. Import/replacement of one cannot fulfill or
+mutate the other. Test this boundary through failures, retries and restart, not
+only successful downloads.
 
 The first Gate 3 preflight found and fixed a recovery-feedback mismatch: library
 destination, write and replacement-promotion failures now explain the mount or
@@ -895,6 +898,16 @@ coverage benefit while introducing seeding and stalled-swarm lifecycle work.
 Keep the transport seam, and reconsider only after a representative read-only
 cohort demonstrates material exact-match gain. See
 `docs/evidence/torrent-coverage-20260902-p39.json`.
+
+Product decision 2026-09-02: the two bounded live-Volume source checks establish
+that automatic collected-edition acquisition cannot be a credible first-release
+promise. Volume and collection files remain supported for local intake, grouping,
+metadata, health and manual import/replacement, including purchased bundles.
+Production Requests exposes automatic search and downloader actions for Issues
+only. Historical Volume intents and the generic tested contract remain preserved;
+the runtime blocks new Volume search/submission before provider traffic. Gate 3
+therefore no longer requires a live Volume release. Its remaining release proof
+is the deployed Compose/restart exercise for the supported Issue acquisition path.
 
 ### Gate 4 — Release candidate
 

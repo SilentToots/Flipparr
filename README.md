@@ -1,6 +1,12 @@
 # SonicBoom
 
 SonicBoom is a pre-release, self-hosted comic catalog and acquisition product.
+
+The V2 release target supports both Issues and collected editions in local
+library intake and organization. Automatic provider search and downloader
+acquisition are supported for Issues only; collected editions are imported from
+files the user already owns. See `docs/INDEPENDENT_FORMATS_SCOPE_V2.md` for the
+authoritative scope. The V1 behavior documented below remains maintenance-only.
 It is being developed toward an installable user release, not as a POC or UI
 prototype. The approved delivery approach, supported first-release target, and
 release gates are documented in [`docs/RELEASE_TRACK.md`](docs/RELEASE_TRACK.md).
