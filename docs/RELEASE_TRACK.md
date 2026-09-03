@@ -960,6 +960,19 @@ treated as errors. Gate 3 is closed. Gate 4 remains open for the clean-install,
 upgrade, rollback, provider-outage, realistic-performance,
 responsive/accessibility, security and operations release-candidate matrix.
 
+Gate 4 storage preflight found that the Debian Bookworm release image provides
+SQLite 3.40.1, which predates SQLite's documented WAL-reset race fix. The user
+and reference catalogs now default to the rollback journal and reject an
+explicit WAL configuration unless the runtime contains an upstream fixed line.
+the NAS passes 950 warnings-as-errors tests. A clean 962-file replay completed
+in 115.805 seconds with the established 833 accepted, 128 health-blocked and one
+review outcome, stable restart projection, clean integrity/foreign keys and no
+resource warning. This supports SQLite for the single-user/single-host release
+without accepting an avoidable WAL risk. Clean-install smoke has passed; Gate 4
+remains open for implemented restore/rollback, upgrade, interruption, outage,
+responsive/accessibility, security and operations checks. See
+`docs/evidence/gate4-sqlite-runtime-20260903-p43.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
