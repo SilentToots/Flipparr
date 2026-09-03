@@ -994,6 +994,24 @@ by that lock before replacement; no live catalog was restored. See
 cross-version upgrade/code rollback, interruption, provider-outage,
 responsive/accessibility, security and operations checks.
 
+The next operations checkpoint exposed a backup-permission regression in two
+private grouping-review trees. Ad-hoc checkpoint containers had written one
+complete tree and three later reports as UID 0 with private `0700`/`0600`
+modes, so the deliberately unprivileged standard rsync sender returned code 23.
+The security boundary behaved correctly. The 17-node, no-symlink scope was
+enumerated before repair; only those two trees were normalized to the NAS's
+SonicBoom service identity (`1000:10`) while retaining `0700` directories and
+`0600` files. No broad `/srv/docker` permission or backup-reader privilege
+was added. The grouping-review CLI now refuses artifact-writing commands as UID
+0 or with a UID/GID that differs from the managed output parent, and directs
+Docker callers to select the configured service UID/GID. Ten
+focused tests and all 960 repository tests pass with warnings treated as errors
+in the NAS Docker; a real root invocation exits 2 without creating output. The
+installed backup job then completed both synchronization passes, created and
+verified the local and iCloud Restic repositories, resumed containers, delivered
+Kuma `up`, and exited 0. See
+`docs/evidence/gate4-checkpoint-backup-permissions-20260903-p47.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
