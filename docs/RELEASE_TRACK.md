@@ -1032,6 +1032,23 @@ Public packaging must also select immutable versioned image digests. See
 `docs/V2_UPGRADE_ROLLBACK_RUNBOOK.md` and
 `docs/evidence/gate4-upgrade-rollback-20260903-p48.json`.
 
+The abrupt-interruption checkpoint then used another fresh disposable copy of
+the same realistic catalog. A non-root candidate container was killed with
+`SIGKILL` while 256 large rows were uncommitted; Docker recorded exit 137 without
+an out-of-memory event and left a private 44,544-byte rollback journal. The next
+database open removed the hot journal, retained zero uncommitted rows and passed
+integrity and foreign-key checks. Claimed resolution and acquisition rows were
+not available before lease expiry, were reclaimed as the same rows at attempt
+two, and refused completion by their stale owners. A running intake batch moved
+back through queued work and completed against an unchanged read-only synthetic
+comic. The production app then started ready on recovered state with no error
+lines. Fifty-two focused the NAS tests pass with warnings treated as errors.
+This closes the release candidate's application-process interruption proof;
+physical media/controller failure remains an infrastructure and backup concern,
+not something this container test claims to simulate. See
+`docs/V2_INTERRUPTION_RECOVERY_RUNBOOK.md` and
+`docs/evidence/gate4-interruption-recovery-20260903-p50.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
