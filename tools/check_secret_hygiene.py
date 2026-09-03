@@ -51,6 +51,7 @@ FALLBACK_EXCLUDED_DIRECTORIES = {
     ".checkpoint-output",
     ".git",
     ".mypy_cache",
+    ".pnpm-store",
     ".pytest_cache",
     ".ruff_cache",
     ".venv",
@@ -114,7 +115,7 @@ def findings(root: Path) -> list[tuple[Path, int, str]]:
                 continue
             match = GENERIC_ASSIGNMENT.search(line)
             if match and not any(
-                word in match.group(1).casefold() for word in PLACEHOLDER_WORDS
+                word in match.group(1).lower() for word in PLACEHOLDER_WORDS
             ):
                 found.append((relative, line_number, "literal credential assignment"))
     return found
