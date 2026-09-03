@@ -1085,11 +1085,23 @@ test dependency drift by pinning the last compatible AnyIO release for the
 current Starlette test client. See
 `docs/evidence/gate4-sabnzbd-job-naming-20260903-p60.json`.
 
+Commit `e4d8d32` is deployed in the NAS QA Compose stack as production image
+`sha256:3b4001c166d904111717f81d92cac02884315c5ce46c7762d777488b62cb92ac`.
+The prior image is retained as `sonicboom-v2:rollback-pre-e4d8d32`. The running
+container is healthy on schema 11 with Issue acquisition enabled, zero startup
+error lines, the store-before-rename ordering present, and the shared
+reduced-motion loader assets installed. No test acquisition was submitted and no
+existing SAB history was modified. See
+`docs/evidence/deployed-v2-sabnzbd-naming-20260903-p61.json`.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
 outages, responsive/accessibility, security, operations, and documentation pass
-the release checklist. Only then is SonicBoom presented as a user release.
+the release checklist. The V2 interface must also pass the explicit V1-to-V2
+journey comparison in `docs/V2_UI_PARITY_CHECKPOINT.md`; the current Intake and
+Requests QA surface is not by itself a complete replacement interface. Only then
+is SonicBoom presented as a user release.
 
 ## Verification and primary references
 
