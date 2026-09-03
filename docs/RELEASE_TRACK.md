@@ -936,6 +936,30 @@ discovery was disabled, so all 63 runs remain provisional and no provider-
 verification gain is claimed. See
 `docs/evidence/deployed-v2-qa-20260902-p41.json`.
 
+The deployed Issue acquisition checkpoint then exercised the remaining Gate 3
+path. A Fables #8 request survived an in-flight Compose restart without duplicate
+submission, rejected a genuinely corrupt RAR4 payload, and stopped safely when
+ten remaining results could not satisfy the immutable target. The checkpoint
+fixed shared recovery-policy drift, repeated cosmetic variants of rejected
+releases, root-owned non-root-worker scratch, stale prior-attempt staging and
+non-terminal rejected attempts.
+
+A separate provider-confirmed, released and previously unowned Fables #141
+request completed the full live path. Its first exact release was a real ZIP but
+failed image CRC validation and was retained as a failed attempt. Retry excluded
+that release and selected a different exact result, which downloaded, validated,
+bound only to Issue #141 and atomically promoted as one accepted healthy CBZ. The
+unsupported original CBR remains present, completed and staged sources remain
+recoverable, both services are healthy with zero application error lines, and
+SQLite integrity and foreign keys pass. The deployed backup CLI also now performs
+and verifies an online schema-11 backup instead of exiting as a no-op. See
+`docs/evidence/gate3-live-issue-20260902-p42.json`.
+
+The final clean-source the NAS run passes all 947 backend tests with warnings
+treated as errors. Gate 3 is closed. Gate 4 remains open for the clean-install,
+upgrade, rollback, provider-outage, realistic-performance,
+responsive/accessibility, security and operations release-candidate matrix.
+
 ### Gate 4 — Release candidate
 
 Clean install, upgrade, rollback, realistic-library performance, provider
