@@ -239,15 +239,21 @@ def save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Authentication method must be 'none' or 'forms'")
     username = str(patch.get("username", current["username"]) or "").strip()
     password = patch.get("password")
+    # Credentials are accepted whatever the method is. They used to be handled
+    # only while enabling forms auth, which made the intended order -- set a
+    # username and password, then switch sign-in on -- impossible: the password
+    # was silently discarded and enabling then failed for want of one.
+    if password is not None:
+        if not isinstance(password, str) or len(password) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not username:
+            raise ValueError("A username is required to set a password")
+        current["passwordHash"] = hash_password(password)
     if method == "forms":
         if not username:
             raise ValueError("A username is required to enable authentication")
-        if password is not None:
-            if not isinstance(password, str) or len(password) < 8:
-                raise ValueError("Password must be at least 8 characters")
-            current["passwordHash"] = hash_password(password)
         if not current["passwordHash"]:
-            raise ValueError("A password is required to enable authentication")
+            raise ValueError("Set a username and password before requiring sign-in")
     current["method"] = method
     current["username"] = username
     if "localBypass" in patch:
@@ -5902,9 +5908,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/auth":
             try:
-                save_auth_config(payload)
+                updated = save_auth_config(payload)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
+                return
+            if updated["method"] == "forms":
+                # Whoever just turned sign-in on (or changed the password) is
+                # already authorised by definition -- they were allowed to make
+                # this call. Issue them a session in the same response, or the
+                # next request 401s and they are locked out of the very page
+                # they would use to fix it.
+                self.send_session_cookie(
+                    issue_session_token(updated), payload=public_auth_config()
+                )
                 return
             self.send_json(public_auth_config())
             return
@@ -6417,9 +6433,12 @@ class Handler(BaseHTTPRequestHandler):
     def query(self, parsed_url: urllib.parse.ParseResult) -> dict[str, str]:
         return {k: values[0] for k, values in urllib.parse.parse_qs(parsed_url.query).items()}
 
-    def send_session_cookie(self, token: str, expire: bool = False) -> None:
+    def send_session_cookie(
+        self, token: str, expire: bool = False, payload: Any = None
+    ) -> None:
         body = json.dumps(
-            {"status": "signed out" if expire else "authenticated"}
+            payload if payload is not None
+            else {"status": "signed out" if expire else "authenticated"}
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")

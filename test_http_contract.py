@@ -351,5 +351,49 @@ class HttpContractTests(unittest.TestCase):
         with patch("app.AUTH_CONFIG_PATH", _ROOT / "definitely-absent.json"):
             self.assertEqual(app.load_auth_config()["method"], "none")
 
+    def test_credentials_can_be_set_while_sign_in_is_still_off(self):
+        """The documented order is: set a username and password, then require
+        sign-in. The password used to be discarded unless the method was
+        already "forms", which made that order impossible."""
+        self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+        saved = self.post("/api/v1/auth", {
+            "method": "none", "username": "setup", "password": "first-password-here"})
+        self.assertEqual(saved.status, 200)
+        self.assertTrue(saved.json()["configured"], "password was dropped")
+        # and it is the password that was actually stored
+        self.assertTrue(app.verify_password("first-password-here",
+                                            app.load_auth_config()["passwordHash"]))
+
+    def test_turning_sign_in_on_does_not_lock_out_the_caller(self):
+        """Enabling auth used to 401 the very next request, stranding the user
+        on the settings page they would need to undo it."""
+        self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+        app.save_auth_config({"method": "none", "username": "owner",
+                              "password": "owner-password-1"})
+        enabled = self.post("/api/v1/auth", {"method": "forms", "username": "owner"})
+        self.assertEqual(enabled.status, 200)
+        cookie = enabled.headers.get("Set-Cookie", "")
+        self.assertIn(app._SESSION_COOKIE, cookie, "no session issued on enable")
+        # that session works immediately
+        req = urllib.request.Request(self.base + "/api/v1/catalog")
+        req.add_header("Cookie", cookie.split(";")[0])
+        with urllib.request.urlopen(req, timeout=20) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_requiring_sign_in_without_a_password_is_refused_clearly(self):
+        """Isolated to its own config file: the suite shares one auth.json, and a
+        password stored by an earlier test would otherwise satisfy this one."""
+        fresh = _ROOT / "no-password-auth.json"
+        fresh.unlink(missing_ok=True)
+        with patch("app.AUTH_CONFIG_PATH", fresh):
+            with self.assertRaises(ValueError) as caught:
+                app.save_auth_config({"method": "forms", "username": "nopass"})
+        self.assertIn("password", str(caught.exception).lower())
+
+    def test_a_password_without_a_username_is_refused(self):
+        self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+        refused = self.post("/api/v1/auth", {"method": "none", "username": "", "password": "orphan-password"})
+        self.assertEqual(refused.status, 400)
+
 if __name__ == "__main__":
     unittest.main()
