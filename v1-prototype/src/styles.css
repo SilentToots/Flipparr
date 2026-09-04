@@ -158,6 +158,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .scan-progress.determinate i { animation: none; transition: width .3s ease; }
 .success-banner { background: var(--green-soft); color: #a9eaba; }
 .backend-banner { background: var(--amber-soft); color: #f2c871; }
+.collected-editions-notice { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: .8rem; display: flex; align-items: center; gap: 9px; background: var(--amber-soft); color: #f2c871; }
 @keyframes scanning { from { transform: translateX(-20%); } to { transform: translateX(190%); } }
 
 .stat-strip { min-height: 98px; border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: repeat(4, 1fr); background: #0f141d; }

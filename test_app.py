@@ -784,6 +784,45 @@ class FilenameParserTests(unittest.TestCase):
             self.assertNotIn("prowlarr-secret", str(public))
             self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
 
+    def test_collected_editions_default_off_and_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.SETTINGS_CONFIG_PATH", Path(temp_dir) / "settings.json"
+        ) as settings_path:
+            self.assertEqual(
+                app.load_app_settings(), {"collectedEditionsEnabled": False}
+            )
+            self.assertFalse(settings_path.exists())
+
+            updated = app.save_app_settings({"collectedEditionsEnabled": True})
+            self.assertEqual(updated["collectedEditionsEnabled"], True)
+            self.assertTrue(settings_path.exists())
+            self.assertTrue(app.load_app_settings()["collectedEditionsEnabled"])
+            self.assertTrue(app.collected_editions_enabled())
+
+            app.save_app_settings({"collectedEditionsEnabled": False})
+            self.assertFalse(app.collected_editions_enabled())
+
+    def test_app_settings_rejects_unknown_keys_and_non_bool(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.SETTINGS_CONFIG_PATH", Path(temp_dir) / "settings.json"
+        ):
+            with self.assertRaises(ValueError):
+                app.save_app_settings({"somethingElse": True})
+            with self.assertRaises(ValueError):
+                app.save_app_settings({"collectedEditionsEnabled": "yes"})
+            with self.assertRaises(ValueError):
+                app.save_app_settings({})
+
+    def test_catalog_payload_exposes_the_collected_editions_flag(self):
+        store = Mock()
+        store.catalog.return_value = {"series": [], "enrichment": {}}
+        store.metadata_provider_available.return_value = True
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order", return_value=[]
+        ), patch("app.collected_editions_enabled", return_value=True):
+            payload = catalog_api_payload()
+        self.assertTrue(payload["collectedEditionsEnabled"])
+
     def test_prowlarr_connection_uses_api_key_header(self):
         with patch("app.load_acquisition_service_config", return_value={
             "prowlarr": {"url": "http://comic-nas.local:9696", "apiKey": "saved-key"}

@@ -14,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     COMICARR_WEB_ROOT=/app/web \
     COMICARR_DATABASE=/config/comicarr.db \
     COMICARR_PROVIDER_CONFIG=/config/metadata-providers.json \
-    COMICARR_ACQUISITION_CONFIG=/config/acquisition-services.json
+    COMICARR_ACQUISITION_CONFIG=/config/acquisition-services.json \
+    COMICARR_SETTINGS_CONFIG=/config/settings.json
 
 WORKDIR /app
 COPY requirements.txt ./

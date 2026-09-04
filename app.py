@@ -65,12 +65,74 @@ ACQUISITION_CONFIG_PATH = Path(
         str(Path(__file__).parent / ".data" / "acquisition-services.json"),
     )
 )
+SETTINGS_CONFIG_PATH = Path(
+    os.environ.get(
+        "COMICARR_SETTINGS_CONFIG",
+        str(Path(__file__).parent / ".data" / "settings.json"),
+    )
+)
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
 GCD_API_BASE = "https://www.comics.org/api"
 METRON_API_BASE = "https://metron.cloud/api"
 COMIC_VINE_API_BASE = "https://comicvine.gamespot.com/api"
 _PROVIDER_CONFIG_LOCK = threading.Lock()
 _ACQUISITION_CONFIG_LOCK = threading.Lock()
+_SETTINGS_CONFIG_LOCK = threading.Lock()
+
+# Application-level preferences (not credentials). Persisted as a small JSON file
+# in /config so it survives restarts.
+_APP_SETTINGS_DEFAULTS: dict[str, Any] = {
+    # Collected editions (trades, hardcovers, omnibuses) are an opt-in feature.
+    # Files are always catalogued and grouped; this only controls whether the
+    # collected-edition browsing and management surfaces are shown. Issue↔volume
+    # fulfillment never happens regardless.
+    "collectedEditionsEnabled": False,
+}
+_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled"})
+
+
+def load_app_settings() -> dict[str, Any]:
+    with _SETTINGS_CONFIG_LOCK:
+        settings = dict(_APP_SETTINGS_DEFAULTS)
+        try:
+            saved = json.loads(SETTINGS_CONFIG_PATH.read_text())
+        except (OSError, ValueError, json.JSONDecodeError):
+            saved = {}
+        if isinstance(saved, dict):
+            for key, value in saved.items():
+                if key in _APP_SETTINGS_BOOL_KEYS and isinstance(value, bool):
+                    settings[key] = value
+        return settings
+
+
+def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(patch, dict) or not patch:
+        raise ValueError("Provide at least one setting to change")
+    clean: dict[str, Any] = {}
+    for key, value in patch.items():
+        if key not in _APP_SETTINGS_DEFAULTS:
+            raise ValueError(f"Unknown setting: {key}")
+        if key in _APP_SETTINGS_BOOL_KEYS and not isinstance(value, bool):
+            raise ValueError(f"{key} must be true or false")
+        clean[key] = value
+    with _SETTINGS_CONFIG_LOCK:
+        current = dict(_APP_SETTINGS_DEFAULTS)
+        try:
+            saved = json.loads(SETTINGS_CONFIG_PATH.read_text())
+            if isinstance(saved, dict):
+                current.update({k: v for k, v in saved.items() if k in _APP_SETTINGS_DEFAULTS})
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        current.update(clean)
+        SETTINGS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SETTINGS_CONFIG_PATH.parent / (SETTINGS_CONFIG_PATH.name + ".tmp")
+        tmp.write_text(json.dumps(current, indent=2, sort_keys=True))
+        tmp.replace(SETTINGS_CONFIG_PATH)
+        return current
+
+
+def collected_editions_enabled() -> bool:
+    return bool(load_app_settings().get("collectedEditionsEnabled"))
 _RELEASE_CANDIDATE_LOCK = threading.Lock()
 _RELEASE_CANDIDATES: dict[str, dict[str, Any]] = {}
 _RELEASE_CANDIDATE_TTL_SECONDS = 30 * 60
@@ -5351,6 +5413,7 @@ def catalog_api_payload() -> dict[str, Any]:
         provider_id in cooldown_ids for provider_id in provider_ids
     )
     payload["enrichment"] = enrichment
+    payload["collectedEditionsEnabled"] = collected_editions_enabled()
     return payload
 
 
@@ -5359,6 +5422,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         if parsed_url.path == "/api/v1/catalog":
             self.send_json(catalog_api_payload())
+            return
+        if parsed_url.path == "/api/v1/settings":
+            self.send_json(load_app_settings())
             return
         if parsed_url.path == "/api/v1/providers":
             self.send_json(public_provider_config())
@@ -5915,6 +5981,18 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json_body()
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
+            return
+        if parsed_url.path == "/api/v1/settings":
+            try:
+                updated = save_app_settings(payload if isinstance(payload, dict) else {})
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:  # pragma: no cover - surfaced for diagnosis
+                traceback.print_exc()
+                self.send_json({"error": f"Could not save settings: {exc}"}, 500)
+                return
+            self.send_json(updated)
             return
         root_match = re.fullmatch(r"/api/v1/library-roots/(\d+)", parsed_url.path)
         if root_match:
