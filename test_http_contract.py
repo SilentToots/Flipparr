@@ -244,6 +244,16 @@ class HttpContractTests(unittest.TestCase):
                               "password": "correct horse battery", **patch})
         self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
 
+    def test_local_bypass_is_off_by_default(self):
+        """On by default made "require sign-in" appear to do nothing: a tunnel,
+        proxy or container bridge all present a private address."""
+        fresh = _ROOT / "default-auth.json"
+        fresh.unlink(missing_ok=True)
+        with patch("app.AUTH_CONFIG_PATH", fresh):
+            self.assertFalse(app.load_auth_config()["localBypass"])
+            app.save_auth_config({"method": "none", "username": "x", "password": "password-here"})
+            self.assertFalse(app.load_auth_config()["localBypass"])
+
     def test_health_endpoint_stays_open_so_the_container_check_keeps_working(self):
         self._configure_auth(localBypass=False)
         response = self.get("/healthz")

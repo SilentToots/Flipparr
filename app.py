@@ -164,10 +164,14 @@ _PROTECTED_PATHS = frozenset({"/results"})
 def _auth_defaults() -> dict[str, Any]:
     return {
         "method": "none",
-        # Sonarr/Radarr's "disabled for local addresses": convenient on a
-        # trusted LAN or tailnet, and only safe because _client_address below
-        # refuses to believe a forwarded header from an untrusted peer.
-        "localBypass": True,
+        # Sonarr/Radarr's "disabled for local addresses". Off by default: any
+        # access through a tunnel, a reverse proxy, or a container bridge
+        # arrives from a private address, so defaulting this on makes
+        # "require sign-in" appear to do nothing on exactly the setups people
+        # actually run. Opt in once you know the traffic really is local --
+        # and set COMICARR_TRUSTED_PROXIES if a proxy is in front, or the
+        # real client address cannot be seen at all.
+        "localBypass": False,
         "username": "",
         "passwordHash": "",
         "sessionSecret": "",
@@ -468,7 +472,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
     "sabnzbd": {
         "name": "SABnzbd", "kind": "Download client",
         "capabilities": ["NZB downloads", "Queue status", "Completed-download tracking"],
-        "description": "Download selected NZBs and report their progress back to Comic Library.",
+        "description": "Download selected NZBs and report their progress back to SonicBoom.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
     },
 }
@@ -5548,7 +5552,7 @@ def render_batch_results(results: list[dict[str, Any]]) -> str:
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Comic Metadata POC</title>
+<title>SonicBoom</title>
 <style>
 :root { color-scheme: dark; font-family: ui-sans-serif,system-ui,sans-serif; background:#11151c; color:#eef2f7 }
 body { max-width:1180px; margin:0 auto; padding:32px 20px 80px }
@@ -5572,7 +5576,7 @@ th { color:#aebbd0 } code { color:#b7c9ff } .warn { color:#ffca72 } a { color:#9
 details { margin-top:12px } summary { cursor:pointer; color:#c8d5e8 }
 @media (max-width:720px) { form { grid-template-columns:1fr 1fr } input[type=text] { grid-column:1/-1 } .match-grid { grid-template-columns:1fr } .cover { width:110px } }
 </style></head><body>
-<h1>Comic Metadata POC</h1><p class="sub">Read-only filename parsing and metadata candidate lookup.</p>
+<h1>SonicBoom</h1><p class="sub">Read-only filename parsing and metadata candidate lookup.</p>
 <form id="scan-form" method="get" action="/"><input id="folder" name="folder" type="text" value="__FOLDER__" placeholder="/path/to/comics" required>
 <button id="choose-folder" type="button">Choose Folder…</button>
 <label><input type="checkbox" name="recursive" value="1" __CHECKED__> Recursive</label><button type="submit">Scan folder</button></form>
@@ -6755,7 +6759,7 @@ def main() -> None:
     start_metadata_enrichment_worker()
     start_acquisition_import_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Comic Metadata POC running at http://{args.host}:{args.port}")
+    print(f"SonicBoom running at http://{args.host}:{args.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
