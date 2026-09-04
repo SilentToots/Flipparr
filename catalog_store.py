@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import datetime as dt
 import difflib
 import hashlib
@@ -473,6 +474,28 @@ class CatalogStore:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
         return connection
+
+    @contextlib.contextmanager
+    def _borrowed_write(self, connection: sqlite3.Connection | None):
+        """Join the caller's transaction when given one, else own a short one.
+
+        Committing per row costs an fsync each. That is fine for a single edit
+        and ruinous for a whole-library pass, so bulk callers pass a connection
+        and pay one commit for the batch. The work done is identical either way.
+        """
+        if connection is not None:
+            yield connection
+            return
+        with self._write_lock, self._connect() as owned:
+            yield owned
+
+    @contextlib.contextmanager
+    def _borrowed_read(self, connection: sqlite3.Connection | None):
+        if connection is not None:
+            yield connection
+            return
+        with self._connect() as owned:
+            yield owned
 
     def _migrate(self) -> None:
         with self._connect() as connection:
@@ -1087,12 +1110,20 @@ class CatalogStore:
     def _reconcile_all_identities(self) -> None:
         with self._connect() as connection:
             rows = list(connection.execute("SELECT id, parsed_json, result_json FROM files"))
-        for row in rows:
-            self._reconcile_file_identity(
-                int(row["id"]),
-                _load_json(row["parsed_json"], {}),
-                _load_json(row["result_json"], {}),
-            )
+        if not rows:
+            return
+        # This runs on every start-up. Reconciling each file in its own
+        # transaction costs one fsync per file (~12ms on a NAS disk), so a
+        # 963-file library spent ~90s here before the server accepted its first
+        # request. One transaction for the whole pass does identical work.
+        with self._write_lock, self._connect() as connection:
+            for row in rows:
+                self._reconcile_file_identity(
+                    int(row["id"]),
+                    _load_json(row["parsed_json"], {}),
+                    _load_json(row["result_json"], {}),
+                    connection=connection,
+                )
 
     def _backfill_legacy_replacement_requests(self) -> None:
         """Attach pre-V25 replacement rows to durable acquisition requests once."""
@@ -1437,11 +1468,12 @@ class CatalogStore:
         return series_run_id
 
     def _reconcile_file_identity(
-        self, file_id: int, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None
+        self, file_id: int, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None,
+        *, connection: sqlite3.Connection | None = None,
     ) -> None:
         if override is None:
-            with self._connect() as connection:
-                row = connection.execute(
+            with self._borrowed_read(connection) as read_connection:
+                row = read_connection.execute(
                     "SELECT fields_json, match_candidate_json FROM file_metadata_overrides WHERE file_id=?", (file_id,)
                 ).fetchone()
             override = _load_json(row["fields_json"], {}) if row else {}
@@ -1449,9 +1481,9 @@ class CatalogStore:
             if selected_candidate:
                 result = {**result, "recommendation": selected_candidate}
         claim = self._identity_claim(parsed, result, override)
-        with self._write_lock, self._connect() as connection:
-            series_run_id = self._resolve_series_run(connection, claim)
-            connection.execute(
+        with self._borrowed_write(connection) as write_connection:
+            series_run_id = self._resolve_series_run(write_connection, claim)
+            write_connection.execute(
                 """INSERT INTO file_identities(
                        file_id, series_run_id, raw_title, normalized_title, identity_kind,
                        issue_number, volume_number, match_confidence, match_basis_json, updated_at
@@ -1467,7 +1499,7 @@ class CatalogStore:
                     claim["issue"], claim["volume"], claim["confidence"], _json(claim["basis"]), _utc_now(),
                 ),
             )
-        self._sync_file_catalog_entity(file_id, parsed, result, override)
+        self._sync_file_catalog_entity(file_id, parsed, result, override, connection=connection)
 
     def _heal_connected_placeholder_run(
         self,
@@ -1607,7 +1639,8 @@ class CatalogStore:
         }
 
     def _sync_file_catalog_entity(
-        self, file_id: int, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None
+        self, file_id: int, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None,
+        *, connection: sqlite3.Connection | None = None,
     ) -> None:
         override = override or {}
         recommendation = dict(result.get("recommendation") or {})
@@ -1624,7 +1657,9 @@ class CatalogStore:
             recommendation["isbns"] = [override["isbn"]] if override["isbn"] else []
         if override.get("recordType"):
             recommendation["record_type"] = "single_issue" if override["recordType"] == "issue" else "collected_edition"
-        with self._write_lock, self._connect() as connection:
+        # Rebind so the body below is unchanged whether the transaction is ours
+        # or the caller's.
+        with self._borrowed_write(connection) as connection:
             identity = connection.execute("SELECT * FROM file_identities WHERE file_id=?", (file_id,)).fetchone()
             if not identity:
                 return
