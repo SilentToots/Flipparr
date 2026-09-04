@@ -157,6 +157,10 @@ _PROVIDER_MIN_INTERVAL_SECONDS = {
     # Comic Vine requires burst control in addition to its hourly resource
     # quota.  Cached series identifiers keep sustained traffic under that cap.
     "comic_vine": max(1.1, float(os.environ.get("COMICARR_COMIC_VINE_MIN_INTERVAL_SECONDS", "1.1"))),
+    # GCD documents no fixed anonymous rate but explicitly throttles anonymous
+    # API traffic; this is the same cushion approach as the other providers,
+    # not a number GCD publishes.
+    "gcd": max(1.5, float(os.environ.get("COMICARR_GCD_MIN_INTERVAL_SECONDS", "1.5"))),
 }
 CATALOG_DATABASE_PATH = Path(
     os.environ.get("COMICARR_DATABASE", str(Path(__file__).parent / ".data" / "comicarr.db"))
@@ -242,7 +246,7 @@ PROVIDER_DEFINITIONS = {
     "gcd": {
         "name": "Grand Comics Database", "credentialField": None,
         "capabilities": ["Series structure", "Issue records", "Volume records"],
-        "description": "Built-in anonymous catalog source. No account or API key is required.",
+        "description": "Built-in anonymous catalog source. No account or API key is required. Responses are cached to disk and reused until they age out, so a re-scan of series you've already matched does not repeat the same lookups.",
         "defaultEnabled": True, "defaultPriority": 10,
     },
     "metron": {
@@ -435,13 +439,24 @@ def _provider_cache_key(provider_id: str, url: str, credential: str) -> str:
     return f"{provider_id}:{credential_scope}:{safe_url}"
 
 
-def _provider_cache_ttl(url: str) -> int:
+def _provider_cache_ttl(url: str, provider_id: str | None = None) -> int:
     """Keep stable identifiers longer than issue lists for ongoing runs."""
     path = urllib.parse.urlsplit(url).path.casefold()
     if "/search/" in path or path.rstrip("/").endswith("/series"):
         return 7 * 24 * 60 * 60
     if "issue_list" in path or path.rstrip("/").endswith("/issues"):
         return 6 * 60 * 60
+    if provider_id == "gcd":
+        # GCD's URL shapes don't match the generic patterns above:
+        # /series/name/{query}/ is a search, /series/{id}/ and /issue/{id}/
+        # are stable identity for published, rarely-revised comics, and
+        # /series/{id}/overview/ enumerates a run's issues (can grow).
+        if "/series/name/" in path:
+            return 7 * 24 * 60 * 60
+        if "/overview" in path:
+            return 6 * 60 * 60
+        if re.search(r"/(?:series|issue)/\d+/?$", path):
+            return 7 * 24 * 60 * 60
     return 24 * 60 * 60
 
 
@@ -511,7 +526,7 @@ def fetch_provider_json(
 ) -> Any:
     """Cache, coalesce, and globally pace authenticated metadata requests."""
     key = _provider_cache_key(provider_id, url, credential)
-    ttl_seconds = _provider_cache_ttl(url)
+    ttl_seconds = _provider_cache_ttl(url, provider_id)
     stale_entry: dict[str, Any] | None = None
     used_stale_cache = False
     while True:
@@ -2451,8 +2466,12 @@ def normalized_title(value: str | None) -> str:
 
 
 def fetch_gcd_json(url: str) -> Any:
-    """Cache GCD responses so a batch does not repeat anonymous API calls."""
-    return fetch_cached_json(url, timeout=12.0)
+    """Cache GCD responses on disk under /config so lookups persist across
+    restarts and scans, not just within one process. Reuses the same
+    persistent, rate-limited, stale-on-error-fallback cache already built for
+    Metron and Comic Vine (fetch_provider_json) rather than the weaker
+    in-memory-first remote cache. GCD is anonymous, so credential is ""."""
+    return fetch_provider_json("gcd", url, "", timeout=12.0)
 
 
 def gcd_title_parts(parsed: ParsedFile) -> tuple[str, str]:
