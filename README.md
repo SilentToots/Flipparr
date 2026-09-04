@@ -1,40 +1,38 @@
 # SonicBoom
 
-SonicBoom is a pre-release, self-hosted comic catalog and acquisition product.
+SonicBoom is a pre-release, self-hosted comic catalog and acquisition product:
+it inventories the comics you already own, matches them against metadata
+providers, and can search and download missing issues through Prowlarr and
+SABnzbd.
 
-The V2 release target supports both Issues and collected editions in local
-library intake and organization. Automatic provider search and downloader
-acquisition are supported for Issues only; collected editions are imported from
-files the user already owns. See `docs/INDEPENDENT_FORMATS_SCOPE_V2.md` for the
-authoritative scope. The V1 behavior documented below remains maintenance-only.
-It is being developed toward an installable user release, not as a POC or UI
-prototype. The approved delivery approach, supported first-release target, and
-release gates are documented in [`docs/RELEASE_TRACK.md`](docs/RELEASE_TRACK.md).
+**Start here: [`docs/OPERATING.md`](docs/OPERATING.md)** — install,
+configuration, authentication, backup and restore, upgrade and rollback,
+troubleshooting, and known limitations.
 
-The current V1 implementation is retained as a maintenance and regression
-reference while the release foundation and Catalog Core v2 are built directly
-in their target architecture. The existing React directory remains named
-`v1-prototype/` for repository continuity; the name does not define the current
-product stage. Catalog v2 is specified in
-[`docs/CATALOG_CORE_V2.md`](docs/CATALOG_CORE_V2.md). The isolated Gate 1
-runtime, configuration, migration, job, health, backup, and verification
-contracts are documented in
-[`docs/V2_RELEASE_FOUNDATION.md`](docs/V2_RELEASE_FOUNDATION.md).
-The in-progress Gate 2 reference-catalog and golden-library contracts are
-documented in
-[`docs/GATE_2_CATALOG_CONTRACT.md`](docs/GATE_2_CATALOG_CONTRACT.md).
-The resumable provider adapter and rate-control contract is documented in
-[`docs/PROVIDER_IMPORT_V2.md`](docs/PROVIDER_IMPORT_V2.md).
-Its versioned, attributed GCD local-export adapter is implemented in V2; the
-separate bounded extractor is now implemented and contract-tested. A real local
-GCD snapshot smoke test and authenticated Metron/Comic Vine adapters remain
-Gate 2 work.
+Single issues and collected editions are both catalogued. Automatic provider
+search and downloader acquisition are for single issues only; collected editions
+are imported from files you already own, and are an opt-in feature because their
+metadata and file availability are markedly weaker. Release gates and the
+supported first-release target are in
+[`docs/RELEASE_TRACK.md`](docs/RELEASE_TRACK.md).
+
+### Direction, 2026-09-03
+
+The product is built forward from the implementation in `app.py`,
+`catalog_store.py` and `v1-prototype/`, on the `v1-forward` branch. A separate
+"V2" catalog rewrite (`sonicboom_v2/`, `catalog_core_v2/`, `sonicboom_ui/`) was
+parked at tag `v2-parked`; those trees and the `*_V2.md` design documents are
+historical reference, not the build target. The reasoning, with measurements, is
+in [`docs/V1_PIVOT_ASSESSMENT.md`](docs/V1_PIVOT_ASSESSMENT.md).
+
+The `v1-prototype/` directory name is repository continuity only. It is the
+production frontend.
 
 ## Current V1 reference implementation
 
 The catalog stores its local database at `.data/comicarr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
 
-Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. SonicBoom then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. The library banner identifies a provider-requested pause, shows the automatic retry time, and points users to optional Metron or Comic Vine setup instead of looking stuck. Successful remote responses are cached for seven days under the configured database directory. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
+Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. SonicBoom then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. The library banner identifies a provider-requested pause, shows the automatic retry time, and points users to optional Metron or Comic Vine setup instead of looking stuck. Successful remote responses are cached on disk under the configured database directory and reused across restarts, with a longer lifetime for stable identity lookups than for issue lists. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
 
 ## Acquisition services
 
@@ -219,7 +217,7 @@ GET /api/batch?folder=/absolute/path/to/comics&recursive=1
 ## Current limitations
 
 - Filename parsing is heuristic and intentionally reports ambiguity rather than silently choosing a match.
-- Open Library and GCD require internet access and may return incomplete or conflicting records. Anonymous GCD access is subject to hourly rate limits, so responses are cached for the life of the app process.
+- Open Library and GCD require internet access and may return incomplete or conflicting records. Anonymous GCD access is rate limited, so responses are cached on disk under `/config` and reused across restarts, and requests are paced per provider.
 - Google Books is disabled by default. To opt in, create a Google Books API key and start the app with `GOOGLE_BOOKS_API_KEY=your_key python3 app.py`.
 - The current GCD API exposes edition and story data but not a complete explicit collected-edition-to-source-issue relationship. Inferred ranges remain clearly labeled until the forthcoming API reprint support is available.
 - GCD issue-list sync can use a verified owned-issue anchor or a run explicitly confirmed through **Find series run**. Multi-run franchises still require separate canonical run relationships. Exact issue dates are retained when returned, but provider gaps and rate limits can leave some issues in an explicit release-date-unknown state.
