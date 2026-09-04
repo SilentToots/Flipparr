@@ -1343,3 +1343,37 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .metadata-setup-actions details { margin: 0; }
 .metadata-setup-action { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 10px; border: 1px solid #4c3d7b; border-radius: 999px; background: transparent; color: #c5b6ff; font-size: .74rem; font-weight: 600; cursor: pointer; transition: background var(--motion-duration-fast) ease; }
 .metadata-setup-action:hover { background: #221d3a; }
+
+/* ---------------------------------------------------------------------------
+   Mobile refinements
+   --------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* iOS Safari zooms the page whenever a focused field is under 16px, which
+     reads as the interface lurching. Controls inherit the body size (~14px),
+     so raise them at touch sizes. Fixing it here rather than with
+     maximum-scale on the viewport, which would also block pinch zoom. */
+  input, select, textarea { font-size: 16px; }
+  .search-field input { font-size: 16px; }
+
+  /* The view toggle had no assigned column, so it auto-placed into column one
+     and pushed the sort field onto its own row. Give every control a column. */
+  .library-tools { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
+  .view-toggle { grid-column: 1; justify-self: start; }
+  .sort-field { grid-column: 2; min-width: 0; }
+  .sort-field > span { display: none; }          /* the select is self-evident */
+  .sort-field select { width: 100%; padding-right: 28px; }
+  .filter-button { grid-column: 3; margin-left: 0; white-space: nowrap; }
+  .scope-toggle { grid-column: 1 / -1; }
+
+  /* Settings rows: the status pill, the description and the action were all
+     competing on one line. Stack them and let each breathe. */
+  .toggle-row, .provider-row { min-height: 0; padding: 16px 0; gap: 14px; }
+  .provider-row { flex-direction: column; align-items: stretch; }
+  .provider-row > svg { display: none; }
+  .provider-row > span { gap: 8px; }
+  .provider-row button { align-self: flex-start; min-height: var(--control-height-md); padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
+  .provider-title-line { gap: 10px; row-gap: 6px; }
+  .provider-state { padding: 4px 9px; font-size: .64rem; }
+  .provider-priority { align-self: flex-start; }
+  .toggle-row small, .provider-row small { line-height: 1.45; }
+}

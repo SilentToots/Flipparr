@@ -146,6 +146,49 @@ const openDialogs = [];
 // on <body>, so its first control sits behind every focusable element on the
 // page and there is no way to leave from the keyboard. Attach the returned ref
 // to the dialog element and give it role="dialog", aria-modal and a name.
+// Attaches native touch listeners to the node the dialog already holds a ref
+// to. Native rather than React's onTouch* props: gesture handling wants the
+// real event stream, and passive listeners keep scrolling smooth.
+function useSwipeToDismiss(ref, onClose) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    let start = null;
+    function onStart(event) {
+      if (event.touches.length !== 1) { start = null; return; }
+      // A swipe beginning on something scrollable sideways -- the tab strip,
+      // a wide table -- belongs to that element, not to the drawer.
+      let el = event.target;
+      while (el && el !== node) {
+        if (el.scrollWidth > el.clientWidth + 1) { start = null; return; }
+        el = el.parentElement;
+      }
+      const touch = event.touches[0];
+      start = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+    }
+    function onEnd(event) {
+      const from = start;
+      start = null;
+      const touch = event.changedTouches && event.changedTouches[0];
+      if (!from || !touch) return;
+      const dx = touch.clientX - from.x;
+      const dy = touch.clientY - from.y;
+      // Rightward, clearly horizontal, and a flick rather than a slow drag.
+      if (dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.8 && Date.now() - from.at < 800) {
+        closeRef.current?.();
+      }
+    }
+    node.addEventListener("touchstart", onStart, { passive: true });
+    node.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      node.removeEventListener("touchstart", onStart);
+      node.removeEventListener("touchend", onEnd);
+    };
+  }, [ref]);
+}
+
 function useDialog(onClose) {
   const ref = useRef(null);
   const closeRef = useRef(onClose);
@@ -1416,6 +1459,7 @@ function CollectionManagement({ series, families, allSeries, onCreateFamily, onS
 function SeriesDrawer({ series, families, allSeries, parentCollection, onBack, onClose, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onEditIssue, onReplace }) {
   const dialogRef = useDialog(onClose);
   const editionsOn = useCollectedEditions();
+  useSwipeToDismiss(dialogRef, onClose);
   const [alias, setAlias] = useState("");
   const [savingAlias, setSavingAlias] = useState(false);
   const [aliasError, setAliasError] = useState("");
@@ -1489,6 +1533,7 @@ function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
 
 function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructure, onOpenSeries, onOpenContents, onRequest, onViewRequests, requestBusy, onEditIssue }) {
   const dialogRef = useDialog(onClose);
+  useSwipeToDismiss(dialogRef, onClose);
   if (!collection) return null;
   const arcs = collection.storyArcs || [];
   const files = collection.runs.flatMap((run) => (run.fileDetails || []).map((file) => ({ ...file, run })));
