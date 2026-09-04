@@ -51,9 +51,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    field height so the pair reads as one control group. */
 .search-row { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
 .search-row .search-field { flex: 1 1 auto; }
-.search-submit { flex: 0 0 auto; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #3d4760; border-radius: var(--radius-sm); background: #1b2331; color: #c8cfdb; cursor: pointer; transition: background var(--motion-duration-fast) ease, border-color var(--motion-duration-fast) ease; }
-.search-submit:hover:not(:disabled) { border-color: #6857aa; background: #28203f; color: #e1d9ff; }
-.search-submit:disabled { opacity: .55; cursor: default; }
+/* align-self: stretch rather than a fixed height, so the button always matches
+   the field whatever height the field takes at a given breakpoint. It carries
+   the accent because it is the action in this pair: against the field it read
+   at 1.19:1, which is barely a separation at all. */
+.search-submit { flex: 0 0 auto; width: 48px; min-height: var(--control-height-md); align-self: stretch; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm); background: var(--violet); color: #fff; cursor: pointer; transition: background var(--motion-duration-fast) ease, transform var(--motion-duration-fast) ease; }
+.search-submit:hover:not(:disabled) { background: var(--color-violet-500); }
+.search-submit:active:not(:disabled) { transform: translateY(1px); }
+.search-submit:disabled { background: #222a3b; color: #6f7b8d; cursor: default; }
 .library-search { position: relative; min-width: 0; width: 100%; z-index: 30; }
 .discovery-results { position: absolute; top: 51px; left: 0; width: min(690px, calc(100vw - 310px)); max-height: min(620px, calc(100vh - 105px)); overflow-y: auto; border: 1px solid #354055; border-radius: 10px; background: #111823; box-shadow: 0 22px 60px rgba(0,0,0,.55); }
 .discovery-results > header { min-height: 59px; padding: 11px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: #171f2c; }
