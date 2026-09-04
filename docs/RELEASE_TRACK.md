@@ -4,7 +4,18 @@ Decision date: 2026-08-29
 
 Status: approved direction for the first user release
 
-Scope amended 2026-09-02: [one run with independent Issues and collected editions](INDEPENDENT_FORMATS_SCOPE_V2.md).
+**Direction change 2026-09-03 — V1-forward.** The from-scratch V2 catalog rewrite
+is parked (tag `v2-parked`); the product is taken forward from V1 on the
+`v1-forward` branch. See [`V1_PIVOT_ASSESSMENT.md`](V1_PIVOT_ASSESSMENT.md) for
+the evidence and the phased plan. The **release definition of done and the
+delivery gates below still apply** — clean-install, upgrade, backup/restore,
+rollback, restart-recovery, provider-outage, realistic-library intake and intake
+effectiveness — measured against the V1-forward Docker image (`Dockerfile`). The
+Gate 2 "Catalog Core v2 correctness" history further down is a record of the
+parked line, not a current requirement. The "V2 transition / incremental
+replacement" strategy in this section is superseded by the V1-forward phases.
+
+Scope amended 2026-09-02, carried into V1-forward: [one run with independent Issues and collected editions](INDEPENDENT_FORMATS_SCOPE_V2.md); collected-edition handling is an opt-in feature (default off).
 Both formats remain first-class local-library intake and ownership targets;
 automatic monitoring, provider search and downloader acquisition are Issue-only
 for the first release. Automatic issue-to-volume contents mapping, missing-Volume
@@ -29,22 +40,23 @@ Authenticated provider dumps and user credentials are never release assets;
 where redistribution is not permitted, users configure or import the source
 locally through a documented adapter.
 
-The V2 transition will use an incremental replacement strategy:
+The path to the first release (V1-forward, 2026-09-03) is:
 
-1. Freeze V1 except for security fixes, data-loss risks, and V2 validation
-   blockers.
-2. Build new significant functionality directly in the V2 target foundation.
-3. Keep stable UI and integration behavior available through explicit adapters
-   while individual capabilities move to V2.
-4. Re-index source comic files into a clean V2 database rather than migrating
-   semantically dirty canonical rows.
-5. Shadow-test the new path, compare deterministic results, and retain a bounded
-   configuration-level rollback to V1 until release gates pass.
+0. Park the V2 rewrite at tag `v2-parked`; take V1 forward on `v1-forward`;
+   stand up V1 QA on the NAS from `Dockerfile` against the real library.
+1. Collected-edition handling becomes an opt-in setting (default off).
+2. Restyle the V1 frontend to the parked V2 visual system and apply the
+   Library-health / one-Fix-match / service-card UX decisions.
+3. Targeted hardening in place: HTTP layer to a framework, split the
+   `app.py` / `catalog_store.py` monoliths, add an era-identity guard at match
+   time and a user "merge runs" action, and the write-only/test-connection
+   secret pattern.
+4. Run the delivery gates below and measure intake effectiveness on the real
+   library.
 
-This avoids two expensive failure modes: polishing architecture that is already
-scheduled for removal, and replacing the entire application in one unvalidated
-cutover. The temporary compatibility layer is transition infrastructure and
-must be removed after the final capability moves to V2.
+The parked V2 trees (`sonicboom_v2/`, `catalog_core_v2/`, `sonicboom_ui/`) and
+`docs/*_V2.md` remain in the repo as reference until a dedicated cleanup; they
+are not built or shipped.
 
 ## Why this is the best-fit approach
 
