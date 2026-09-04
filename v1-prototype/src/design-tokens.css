@@ -58,13 +58,28 @@
   --radius: 11px;
   --radius-lg: 15px;
   --radius-pill: 999px;
+  /* Type scale. The stylesheet previously carried 54 distinct font sizes, a
+     dozen of them inside a 0.11rem band -- differences too small to read as
+     deliberate, but plainly untidy when two land side by side. These eight
+     steps replace them. Sized up modestly from the old values, which ran to
+     9-11px in places and were hard to read on a phone. */
+  --text-2xs: .6875rem;   /* 11px */
+  --text-xs: .75rem;      /* 12px */
+  --text-sm: .8125rem;    /* 13px */
+  --text-md: .875rem;     /* 14px */
+  --text-base: .9375rem;  /* 15px */
+  --text-lg: 1.0625rem;   /* 17px */
+  --text-xl: 1.25rem;     /* 20px */
+  --text-2xl: 1.5rem;     /* 24px */
+  --text-3xl: 1.75rem;    /* 28px */
+
   --control-height-sm: 32px;
   --control-height-md: 42px;
   --control-gap: var(--space-2);
   --control-padding-sm: 10px;
   --control-padding-md: var(--space-4);
-  --control-font-sm: .72rem;
-  --control-font-md: .83rem;
+  --control-font-sm: var(--text-xs);
+  --control-font-md: var(--text-sm);
 
   /* Button component tokens */
   --button-primary-bg: var(--violet);
@@ -85,7 +100,7 @@
   /* Status component tokens */
   --status-height: 23px;
   --status-padding-inline: var(--space-2);
-  --status-font-size: .69rem;
+  --status-font-size: var(--text-2xs);
   --status-gap: var(--space-1);
   --status-amber-bg: var(--amber-soft);
   --status-amber-text: #ffd275;

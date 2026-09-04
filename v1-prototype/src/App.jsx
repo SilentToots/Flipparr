@@ -149,6 +149,22 @@ const openDialogs = [];
 // Attaches native touch listeners to the node the dialog already holds a ref
 // to. Native rather than React's onTouch* props: gesture handling wants the
 // real event stream, and passive listeners keep scrolling smooth.
+// Keeps a drawer mounted long enough for its exit animation to play, then
+// hands control back to the parent. Returns the class to apply and a close
+// function to use everywhere in place of the raw onClose.
+function useDrawerExit(onClose, duration = 200) {
+  const [closing, setClosing] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  function requestClose() {
+    const instant = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (instant || closing) { onClose(); return; }
+    setClosing(true);
+    timer.current = window.setTimeout(onClose, duration);
+  }
+  return { closing, requestClose };
+}
+
 function useSwipeToDismiss(ref, onClose) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -407,12 +423,17 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
 }
 
 function SearchBar({ value, onChange, onSubmit, actionLabel = "Search online", busy = false, placeholder = "Search series, issue, or creator…", label = "Search" }) {
-  return <div className="search-field"><MagnifyingGlass size={20} /><input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => {
+  // Submit sits outside the field and carries the magnifier, so the field no
+  // longer repeats it. actionLabel becomes the button's accessible name, since
+  // an icon-only control has no visible text of its own.
+  const field = <div className="search-field"><input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => {
     if (event.key === "Enter" && onSubmit) {
       event.preventDefault();
       onSubmit();
     }
-  }} placeholder={placeholder} />{onSubmit ? <Button type="button" size="sm" busy={busy} busyLabel="Searching…" disabled={value.trim().length < 2} onClick={onSubmit} icon={<MagnifyingGlass size={15} />}>{actionLabel}</Button> : null}</div>;
+  }} placeholder={placeholder} /></div>;
+  if (!onSubmit) return field;
+  return <div className="search-row">{field}<button type="button" className="search-submit" aria-label={busy ? "Searching…" : actionLabel} title={actionLabel} disabled={busy || value.trim().length < 2} aria-busy={busy} onClick={onSubmit}>{busy ? <LoadingSpinner size={18} /> : <MagnifyingGlass size={19} />}</button></div>;
 }
 
 const LoadingSpinner = LoadingIndicator;
@@ -1457,9 +1478,10 @@ function CollectionManagement({ series, families, allSeries, onCreateFamily, onS
 }
 
 function SeriesDrawer({ series, families, allSeries, parentCollection, onBack, onClose, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onEditIssue, onReplace }) {
-  const dialogRef = useDialog(onClose);
+  const { closing, requestClose } = useDrawerExit(onClose);
+  const dialogRef = useDialog(requestClose);
   const editionsOn = useCollectedEditions();
-  useSwipeToDismiss(dialogRef, onClose);
+  useSwipeToDismiss(dialogRef, requestClose);
   const [alias, setAlias] = useState("");
   const [savingAlias, setSavingAlias] = useState(false);
   const [aliasError, setAliasError] = useState("");
@@ -1515,7 +1537,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, onBack, o
   }));
   const isFollowing = series.monitoringStatus === "monitored";
   const wantedIssueCount = Math.max(0, Number(series.releaseSummary?.releasedMissing ?? series.unowned ?? Math.max(0, (series.total || 0) - (series.owned || 0))));
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="series-drawer" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>{parentCollection ? <button className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}<button className="modal-close" onClick={onClose} aria-label="Close series details"><X size={20} /></button><div className="drawer-identity"><div className="drawer-cover"><SeriesCover series={series} /></div><div><h2 id="series-drawer-title">{series.title} <em>({series.year})</em></h2><p>{series.publisher}</p><div className="drawer-statuses"><PublicationStatus series={series} />{isFollowing ? <span className="status-chip green"><CheckCircle size={13} weight="fill" /> Following</span> : null}{series.family ? <button className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div></div></div><div className="drawer-facts"><span><strong>{series.fileDetails?.length ?? series.owned}</strong>Comic files</span><span><strong>{series.inventory?.directIssueFiles ?? 0}</strong>Single issues</span>{editionsOn ? <span><strong>{series.inventory?.editionCount ?? series.editions?.length ?? 0}</strong>Volumes</span> : null}<span><strong>{identityStrength}</strong>Match confidence</span></div><nav className="drawer-tabs" aria-label="Series details">{[["overview", "Overview"], ["issues", `Issues (${series.issues?.length ?? 0})`], ...(editionsOn ? [["editions", `Volumes (${series.editions?.length ?? 0})`]] : []), ["files", `Files (${series.fileDetails?.length ?? 0})`], ["aliases", "Aliases"], ["family", "Collection"]].map(([id, label]) => <button className={tab === id ? "active" : ""} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav><div className="drawer-tab-content">{tab === "overview" ? <><h3>Your collection</h3><Ownership series={series} /><section className="coverage-overview"><span><strong>{series.issues?.filter((issue) => issue.directOwned).length ?? 0}</strong>Single issues owned</span><span><strong>{series.issues?.filter((issue) => issue.collectionOwned).length ?? 0}</strong>Issues in volumes</span>{editionsOn ? <span><strong>{series.editions?.reduce((count, edition) => count + (edition.coverageGroups?.filter((claim) => !claim.resolved).length ?? 0), 0)}</strong>Volume contents to verify</span> : null}</section><IssueCatalogCard series={series} catalogKnown={catalogKnown} syncing={syncingIssues} error={syncError} lastResult={lastSyncResult} onSync={syncIssues} onReviewFiles={() => setTab("files")} onFindRun={onFindRun} /><details className="advanced-collection-tools"><summary><Gear size={15} /> Advanced tools</summary><p>If one publication run was accidentally split into two entries, preview and combine them without changing files on disk.</p><button onClick={() => onMergeRun(series)}><Books size={16} /> Combine duplicate run</button></details></> : null}{tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} /> : null}{tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}{tab === "files" ? <FileInventory files={series.fileDetails} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}{tab === "aliases" ? <><div className="alias-list">{series.aliases?.length ? series.aliases.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>) : <p>No alternate titles recorded.</p>}</div><form className="alias-form" onSubmit={saveAlias}><label><span>Add a title alias</span><div><input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="Alternate series title…" /><button disabled={savingAlias || !alias.trim()} aria-busy={savingAlias}>{savingAlias ? <LoadingSpinner size={18} /> : <Plus size={18} />} Add</button></div></label>{aliasError ? <small className="form-error" role="alert">{aliasError}</small> : <small>Confirmed aliases are used during future scans and searches.</small>}</form></> : null}{tab === "family" ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}</div><div className="drawer-actions"><button className={isFollowing ? "ghost-button" : "primary-button"} disabled={requestBusy || (isFollowing && wantedIssueCount === 0)} onClick={isFollowing ? onViewRequests : onRequest}>{requestBusy ? <LoadingSpinner size={19} /> : isFollowing ? <CheckCircle size={19} weight="fill" /> : <ChatCircle size={19} />} {requestBusy ? "Following…" : isFollowing ? wantedIssueCount ? `View ${wantedIssueCount} wanted issue${wantedIssueCount === 1 ? "" : "s"}` : "Following · up to date" : "Follow run"}</button><button className="ghost-button" onClick={() => setTab("files")}><Eye size={18} /> View files</button></div></aside></div>;
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>{parentCollection ? <button className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}<button className="modal-close" onClick={requestClose} aria-label="Close series details"><X size={20} /></button><div className="drawer-identity"><div className="drawer-cover"><SeriesCover series={series} /></div><div><h2 id="series-drawer-title">{series.title} <em>({series.year})</em></h2><p>{series.publisher}</p><div className="drawer-statuses"><PublicationStatus series={series} />{isFollowing ? <span className="status-chip green"><CheckCircle size={13} weight="fill" /> Following</span> : null}{series.family ? <button className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div></div></div><div className="drawer-facts"><span><strong>{series.fileDetails?.length ?? series.owned}</strong>Comic files</span><span><strong>{series.inventory?.directIssueFiles ?? 0}</strong>Single issues</span>{editionsOn ? <span><strong>{series.inventory?.editionCount ?? series.editions?.length ?? 0}</strong>Volumes</span> : null}<span><strong>{identityStrength}</strong>Match confidence</span></div><nav className="drawer-tabs" aria-label="Series details">{[["overview", "Overview"], ["issues", `Issues (${series.issues?.length ?? 0})`], ...(editionsOn ? [["editions", `Volumes (${series.editions?.length ?? 0})`]] : []), ["files", `Files (${series.fileDetails?.length ?? 0})`], ["aliases", "Aliases"], ["family", "Collection"]].map(([id, label]) => <button className={tab === id ? "active" : ""} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav><div className="drawer-tab-content">{tab === "overview" ? <><h3>Your collection</h3><Ownership series={series} /><section className="coverage-overview"><span><strong>{series.issues?.filter((issue) => issue.directOwned).length ?? 0}</strong>Single issues owned</span><span><strong>{series.issues?.filter((issue) => issue.collectionOwned).length ?? 0}</strong>Issues in volumes</span>{editionsOn ? <span><strong>{series.editions?.reduce((count, edition) => count + (edition.coverageGroups?.filter((claim) => !claim.resolved).length ?? 0), 0)}</strong>Volume contents to verify</span> : null}</section><IssueCatalogCard series={series} catalogKnown={catalogKnown} syncing={syncingIssues} error={syncError} lastResult={lastSyncResult} onSync={syncIssues} onReviewFiles={() => setTab("files")} onFindRun={onFindRun} /><details className="advanced-collection-tools"><summary><Gear size={15} /> Advanced tools</summary><p>If one publication run was accidentally split into two entries, preview and combine them without changing files on disk.</p><button onClick={() => onMergeRun(series)}><Books size={16} /> Combine duplicate run</button></details></> : null}{tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} /> : null}{tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}{tab === "files" ? <FileInventory files={series.fileDetails} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}{tab === "aliases" ? <><div className="alias-list">{series.aliases?.length ? series.aliases.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>) : <p>No alternate titles recorded.</p>}</div><form className="alias-form" onSubmit={saveAlias}><label><span>Add a title alias</span><div><input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="Alternate series title…" /><button disabled={savingAlias || !alias.trim()} aria-busy={savingAlias}>{savingAlias ? <LoadingSpinner size={18} /> : <Plus size={18} />} Add</button></div></label>{aliasError ? <small className="form-error" role="alert">{aliasError}</small> : <small>Confirmed aliases are used during future scans and searches.</small>}</form></> : null}{tab === "family" ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}</div><div className="drawer-actions"><button className={isFollowing ? "ghost-button" : "primary-button"} disabled={requestBusy || (isFollowing && wantedIssueCount === 0)} onClick={isFollowing ? onViewRequests : onRequest}>{requestBusy ? <LoadingSpinner size={19} /> : isFollowing ? <CheckCircle size={19} weight="fill" /> : <ChatCircle size={19} />} {requestBusy ? "Following…" : isFollowing ? wantedIssueCount ? `View ${wantedIssueCount} wanted issue${wantedIssueCount === 1 ? "" : "s"}` : "Following · up to date" : "Follow run"}</button><button className="ghost-button" onClick={() => setTab("files")}><Eye size={18} /> View files</button></div></aside></div>;
 }
 
 function SeriesMergeWorkbench({ data, busy, error, onClose, onTargetChange, onConfirm }) {
@@ -1532,8 +1554,9 @@ function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
 }
 
 function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructure, onOpenSeries, onOpenContents, onRequest, onViewRequests, requestBusy, onEditIssue }) {
-  const dialogRef = useDialog(onClose);
-  useSwipeToDismiss(dialogRef, onClose);
+  const { closing, requestClose } = useDrawerExit(onClose);
+  const dialogRef = useDialog(requestClose);
+  useSwipeToDismiss(dialogRef, requestClose);
   if (!collection) return null;
   const arcs = collection.storyArcs || [];
   const files = collection.runs.flatMap((run) => (run.fileDetails || []).map((file) => ({ ...file, run })));
