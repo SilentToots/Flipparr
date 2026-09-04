@@ -12,13 +12,17 @@ import concurrent.futures
 import difflib
 import gzip
 import hashlib
+import hmac
 import html
+import http.cookies
 import io
+import ipaddress
 import json
 import mimetypes
 import os
 import posixpath
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -71,6 +75,21 @@ SETTINGS_CONFIG_PATH = Path(
         "COMICARR_SETTINGS_CONFIG",
         str(Path(__file__).parent / ".data" / "settings.json"),
     )
+)
+AUTH_CONFIG_PATH = Path(
+    os.environ.get(
+        "COMICARR_AUTH_CONFIG",
+        str(Path(__file__).parent / ".data" / "auth.json"),
+    )
+)
+# Addresses whose X-Forwarded-For may be believed. A reverse proxy makes every
+# request look like it came from the proxy, so without this the "local
+# addresses" bypass would treat the whole internet as local. Empty by default:
+# an unconfigured deployment trusts nothing and falls back to the real peer.
+TRUSTED_PROXIES = tuple(
+    entry.strip()
+    for entry in os.environ.get("COMICARR_TRUSTED_PROXIES", "").split(",")
+    if entry.strip()
 )
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
 GCD_API_BASE = "https://www.comics.org/api"
@@ -130,6 +149,149 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
         tmp.write_text(json.dumps(current, indent=2, sort_keys=True))
         tmp.replace(SETTINGS_CONFIG_PATH)
         return current
+
+
+_AUTH_CONFIG_LOCK = threading.Lock()
+_AUTH_METHODS = frozenset({"none", "forms"})
+_SESSION_COOKIE = "sonicboom_session"
+_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
+_AUTH_EXEMPT_PATHS = frozenset({"/healthz", "/api/v1/auth/login", "/api/v1/auth/status"})
+# Legacy server-rendered view; it prints catalog data, so it is not public.
+_PROTECTED_PATHS = frozenset({"/results"})
+
+
+def _auth_defaults() -> dict[str, Any]:
+    return {
+        "method": "none",
+        # Sonarr/Radarr's "disabled for local addresses": convenient on a
+        # trusted LAN or tailnet, and only safe because _client_address below
+        # refuses to believe a forwarded header from an untrusted peer.
+        "localBypass": True,
+        "username": "",
+        "passwordHash": "",
+        "sessionSecret": "",
+    }
+
+
+def hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    derived = hashlib.scrypt(
+        password.encode("utf-8"), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
+    )
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt.hex()}${derived.hex()}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        scheme, n, r, pp, salt_hex, digest_hex = str(encoded or "").split("$")
+        if scheme != "scrypt":
+            return False
+        derived = hashlib.scrypt(
+            password.encode("utf-8"), salt=bytes.fromhex(salt_hex),
+            n=int(n), r=int(r), p=int(pp), dklen=len(bytes.fromhex(digest_hex)),
+        )
+    except (ValueError, TypeError):
+        return False
+    # Constant time: a timing difference here leaks the password one byte at a time.
+    return hmac.compare_digest(derived, bytes.fromhex(digest_hex))
+
+
+def load_auth_config() -> dict[str, Any]:
+    defaults = _auth_defaults()
+    with _AUTH_CONFIG_LOCK:
+        try:
+            stored = json.loads(AUTH_CONFIG_PATH.read_text())
+        except (OSError, ValueError):
+            stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    merged = {**defaults, **{k: v for k, v in stored.items() if k in defaults}}
+    if str(merged.get("method")) not in _AUTH_METHODS:
+        merged["method"] = "none"
+    return merged
+
+
+def save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
+    current = load_auth_config()
+    method = str(patch.get("method", current["method"]))
+    if method not in _AUTH_METHODS:
+        raise ValueError("Authentication method must be 'none' or 'forms'")
+    username = str(patch.get("username", current["username"]) or "").strip()
+    password = patch.get("password")
+    if method == "forms":
+        if not username:
+            raise ValueError("A username is required to enable authentication")
+        if password is not None:
+            if not isinstance(password, str) or len(password) < 8:
+                raise ValueError("Password must be at least 8 characters")
+            current["passwordHash"] = hash_password(password)
+        if not current["passwordHash"]:
+            raise ValueError("A password is required to enable authentication")
+    current["method"] = method
+    current["username"] = username
+    if "localBypass" in patch:
+        if not isinstance(patch["localBypass"], bool):
+            raise ValueError("localBypass must be true or false")
+        current["localBypass"] = patch["localBypass"]
+    if not current["sessionSecret"]:
+        current["sessionSecret"] = secrets.token_urlsafe(32)
+    with _AUTH_CONFIG_LOCK:
+        AUTH_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = AUTH_CONFIG_PATH.parent / (AUTH_CONFIG_PATH.name + ".tmp")
+        tmp.write_text(json.dumps(current, indent=2))
+        os.chmod(tmp, 0o600)
+        tmp.replace(AUTH_CONFIG_PATH)
+    return current
+
+
+def public_auth_config() -> dict[str, Any]:
+    """Never expose the password hash or the session secret."""
+    config = load_auth_config()
+    return {
+        "method": config["method"],
+        "localBypass": bool(config["localBypass"]),
+        "username": config["username"],
+        "configured": bool(config["passwordHash"]),
+    }
+
+
+def issue_session_token(config: dict[str, Any]) -> str:
+    expires = int(time.time()) + _SESSION_TTL_SECONDS
+    payload = f"{config['username']}:{expires}"
+    signature = hmac.new(
+        config["sessionSecret"].encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"{payload}:{signature}"
+
+
+def session_token_valid(token: str, config: dict[str, Any]) -> bool:
+    try:
+        username, expires, signature = str(token or "").rsplit(":", 2)
+    except ValueError:
+        return False
+    if not config.get("sessionSecret"):
+        return False
+    expected = hmac.new(
+        config["sessionSecret"].encode("utf-8"),
+        f"{username}:{expires}".encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return False
+    try:
+        if int(expires) < int(time.time()):
+            return False
+    except ValueError:
+        return False
+    # Renaming the account or rotating the secret invalidates issued sessions.
+    return hmac.compare_digest(username, str(config.get("username") or ""))
+
+
+def is_local_address(address: str) -> bool:
+    try:
+        return ipaddress.ip_address(address).is_private or ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
 
 
 def collected_editions_enabled() -> bool:
@@ -5481,6 +5643,62 @@ class Handler(BaseHTTPRequestHandler):
         self._response_started = True
         super().send_response(code, message)
 
+    def _client_address(self) -> str:
+        """The caller's real address, believing a forwarded header only from a
+        peer we were told to trust.
+
+        This is what keeps the local-address bypass safe. A reverse proxy makes
+        every request arrive from the proxy, so if X-Forwarded-For were trusted
+        unconditionally anyone could send `X-Forwarded-For: 127.0.0.1` and be
+        treated as local — which would silently disable authentication.
+        """
+        peer = self.client_address[0] if self.client_address else ""
+        if peer in TRUSTED_PROXIES:
+            forwarded = self.headers.get("X-Forwarded-For", "")
+            first = forwarded.split(",")[0].strip()
+            if first:
+                return first
+        return peer
+
+    def _request_is_https(self) -> bool:
+        peer = self.client_address[0] if self.client_address else ""
+        if peer in TRUSTED_PROXIES:
+            return self.headers.get("X-Forwarded-Proto", "").strip().lower() == "https"
+        return False
+
+    def _authorized(self, path: str) -> bool:
+        config = load_auth_config()
+        if config["method"] == "none":
+            return True
+        if path in _AUTH_EXEMPT_PATHS:
+            return True
+        protected = path.startswith("/api/") or path in _PROTECTED_PATHS
+        if not protected:
+            # The app shell and its assets must load unauthenticated, or there
+            # is no page on which to present the login form.
+            return True
+        if config["localBypass"] and is_local_address(self._client_address()):
+            return True
+        cookie = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+        morsel = cookie.get(_SESSION_COOKIE)
+        return bool(morsel and session_token_valid(morsel.value, config))
+
+    def _same_origin(self) -> bool:
+        """Reject cross-site state changes.
+
+        SameSite=Lax already stops the browser sending the session cookie on a
+        cross-site POST; this is the second lock, and also covers clients that
+        ignore SameSite.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host", "")
+        try:
+            return urllib.parse.urlsplit(origin).netloc == host
+        except ValueError:
+            return False
+
     def _dispatch(self, route: Callable[[], None]) -> None:
         """Turn an unhandled failure into a JSON 500 rather than a dead socket.
 
@@ -5489,6 +5707,13 @@ class Handler(BaseHTTPRequestHandler):
         the handler and the client sees the connection close with no response
         at all, which is indistinguishable from the server being down.
         """
+        path = urllib.parse.urlparse(self.path).path
+        if not self._authorized(path):
+            self.send_json({"error": "Authentication required"}, 401)
+            return
+        if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():
+            self.send_json({"error": "Cross-site request rejected"}, 403)
+            return
         try:
             route()
         except Exception:
@@ -5513,6 +5738,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_get(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        if parsed_url.path == "/healthz":
+            # Separate from "/" so the container healthcheck keeps working once
+            # authentication is switched on.
+            self.send_json({"status": "ok"})
+            return
+        if parsed_url.path == "/api/v1/auth/status":
+            # Reachable unauthenticated: the app needs to know whether to show a
+            # login form. Deliberately does not reveal the username.
+            config = load_auth_config()
+            self.send_json({
+                "method": config["method"],
+                "authenticated": self._authorized("/api/v1/catalog"),
+            })
+            return
+        if parsed_url.path == "/api/v1/auth":
+            self.send_json(public_auth_config())
+            return
         if parsed_url.path == "/api/v1/catalog":
             self.send_json(catalog_api_payload())
             return
@@ -5609,6 +5851,34 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json_body()
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
+            return
+        if parsed_url.path == "/api/v1/auth/login":
+            config = load_auth_config()
+            if config["method"] == "none":
+                self.send_json({"status": "authenticated"})
+                return
+            username = str(payload.get("username") or "")
+            password = str(payload.get("password") or "")
+            if not (
+                hmac.compare_digest(username, str(config["username"] or ""))
+                and verify_password(password, config["passwordHash"])
+            ):
+                # One message for both cases: a distinct "no such user" reply
+                # would let an attacker enumerate valid usernames.
+                self.send_json({"error": "Incorrect username or password"}, 401)
+                return
+            self.send_session_cookie(issue_session_token(config))
+            return
+        if parsed_url.path == "/api/v1/auth/logout":
+            self.send_session_cookie("", expire=True)
+            return
+        if parsed_url.path == "/api/v1/auth":
+            try:
+                save_auth_config(payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(public_auth_config())
             return
         provider_test_match = re.fullmatch(r"/api/v1/providers/([a-z_]+)/test", parsed_url.path)
         if provider_test_match:
@@ -6118,6 +6388,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def query(self, parsed_url: urllib.parse.ParseResult) -> dict[str, str]:
         return {k: values[0] for k, values in urllib.parse.parse_qs(parsed_url.query).items()}
+
+    def send_session_cookie(self, token: str, expire: bool = False) -> None:
+        body = json.dumps(
+            {"status": "signed out" if expire else "authenticated"}
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        attributes = [
+            f"{_SESSION_COOKIE}={token}", "Path=/", "HttpOnly",
+            # Lax keeps the cookie off cross-site POSTs, which is the CSRF risk
+            # a cookie session introduces.
+            "SameSite=Lax",
+        ]
+        if expire:
+            attributes.append("Max-Age=0")
+        else:
+            attributes.append(f"Max-Age={_SESSION_TTL_SECONDS}")
+        if self._request_is_https():
+            attributes.append("Secure")
+        self.send_header("Set-Cookie", "; ".join(attributes))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def send_json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, indent=2, ensure_ascii=False).encode()

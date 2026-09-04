@@ -24,6 +24,11 @@ services:
       COMICARR_PROVIDER_CONFIG: /config/metadata-providers.json
       COMICARR_ACQUISITION_CONFIG: /config/acquisition-services.json
       COMICARR_SETTINGS_CONFIG: /config/settings.json
+      COMICARR_AUTH_CONFIG: /config/auth.json
+      # Addresses whose X-Forwarded-For may be believed. Set this to the
+      # reverse proxy's address when running behind one, otherwise the
+      # "local addresses" auth bypass cannot see the real client.
+      COMICARR_TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
       COMICARR_WEB_ROOT: /app/web
       COMICARR_LIBRARY_ROOT: /comics
       COMICARR_SAB_COMPLETE_ROOT: /downloads/complete/comics

@@ -15,7 +15,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     COMICARR_DATABASE=/config/comicarr.db \
     COMICARR_PROVIDER_CONFIG=/config/metadata-providers.json \
     COMICARR_ACQUISITION_CONFIG=/config/acquisition-services.json \
-    COMICARR_SETTINGS_CONFIG=/config/settings.json
+    COMICARR_SETTINGS_CONFIG=/config/settings.json \
+    COMICARR_AUTH_CONFIG=/config/auth.json
 
 WORKDIR /app
 COPY requirements.txt ./
@@ -28,6 +29,6 @@ EXPOSE 8787
 VOLUME ["/config", "/comics", "/downloads/complete/comics"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/', timeout=3).read(1)"]
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=3).read(1)"]
 
 CMD ["python", "-B", "app.py", "--host", "0.0.0.0", "--port", "8787"]

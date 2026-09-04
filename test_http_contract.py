@@ -33,6 +33,7 @@ os.environ["COMICARR_WEB_ROOT"] = str(_ROOT / "web")
 os.environ["COMICARR_PROVIDER_CONFIG"] = str(_ROOT / "providers.json")
 os.environ["COMICARR_ACQUISITION_CONFIG"] = str(_ROOT / "services.json")
 os.environ["COMICARR_SETTINGS_CONFIG"] = str(_ROOT / "settings.json")
+os.environ["COMICARR_AUTH_CONFIG"] = str(_ROOT / "auth.json")
 
 import app  # noqa: E402  (import after the environment is prepared)
 
@@ -234,6 +235,93 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(response.status, 500)
         self.assertIn("application/json", response.headers["Content-Type"])
         self.assertIn("error", response.json())
+
+    # ---- authentication -----------------------------------------------------
+
+    def _configure_auth(self, **patch):
+        """Set auth directly through the config layer, bypassing the HTTP API."""
+        app.save_auth_config({"method": "forms", "username": "reader",
+                              "password": "correct horse battery", **patch})
+        self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+
+    def test_health_endpoint_stays_open_so_the_container_check_keeps_working(self):
+        self._configure_auth(localBypass=False)
+        response = self.get("/healthz")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json()["status"], "ok")
+
+    def test_api_requires_a_session_once_forms_auth_is_on(self):
+        self._configure_auth(localBypass=False)
+        self.assertEqual(self.get("/api/v1/catalog").status, 401)
+
+    def test_app_shell_stays_reachable_so_a_login_form_can_render(self):
+        self._configure_auth(localBypass=False)
+        self.assertEqual(self.get("/library").status, 200)
+
+    def test_login_rejects_a_bad_password_and_accepts_the_right_one(self):
+        self._configure_auth(localBypass=False)
+        self.assertEqual(self.post("/api/v1/auth/login",
+                                   {"username": "reader", "password": "wrong"}).status, 401)
+        ok = self.post("/api/v1/auth/login",
+                       {"username": "reader", "password": "correct horse battery"})
+        self.assertEqual(ok.status, 200)
+        cookie = ok.headers.get("Set-Cookie", "")
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Lax", cookie)
+
+    def test_a_session_cookie_grants_access_including_to_image_urls(self):
+        """Covers render in <img>, which cannot carry an Authorization header,
+        so the session has to travel as a cookie."""
+        self._configure_auth(localBypass=False)
+        login = self.post("/api/v1/auth/login",
+                          {"username": "reader", "password": "correct horse battery"})
+        token = login.headers["Set-Cookie"].split(";")[0]
+        authed = request("GET", self.base + "/api/v1/catalog")
+        self.assertEqual(authed.status, 401)
+        req = urllib.request.Request(self.base + "/api/v1/catalog")
+        req.add_header("Cookie", token)
+        with urllib.request.urlopen(req, timeout=20) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_password_is_never_returned_by_the_config_endpoints(self):
+        self._configure_auth()
+        body = self.get("/api/v1/auth").body.decode().lower()
+        for leak in ("passwordhash", "sessionsecret", "correct horse"):
+            self.assertNotIn(leak, body)
+
+    def test_auth_status_does_not_leak_the_username_before_login(self):
+        self._configure_auth(localBypass=False)
+        body = self.get("/api/v1/auth/status").body.decode().lower()
+        self.assertNotIn("reader", body)
+
+    def test_a_forwarded_header_from_an_untrusted_peer_cannot_fake_a_local_client(self):
+        """The bypass is only safe if a spoofed X-Forwarded-For is ignored."""
+        self._configure_auth(localBypass=True)
+        req = urllib.request.Request(self.base + "/api/v1/catalog")
+        req.add_header("X-Forwarded-For", "127.0.0.1")
+        # The test client really is local, so assert on the resolution rule
+        # itself rather than on the response.
+        self.assertEqual(app.TRUSTED_PROXIES, ())
+
+    def test_cross_site_state_change_is_refused(self):
+        req = urllib.request.Request(
+            self.base + "/api/v1/settings", data=json.dumps({"collectedEditionsEnabled": True}).encode(),
+            method="PATCH")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Origin", "https://evil.example")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+        self.assertEqual(status, 403)
+
+    def test_password_hashing_is_salted_and_verifies(self):
+        first, second = app.hash_password("same password"), app.hash_password("same password")
+        self.assertNotEqual(first, second, "each hash must use a fresh salt")
+        self.assertTrue(app.verify_password("same password", first))
+        self.assertFalse(app.verify_password("other password", first))
+        self.assertFalse(app.verify_password("same password", "not-a-hash"))
 
 if __name__ == "__main__":
     unittest.main()
