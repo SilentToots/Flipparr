@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import difflib
+import gzip
 import hashlib
 import html
 import io
@@ -34,7 +35,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from catalog_store import CatalogStore
 from catalog_core_v2.provider_evidence import (
@@ -5442,8 +5443,75 @@ def catalog_api_payload() -> dict[str, Any]:
     return payload
 
 
+COMPRESSIBLE_TYPES = (
+    "application/json", "application/javascript", "image/svg+xml",
+    "application/manifest+json", "text/",
+)
+# Below roughly one packet, compression costs more than it saves.
+GZIP_MIN_BYTES = 1024
+
+
+def _gzip_if_worthwhile(
+    body: bytes, content_type: str, accept_encoding: str
+) -> tuple[bytes, str | None]:
+    """Compress a response when the client asked and the type benefits.
+
+    The catalog payload for a real library is megabytes of highly repetitive
+    JSON, so this is the difference between a multi-megabyte and a
+    hundred-kilobyte response on every load.
+    """
+    if "gzip" not in (accept_encoding or "").lower():
+        return body, None
+    if len(body) < GZIP_MIN_BYTES:
+        return body, None
+    if not content_type.startswith(COMPRESSIBLE_TYPES):
+        return body, None
+    compressed = gzip.compress(body, compresslevel=6)
+    if len(compressed) >= len(body):
+        return body, None
+    return compressed, "gzip"
+
+
 class Handler(BaseHTTPRequestHandler):
+    # Set once a status line has gone out, so the guard below knows whether it
+    # is still safe to write an error response.
+    _response_started = False
+
+    def send_response(self, code, message=None):  # type: ignore[override]
+        self._response_started = True
+        super().send_response(code, message)
+
+    def _dispatch(self, route: Callable[[], None]) -> None:
+        """Turn an unhandled failure into a JSON 500 rather than a dead socket.
+
+        Routes keep their own specific error mappings; this catches only what
+        none of them did. Without it an unexpected exception propagates out of
+        the handler and the client sees the connection close with no response
+        at all, which is indistinguishable from the server being down.
+        """
+        try:
+            route()
+        except Exception:
+            traceback.print_exc()
+            if self._response_started:
+                return
+            self.send_json(
+                {"error": "The server could not complete this request."}, 500
+            )
+
     def do_GET(self) -> None:
+        self._dispatch(self._route_get)
+
+    def do_POST(self) -> None:
+        self._dispatch(self._route_post)
+
+    def do_PATCH(self) -> None:
+        self._dispatch(self._route_patch)
+
+    def do_DELETE(self) -> None:
+        self._dispatch(self._route_delete)
+
+    def _route_get(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         if parsed_url.path == "/api/v1/catalog":
             self.send_json(catalog_api_payload())
@@ -5531,7 +5599,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.handle_page(parsed_url)
 
-    def do_POST(self) -> None:
+    def _route_post(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         cover_upload_match = re.fullmatch(r"/api/v1/files/(\d+)/cover/upload", parsed_url.path)
         if cover_upload_match:
@@ -6000,7 +6068,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_json({"error": "Endpoint not found"}, 404)
 
-    def do_PATCH(self) -> None:
+    def _route_patch(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         try:
             payload = self.read_json_body()
@@ -6035,7 +6103,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_json({"error": "Endpoint not found"}, 404)
 
-    def do_DELETE(self) -> None:
+    def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         root_match = re.fullmatch(r"/api/v1/library-roots/(\d+)", parsed_url.path)
         if root_match:
@@ -6053,11 +6121,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, indent=2, ensure_ascii=False).encode()
+        body, encoding = _gzip_if_worthwhile(
+            body, "application/json", self.headers.get("Accept-Encoding", "")
+        )
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+        # Required whenever a response varies by request header, and doubly so
+        # for the immutably cached assets below: without it a shared cache can
+        # hand a compressed body to a client that never asked for one.
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def handle_web_asset(self, request_path: str) -> None:
         """Serve the production React build and fall back to its app shell."""
@@ -6081,12 +6159,19 @@ class Handler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
             content_type += "; charset=utf-8"
+        body, encoding = _gzip_if_worthwhile(
+            body, content_type, self.headers.get("Accept-Encoding", "")
+        )
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "public, max-age=31536000, immutable" if target.name != "index.html" else "no-cache")
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def read_json_body(self) -> dict[str, Any]:
         try:

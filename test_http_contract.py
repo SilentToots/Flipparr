@@ -11,6 +11,7 @@ something to be verified against: the routing table is 54 branches and only one
 existing test touched the transport layer at all.
 """
 
+import gzip
 import json
 import os
 import tempfile
@@ -20,6 +21,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 _TEMP = tempfile.TemporaryDirectory()
 _ROOT = Path(_TEMP.name)
@@ -56,10 +58,15 @@ class Response:
         return json.loads(self.body)
 
 
-def request(method: str, url: str, data: bytes | None = None, content_type: str | None = None) -> Response:
+def request(
+    method: str, url: str, data: bytes | None = None, content_type: str | None = None,
+    accept_encoding: str | None = None,
+) -> Response:
     req = urllib.request.Request(url, data=data, method=method)
     if content_type:
         req.add_header("Content-Type", content_type)
+    if accept_encoding:
+        req.add_header("Accept-Encoding", accept_encoding)
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             return Response(response.status, dict(response.headers), response.read())
@@ -190,6 +197,43 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(response.status, 404)
         self.assertIn("application/json", response.headers["Content-Type"])
 
+
+    # ---- compression --------------------------------------------------------
+
+    def test_json_is_compressed_when_the_client_accepts_it(self):
+        plain = self.get("/api/v1/catalog")
+        gzipped = request("GET", self.base + "/api/v1/catalog", accept_encoding="gzip")
+        self.assertEqual(gzipped.headers.get("Content-Encoding"), "gzip")
+        self.assertEqual(gzipped.headers.get("Vary"), "Accept-Encoding")
+        # urllib does not auto-decompress, so the body is the compressed bytes.
+        self.assertLess(len(gzipped.body), len(plain.body))
+        self.assertEqual(gzip.decompress(gzipped.body), plain.body)
+
+    def test_a_client_that_does_not_accept_gzip_still_gets_plain_json(self):
+        response = self.get("/api/v1/catalog")
+        self.assertIsNone(response.headers.get("Content-Encoding"))
+        json.loads(response.body)
+
+    def test_text_assets_are_compressed_and_marked_vary(self):
+        gzipped = request("GET", self.base + "/asset.js", accept_encoding="gzip")
+        self.assertEqual(gzipped.headers.get("Vary"), "Accept-Encoding")
+        self.assertIn("immutable", gzipped.headers.get("Cache-Control", ""))
+
+    def test_small_responses_are_not_compressed(self):
+        """Below the threshold gzip costs more than it saves."""
+        response = request("GET", self.base + "/api/v1/settings", accept_encoding="gzip")
+        self.assertIsNone(response.headers.get("Content-Encoding"))
+
+    # ---- unhandled failures -------------------------------------------------
+
+    def test_an_unexpected_failure_returns_json_500_not_a_dead_socket(self):
+        """Before the guard this closed the connection with no response, which a
+        client cannot tell apart from the server being down."""
+        with patch("app.catalog_api_payload", side_effect=RuntimeError("boom")):
+            response = self.get("/api/v1/catalog")
+        self.assertEqual(response.status, 500)
+        self.assertIn("application/json", response.headers["Content-Type"])
+        self.assertIn("error", response.json())
 
 if __name__ == "__main__":
     unittest.main()
