@@ -1803,6 +1803,12 @@ def parse_filename(path: Path) -> ParsedFile:
     title = NOISE.sub(" ", title)
     title = YEAR.sub(" ", title)
     title = VOLUME.sub(" ", title)
+    # Scanner and upload pipelines leave bare identifiers in filenames
+    # (Saga_vol2_1398374447.cbz). Left in the title they split one run into
+    # several. Real years are already removed above and issue/volume numbers are
+    # at most four digits, so a standalone run of five or more digits is never
+    # part of a comic's title.
+    title = re.sub(r"(?<!\d)\d{5,}(?!\d)", " ", title)
     for _, pattern in FORMAT_PATTERNS:
         title = pattern.sub(" ", title)
     title = re.sub(r"\s+-\s+|[-–—]+$", " ", title)

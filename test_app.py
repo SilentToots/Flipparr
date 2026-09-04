@@ -1280,6 +1280,27 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(item.year, 2017)
         self.assertEqual(item.format, "trade paperback")
 
+    def test_upload_identifier_does_not_split_a_run(self):
+        """Saga_vol2_1398374447.cbz used to become its own run titled "Saga 1398374447"."""
+        stamped = parse_filename(Path("Saga_vol2_1398374447.cbz"))
+        clean = parse_filename(Path("saga_vol8.cbz"))
+        self.assertEqual(stamped.title, "Saga")
+        self.assertEqual(stamped.volume, 2)
+        self.assertEqual(stamped.title.lower(), clean.title.lower())
+
+    def test_short_numbers_in_titles_survive(self):
+        """The identifier guard is limited to five or more digits.
+
+        Years, issue numbers and volume numbers are at most four digits and are
+        handled by their own rules, so the guard must leave them alone.
+        """
+        self.assertEqual(parse_filename(Path("Saga vol 2 (2013).cbz")).year, 2013)
+        self.assertEqual(parse_filename(Path("Saga vol 2 (2013).cbz")).volume, 2)
+        self.assertEqual(parse_filename(Path("Batman 100 (2020).cbz")).title, "Batman")
+        # A four-digit run is left in place by the guard; only the pre-existing
+        # year rule may remove one.
+        self.assertEqual(parse_filename(Path("Judge Dredd 1234.cbz")).title, "Judge Dredd 1234")
+
     def test_omnibus_with_isbn(self):
         item = parse_filename(Path("Wolverine Omnibus Vol 1 978-1-302-95008-8.cbz"))
         self.assertEqual(item.title, "Wolverine")

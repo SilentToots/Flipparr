@@ -4997,9 +4997,15 @@ class CatalogStore:
             # filename-derived placeholder such as "birth right" should not
             # win over a provider-confirmed "Birthright", while the earliest
             # known start remains the run boundary.
-            def title_quality(value: str | None) -> tuple[int, int, int]:
+            def title_quality(value: str | None) -> tuple[int, int, int, int]:
                 text = str(value or "").strip()
+                # A long digit run is an upload id or timestamp carried in from a
+                # filename, never part of a comic's title. Rank a title carrying
+                # one below a clean title, ahead of every other signal: otherwise
+                # capitalisation alone lets "Saga 1398374447" beat "saga" and the
+                # junk name survives the merge the user asked for.
                 return (
+                    int(not re.search(r"(?<!\d)\d{5,}(?!\d)", text)),
                     int(bool(text) and not text.islower()),
                     int(bool(text) and " " not in text),
                     len(text),

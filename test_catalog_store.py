@@ -22,6 +22,25 @@ class CatalogStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.ProgrammingError, "closed database"):
                 connection.execute("SELECT 1")
 
+    def test_merge_keeps_the_clean_title_over_an_identifier_title(self):
+        """Merging a stamped duplicate must not rename the run the user kept."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "merge.db")
+            with store._connect() as connection:
+                for title in ("saga", "Saga 1398374447"):
+                    connection.execute(
+                        """INSERT INTO series_runs(canonical_title, canonical_key, start_year,
+                               publisher, created_at, updated_at)
+                           VALUES (?, ?, NULL, NULL, '2026-01-01', '2026-01-01')""",
+                        (title, title.lower().replace(" ", "")),
+                    )
+                runs = {
+                    row["canonical_title"]: int(row["id"])
+                    for row in connection.execute("SELECT id, canonical_title FROM series_runs")
+                }
+            result = store.merge_series(runs["Saga 1398374447"], runs["saga"])
+            self.assertEqual(result["title"], "saga")
+
     def test_library_roots_can_be_managed_without_changing_comic_files(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
