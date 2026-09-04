@@ -540,7 +540,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .timeline p { margin: 0; color: var(--muted); }
 .timeline time { text-align: right; color: #758194; font-size: .73rem; line-height: 1.5; }
 
-.settings-layout { display: grid; gap: 16px; max-width: 900px; }
+.settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 900px; }
+/* minmax(0, 1fr) rather than the implicit auto column: grid items default to
+   min-width:auto, so an auto column refuses to shrink below its content's
+   min-content width and the whole page scrolls sideways at 320px. */
 .settings-layout > section { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .settings-layout h2 { font-size: 1rem; margin: 0 0 20px; }
 .settings-layout .secondary-button { margin-top: 12px; }
