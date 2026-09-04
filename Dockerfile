@@ -28,6 +28,12 @@ COPY --from=web-build /build/v1-prototype/dist/client ./web
 EXPOSE 8787
 VOLUME ["/config", "/comics", "/downloads/complete/comics"]
 
+# Default to a non-root user so the image is not privileged when run without an
+# explicit `user:`. compose still overrides this with PUID/PGID. Matters because
+# config files written as root become unreadable once the service runs as a
+# normal user, and this app fails closed when it cannot read its auth config.
+USER 1000:10
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=3).read(1)"]
 

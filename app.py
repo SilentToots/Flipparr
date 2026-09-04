@@ -197,15 +197,35 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(derived, bytes.fromhex(digest_hex))
 
 
+class AuthConfigUnreadable(RuntimeError):
+    """The auth config exists but could not be read or parsed.
+
+    Treated as a hard failure rather than falling back to defaults. The defaults
+    disable authentication, so silently using them would turn a file-permission
+    problem into a silently unprotected instance -- which is exactly what
+    happens when the file is written as root and the service then runs as a
+    non-root user.
+    """
+
+
 def load_auth_config() -> dict[str, Any]:
     defaults = _auth_defaults()
     with _AUTH_CONFIG_LOCK:
         try:
             stored = json.loads(AUTH_CONFIG_PATH.read_text())
-        except (OSError, ValueError):
+        except FileNotFoundError:
             stored = {}
+        except OSError as exc:
+            raise AuthConfigUnreadable(
+                f"{AUTH_CONFIG_PATH} exists but cannot be read ({exc.strerror}). "
+                "Check that it is owned by the user the service runs as."
+            ) from exc
+        except ValueError as exc:
+            raise AuthConfigUnreadable(
+                f"{AUTH_CONFIG_PATH} is not valid JSON ({exc})."
+            ) from exc
     if not isinstance(stored, dict):
-        stored = {}
+        raise AuthConfigUnreadable(f"{AUTH_CONFIG_PATH} must contain a JSON object.")
     merged = {**defaults, **{k: v for k, v in stored.items() if k in defaults}}
     if str(merged.get("method")) not in _AUTH_METHODS:
         merged["method"] = "none"
@@ -5667,6 +5687,8 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _authorized(self, path: str) -> bool:
+        # An unreadable config denies everything except the health check, rather
+        # than quietly serving an unprotected instance.
         config = load_auth_config()
         if config["method"] == "none":
             return True
@@ -5708,7 +5730,13 @@ class Handler(BaseHTTPRequestHandler):
         at all, which is indistinguishable from the server being down.
         """
         path = urllib.parse.urlparse(self.path).path
-        if not self._authorized(path):
+        try:
+            authorized = path == "/healthz" or self._authorized(path)
+        except AuthConfigUnreadable as exc:
+            traceback.print_exc()
+            self.send_json({"error": f"Authentication is misconfigured: {exc}"}, 503)
+            return
+        if not authorized:
             self.send_json({"error": "Authentication required"}, 401)
             return
         if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():

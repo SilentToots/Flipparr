@@ -323,5 +323,33 @@ class HttpContractTests(unittest.TestCase):
         self.assertFalse(app.verify_password("other password", first))
         self.assertFalse(app.verify_password("same password", "not-a-hash"))
 
+    def test_unreadable_auth_config_fails_closed_rather_than_disabling_auth(self):
+        """A config written as root and read as a normal user must not silently
+        turn into "authentication disabled"."""
+        with patch("app.AUTH_CONFIG_PATH", Path("/proc/1/mem")):  # exists, unreadable
+            with self.assertRaises(app.AuthConfigUnreadable):
+                app.load_auth_config()
+        response = None
+        with patch("app.load_auth_config", side_effect=app.AuthConfigUnreadable("denied")):
+            response = self.get("/api/v1/catalog")
+            health = self.get("/healthz")
+        self.assertEqual(response.status, 503)
+        self.assertIn("misconfigured", response.json()["error"])
+        # The health check must still answer, so the container reports the
+        # problem instead of silently restarting.
+        self.assertEqual(health.status, 200)
+
+    def test_malformed_auth_config_is_also_a_hard_failure(self):
+        bad = _ROOT / "broken-auth.json"
+        bad.write_text("{not json")
+        with patch("app.AUTH_CONFIG_PATH", bad):
+            with self.assertRaises(app.AuthConfigUnreadable):
+                app.load_auth_config()
+
+    def test_missing_auth_config_is_fine_and_means_no_auth(self):
+        """First run must not be a hard failure."""
+        with patch("app.AUTH_CONFIG_PATH", _ROOT / "definitely-absent.json"):
+            self.assertEqual(app.load_auth_config()["method"], "none")
+
 if __name__ == "__main__":
     unittest.main()
