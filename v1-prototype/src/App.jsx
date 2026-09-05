@@ -1177,16 +1177,25 @@ const SETTINGS_SECTIONS = [
 // The documented Docker mount, so most installs need no typing at all.
 const DEFAULT_LIBRARY_FOLDER = "/comics";
 
-function SetupArtwork() {
-  return <svg className="setup-art" viewBox="0 0 200 200" fill="none" role="img" aria-hidden="true">
-    <circle cx="100" cy="100" r="84" fill="rgba(139,92,246,.10)" />
-    <g stroke="#a99af5" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="48" y="120" width="104" height="22" rx="6" />
-      <rect x="55" y="94" width="104" height="22" rx="6" />
-      <rect x="44" y="68" width="104" height="22" rx="6" />
-      <path d="M61 120v22M68 94v22M57 68v22" />
+function SonicBoomMark() {
+  // A comic burst -- the shape a sound makes in a panel. Drawn rather than
+  // imported so it inherits the accent and costs no request; the spikes are
+  // deliberately uneven so it reads as inked, not generated.
+  const burst = "100.0,26.0 113.0,55.9 137.2,42.1 134.8,69.9 170.7,67.7 145.5,93.5 165.9,109.5 141.8,119.1 157.0,149.4 124.9,138.7 120.0,168.2 100.0,146.0 77.9,175.3 75.1,138.7 48.5,144.6 58.2,119.1 26.8,110.5 54.5,93.5 36.1,70.8 65.2,69.9 58.8,35.9 87.0,55.9";
+  return <svg className="setup-art" viewBox="0 0 200 200" role="img" aria-label="SonicBoom">
+    <defs>
+      <linearGradient id="sb-burst" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="#9e87ff" />
+        <stop offset="1" stopColor="#6a4fd8" />
+      </linearGradient>
+    </defs>
+    <polygon points={burst} fill="url(#sb-burst)" opacity=".16" />
+    <polygon points={burst} fill="none" stroke="url(#sb-burst)" strokeWidth="4" strokeLinejoin="round" />
+    <g stroke="#b3a4f5" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="72" y="106" width="56" height="13" rx="4" />
+      <rect x="76" y="90" width="56" height="13" rx="4" />
+      <rect x="68" y="74" width="56" height="13" rx="4" />
     </g>
-    <path d="M133 46l4.4 10.6L148 61l-10.6 4.4L133 76l-4.4-10.6L118 61l10.6-4.4z" fill="#8b5cf6" opacity=".9" />
   </svg>;
 }
 
@@ -1337,18 +1346,22 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
         </>}
       </header>
 
-      {step.id === "welcome" ? <div className="setup-welcome">
-        <div className="setup-welcome-copy">
-          <span className="setup-eyebrow">Welcome</span>
-          <h1>Set up your comic library</h1>
-          <p>SonicBoom reads the comics on your disk, identifies them, and shows what is missing.</p>
-          <div className="setup-welcome-actions">
-            <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
-            <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip for now</button>
+      {step.id === "welcome" ? <>
+        <div className="setup-welcome">
+          <SonicBoomMark />
+          <div className="setup-welcome-copy">
+            <span className="setup-eyebrow">Welcome</span>
+            <h1>Set up your comic library</h1>
+            <p>SonicBoom reads the comics on your disk, identifies them, and shows what is missing.</p>
           </div>
         </div>
-        <SetupArtwork />
-      </div> : null}
+        {/* Sits on the card floor, where Back and Continue sit on every other
+            step, so the place you press does not move as you go. */}
+        <footer className="setup-actions setup-welcome-actions">
+          <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
+          <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip for now</button>
+        </footer>
+      </> : null}
 
       {step.id === "library" ? <SetupLibraryStep
         folder={folder} recursive={recursive} existingRoots={existingRoots}
@@ -1573,7 +1586,7 @@ function AcquisitionServiceSettingsModal({ service, onClose, onSaved }) {
       await onSaved();
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="acquisition-service-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close acquisition service settings"><X size={20} /></button><span className="eyebrow">{service.kind}</span><h2 id="acquisition-service-title">Connect {service.name}</h2><p className="workbench-intro">{service.description}</p><form onSubmit={save}><label className="form-field"><span>Server URL</span><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={service.id === "prowlarr" ? "http://nas:9696" : "http://nas:8080"} required /></label><label className="form-field"><span>API key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={service.configured ? "Saved locally · enter a new key to replace it" : `Enter your ${service.name} API key…`} /></label>{service.id === "sabnzbd" ? <label className="form-field"><span>SABnzbd category</span><input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="comics" required /><small>SonicBoom will use this category to identify and monitor its downloads.</small></label> : null}<Toggle checked={enabled} onChange={setEnabled} title={`Use ${service.name}`} description={service.id === "prowlarr" ? "Search configured Usenet indexers for wanted comics." : "Send selected NZBs to SABnzbd and monitor their progress."} />{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "test" ? <LoadingSpinner size={17} /> : <ArrowsClockwise size={17} />} {busy === "test" ? "Testing…" : "Test connection"}</button><span />{service.configured ? <button type="button" className="danger-button" onClick={disconnect} disabled={Boolean(busy)}>Disconnect</button> : null}<button className="primary-button" disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "save" ? <LoadingSpinner size={17} /> : <ShieldCheck size={17} />} {busy === "save" ? "Saving…" : "Save connection"}</button></div><small className="provider-credential-help">The API key is stored locally and is never returned to the browser after saving.</small></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="acquisition-service-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close acquisition service settings"><X size={20} /></button><span className="eyebrow">{service.kind}</span><h2 id="acquisition-service-title">Connect {service.name}</h2><p className="workbench-intro">{service.description}</p><form onSubmit={save}><label className="form-field"><span>Server URL</span><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={service.id === "prowlarr" ? "http://nas:9696" : "http://nas:8080"} required /></label><label className="form-field"><span>API key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={service.configured ? "Saved locally · enter a new key to replace it" : `Enter your ${service.name} API key…`} /></label>{service.id === "sabnzbd" ? <label className="form-field"><span>SABnzbd category</span><input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="comics" required /><small>SonicBoom will use this category to identify and monitor its downloads.</small></label> : null}<Toggle checked={enabled} onChange={setEnabled} title={`Use ${service.name}`} description={service.id === "prowlarr" ? "Search configured Usenet indexers for wanted comics." : "Send selected NZBs to SABnzbd and monitor their progress."} />{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{service.configured ? <button type="button" className="danger-button" onClick={disconnect} disabled={Boolean(busy)}>Disconnect</button> : null}<button className="primary-button" disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div><small className="provider-credential-help">The API key is stored locally and is never returned to the browser after saving.</small></form></section></div>;
 }
 
 function ProviderSettingsModal({ provider, onClose, onSaved }) {
@@ -1611,7 +1624,7 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
       await onSaved();
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close provider settings"><X size={20} /></button><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved locally · enter a new value to replace it" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.id === "metron" ? "Create a token from the API Tokens section of your Metron account." : "Comic Vine API access is intended for personal, non-commercial use. Your key is never returned to the browser after saving."}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><label className="form-field provider-priority-field"><span>Provider priority</span><select value={priority} onChange={(event) => setPriority(Number(event.target.value))}><option value="15">Before other optional providers</option><option value="20">Normal priority</option><option value="30">Fallback priority</option></select><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></label>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <LoadingSpinner size={17} /> : <ArrowsClockwise size={17} />} {busy === "test" ? "Testing…" : "Test connection"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <LoadingSpinner size={17} /> : <ShieldCheck size={17} />} {busy === "save" ? "Saving…" : "Save provider"}</button></div></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close provider settings"><X size={20} /></button><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved locally · enter a new value to replace it" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.id === "metron" ? "Create a token from the API Tokens section of your Metron account." : "Comic Vine API access is intended for personal, non-commercial use. Your key is never returned to the browser after saving."}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><label className="form-field provider-priority-field"><span>Provider priority</span><select value={priority} onChange={(event) => setPriority(Number(event.target.value))}><option value="15">Before other optional providers</option><option value="20">Normal priority</option><option value="30">Fallback priority</option></select><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></label>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
 }
 
 function GroupedIssueInventory({ issues, onEditIssue }) {
