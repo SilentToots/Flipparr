@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import difflib
+import email.message
 import gzip
 import hashlib
 import hmac
@@ -343,6 +344,23 @@ _PROVIDER_REQUEST_LOCK = threading.Lock()
 _PROVIDER_NEXT_REQUEST_AT: dict[str, float] = {}
 _PROVIDER_RESPONSE_HEADERS = threading.local()
 _PROVIDER_CACHE_STALE_SECONDS = 30 * 24 * 60 * 60
+# A published comic's identity record does not get revised, so re-asking for it
+# every week spends request budget to re-learn the same answer.
+_PROVIDER_IDENTITY_TTL_SECONDS = max(
+    24 * 60 * 60,
+    int(os.environ.get("COMICARR_PROVIDER_IDENTITY_TTL_SECONDS", str(90 * 24 * 60 * 60))),
+)
+# Remembering a definitive "we have nothing" stops every later scan from asking
+# the same question again. Kept well short of a hit's lifetime because a
+# provider can gain a record it did not have; a hit cannot become less true.
+_PROVIDER_NEGATIVE_TTL_SECONDS = max(
+    60 * 60,
+    int(os.environ.get("COMICARR_PROVIDER_NEGATIVE_TTL_SECONDS", str(7 * 24 * 60 * 60))),
+)
+# Only answers that mean "this does not exist". A 429 or a 5xx is the provider
+# failing to answer, and a 401/403 is our credential -- caching either would
+# turn a passing problem into a lasting one.
+_PROVIDER_CACHEABLE_MISS_CODES = frozenset({404, 410})
 _PROVIDER_MIN_INTERVAL_SECONDS = {
     # Metron documents a sustained limit of 20 requests/minute.  A small
     # cushion prevents clock/network jitter from putting the 20th request over.
@@ -632,6 +650,24 @@ def _provider_cache_key(provider_id: str, url: str, credential: str) -> str:
     return f"{provider_id}:{credential_scope}:{safe_url}"
 
 
+def _is_remembered_miss(entry: dict[str, Any]) -> bool:
+    """A cache row with no payload records that the provider had nothing."""
+    return entry.get("data") is None and int(entry.get("status") or 200) >= 400
+
+
+def _remembered_miss_error(url: str, status: int) -> urllib.error.HTTPError:
+    """Replay a remembered miss in the shape callers already handle.
+
+    Callers branch on exc.code (``if exc.code != 404: raise``), so a remembered
+    miss has to arrive as the same exception a live one would, not as a special
+    return value every call site would need to learn about.
+    """
+    return urllib.error.HTTPError(
+        _redacted_upstream_url(url), status, "Not found (remembered)",
+        email.message.Message(), None,
+    )
+
+
 def _provider_cache_ttl(url: str, provider_id: str | None = None) -> int:
     """Keep stable identifiers longer than issue lists for ongoing runs."""
     path = urllib.parse.urlsplit(url).path.casefold()
@@ -649,7 +685,7 @@ def _provider_cache_ttl(url: str, provider_id: str | None = None) -> int:
         if "/overview" in path:
             return 6 * 60 * 60
         if re.search(r"/(?:series|issue)/\d+/?$", path):
-            return 7 * 24 * 60 * 60
+            return _PROVIDER_IDENTITY_TTL_SECONDS
     return 24 * 60 * 60
 
 
@@ -725,7 +761,11 @@ def fetch_provider_json(
     while True:
         with _PROVIDER_JSON_LOCK:
             entry = _PROVIDER_JSON_CACHE.get(key)
-            if entry and isinstance(entry.get("data"), (dict, list)):
+            if entry and _is_remembered_miss(entry):
+                age = time.time() - float(entry.get("saved_at") or 0)
+                if not force and age < _PROVIDER_NEGATIVE_TTL_SECONDS:
+                    raise _remembered_miss_error(url, int(entry.get("status") or 404))
+            elif entry and isinstance(entry.get("data"), (dict, list)):
                 stale_entry = entry
                 if not force and time.time() - float(entry.get("saved_at") or 0) < ttl_seconds:
                     return entry["data"]
@@ -749,7 +789,11 @@ def fetch_provider_json(
             payload = fetch_json_with_headers(
                 url, _provider_headers(provider_id, credential), timeout=timeout
             )
-        if credential in json.dumps(payload, ensure_ascii=False):
+        # Guard against a provider echoing our key back. `credential` must be
+        # checked for emptiness first: anonymous providers pass "", and "" is a
+        # substring of every string, so an unguarded test rejects every one of
+        # their successful responses.
+        if credential and credential in json.dumps(payload, ensure_ascii=False):
             raise ValueError("Provider returned unsafe credential-bearing data")
         response_headers = getattr(_PROVIDER_RESPONSE_HEADERS, "value", {}) or {}
         if provider_id == "comic_vine" and str((payload or {}).get("status_code")) == "107":
@@ -776,19 +820,36 @@ def fetch_provider_json(
                     event.set()
                 raise limited
         else:
+            miss_code = (
+                exc.code
+                if isinstance(exc, urllib.error.HTTPError)
+                and exc.code in _PROVIDER_CACHEABLE_MISS_CODES
+                else None
+            )
+            saved_at = time.time()
             with _PROVIDER_JSON_LOCK:
+                if miss_code is not None:
+                    _PROVIDER_JSON_CACHE[key] = {
+                        "saved_at": saved_at, "status": miss_code, "data": None,
+                    }
                 _PROVIDER_JSON_INFLIGHT.pop(key, None)
                 event.set()
+            if miss_code is not None:
+                persist_provider_cache(key, provider_id, saved_at, miss_code, None)
             raise
 
+    saved_at = time.time()
     with _PROVIDER_JSON_LOCK:
         if not used_stale_cache:
-            _PROVIDER_JSON_CACHE[key] = {"saved_at": time.time(), "data": payload}
+            _PROVIDER_JSON_CACHE[key] = {
+                "saved_at": saved_at, "status": 200, "data": payload,
+            }
         _PROVIDER_JSON_INFLIGHT.pop(key, None)
         event.set()
-        snapshot = dict(_PROVIDER_JSON_CACHE)
     if not used_stale_cache:
-        persist_provider_cache(snapshot)
+        # Deliberately outside the lock: this commits and fsyncs, and holding
+        # the cache lock across that would serialise every provider fetch.
+        persist_provider_cache(key, provider_id, saved_at, 200, payload)
     return payload
 
 
@@ -2434,33 +2495,70 @@ def load_persisted_remote_cache() -> None:
                 _REMOTE_JSON_CACHE[url] = entry["data"]
 
 
-def load_persisted_provider_cache() -> None:
+def _import_retired_provider_cache_file() -> None:
+    """Carry the retired single-file cache into SQLite once, then retire it.
+
+    The file held every response in one JSON object that was rewritten in full
+    on each miss. Existing rows win the import: anything already in SQLite was
+    written by the current path and is at least as trustworthy.
+    """
     try:
         payload = json.loads(_PROVIDER_CACHE_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        return
+    if not isinstance(payload, dict):
         return
     cutoff = time.time() - _PROVIDER_CACHE_STALE_SECONDS
-    with _PROVIDER_JSON_LOCK:
-        for key, entry in payload.items():
-            if (
-                isinstance(key, str)
-                and isinstance(entry, dict)
-                and float(entry.get("saved_at") or 0) >= cutoff
-                and isinstance(entry.get("data"), (dict, list))
-            ):
-                _PROVIDER_JSON_CACHE[key] = {
-                    "saved_at": float(entry["saved_at"]), "data": entry["data"],
-                }
-
-
-def persist_provider_cache(snapshot: dict[str, dict[str, Any]]) -> None:
-    temporary = _PROVIDER_CACHE_FILE.with_suffix(".tmp")
+    entries: list[tuple[str, str, float, int, Any]] = []
+    for key, entry in payload.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        if not isinstance(entry.get("data"), (dict, list)):
+            continue
+        try:
+            saved_at = float(entry.get("saved_at") or 0)
+        except (TypeError, ValueError):
+            continue
+        if saved_at < cutoff:
+            continue
+        # Keys are built as "{provider}:{credential_scope}:{url}".
+        entries.append((key, key.split(":", 1)[0], saved_at, 200, entry["data"]))
     try:
-        _PROVIDER_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(json.dumps(snapshot, ensure_ascii=False))
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, _PROVIDER_CACHE_FILE)
+        catalog_store().provider_cache_import(entries)
+    except Exception:
+        return
+    try:
+        _PROVIDER_CACHE_FILE.replace(_PROVIDER_CACHE_FILE.with_suffix(".migrated"))
     except OSError:
+        pass
+
+
+def load_persisted_provider_cache() -> None:
+    _import_retired_provider_cache_file()
+    try:
+        warmed = catalog_store().provider_cache_load(
+            time.time() - _PROVIDER_CACHE_STALE_SECONDS
+        )
+        catalog_store().provider_cache_prune(
+            time.time() - _PROVIDER_CACHE_STALE_SECONDS
+        )
+    except Exception:
+        # An unreadable cache costs speed, never correctness: fall back to
+        # fetching everything rather than refusing to start.
+        return
+    with _PROVIDER_JSON_LOCK:
+        _PROVIDER_JSON_CACHE.update(warmed)
+
+
+def persist_provider_cache(
+    key: str, provider_id: str, saved_at: float, status: int, data: Any
+) -> None:
+    """Write one cache row. A cache write must never fail its own lookup."""
+    try:
+        catalog_store().provider_cache_put(
+            key, provider_id, saved_at=saved_at, status=status, data=data
+        )
+    except Exception:
         pass
 
 

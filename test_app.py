@@ -42,6 +42,73 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(second, payload)
         fetch.assert_called_once()
 
+    def test_a_definitive_miss_is_remembered_instead_of_asked_again(self):
+        """A provider that has nothing is asked once, not once per scan."""
+        missing = urllib.error.HTTPError(
+            "https://www.comics.org/api/issue/999999/", 404, "Not Found", {}, None
+        )
+        with patch("app.fetch_json_with_headers", side_effect=missing) as fetch:
+            with self.assertRaises(urllib.error.HTTPError):
+                app.fetch_provider_json("gcd", "https://www.comics.org/api/issue/999999/", "")
+            with self.assertRaises(urllib.error.HTTPError) as replayed:
+                app.fetch_provider_json("gcd", "https://www.comics.org/api/issue/999999/", "")
+
+        fetch.assert_called_once()
+        self.assertEqual(replayed.exception.code, 404)
+
+    def test_a_remembered_miss_expires_sooner_than_a_remembered_hit(self):
+        self.assertLess(
+            app._PROVIDER_NEGATIVE_TTL_SECONDS, app._PROVIDER_IDENTITY_TTL_SECONDS
+        )
+        missing = urllib.error.HTTPError(
+            "https://www.comics.org/api/issue/999999/", 404, "Not Found", {}, None
+        )
+        url = "https://www.comics.org/api/issue/999999/"
+        with patch("app.fetch_json_with_headers", side_effect=missing):
+            with self.assertRaises(urllib.error.HTTPError):
+                app.fetch_provider_json("gcd", url, "")
+        key = app._provider_cache_key("gcd", url, "")
+        app._PROVIDER_JSON_CACHE[key]["saved_at"] -= app._PROVIDER_NEGATIVE_TTL_SECONDS + 1
+
+        payload = {"id": 999999}
+        with patch("app.fetch_json_with_headers", return_value=payload) as fetch:
+            self.assertEqual(app.fetch_provider_json("gcd", url, ""), payload)
+        fetch.assert_called_once()
+
+    def test_a_throttled_or_broken_provider_is_never_remembered_as_empty(self):
+        """Caching a 429 or a 5xx would turn a passing outage into a lasting one."""
+        for status, reason in ((429, "Too Many Requests"), (503, "Service Unavailable")):
+            with self.subTest(status=status):
+                app._PROVIDER_JSON_CACHE.clear()
+                error = urllib.error.HTTPError(
+                    "https://www.comics.org/api/issue/5/", status, reason, {}, None
+                )
+                with patch("app.fetch_json_with_headers", side_effect=error):
+                    with self.assertRaises(Exception):
+                        app.fetch_provider_json(
+                            "gcd", "https://www.comics.org/api/issue/5/", ""
+                        )
+                self.assertFalse(app._PROVIDER_JSON_CACHE)
+
+    def test_a_rejected_credential_is_never_remembered_as_empty(self):
+        """A fixed API key must take effect at once, not after the miss ages out."""
+        error = urllib.error.HTTPError(
+            "https://metron.cloud/api/series/1/", 401, "Unauthorized", {}, None
+        )
+        with patch("app.fetch_json_with_headers", side_effect=error):
+            with self.assertRaises(urllib.error.HTTPError):
+                app.fetch_provider_json("metron", "https://metron.cloud/api/series/1/", "bad")
+        self.assertFalse(app._PROVIDER_JSON_CACHE)
+
+    def test_identity_records_are_cached_far_longer_than_issue_lists(self):
+        """A published comic's identity does not get revised; a run's issues do."""
+        identity = app._provider_cache_ttl("https://www.comics.org/api/issue/123/", "gcd")
+        overview = app._provider_cache_ttl(
+            "https://www.comics.org/api/series/123/overview/?format=json", "gcd"
+        )
+        self.assertEqual(identity, app._PROVIDER_IDENTITY_TTL_SECONDS)
+        self.assertGreater(identity, overview)
+
     def test_provider_cache_key_never_contains_api_credentials(self):
         key = app._provider_cache_key(
             "comic_vine",
@@ -72,6 +139,16 @@ class FilenameParserTests(unittest.TestCase):
         self.assertNotIn(secret, rendered)
         self.assertNotIn(secret, raised.exception.geturl())
         self.assertIn("%5BREDACTED%5D", raised.exception.geturl())
+
+    def test_an_anonymous_provider_response_is_not_mistaken_for_a_leaked_key(self):
+        """GCD sends no credential. "" is a substring of every response, so an
+        unguarded reflection check rejects every successful anonymous lookup."""
+        payload = {"id": 42, "name": "Love and Rockets"}
+        with patch("app.fetch_json_with_headers", return_value=payload):
+            result = app.fetch_provider_json(
+                "gcd", "https://www.comics.org/api/series/42/", ""
+            )
+        self.assertEqual(result, payload)
 
     def test_provider_reflection_is_not_cached_or_returned(self):
         secret = "provider-reflection-secret"

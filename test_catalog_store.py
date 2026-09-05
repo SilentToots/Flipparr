@@ -1904,6 +1904,62 @@ class CatalogStoreTests(unittest.TestCase):
             store.perform_scan(second, lambda *_: [parsed_file()], enrich)
             self.assertEqual(store.catalog()["stats"]["needAttention"], 1)
 
+    def test_provider_cache_round_trips_hits_and_remembered_misses(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            store.provider_cache_put("gcd:abc:/series/1/", "gcd", saved_at=1000.0, data={"id": 1})
+            store.provider_cache_put("gcd:abc:/issue/9/", "gcd", saved_at=1000.0, status=404)
+
+            hit = store.provider_cache_get("gcd:abc:/series/1/")
+            miss = store.provider_cache_get("gcd:abc:/issue/9/")
+
+            self.assertEqual(hit["data"], {"id": 1})
+            self.assertEqual(hit["status"], 200)
+            self.assertIsNone(miss.get("data"))
+            self.assertEqual(miss["status"], 404)
+            self.assertIsNone(store.provider_cache_get("gcd:abc:/nothing/"))
+
+    def test_provider_cache_writes_one_row_rather_than_the_whole_cache(self):
+        """Rewriting every entry per miss is what this table replaced."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            for index in range(50):
+                store.provider_cache_put(
+                    f"gcd:abc:/issue/{index}/", "gcd", saved_at=1000.0, data={"id": index}
+                )
+            store.provider_cache_put("gcd:abc:/issue/7/", "gcd", saved_at=2000.0, data={"id": 7})
+
+            updated = store.provider_cache_get("gcd:abc:/issue/7/")
+            untouched = store.provider_cache_get("gcd:abc:/issue/8/")
+            self.assertEqual(updated["saved_at"], 2000.0)
+            self.assertEqual(untouched["saved_at"], 1000.0)
+            self.assertEqual(len(store.provider_cache_load(0.0)), 50)
+
+    def test_provider_cache_load_and_prune_respect_the_cutoff(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            store.provider_cache_put("gcd:abc:/old/", "gcd", saved_at=100.0, data={"a": 1})
+            store.provider_cache_put("gcd:abc:/new/", "gcd", saved_at=900.0, data={"a": 2})
+
+            self.assertEqual(set(store.provider_cache_load(500.0)), {"gcd:abc:/new/"})
+            self.assertEqual(store.provider_cache_prune(500.0), 1)
+            self.assertIsNone(store.provider_cache_get("gcd:abc:/old/"))
+            self.assertIsNotNone(store.provider_cache_get("gcd:abc:/new/"))
+
+    def test_importing_the_retired_cache_file_never_overwrites_newer_rows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            store.provider_cache_put("gcd:abc:/series/1/", "gcd", saved_at=900.0, data={"v": "new"})
+
+            imported = store.provider_cache_import([
+                ("gcd:abc:/series/1/", "gcd", 100.0, 200, {"v": "old"}),
+                ("gcd:abc:/series/2/", "gcd", 100.0, 200, {"v": "fresh"}),
+            ])
+
+            self.assertEqual(imported, 1)
+            self.assertEqual(store.provider_cache_get("gcd:abc:/series/1/")["data"], {"v": "new"})
+            self.assertEqual(store.provider_cache_get("gcd:abc:/series/2/")["data"], {"v": "fresh"})
+
 
 if __name__ == "__main__":
     unittest.main()

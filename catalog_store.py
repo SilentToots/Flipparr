@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 LOCAL_ANALYSIS_VERSION = 2
 MONITORED_RUN_REFRESH_HOURS = 24
 
@@ -914,6 +914,15 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS series_monitor_refreshes_due
                     ON series_monitor_refreshes(status, next_check_at);
+                CREATE TABLE IF NOT EXISTS provider_cache (
+                    key TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    saved_at REAL NOT NULL,
+                    status INTEGER NOT NULL DEFAULT 200,
+                    payload TEXT
+                );
+                CREATE INDEX IF NOT EXISTS provider_cache_saved_at
+                    ON provider_cache(saved_at);
                 """
             )
             edition_columns = {row["name"] for row in connection.execute("PRAGMA table_info(editions)")}
@@ -6508,3 +6517,110 @@ class CatalogStore:
                 "; ".join(conflicts).capitalize() + ".", "warning", comparison,
             )
         return items
+
+    # ---- provider response cache -----------------------------------------
+    #
+    # Provider responses used to live in a single JSON file that was rewritten
+    # in full on every miss, so the write cost grew with the cache. It grows
+    # faster now that misses are cached too, so each entry is its own row and a
+    # write touches only that row.
+    #
+    # A row with a NULL payload is a remembered miss: the provider answered
+    # definitively that it has nothing, and `status` records what it said.
+
+    def provider_cache_get(self, key: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT saved_at, status, payload FROM provider_cache WHERE key=?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        entry: dict[str, Any] = {
+            "saved_at": float(row["saved_at"]),
+            "status": int(row["status"]),
+        }
+        if row["payload"] is not None:
+            try:
+                entry["data"] = json.loads(row["payload"])
+            except ValueError:
+                # A row we cannot decode is worth less than a fresh request.
+                return None
+        return entry
+
+    def provider_cache_put(
+        self,
+        key: str,
+        provider: str,
+        *,
+        saved_at: float,
+        status: int = 200,
+        data: Any = None,
+    ) -> None:
+        payload = None if data is None else json.dumps(data, ensure_ascii=False)
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO provider_cache(key, provider, saved_at, status, payload)
+                   VALUES(?, ?, ?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                       provider=excluded.provider,
+                       saved_at=excluded.saved_at,
+                       status=excluded.status,
+                       payload=excluded.payload""",
+                (str(key), str(provider), float(saved_at), int(status), payload),
+            )
+
+    def provider_cache_load(self, cutoff: float) -> dict[str, dict[str, Any]]:
+        """Warm the in-process cache. Entries older than `cutoff` stay behind."""
+        warmed: dict[str, dict[str, Any]] = {}
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT key, saved_at, status, payload FROM provider_cache WHERE saved_at >= ?",
+                (float(cutoff),),
+            )
+            for row in rows:
+                entry: dict[str, Any] = {
+                    "saved_at": float(row["saved_at"]),
+                    "status": int(row["status"]),
+                }
+                if row["payload"] is not None:
+                    try:
+                        entry["data"] = json.loads(row["payload"])
+                    except ValueError:
+                        continue
+                warmed[str(row["key"])] = entry
+        return warmed
+
+    def provider_cache_prune(self, cutoff: float) -> int:
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM provider_cache WHERE saved_at < ?", (float(cutoff),)
+            )
+            return int(cursor.rowcount or 0)
+
+    def provider_cache_import(self, entries: Iterable[tuple[str, str, float, int, Any]]) -> int:
+        """Import the retired JSON cache in one transaction rather than per row.
+
+        Existing rows win: anything already in SQLite was written by the current
+        code path and is at least as trustworthy as the file being retired.
+        """
+        rows = [
+            (
+                str(key),
+                str(provider),
+                float(saved_at),
+                int(status),
+                None if data is None else json.dumps(data, ensure_ascii=False),
+            )
+            for key, provider, saved_at, status, data in entries
+        ]
+        if not rows:
+            return 0
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.executemany(
+                """INSERT OR IGNORE INTO provider_cache(
+                       key, provider, saved_at, status, payload
+                   ) VALUES(?, ?, ?, ?, ?)""",
+                rows,
+            )
+            return int(cursor.rowcount or 0)
