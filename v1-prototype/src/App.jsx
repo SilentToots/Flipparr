@@ -1346,22 +1346,21 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
         </>}
       </header>
 
-      {step.id === "welcome" ? <>
-        <div className="setup-welcome">
-          <SonicBoomMark />
-          <div className="setup-welcome-copy">
-            <span className="setup-eyebrow">Welcome</span>
-            <h1>Set up your comic library</h1>
-            <p>SonicBoom reads the comics on your disk, identifies them, and shows what is missing.</p>
+      {step.id === "welcome" ? <div className="setup-welcome">
+        <SonicBoomMark />
+        {/* The actions belong to the copy: beside the artwork they follow the
+            sentence they answer, and on a phone the column stretches so they
+            still land on the card floor, where Back and Continue sit later. */}
+        <div className="setup-welcome-copy">
+          <span className="setup-eyebrow">Welcome</span>
+          <h1>Set up your comic library</h1>
+          <p>SonicBoom reads the comics on your disk, identifies them, and shows what is missing.</p>
+          <div className="setup-welcome-actions">
+            <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
+            <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip</button>
           </div>
         </div>
-        {/* Sits on the card floor, where Back and Continue sit on every other
-            step, so the place you press does not move as you go. */}
-        <footer className="setup-actions setup-welcome-actions">
-          <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
-          <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip</button>
-        </footer>
-      </> : null}
+      </div> : null}
 
       {step.id === "library" ? <SetupLibraryStep
         folder={folder} recursive={recursive} existingRoots={existingRoots}
