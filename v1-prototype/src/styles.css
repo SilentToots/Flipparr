@@ -1597,7 +1597,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* The offer takes the room; skipping is the small way out beside it -- the same
    weighting as the Back circle next to Continue on every step that follows. */
 .setup-welcome-actions { display: flex; flex-wrap: nowrap; gap: 12px; justify-content: flex-start; }
-.setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; }
+/* Sized to its label with a floor, not to the column: the copy runs to 46ch,
+   and a button as wide as a paragraph stops reading as a button. It still
+   dwarfs Skip beside it. */
+.setup-welcome-actions .setup-pill.primary { flex: 0 0 auto; min-width: 200px; }
 .setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 24px; }
 /* Pill buttons: one filled, one tinted rather than outlined, so the pair reads
    as two offers rather than an action and a warning. */
@@ -1622,7 +1625,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      the pair reads as one decision instead of a list. */
   .setup-welcome-actions { flex-wrap: nowrap; gap: 10px; }
   .setup-welcome-actions .setup-pill { min-width: 0; white-space: nowrap; }
-  .setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; padding: 0 14px; }
+  .setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; min-width: 0; padding: 0 14px; }
   .setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 20px; }
 }
 
