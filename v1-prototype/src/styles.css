@@ -1691,4 +1691,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .brand-mark { display: block; flex: none; }
 .setup-brand { color: var(--muted-strong); }
 .setup-welcome .brand-mark { color: var(--color-violet-400); margin: 0 auto; }
+/* The sidebar wordmark stands alone -- it names the app, so a "Comic library"
+   line under it was labelling the label. The login screen keeps its subtitle,
+   which says what to do rather than what this is. */
+.sidebar .brand { padding-bottom: 18px; }
+.sidebar .brand-wordmark { color: var(--text); }
 .brand > div > .brand-wordmark { color: var(--text); margin-bottom: 5px; }

@@ -443,7 +443,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   const counts = { requests: catalog?.stats?.openRequests ?? 0, metadata: catalog?.stats?.needAttention ?? 0 };
   return (
     <aside className="sidebar">
-      <div className="brand"><div><FlipparrWordmark height={26} /><span>Comic library</span></div></div>
+      <div className="brand"><FlipparrWordmark height={26} /></div>
       <nav aria-label="Primary navigation">
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
           <button className={`nav-item ${active === id ? "active" : ""}`} key={id} onClick={() => onNavigate(id)} aria-label={label} aria-current={active === id ? "page" : undefined}>
