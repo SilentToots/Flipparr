@@ -7,6 +7,7 @@ import {
   Books,
   CaretDown,
   ChatCircle,
+  Check,
   CheckCircle,
   ClockCounterClockwise,
   CloudArrowDown,
@@ -1137,6 +1138,157 @@ const SETTINGS_SECTIONS = [
   { id: "metadata", label: "Metadata sources" },
 ];
 
+const SETUP_STEPS = [
+  { id: "library", label: "Library folder", required: true },
+  { id: "acquisition", label: "Download services", required: false },
+  { id: "metadata", label: "Metadata sources", required: false },
+];
+
+function SetupStepper({ stepIndex }) {
+  return <ol className="setup-stepper" aria-label="Setup progress">
+    {SETUP_STEPS.map((step, index) => {
+      const state = index < stepIndex ? "done" : index === stepIndex ? "current" : "upcoming";
+      return <li className={state} key={step.id} aria-current={state === "current" ? "step" : undefined}>
+        <span className="setup-step-marker">{state === "done" ? <Check size={14} weight="bold" /> : index + 1}</span>
+        <span className="setup-step-label">{step.label}</span>
+      </li>;
+    })}
+  </ol>;
+}
+
+function SetupLibraryStep({ folder, onFolderChange, recursive, onRecursiveChange, existingRoots }) {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  async function check() {
+    setChecking(true); setError(""); setResult(null);
+    try {
+      const found = await apiRequest("/api/v1/library-folder-check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder, recursive }),
+      });
+      setResult(found);
+      onFolderChange(folder, found);
+    } catch (caught) {
+      setError(caught.message);
+      onFolderChange(folder, null);
+    } finally {
+      setChecking(false);
+    }
+  }
+  return <div className="setup-step-body">
+    <p className="setup-lead">Point SonicBoom at the folder holding the comics you already own. It reads them where they are — nothing is renamed, moved or written.</p>
+    {existingRoots.length ? <div className="setup-existing-roots">
+      <strong>Already configured</strong>
+      {existingRoots.map((root) => <span key={root.id}><FolderOpen size={16} /> {root.path}</span>)}
+    </div> : null}
+    <label className="setup-field">
+      <span>Folder path inside the container</span>
+      <input value={folder} onChange={(event) => { setResult(null); setError(""); onFolderChange(event.target.value, null); }}
+        placeholder="/comics" spellCheck={false} autoCapitalize="none" autoCorrect="off" />
+    </label>
+    <label className="setup-checkbox">
+      <input type="checkbox" checked={recursive} onChange={(event) => { setResult(null); onRecursiveChange(event.target.checked); }} />
+      <span>Include subfolders</span>
+    </label>
+    <button type="button" className="secondary-button" onClick={check} disabled={!folder.trim() || checking} aria-busy={checking}>
+      {checking ? <LoadingSpinner size={17} /> : <MagnifyingGlass size={17} />} Check this folder
+    </button>
+    {result ? <p className="setup-check-ok" role="status">
+      <CheckCircle size={18} weight="fill" /> Found <strong>{result.comicCount}{result.countTruncatedAt ? "+" : ""}</strong> comic {result.comicCount === 1 ? "file" : "files"} in {result.path}.
+    </p> : null}
+    {error ? <p className="setup-check-error" role="alert"><WarningCircle size={18} weight="fill" /> {error}</p> : null}
+  </div>;
+}
+
+function SetupView({ catalog, onFinish, onSkipSetup }) {
+  const [stepIndex, setStepIndex] = useState(0);
+  const [folder, setFolder] = useState("");
+  const [folderChecked, setFolderChecked] = useState(null);
+  const [recursive, setRecursive] = useState(true);
+  const [services, setServices] = useState([]);
+  const [editingService, setEditingService] = useState(null);
+  const [providers, setProviders] = useState([]);
+  const [editingProvider, setEditingProvider] = useState(null);
+  const [finishing, setFinishing] = useState(false);
+  const [error, setError] = useState("");
+  const existingRoots = catalog?.roots || [];
+
+  async function loadServices() {
+    try { setServices((await apiRequest("/api/v1/acquisition-services")).services || []); } catch (caught) { setError(caught.message); }
+  }
+  async function loadProviders() {
+    try { setProviders((await apiRequest("/api/v1/providers")).providers || []); } catch (caught) { setError(caught.message); }
+  }
+  useEffect(() => { loadServices(); loadProviders(); }, []);
+
+  const step = SETUP_STEPS[stepIndex];
+  // A folder is the one thing setup cannot invent: there is nothing to scan
+  // without it. Everything after this is genuinely optional.
+  const canLeaveLibraryStep = Boolean(folderChecked) || existingRoots.length > 0;
+
+  async function finish() {
+    setFinishing(true); setError("");
+    try {
+      await apiRequest("/api/v1/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setupCompleted: true }),
+      });
+      await onFinish(folderChecked ? folderChecked.path : "", recursive);
+    } catch (caught) {
+      setError(caught.message);
+      setFinishing(false);
+    }
+  }
+
+  return <div className="setup-shell">
+    <div className="setup-card">
+      <header className="setup-header">
+        <span className="setup-brand"><BookOpen size={22} weight="duotone" /> SonicBoom</span>
+        <h1>Set up your library</h1>
+        <p>Three steps, then SonicBoom takes stock of what you own.</p>
+        <SetupStepper stepIndex={stepIndex} />
+      </header>
+
+      {step.id === "library" ? <SetupLibraryStep
+        folder={folder} recursive={recursive} existingRoots={existingRoots}
+        onFolderChange={(value, checked) => { setFolder(value); setFolderChecked(checked); }}
+        onRecursiveChange={setRecursive} /> : null}
+
+      {step.id === "acquisition" ? <div className="setup-step-body">
+        <p className="setup-lead">Connect Prowlarr to search for releases and SABnzbd to download the ones you choose. Skip this if you only want to catalogue comics you already have — you can add them later in Settings.</p>
+        {services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}
+      </div> : null}
+
+      {step.id === "metadata" ? <div className="setup-step-body">
+        <p className="setup-lead">The Grand Comics Database works immediately with no account. Adding another source is optional but makes the first intake substantially faster.</p>
+        {providers.map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+        <aside className="provider-policy-note">
+          <ClockCounterClockwise size={19} weight="fill" />
+          <span>
+            <strong>Why a second source is worth the two minutes</strong>
+            <small>The Grand Comics Database limits anonymous use to roughly 50–60 lookups an hour, which works out at about 25 series an hour. Metron allows 20 a minute. On a large library that is the difference between an afternoon and a few minutes — and your keys stay on this device.</small>
+          </span>
+        </aside>
+      </div> : null}
+
+      {error ? <p className="setup-check-error" role="alert"><WarningCircle size={18} weight="fill" /> {error}</p> : null}
+
+      <footer className="setup-actions">
+        {stepIndex > 0 ? <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex - 1)} disabled={finishing}><ArrowLeft size={17} /> Back</button> : <button type="button" className="ghost-button" onClick={onSkipSetup} disabled={finishing}>Set up later</button>}
+        <div className="setup-actions-primary">
+          {!step.required && stepIndex < SETUP_STEPS.length - 1 ? <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex + 1)} disabled={finishing}>Skip for now</button> : null}
+          {stepIndex < SETUP_STEPS.length - 1
+            ? <button type="button" className="primary-button" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue <ArrowRight size={17} /></button>
+            : <button type="button" className="primary-button" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan my library</button>}
+        </div>
+      </footer>
+    </div>
+    {editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}
+    {editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}
+  </div>;
+}
+
 function SettingsView({ catalog, onNavigate, onAuthChanged, onSignOut, section, onSectionChange }) {
   const [collectedEditions, setCollectedEditions] = useState(false);
   const [savingCollectedEditions, setSavingCollectedEditions] = useState(false);
@@ -1900,9 +2052,27 @@ export function App() {
   const [replacementBusy, setReplacementBusy] = useState(false);
   const [replacementError, setReplacementError] = useState("");
   const [requestBusyKey, setRequestBusyKey] = useState("");
+  const [setupCompleted, setSetupCompleted] = useState(null);
+  const [setupDeferred, setSetupDeferred] = useState(false);
   const [mergeWorkbench, setMergeWorkbench] = useState(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState("");
+  async function loadSetupState() {
+    try {
+      const settings = await apiRequest("/api/v1/settings");
+      setSetupCompleted(Boolean(settings?.setupCompleted));
+    } catch (error) {
+      // An unreachable or unauthenticated backend is not evidence that setup is
+      // outstanding, and guessing wrong puts the wizard over a working library.
+      setSetupCompleted(true);
+    }
+  }
+  async function finishSetup(folder, recursive) {
+    setSetupCompleted(true);
+    navigate("library");
+    if (folder) await scanLibrary(folder, recursive);
+    else await loadCatalog();
+  }
   function navigate(id, sectionId) {
     setActive(id); setSelectedSeries(null); setSelectedCollection(null); setSeriesParentCollection(null);
     // Settings shows one section at a time, so a deep link selects the section
@@ -2501,6 +2671,7 @@ export function App() {
     setContentsBusy(false);
   }
   useEffect(() => { loadCatalog(); }, []);
+  useEffect(() => { loadSetupState(); }, []);
   useEffect(() => {
     const acquisitionEntries = [...(catalog?.requests || []), ...(catalog?.replacementRequests || [])];
     const activeDownload = acquisitionEntries.some((request) =>
@@ -2516,6 +2687,20 @@ export function App() {
   useEffect(() => { loadAuthStatus(); }, []);
   if (authStatus && authStatus.method === "forms" && !authStatus.authenticated) {
     return <LoginView onSignedIn={async () => { await loadAuthStatus(); await loadCatalog(); }} />;
+  }
+  // Setup takes the whole screen: there is nothing useful in the nav until a
+  // library folder exists. "Set up later" defers for this session only rather
+  // than marking the instance configured, since it is not.
+  //
+  // An existing install upgrading into this version has setupCompleted false
+  // simply because the setting did not exist when it was configured. A library
+  // root is proof that the one required step was already done, so wait for the
+  // catalog and treat any configured root as setup already finished.
+  const setupOutstanding = setupCompleted === false
+    && catalog !== null
+    && !(catalog?.roots || []).length;
+  if (setupOutstanding && !setupDeferred) {
+    return <SetupView catalog={catalog} onFinish={finishSetup} onSkipSetup={() => setSetupDeferred(true)} />;
   }
   return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" ? <DiscoverView onSearch={openSearch} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
 }

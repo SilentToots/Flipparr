@@ -333,6 +333,52 @@ class HttpContractTests(unittest.TestCase):
         self.assertFalse(app.verify_password("other password", first))
         self.assertFalse(app.verify_password("same password", "not-a-hash"))
 
+    def test_setup_completion_is_stored_with_the_instance(self):
+        """Browser storage would re-prompt on a second device."""
+        self.assertFalse(self.get("/api/v1/settings").json()["setupCompleted"])
+        saved = self.patch("/api/v1/settings", {"setupCompleted": True})
+        self.assertEqual(saved.status, 200)
+        self.assertTrue(self.get("/api/v1/settings").json()["setupCompleted"])
+        self.patch("/api/v1/settings", {"setupCompleted": False})
+
+    def test_library_folder_check_reports_what_is_in_a_usable_folder(self):
+        library = _ROOT / "check-library" / "nested"
+        library.mkdir(parents=True, exist_ok=True)
+        (library / "Saga 001.cbz").write_bytes(b"x")
+        (library / "Saga 002.cbr").write_bytes(b"x")
+        (library / "notes.txt").write_bytes(b"x")
+
+        response = self.post(
+            "/api/v1/library-folder-check",
+            {"folder": str(_ROOT / "check-library"), "recursive": True},
+        )
+        self.assertEqual(response.status, 200)
+        body = response.json()
+        self.assertEqual(body["comicCount"], 2)
+        self.assertIsNone(body["countTruncatedAt"])
+
+        shallow = self.post(
+            "/api/v1/library-folder-check",
+            {"folder": str(_ROOT / "check-library"), "recursive": False},
+        )
+        self.assertEqual(shallow.json()["comicCount"], 0)
+
+    def test_library_folder_check_explains_why_a_folder_is_unusable(self):
+        """Setup used to accept a typo and only fail at the first scan."""
+        missing = self.post("/api/v1/library-folder-check", {"folder": str(_ROOT / "nope")})
+        self.assertEqual(missing.status, 400)
+        self.assertIn("does not exist", missing.json()["error"])
+
+        relative = self.post("/api/v1/library-folder-check", {"folder": "comics"})
+        self.assertEqual(relative.status, 400)
+        self.assertIn("absolute path", relative.json()["error"])
+
+        a_file = _ROOT / "not-a-folder.cbz"
+        a_file.write_bytes(b"x")
+        self.assertEqual(
+            self.post("/api/v1/library-folder-check", {"folder": str(a_file)}).status, 400
+        )
+
     def test_unreadable_auth_config_fails_closed_rather_than_disabling_auth(self):
         """A config written as root and read as a normal user must not silently
         turn into "authentication disabled"."""

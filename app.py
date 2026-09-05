@@ -120,8 +120,11 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # collected-edition browsing and management surfaces are shown. Issue↔volume
     # fulfillment never happens regardless.
     "collectedEditionsEnabled": False,
+    # First-run setup. Stored with the instance rather than in the browser so
+    # finishing setup on a laptop does not leave a phone still being prompted.
+    "setupCompleted": False,
 }
-_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled"})
+_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted"})
 
 
 def load_app_settings() -> dict[str, Any]:
@@ -1923,6 +1926,44 @@ def start_acquisition_import_worker() -> threading.Thread:
     )
     _IMPORT_THREAD.start()
     return _IMPORT_THREAD
+
+
+def inspect_library_folder(folder: str, recursive: bool = True) -> dict[str, Any]:
+    """Report whether a folder can be used as a library root, and what is in it.
+
+    Setup used to accept any string and only discover a typo when the first
+    scan failed, several steps later. Counting is capped because the answer
+    only has to be good enough to say "this is the right folder".
+    """
+    path = Path(str(folder or "").strip())
+    if not path.is_absolute():
+        raise ValueError("Enter an absolute path, starting with /")
+    if not path.exists():
+        raise ValueError(f"{path} does not exist inside the container")
+    if not path.is_dir():
+        raise ValueError(f"{path} is not a folder")
+    if not os.access(path, os.R_OK | os.X_OK):
+        raise ValueError(f"{path} cannot be read by the user this service runs as")
+
+    limit = 5000
+    comics = 0
+    truncated = False
+    walker = os.walk(path) if recursive else [(str(path), [], os.listdir(path))]
+    for _, _, names in walker:
+        for name in names:
+            if os.path.splitext(name)[1].casefold() in SUPPORTED_EXTENSIONS:
+                comics += 1
+                if comics >= limit:
+                    truncated = True
+                    break
+        if truncated:
+            break
+    return {
+        "path": str(path),
+        "recursive": bool(recursive),
+        "comicCount": comics,
+        "countTruncatedAt": limit if truncated else None,
+    }
 
 
 def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str = "full") -> int:
@@ -6118,6 +6159,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
+            return
+        if parsed_url.path == "/api/v1/library-folder-check":
+            try:
+                self.send_json(inspect_library_folder(
+                    str(payload.get("folder") or ""),
+                    bool(payload.get("recursive", True)),
+                ))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            except OSError as exc:
+                self.send_json({"error": f"Could not read that folder: {exc.strerror}"}, 400)
             return
         if parsed_url.path == "/api/v1/scans":
             folder = str(payload.get("folder") or "")

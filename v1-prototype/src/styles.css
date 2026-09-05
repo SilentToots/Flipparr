@@ -1481,3 +1481,53 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   }
   .settings-switcher-select select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 }
+
+/* First-run setup. A full-screen takeover rather than a view inside the nav:
+   until a library folder exists there is nothing for the nav to lead to. */
+.setup-shell { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px 64px; background: var(--bg); }
+.setup-card { width: min(680px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px; }
+.setup-header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 24px; }
+.setup-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--muted-strong); font-size: var(--text-sm); font-weight: 600; letter-spacing: .02em; }
+.setup-header h1 { margin: 14px 0 6px; font-size: var(--text-2xl); }
+.setup-header > p { margin: 0 0 22px; color: var(--muted); font-size: var(--text-base); }
+
+.setup-stepper { display: flex; flex-wrap: wrap; gap: 10px 20px; list-style: none; margin: 0; padding: 0; }
+.setup-stepper li { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: var(--text-sm); }
+.setup-stepper li.current { color: var(--text); font-weight: 600; }
+.setup-stepper li.done { color: var(--muted-strong); }
+.setup-step-marker { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line-strong); font-size: var(--text-xs); font-weight: 600; }
+.setup-stepper li.current .setup-step-marker { border-color: var(--violet); background: var(--violet); color: #fff; }
+.setup-stepper li.done .setup-step-marker { border-color: var(--green, #3fb950); color: var(--green, #3fb950); }
+
+.setup-step-body { display: flex; flex-direction: column; gap: 16px; }
+.setup-lead { margin: 0; color: var(--muted-strong); font-size: var(--text-base); line-height: 1.55; }
+.setup-field { display: flex; flex-direction: column; gap: 7px; }
+.setup-field > span { color: var(--muted); font-size: var(--text-sm); }
+.setup-field input { min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0d121a; color: var(--text); font-size: 16px; }
+.setup-field input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.setup-checkbox { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--muted-strong); font-size: var(--text-md); cursor: pointer; }
+.setup-checkbox input { width: 18px; height: 18px; accent-color: var(--violet); }
+.setup-step-body > .secondary-button { align-self: flex-start; min-height: 44px; }
+
+.setup-existing-roots { display: flex; flex-direction: column; gap: 7px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #0d121a; }
+.setup-existing-roots strong { font-size: var(--text-sm); color: var(--muted); font-weight: 600; }
+.setup-existing-roots span { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: var(--text-md); }
+
+.setup-check-ok, .setup-check-error { display: flex; align-items: flex-start; gap: 9px; margin: 0; padding: 13px 15px; border-radius: var(--radius-sm); font-size: var(--text-md); line-height: 1.5; }
+.setup-check-ok { background: rgba(63,185,80,.09); border: 1px solid rgba(63,185,80,.3); color: #9be5ac; }
+.setup-check-error { background: rgba(248,81,73,.09); border: 1px solid rgba(248,81,73,.32); color: #ffb4ae; }
+
+.setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
+.setup-actions-primary { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.setup-actions button { min-height: 44px; }
+
+@media (max-width: 640px) {
+  .setup-shell { padding: 0; align-items: stretch; }
+  .setup-card { border: 0; border-radius: 0; padding: 24px 18px 32px; min-height: 100vh; }
+  /* Stack the footer so neither action is squeezed, and put the primary one
+     first in the reading order it is actually used in. */
+  .setup-actions { flex-direction: column-reverse; align-items: stretch; }
+  .setup-actions-primary { margin-left: 0; flex-direction: column-reverse; align-items: stretch; }
+  .setup-actions button { width: 100%; justify-content: center; }
+  .setup-step-body > .secondary-button { align-self: stretch; justify-content: center; }
+}

@@ -923,9 +923,10 @@ class FilenameParserTests(unittest.TestCase):
             {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
         ):
             settings_path = Path(temp_dir) / "settings.json"
-            self.assertEqual(
-                app.load_app_settings(), {"collectedEditionsEnabled": False}
-            )
+            # Assert the setting this test is about, not the whole document:
+            # comparing the entire dict broke the moment another setting was
+            # added, on a test that has nothing to do with it.
+            self.assertFalse(app.load_app_settings()["collectedEditionsEnabled"])
             self.assertFalse(settings_path.exists())
 
             updated = app.save_app_settings({"collectedEditionsEnabled": True})
