@@ -336,7 +336,22 @@ class HttpContractTests(unittest.TestCase):
     def test_unreadable_auth_config_fails_closed_rather_than_disabling_auth(self):
         """A config written as root and read as a normal user must not silently
         turn into "authentication disabled"."""
-        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(Path("/proc/1/mem"))}):  # exists, unreadable
+        # A real file with its permissions removed, rather than /proc/1/mem:
+        # that path exists only on Linux, so on any other platform this read
+        # raised FileNotFoundError and the test passed without ever reaching
+        # the unreadable-file branch it exists to cover.
+        unreadable = _ROOT / "unreadable-auth.json"
+        unreadable.write_text("{}")
+        unreadable.chmod(0o000)
+
+        def restore() -> None:
+            unreadable.chmod(0o600)
+            unreadable.unlink(missing_ok=True)
+
+        self.addCleanup(restore)
+        if os.access(unreadable, os.R_OK):
+            self.skipTest("this user bypasses file permissions, so nothing is unreadable")
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(unreadable)}):
             with self.assertRaises(app.AuthConfigUnreadable):
                 app.load_auth_config()
         response = None

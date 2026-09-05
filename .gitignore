@@ -13,6 +13,7 @@ comicarr.db-shm
 comicarr.db-wal
 .pnpm-store/
 __pycache__/
+.venv/
 *.pyc
 v1-prototype/node_modules/
 v1-prototype/dist/
