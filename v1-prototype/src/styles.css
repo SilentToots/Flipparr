@@ -1543,24 +1543,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-aside { display: flex; gap: 10px; align-items: flex-start; padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255,255,255,.02); color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
 .setup-aside > svg { flex: none; color: #8e7ce0; margin-top: 1px; }
 
-.setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); background: var(--surface); }
+.setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
 .setup-actions button { min-height: 44px; }
 
 @media (max-width: 640px) {
   .setup-shell { padding: 0; align-items: stretch; }
-  /* Fixed heading, scrolling body, fixed actions. Step three ran to 1639px on
-     an 812px screen, which left "Finish and scan my library" 795px below the
-     fold -- and a sticky footer only traded that for covering the card beneath
-     it. A column cannot overlap its own content. */
-  .setup-shell { height: 100dvh; }
-  .setup-card { border: 0; border-radius: 0; padding: 20px 18px 0; height: 100dvh; display: flex; flex-direction: column; }
-  .setup-header { flex: 0 0 auto; }
-  .setup-step-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 14px; }
-  /* The body is itself a flex column, so under a constrained height its own
-     children were shrunk below their content and stacked on top of each other.
-     They keep their natural height; the body scrolls instead. */
-  .setup-step-body > * { flex: 0 0 auto; }
-  .setup-actions { flex: 0 0 auto; margin-top: 0; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  /* A card here as well. Each step now fits inside one, so the viewport-pinned
+     footer that the long steps needed -- and the rule and fill that came with
+     it -- are no longer earning their keep. */
+  .setup-shell { padding: 16px 14px max(20px, env(safe-area-inset-bottom)); align-items: flex-start; }
+  .setup-card { padding: 22px 18px 24px; }
   /* Stack the footer so neither action is squeezed, and put the primary one
      first in the reading order it is actually used in. */
   /* Back is a small square beside the action, not a second full-width button
@@ -1613,7 +1605,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-card.welcome .setup-art { width: 226px; height: 226px; }
 
 @media (max-width: 760px) {
-  .setup-card.welcome { padding: 24px 18px 28px; width: 100%; }
+  .setup-card.welcome { padding: 22px 18px 26px; width: 100%; }
   .setup-card.welcome .setup-art { width: 132px; height: 132px; }
 }
 
@@ -1636,9 +1628,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-actions { justify-content: flex-start; }
 
 @media (max-width: 640px) {
-  /* Full-bleed on a phone, so it is the page rather than a card floating on a
-     slightly different colour. */
-  .setup-card { background: transparent; }
   .setup-card .provider-row { background: rgba(255,255,255,.03); }
   /* Settings stacks these on a phone, because there the row carries a status
      pill, a description and an action all competing. A setup card carries one
