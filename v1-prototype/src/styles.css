@@ -345,7 +345,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .empty-state strong { color: var(--text); }
 .empty-state .primary-button { margin-top: 10px; }
 
-.focused-panel { max-width: 760px; margin-top: 18px; padding: 32px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+.focused-panel { max-width: 760px; margin-top: 18px; margin-inline: auto; padding: 32px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
 .discover-panel .search-field { width: min(620px, 100%); }
 .library-sources-panel { max-width: 920px; margin-top: 18px; border: 1px solid #3d355e; border-radius: var(--radius-lg); background: #161526; overflow: hidden; }
 .library-sources-panel > header { padding: 22px 24px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: center; }
@@ -550,15 +550,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .comparison-source a { color: #aa9bf0; font-size: var(--text-sm); }
 
 
-.timeline { max-width: 850px; border-left: 1px solid var(--line); margin: 20px 0 0 16px; }
-.timeline article { display: grid; grid-template-columns: 42px 1fr auto; gap: 15px; min-height: 104px; padding: 0 0 24px; }
-.timeline-icon { margin-left: -21px; width: 42px; height: 42px; border-radius: 50%; background: #1e2633; display: grid; place-items: center; color: var(--muted); }
-.timeline-icon.green { color: var(--green); background: var(--green-soft); }
-.timeline-icon.amber { color: var(--amber); background: var(--amber-soft); }
-.timeline-icon.violet { color: #af9bff; background: var(--violet-soft); }
-.timeline h3 { margin: 2px 0 7px; font-size: var(--text-base); }
-.timeline p { margin: 0; color: var(--muted); }
-.timeline time { text-align: right; color: #758194; font-size: var(--text-sm); line-height: 1.5; }
 
 .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 900px; }
 /* minmax(0, 1fr) rather than the implicit auto column: grid items default to
@@ -585,7 +576,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .toggle-row > span, .provider-row > span { display: grid; gap: 5px; flex: 1; }
 .metadata-source-settings .provider-row > span { gap: 7px; }
 .metadata-source-settings .provider-row small { line-height: 1.45; }
-.toggle-row small, .provider-row small { color: var(--muted); }
+.toggle-row small, .provider-row small { color: var(--muted); max-width: 68ch; line-height: 1.5; }
 .toggle-row input { position: absolute; opacity: 0; }
 .toggle-row > i { width: 40px; height: 23px; border-radius: 15px; background: #343d4c; position: relative; transition: background var(--motion-duration-fast); }
 .toggle-row > i::after { content: ""; width: 17px; height: 17px; border-radius: 50%; background: white; position: absolute; left: 3px; top: 3px; transition: transform var(--motion-duration-fast); }
@@ -1142,7 +1133,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .brand, .sidebar-footer { display: none; }
   .sidebar nav { display: flex; width: 100%; justify-content: space-around; gap: 2px; }
   .nav-item { min-width: 48px; width: auto; flex: 1; padding: 9px; }
-  .nav-item:nth-child(5) { display: none; }
+
   .main-content { margin-left: 0; padding: 18px 16px 90px; }
   .topbar { grid-template-columns: 1fr; }
   .library-sources-panel > header { grid-template-columns: 1fr; }
@@ -1393,6 +1384,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      it and let the action sit full width beneath. */
   .issue-catalog-card { grid-template-columns: minmax(0, 1fr); }
   .issue-catalog-card button { width: 100%; justify-content: center; min-height: 44px; }
+
+  /* #4: the tab strip scrolls but gave no sign of it, so "Collection" simply
+     looked clipped. Fade the trailing edge to show there is more. Scoped to the
+     widths where it actually overflows. */
+  .drawer-tabs { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
 
   /* Touch targets. Apple's guideline is 44px; several controls sat at 16-30px,
      which is fine to click and awkward to tap. Raised where it does not disturb
