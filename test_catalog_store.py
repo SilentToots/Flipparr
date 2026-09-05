@@ -165,11 +165,11 @@ class CatalogStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store = CatalogStore(Path(folder) / "catalog.db")
             store.record_metadata_provider_outcome(
-                "gcd", "Grand Comics Database asked SonicBoom to pause.", 180
+                "gcd", "Grand Comics Database asked Flipparr to pause.", 180
             )
             cooldown = store.metadata_enrichment_summary()["providerCooldowns"][0]
             self.assertEqual(cooldown["provider"], "gcd")
-            self.assertIn("asked SonicBoom to pause", cooldown["error"])
+            self.assertIn("asked Flipparr to pause", cooldown["error"])
             self.assertIsNotNone(cooldown["nextRetryAt"])
 
     def test_same_title_provider_runs_remain_distinct_and_are_retry_safe(self):

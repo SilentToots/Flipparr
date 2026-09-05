@@ -1,6 +1,6 @@
-# SonicBoom
+# Flipparr
 
-SonicBoom is a pre-release, self-hosted comic catalog and acquisition product:
+Flipparr is a pre-release, self-hosted comic catalog and acquisition product:
 it inventories the comics you already own, matches them against metadata
 providers, and can search and download missing issues through Prowlarr and
 SABnzbd.
@@ -30,9 +30,9 @@ production frontend.
 
 ## Current V1 reference implementation
 
-The catalog stores its local database at `.data/comicarr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
+The catalog stores its local database at `.data/flipparr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
 
-Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. SonicBoom then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. The library banner identifies a provider-requested pause, shows the automatic retry time, and points users to optional Metron or Comic Vine setup instead of looking stuck. Successful remote responses are cached on disk under the configured database directory and reused across restarts, with a longer lifetime for stable identity lookups than for issue lists. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
+Initial setup is progressive. The first pass reads only local filenames, embedded metadata, covers, and archive health so a large library becomes visible without consuming provider limits. Flipparr then creates one durable enrichment job per canonical series—not per comic file—and processes those jobs serially in the background. Provider cooldowns, HTTP `Retry-After` values, attempts, and ambiguous matches survive restarts in SQLite. The library banner identifies a provider-requested pause, shows the automatic retry time, and points users to optional Metron or Comic Vine setup instead of looking stuck. Successful remote responses are cached on disk under the configured database directory and reused across restarts, with a longer lifetime for stable identity lookups than for issue lists. Files awaiting background metadata are not counted as damaged or shown as manual fixes.
 
 ## Acquisition services
 
@@ -79,11 +79,11 @@ The current QA container builds the React interface and serves it from the same 
 
 The checked-in Compose example follows the NAS's home-services conventions: it runs as media user `1000:10`, stores state under `/srv/docker/sonicboom`, mounts `/srv/books/comics`, attaches to `home-services-proxy`, uses a loopback-only host port, drops privilege escalation, and limits container logs.
 
-SonicBoom retrieves a selected NZB from Prowlarr through the private configured service URL, validates the bounded XML payload, and uploads the NZB file to SABnzbd under a clean release name. Prowlarr download URLs and API keys are never handed to SABnzbd. A successful SAB queue response is only the start of the request lifecycle, not completion.
+Flipparr retrieves a selected NZB from Prowlarr through the private configured service URL, validates the bounded XML payload, and uploads the NZB file to SABnzbd under a clean release name. Prowlarr download URLs and API keys are never handed to SABnzbd. A successful SAB queue response is only the start of the request lifecycle, not completion.
 
-The completed-download importer follows SABnzbd by its stable queue ID, waits for a successful history result, and validates the selected comic against the requested series and issue. It copies into the existing series folder when one is known, otherwise using `Publisher/Series (Year)`, and names a new issue `Series (Year) #001 - Issue Title.cbz`. The copy is written to a hidden partial file, flushed, size- and SHA-256-verified, structurally checked, and atomically promoted. Imports stop if they would cross the configurable minimum-free-space threshold. Name conflicts stop for review, and SABnzbd's source copy is never deleted. SonicBoom marks the request fulfilled and rescans the library only after this verified import succeeds. The library mount is writable only for this verified import path; the SAB completed folder stays read-only.
+The completed-download importer follows SABnzbd by its stable queue ID, waits for a successful history result, and validates the selected comic against the requested series and issue. It copies into the existing series folder when one is known, otherwise using `Publisher/Series (Year)`, and names a new issue `Series (Year) #001 - Issue Title.cbz`. The copy is written to a hidden partial file, flushed, size- and SHA-256-verified, structurally checked, and atomically promoted. Imports stop if they would cross the configurable minimum-free-space threshold. Name conflicts stop for review, and SABnzbd's source copy is never deleted. Flipparr marks the request fulfilled and rescans the library only after this verified import succeeds. The library mount is writable only for this verified import path; the SAB completed folder stays read-only.
 
-Damaged-file replacement uses the same durable acquisition jobs, but it does not count the damaged copy as satisfying those jobs. A replacement can start only after SonicBoom has mapped the file to specific issues; collected-volume replacement therefore requests its verified issue contents rather than guessing from a filename. The existing comic remains active until every required download is validated and imported. SonicBoom then moves it into `.sonicboom/quarantine/<replacement-id>/` under the library root and completes the replacement request. Failed validation leaves the original untouched, and a failed catalog swap restores it automatically while retaining the rejected copy for inspection.
+Damaged-file replacement uses the same durable acquisition jobs, but it does not count the damaged copy as satisfying those jobs. A replacement can start only after Flipparr has mapped the file to specific issues; collected-volume replacement therefore requests its verified issue contents rather than guessing from a filename. The existing comic remains active until every required download is validated and imported. Flipparr then moves it into `.sonicboom/quarantine/<replacement-id>/` under the library root and completes the replacement request. Failed validation leaves the original untouched, and a failed catalog swap restores it automatically while retaining the rejected copy for inspection.
 
 The same naming policy is intended to power a future **Organize library** function. Existing files will be handled separately through an explicit preview of old path → proposed path, conflict checks, and an undo manifest; intake does not silently reorganize a user's current library.
 
@@ -163,7 +163,7 @@ POST /api/v1/files/{file_id}/contents/reset
 
 The repository began with a read-only local metadata experiment that scans comic
 filenames and returns candidates. This historical path does not define the
-current SonicBoom product architecture or release readiness. It does not rename,
+current Flipparr product architecture or release readiness. It does not rename,
 move, edit, or delete comic files.
 
 ## Run

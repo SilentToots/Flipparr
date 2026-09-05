@@ -1,4 +1,4 @@
-"""HTTP contract characterisation for the SonicBoom API.
+"""HTTP contract characterisation for the Flipparr API.
 
 These tests speak plain HTTP against a running server and assert only what a
 client can observe: status code, content type, and response shape. Nothing here

@@ -52,11 +52,32 @@ from catalog_core_v2.provider_evidence import (
 )
 
 
+def _env(name: str, default: str = "") -> str:
+    """Read FLIPPARR_<name>, falling back to the older COMICARR_ spelling.
+
+    The app was renamed. A compose file written against the old prefix keeps
+    working rather than silently dropping back to defaults, which would look
+    like the configuration was ignored rather than renamed.
+    """
+    value = os.environ.get(f"FLIPPARR_{name}")
+    if value is None:
+        value = os.environ.get(f"COMICARR_{name}")
+    return default if value is None else value
+
+
 # Bumped by hand at release. COMICARR_BUILD is stamped by the image build (a
 # commit sha), so a running container can be traced to the source that made it
 # even between releases.
 APP_VERSION = "0.1.0"
-APP_BUILD = os.environ.get("COMICARR_BUILD", "").strip() or "source"
+APP_BUILD = _env("BUILD", "").strip() or "source"
+
+# Flipparr's own directory inside a library root, holding originals set aside by
+# a replacement. ".sonicboom" is the pre-rename spelling: still read, and still
+# excluded from scans, because a scan that stopped excluding it would re-import
+# every original the user had already replaced.
+MANAGED_LIBRARY_DIR = ".flipparr"
+LEGACY_MANAGED_LIBRARY_DIRS = (".sonicboom",)
+MANAGED_LIBRARY_DIRS = frozenset({MANAGED_LIBRARY_DIR, *LEGACY_MANAGED_LIBRARY_DIRS})
 
 SUPPORTED_EXTENSIONS = {".cbz", ".cbr", ".pdf", ".epub", ".cb7", ".cbt"}
 ZIP_COMIC_EXTENSIONS = {".cbz", ".epub"}
@@ -133,37 +154,34 @@ def _configured_path(variable: str, default: Path) -> Path:
     importer; arriving second, its `import app` hit sys.modules and its
     environment was silently ignored.
     """
-    override = os.environ.get(variable)
+    override = _env(variable)
     return Path(override) if override else default
 
 
 def provider_config_path() -> Path:
-    return _configured_path(
-        "COMICARR_PROVIDER_CONFIG", _DEFAULT_CONFIG_DIR / "metadata-providers.json"
+    return _configured_path("PROVIDER_CONFIG", _DEFAULT_CONFIG_DIR / "metadata-providers.json"
     )
 
 
 def acquisition_config_path() -> Path:
-    return _configured_path(
-        "COMICARR_ACQUISITION_CONFIG", _DEFAULT_CONFIG_DIR / "acquisition-services.json"
+    return _configured_path("ACQUISITION_CONFIG", _DEFAULT_CONFIG_DIR / "acquisition-services.json"
     )
 
 
 def settings_config_path() -> Path:
-    return _configured_path(
-        "COMICARR_SETTINGS_CONFIG", _DEFAULT_CONFIG_DIR / "settings.json"
+    return _configured_path("SETTINGS_CONFIG", _DEFAULT_CONFIG_DIR / "settings.json"
     )
 
 
 def auth_config_path() -> Path:
-    return _configured_path("COMICARR_AUTH_CONFIG", _DEFAULT_CONFIG_DIR / "auth.json")
+    return _configured_path("AUTH_CONFIG", _DEFAULT_CONFIG_DIR / "auth.json")
 # Addresses whose X-Forwarded-For may be believed. A reverse proxy makes every
 # request look like it came from the proxy, so without this the "local
 # addresses" bypass would treat the whole internet as local. Empty by default:
 # an unconfigured deployment trusts nothing and falls back to the real peer.
 TRUSTED_PROXIES = tuple(
     entry.strip()
-    for entry in os.environ.get("COMICARR_TRUSTED_PROXIES", "").split(",")
+    for entry in _env("TRUSTED_PROXIES", "").split(",")
     if entry.strip()
 )
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
@@ -232,7 +250,7 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
 
 _AUTH_CONFIG_LOCK = threading.Lock()
 _AUTH_METHODS = frozenset({"none", "forms"})
-_SESSION_COOKIE = "sonicboom_session"
+_SESSION_COOKIE = "flipparr_session"
 _SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 _AUTH_EXEMPT_PATHS = frozenset({"/healthz", "/api/v1/auth/login", "/api/v1/auth/status"})
@@ -428,14 +446,14 @@ _PROVIDER_CACHE_STALE_SECONDS = 30 * 24 * 60 * 60
 # every week spends request budget to re-learn the same answer.
 _PROVIDER_IDENTITY_TTL_SECONDS = max(
     24 * 60 * 60,
-    int(os.environ.get("COMICARR_PROVIDER_IDENTITY_TTL_SECONDS", str(90 * 24 * 60 * 60))),
+    int(_env("PROVIDER_IDENTITY_TTL_SECONDS", str(90 * 24 * 60 * 60))),
 )
 # Remembering a definitive "we have nothing" stops every later scan from asking
 # the same question again. Kept well short of a hit's lifetime because a
 # provider can gain a record it did not have; a hit cannot become less true.
 _PROVIDER_NEGATIVE_TTL_SECONDS = max(
     60 * 60,
-    int(os.environ.get("COMICARR_PROVIDER_NEGATIVE_TTL_SECONDS", str(7 * 24 * 60 * 60))),
+    int(_env("PROVIDER_NEGATIVE_TTL_SECONDS", str(7 * 24 * 60 * 60))),
 )
 # Only answers that mean "this does not exist". A 429 or a 5xx is the provider
 # failing to answer, and a 401/403 is our credential -- caching either would
@@ -444,10 +462,10 @@ _PROVIDER_CACHEABLE_MISS_CODES = frozenset({404, 410})
 _PROVIDER_MIN_INTERVAL_SECONDS = {
     # Metron documents a sustained limit of 20 requests/minute.  A small
     # cushion prevents clock/network jitter from putting the 20th request over.
-    "metron": max(3.2, float(os.environ.get("COMICARR_METRON_MIN_INTERVAL_SECONDS", "3.2"))),
+    "metron": max(3.2, float(_env("METRON_MIN_INTERVAL_SECONDS", "3.2"))),
     # Comic Vine requires burst control in addition to its hourly resource
     # quota.  Cached series identifiers keep sustained traffic under that cap.
-    "comic_vine": max(1.1, float(os.environ.get("COMICARR_COMIC_VINE_MIN_INTERVAL_SECONDS", "1.1"))),
+    "comic_vine": max(1.1, float(_env("COMIC_VINE_MIN_INTERVAL_SECONDS", "1.1"))),
     # GCD publishes no anonymous rate, but its behaviour has been measured
     # (2026-09-05): exhausting the anonymous quota returns 429 with a JSON body
     # of {"detail": "Request was throttled. Expected available in N seconds."}
@@ -456,28 +474,37 @@ _PROVIDER_MIN_INTERVAL_SECONDS = {
     # few seconds, and the cushion below is the wrong lever for it. What keeps
     # us under the cap is the per-series cooldown in enrich_catalog_series plus
     # the response cache; this interval only stops two lookups colliding.
-    "gcd": max(1.5, float(os.environ.get("COMICARR_GCD_MIN_INTERVAL_SECONDS", "1.5"))),
+    "gcd": max(1.5, float(_env("GCD_MIN_INTERVAL_SECONDS", "1.5"))),
 }
 def catalog_database_path() -> Path:
-    return _configured_path("COMICARR_DATABASE", _DEFAULT_CONFIG_DIR / "comicarr.db")
+    """Where the catalog lives, honouring a database written before the rename.
+
+    The app was Comicarr, then SonicBoom, now Flipparr. A new install gets
+    flipparr.db, but an existing comicarr.db sitting where the database is
+    configured to be keeps being used -- starting an empty database beside a
+    full one would look exactly like losing the library.
+    """
+    configured = _configured_path("DATABASE", _DEFAULT_CONFIG_DIR / "flipparr.db")
+    legacy = configured.with_name("comicarr.db")
+    if not configured.exists() and legacy.exists():
+        return legacy
+    return configured
 
 
 def _remote_cache_file() -> Path:
-    return _configured_path(
-        "COMICARR_REMOTE_CACHE",
+    return _configured_path("REMOTE_CACHE",
         catalog_database_path().parent / "remote-metadata-cache.json",
     )
 
 
 def _provider_cache_file() -> Path:
-    return _configured_path(
-        "COMICARR_PROVIDER_CACHE",
+    return _configured_path("PROVIDER_CACHE",
         catalog_database_path().parent / "provider-metadata-cache-v1.json",
     )
 
 
 def web_root() -> Path | None:
-    configured = os.environ.get("COMICARR_WEB_ROOT")
+    configured = _env("WEB_ROOT") or None
     return Path(configured).resolve() if configured else None
 _CATALOG_STORE: CatalogStore | None = None
 _CATALOG_STORE_LOCK = threading.Lock()
@@ -485,13 +512,13 @@ _ENRICHMENT_STOP = threading.Event()
 _ENRICHMENT_THREAD: threading.Thread | None = None
 _IMPORT_STOP = threading.Event()
 _IMPORT_THREAD: threading.Thread | None = None
-COMIC_LIBRARY_ROOT = Path(os.environ.get("COMICARR_LIBRARY_ROOT", "/comics"))
+COMIC_LIBRARY_ROOT = Path(_env("LIBRARY_ROOT", "/comics"))
 SAB_COMPLETE_ROOT = Path(
-    os.environ.get("COMICARR_SAB_COMPLETE_ROOT", "/downloads/complete/comics")
+    _env("SAB_COMPLETE_ROOT", "/downloads/complete/comics")
 )
-IMPORT_POLL_SECONDS = max(5, int(os.environ.get("COMICARR_IMPORT_POLL_SECONDS", "15")))
+IMPORT_POLL_SECONDS = max(5, int(_env("IMPORT_POLL_SECONDS", "15")))
 IMPORT_MIN_FREE_BYTES = max(
-    0, int(os.environ.get("COMICARR_MIN_FREE_SPACE_MB", "100")) * 1024 * 1024
+    0, int(_env("MIN_FREE_SPACE_MB", "100")) * 1024 * 1024
 )
 FORMAT_PATTERNS = (
     ("omnibus", re.compile(r"\bomnibus\b", re.I)),
@@ -589,7 +616,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
     "sabnzbd": {
         "name": "SABnzbd", "kind": "Download client",
         "capabilities": ["NZB downloads", "Queue status", "Completed-download tracking"],
-        "description": "Download selected NZBs and report their progress back to SonicBoom.",
+        "description": "Download selected NZBs and report their progress back to Flipparr.",
         "setupSummary": "Downloads what you pick and reports progress back.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
     },
@@ -691,7 +718,7 @@ def public_provider_config() -> dict[str, Any]:
 
 
 def _provider_headers(provider_id: str, credential: str) -> dict[str, str]:
-    headers = {"Accept": "application/json", "User-Agent": "Comicarr/1.0 (local metadata client)"}
+    headers = {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION} (local metadata client)"}
     if provider_id == "metron":
         headers["Authorization"] = f"Bearer {credential}"
     return headers
@@ -903,7 +930,7 @@ def fetch_provider_json(
             _cool_down_provider_requests(provider_id, retry_after)
             raise MetadataRateLimited(
                 provider_id, retry_after,
-                "Comic Vine asked SonicBoom to pause after reaching its request limit.",
+                "Comic Vine asked Flipparr to pause after reaching its request limit.",
             )
         if _provider_headers_exhausted(response_headers):
             _cool_down_provider_requests(
@@ -982,7 +1009,7 @@ def post_multipart_file_json(
     timeout: float = 30.0,
 ) -> Any:
     """Upload one in-memory file and decode the JSON response."""
-    boundary = f"----SonicBoom{os.urandom(12).hex()}"
+    boundary = f"----Flipparr{os.urandom(12).hex()}"
     safe_field = re.sub(r"[^A-Za-z0-9_-]", "", field_name) or "name"
     source_name = Path(filename)
     safe_stem = _safe_path_component(source_name.stem, "comic")[:170]
@@ -1154,7 +1181,7 @@ def test_acquisition_service_connection(
     if service_id == "prowlarr":
         data = fetch_json_with_headers(
             f"{url}/api/v1/system/status",
-            {"Accept": "application/json", "X-Api-Key": api_key, "User-Agent": "Comicarr/1.0"},
+            {"Accept": "application/json", "X-Api-Key": api_key, "User-Agent": f"Flipparr/{APP_VERSION}"},
         )
         version = str(data.get("version") or "unknown")
         detail = f"Connected to Prowlarr {version}."
@@ -1162,7 +1189,7 @@ def test_acquisition_service_connection(
         endpoint = f"{url}/api?" + urllib.parse.urlencode({
             "mode": "version", "output": "json", "apikey": api_key,
         })
-        data = fetch_json_with_headers(endpoint, {"Accept": "application/json", "User-Agent": "Comicarr/1.0"})
+        data = fetch_json_with_headers(endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"})
         version = str((data.get("version") if isinstance(data, dict) else None) or "unknown")
         detail = f"Connected to SABnzbd {version}; downloads will use the “{str(payload.get('category') or config.get('category') or 'comics')}” category."
     return {"service": service_id, "status": "connected", "detail": detail}
@@ -1231,7 +1258,7 @@ class ReleaseDownloadError(RuntimeError):
 
 
 class SABSubmissionError(RuntimeError):
-    """SABnzbd could not accept an NZB that SonicBoom already retrieved."""
+    """SABnzbd could not accept an NZB that Flipparr already retrieved."""
 
 
 def _prowlarr_download_reference(download_url: Any) -> str:
@@ -1291,7 +1318,7 @@ def _fetch_selected_nzb(candidate: dict[str, Any]) -> bytes:
             {
                 "Accept": "application/x-nzb, application/xml;q=0.9, */*;q=0.1",
                 "X-Api-Key": str(prowlarr["apiKey"]),
-                "User-Agent": "SonicBoom/1.0",
+                "User-Agent": "Flipparr/1.0",
             },
             timeout=45.0,
             max_bytes=NZB_MAX_BYTES,
@@ -1304,7 +1331,7 @@ def _fetch_selected_nzb(candidate: dict[str, Any]) -> bytes:
         )
         raise ReleaseDownloadError(detail) from None
     except (urllib.error.URLError, TimeoutError):
-        raise ReleaseDownloadError("SonicBoom could not retrieve the NZB from Prowlarr") from None
+        raise ReleaseDownloadError("Flipparr could not retrieve the NZB from Prowlarr") from None
     except ValueError as exc:
         raise ReleaseDownloadError(str(exc)) from exc
     if not payload.strip():
@@ -1334,7 +1361,7 @@ def _submit_nzb_to_sabnzbd(
             filename=filename,
             content=payload,
             content_type="application/x-nzb",
-            headers={"Accept": "application/json", "User-Agent": "SonicBoom/1.0"},
+            headers={"Accept": "application/json", "User-Agent": "Flipparr/1.0"},
             timeout=30.0,
         )
     except urllib.error.HTTPError as exc:
@@ -1345,7 +1372,7 @@ def _submit_nzb_to_sabnzbd(
         )
         raise SABSubmissionError(detail) from None
     except (urllib.error.URLError, TimeoutError):
-        raise SABSubmissionError("SonicBoom could not reach SABnzbd") from None
+        raise SABSubmissionError("Flipparr could not reach SABnzbd") from None
     if not isinstance(response, dict) or not response.get("status"):
         raise SABSubmissionError("SABnzbd did not accept the uploaded NZB")
     return response
@@ -1366,7 +1393,7 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
     payload = fetch_json_with_headers(
         endpoint,
         {"Accept": "application/json", "X-Api-Key": str(prowlarr["apiKey"]),
-         "User-Agent": "Comicarr/1.0"},
+         "User-Agent": f"Flipparr/{APP_VERSION}"},
         timeout=45.0,
     )
     releases = payload if isinstance(payload, list) else []
@@ -1517,7 +1544,7 @@ def _resolve_sab_download_source(
     storage_name = storage_path.name
     candidates: list[Path] = []
     # SAB commonly reports its own host path. Rebuild the portion beneath the
-    # configured category directory inside SonicBoom's completed-download mount.
+    # configured category directory inside Flipparr's completed-download mount.
     storage_parts = storage_path.parts
     category_indexes = [
         index for index, part in enumerate(storage_parts)
@@ -1648,17 +1675,29 @@ def _replacement_quarantine_path(
     """Build a hidden, recoverable path without allowing the source to escape its root."""
     root = library_root.resolve()
     if original_path.is_symlink():
-        raise ValueError("SonicBoom will not quarantine a symbolic link")
+        raise ValueError("Flipparr will not quarantine a symbolic link")
     resolved_original = original_path.resolve()
     try:
         relative = resolved_original.relative_to(root)
     except ValueError as exc:
         raise ValueError("The replacement original is outside the configured library root") from exc
-    target = root / ".sonicboom" / "quarantine" / str(replacement_id) / relative
+    target = root / MANAGED_LIBRARY_DIR / "quarantine" / str(replacement_id) / relative
     try:
-        target.resolve(strict=False).relative_to(root / ".sonicboom" / "quarantine")
+        target.resolve(strict=False).relative_to(root / MANAGED_LIBRARY_DIR / "quarantine")
     except ValueError as exc:
         raise ValueError("The quarantine destination escaped its managed directory") from exc
+    if target.exists():
+        return target
+    # An original set aside before the rename stays where it was put; moving it
+    # would be this app relocating a file in the library, which it does not do.
+    for legacy_dir in LEGACY_MANAGED_LIBRARY_DIRS:
+        legacy = root / legacy_dir / "quarantine" / str(replacement_id) / relative
+        try:
+            legacy.resolve(strict=False).relative_to(root / legacy_dir / "quarantine")
+        except ValueError:
+            continue
+        if legacy.exists():
+            return legacy
     return target
 
 
@@ -1748,7 +1787,7 @@ def import_downloaded_comic(
         else:
             raise ValueError("A different comic already exists at the organized destination")
     partial = destination.with_name(
-        f".{destination.stem}.sonicboom-{os.getpid()}-{threading.get_ident()}.partial"
+        f".{destination.stem}.flipparr-{os.getpid()}-{threading.get_ident()}.partial"
         f"{destination.suffix.lower()}"
     )
     if partial.exists():
@@ -1796,7 +1835,7 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
         "nzo_ids": str(download["sab_nzo_id"]), "output": "json", "apikey": sab["apiKey"],
     })
     payload = fetch_json_with_headers(
-        endpoint, {"Accept": "application/json", "User-Agent": "Comicarr/1.0"}, timeout=30.0
+        endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0
     )
     history = payload.get("history") if isinstance(payload, dict) else None
     slots = history.get("slots") if isinstance(history, dict) else []
@@ -1828,7 +1867,7 @@ def _fallback_after_sab_failure(
     try:
         search = search_prowlarr_releases(job_id)
     except Exception as exc:
-        detail = f"{message}. SonicBoom could not search for a fallback release: {exc}"
+        detail = f"{message}. Flipparr could not search for a fallback release: {exc}"
         store.update_acquisition_job(job_id, "failed", detail)
         return {"status": "failed", "error": detail, "automaticFallback": False}
     candidates = search.get("candidates") if isinstance(search, dict) else []
@@ -1889,7 +1928,7 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         )
         store.update_acquisition_job(
             int(download["job_id"]), "grabbed",
-            "SABnzbd finished; waiting for the completed file to appear in SonicBoom",
+            "SABnzbd finished; waiting for the completed file to appear in Flipparr",
         )
         return {"status": "waiting_for_files", "detail": message}
     except Exception as exc:
@@ -1992,7 +2031,7 @@ def start_acquisition_import_worker() -> threading.Thread:
     _IMPORT_STOP.clear()
     _IMPORT_THREAD = threading.Thread(
         target=acquisition_import_worker,
-        name="sonicboom-sab-import-coordinator",
+        name="flipparr-sab-import-coordinator",
         daemon=True,
     )
     _IMPORT_THREAD.start()
@@ -2053,7 +2092,7 @@ def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str =
 
     worker = threading.Thread(
         target=perform,
-        name=f"comicarr-scan-{scan_id}",
+        name=f"flipparr-scan-{scan_id}",
         daemon=True,
     )
     worker.start()
@@ -2602,7 +2641,7 @@ def scan_folder(folder: str, recursive: bool = True) -> list[ParsedFile]:
     return [
         parse_filename(p)
         for p in iterator
-        if ".sonicboom" not in p.relative_to(root).parts
+        if not MANAGED_LIBRARY_DIRS.intersection(p.relative_to(root).parts)
         and p.is_file()
         and p.suffix.lower() in SUPPORTED_EXTENSIONS
     ]
@@ -4681,7 +4720,7 @@ def _rate_limit_from_error(provider: str, exc: Exception) -> MetadataRateLimited
     retry_after = _provider_retry_after(provider, dict(exc.headers.items()) if exc.headers else {})
     return MetadataRateLimited(
         provider, retry_after,
-        f"{PROVIDER_DEFINITIONS.get(provider, {}).get('name', provider)} asked SonicBoom to pause.",
+        f"{PROVIDER_DEFINITIONS.get(provider, {}).get('name', provider)} asked Flipparr to pause.",
     )
 
 
@@ -4716,7 +4755,7 @@ def _apply_gcd_series_enrichment(series_run_id: int, context: dict[str, Any]) ->
     if len(exact) != 1:
         return {
             "status": "review", "provider": "gcd", "candidateCount": len(exact),
-            "detail": "SonicBoom found no single high-confidence publication run and left the local grouping unchanged.",
+            "detail": "Flipparr found no single high-confidence publication run and left the local grouping unchanged.",
         }
     candidate = exact[0]
     provider_series_id = str(candidate["providerSeriesId"])
@@ -4891,7 +4930,7 @@ def start_metadata_enrichment_worker() -> threading.Thread:
     _ENRICHMENT_STOP.clear()
     _ENRICHMENT_THREAD = threading.Thread(
         target=metadata_enrichment_worker,
-        name="sonicboom-metadata-coordinator",
+        name="flipparr-metadata-coordinator",
         daemon=True,
     )
     _ENRICHMENT_THREAD.start()
@@ -5804,7 +5843,7 @@ def render_batch_results(results: list[dict[str, Any]]) -> str:
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SonicBoom</title>
+<title>Flipparr</title>
 <style>
 :root { color-scheme: dark; font-family: ui-sans-serif,system-ui,sans-serif; background:#11151c; color:#eef2f7 }
 body { max-width:1180px; margin:0 auto; padding:32px 20px 80px }
@@ -5828,7 +5867,7 @@ th { color:#aebbd0 } code { color:#b7c9ff } .warn { color:#ffca72 } a { color:#9
 details { margin-top:12px } summary { cursor:pointer; color:#c8d5e8 }
 @media (max-width:720px) { form { grid-template-columns:1fr 1fr } input[type=text] { grid-column:1/-1 } .match-grid { grid-template-columns:1fr } .cover { width:110px } }
 </style></head><body>
-<h1>SonicBoom</h1><p class="sub">Read-only filename parsing and metadata candidate lookup.</p>
+<h1>Flipparr</h1><p class="sub">Read-only filename parsing and metadata candidate lookup.</p>
 <form id="scan-form" method="get" action="/"><input id="folder" name="folder" type="text" value="__FOLDER__" placeholder="/path/to/comics" required>
 <button id="choose-folder" type="button">Choose Folder…</button>
 <label><input type="checkbox" name="recursive" value="1" __CHECKED__> Recursive</label><button type="submit">Scan folder</button></form>

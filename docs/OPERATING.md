@@ -1,6 +1,6 @@
-# Operating SonicBoom
+# Operating Flipparr
 
-Install, configure, back up and troubleshoot a SonicBoom instance.
+Install, configure, back up and troubleshoot a Flipparr instance.
 
 Every procedure here was executed against a real 963-file library on a Synology
 NAS before being written down; the verification results are in
@@ -11,7 +11,7 @@ given rather than just the workaround.
 
 ## 1. Install
 
-SonicBoom ships as a Docker image and keeps all of its state in one `/config`
+Flipparr ships as a Docker image and keeps all of its state in one `/config`
 volume. It needs read access to your comics, and read access to your download
 client's completed folder if you want automatic import.
 
@@ -48,19 +48,19 @@ All settings have working defaults; you only need these if you are changing path
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `COMICARR_DATABASE` | `/config/comicarr.db` | catalog database |
-| `COMICARR_PROVIDER_CONFIG` | `/config/metadata-providers.json` | metadata source credentials |
-| `COMICARR_ACQUISITION_CONFIG` | `/config/acquisition-services.json` | Prowlarr / SABnzbd credentials |
-| `COMICARR_SETTINGS_CONFIG` | `/config/settings.json` | application preferences |
-| `COMICARR_AUTH_CONFIG` | `/config/auth.json` | sign-in configuration |
-| `COMICARR_TRUSTED_PROXIES` | *(empty)* | **See [Behind a reverse proxy](#behind-a-reverse-proxy).** |
-| `COMICARR_LIBRARY_ROOT` | `/comics` | library mount |
-| `COMICARR_SAB_COMPLETE_ROOT` | `/downloads/complete/comics` | completed-download mount |
-| `COMICARR_IMPORT_POLL_SECONDS` | `15` | how often to look for completed downloads |
-| `COMICARR_MIN_FREE_SPACE_MB` | `100` | refuse to import below this free space |
-| `COMICARR_GCD_MIN_INTERVAL_SECONDS` | `1.5` | minimum gap between Grand Comics Database requests |
-| `COMICARR_METRON_MIN_INTERVAL_SECONDS` | `3.2` | Metron documents 20 requests/minute |
-| `COMICARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
+| `FLIPPARR_DATABASE` | `/config/flipparr.db` | catalog database |
+| `FLIPPARR_PROVIDER_CONFIG` | `/config/metadata-providers.json` | metadata source credentials |
+| `FLIPPARR_ACQUISITION_CONFIG` | `/config/acquisition-services.json` | Prowlarr / SABnzbd credentials |
+| `FLIPPARR_SETTINGS_CONFIG` | `/config/settings.json` | application preferences |
+| `FLIPPARR_AUTH_CONFIG` | `/config/auth.json` | sign-in configuration |
+| `FLIPPARR_TRUSTED_PROXIES` | *(empty)* | **See [Behind a reverse proxy](#behind-a-reverse-proxy).** |
+| `FLIPPARR_LIBRARY_ROOT` | `/comics` | library mount |
+| `FLIPPARR_SAB_COMPLETE_ROOT` | `/downloads/complete/comics` | completed-download mount |
+| `FLIPPARR_IMPORT_POLL_SECONDS` | `15` | how often to look for completed downloads |
+| `FLIPPARR_MIN_FREE_SPACE_MB` | `100` | refuse to import below this free space |
+| `FLIPPARR_GCD_MIN_INTERVAL_SECONDS` | `1.5` | minimum gap between Grand Comics Database requests |
+| `FLIPPARR_METRON_MIN_INTERVAL_SECONDS` | `3.2` | Metron documents 20 requests/minute |
+| `FLIPPARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
 
 `GET /healthz` is unauthenticated and is what the container health check uses.
 
@@ -91,14 +91,14 @@ believed the `X-Forwarded-For` header unconditionally, anyone could send
 `X-Forwarded-For: 127.0.0.1` and skip sign-in entirely — so the app ignores that
 header by default.
 
-The consequence: behind a proxy, with `COMICARR_TRUSTED_PROXIES` unset, either
+The consequence: behind a proxy, with `FLIPPARR_TRUSTED_PROXIES` unset, either
 every request looks like it came from the proxy's own (private) address and the
 local bypass applies to everyone, or no request looks local at all.
 
 Set it to your proxy's address:
 
 ```yaml
-COMICARR_TRUSTED_PROXIES: "172.18.0.5"    # your reverse proxy's address
+FLIPPARR_TRUSTED_PROXIES: "172.18.0.5"    # your reverse proxy's address
 ```
 
 Then the app reads the real client address from `X-Forwarded-For`, and the
@@ -184,7 +184,7 @@ again:
 
 ```bash
 docker compose stop sonicboom
-tar -czf sonicboom-backup-$(date +%F).tgz -C /path/to config
+tar -czf flipparr-backup-$(date +%F).tgz -C /path/to config
 docker compose start sonicboom
 ```
 
@@ -214,7 +214,7 @@ previous tag. To roll back:
 
 ```bash
 docker compose down
-tar -xzf sonicboom-backup-YYYY-MM-DD.tgz -C /path/to
+tar -xzf flipparr-backup-YYYY-MM-DD.tgz -C /path/to
 docker compose up -d          # with the previous image tag pinned
 ```
 

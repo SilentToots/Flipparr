@@ -354,13 +354,13 @@ class FilenameParserTests(unittest.TestCase):
         job = {"id": 8, "series_run_id": 4, "attempt_count": 1}
         with patch("app.catalog_store", return_value=store), patch(
             "app.enrich_catalog_series",
-            side_effect=MetadataRateLimited("gcd", 180, "Provider asked SonicBoom to pause."),
+            side_effect=MetadataRateLimited("gcd", 180, "Provider asked Flipparr to pause."),
         ):
             result = run_metadata_enrichment_job(job)
 
         self.assertEqual(result, {"status": "waiting", "provider": "gcd"})
         store.finish_metadata_enrichment_job.assert_called_once_with(
-            8, "waiting", "gcd", "Provider asked SonicBoom to pause.", 180
+            8, "waiting", "gcd", "Provider asked Flipparr to pause.", 180
         )
 
     def test_series_enrichment_stops_after_first_provider_supplies_issue_list(self):
@@ -829,6 +829,64 @@ class FilenameParserTests(unittest.TestCase):
             [provider["provider"] for provider in result["providers"]],
             ["metron", "comic_vine", "gcd"],
         )
+
+    def test_a_scan_still_skips_originals_quarantined_before_the_rename(self):
+        """The exclusion is why a replaced original stays replaced. Renaming it
+        without keeping the old spelling would re-import every one of them."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "Saga 001.cbz").write_bytes(b"x")
+            for managed in (".flipparr", ".sonicboom"):
+                held = root / managed / "quarantine" / "1"
+                held.mkdir(parents=True)
+                (held / "Replaced 002.cbz").write_bytes(b"x")
+
+            found = sorted(Path(item.path).name for item in app.scan_folder(str(root), True))
+            self.assertEqual(found, ["Saga 001.cbz"])
+
+    def test_an_original_quarantined_before_the_rename_is_still_found(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original = root / "Saga 003.cbz"
+            legacy = root / ".sonicboom" / "quarantine" / "7"
+            legacy.mkdir(parents=True)
+            (legacy / "Saga 003.cbz").write_bytes(b"x")
+
+            found = app._replacement_quarantine_path(7, original, root.resolve())
+            self.assertEqual(found, (legacy / "Saga 003.cbz").resolve())
+
+            # with nothing held anywhere, a new quarantine uses the new name
+            fresh = app._replacement_quarantine_path(8, original, root.resolve())
+            self.assertEqual(fresh, root.resolve() / ".flipparr" / "quarantine" / "8" / "Saga 003.cbz")
+
+    def test_the_old_env_prefix_still_configures_a_renamed_app(self):
+        """Comicarr -> SonicBoom -> Flipparr. A compose file written against the
+        old prefix must keep working, or a rename looks like lost config."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            moved = Path(temp_dir)
+            with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(moved / "legacy.json")}, clear=False):
+                self.assertEqual(app.auth_config_path(), moved / "legacy.json")
+            # and the new spelling wins when both are set
+            with patch.dict("app.os.environ", {
+                "COMICARR_AUTH_CONFIG": str(moved / "legacy.json"),
+                "FLIPPARR_AUTH_CONFIG": str(moved / "current.json"),
+            }, clear=False):
+                self.assertEqual(app.auth_config_path(), moved / "current.json")
+
+    def test_a_database_written_before_the_rename_is_still_the_one_used(self):
+        """Starting an empty flipparr.db beside a full comicarr.db would look
+        exactly like losing the library."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = Path(temp_dir)
+            legacy = config / "comicarr.db"
+            with patch.dict("app.os.environ", {"FLIPPARR_DATABASE": str(config / "flipparr.db")}, clear=False):
+                # nothing on disk yet: a new install gets the new name
+                self.assertEqual(app.catalog_database_path(), config / "flipparr.db")
+                legacy.write_bytes(b"")
+                self.assertEqual(app.catalog_database_path(), legacy)
+                # once the new one exists it wins, so a migrated install moves on
+                (config / "flipparr.db").write_bytes(b"")
+                self.assertEqual(app.catalog_database_path(), config / "flipparr.db")
 
     def test_configured_paths_follow_the_environment_after_import(self):
         """Reading these at import time made the suites order-dependent.
@@ -1528,7 +1586,7 @@ class FilenameParserTests(unittest.TestCase):
                     library_root=library, completed_root=completed,
                 )
 
-            quarantine = library / ".sonicboom" / "quarantine" / "9" / "Image Comics" / "Saga (2012)" / destination.name
+            quarantine = library / ".flipparr" / "quarantine" / "9" / "Image Comics" / "Saga (2012)" / destination.name
             self.assertEqual(quarantine.read_bytes(), b"damaged-original")
             self.assertEqual(destination.read_bytes(), source.read_bytes())
             self.assertEqual(Path(result["quarantineOriginal"]).resolve(), quarantine.resolve())
@@ -1568,7 +1626,7 @@ class FilenameParserTests(unittest.TestCase):
                         library_root=library, completed_root=completed,
                     )
             self.assertEqual(destination.read_bytes(), b"damaged-original")
-            self.assertFalse((library / ".sonicboom").exists())
+            self.assertFalse((library / ".flipparr").exists())
 
     def test_organized_issue_filename_keeps_story_title_out_of_series_title(self):
         item = parse_filename(Path("Absolute Flash (2025) #018 - Now You See Me.cbz"))
@@ -1846,7 +1904,7 @@ class FilenameParserTests(unittest.TestCase):
         store.update_acquisition_job.assert_called_once_with(
             7,
             "grabbed",
-            "SABnzbd finished; waiting for the completed file to appear in SonicBoom",
+            "SABnzbd finished; waiting for the completed file to appear in Flipparr",
         )
 
     def test_resolves_sab_host_file_path_inside_category_mount(self):
@@ -1930,7 +1988,7 @@ class FilenameParserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "Current 001.cbz").touch()
-            hidden = root / ".sonicboom" / "quarantine" / "4"
+            hidden = root / ".flipparr" / "quarantine" / "4"
             hidden.mkdir(parents=True)
             (hidden / "Old 001.cbz").touch()
             files = scan_folder(folder)

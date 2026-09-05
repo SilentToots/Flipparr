@@ -1,4 +1,4 @@
-name: sonicboom
+name: flipparr
 
 x-logging: &default-logging
   driver: json-file
@@ -7,12 +7,12 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  sonicboom:
+  flipparr:
     build:
       context: .
       dockerfile: Dockerfile
-    image: sonicboom:local
-    container_name: sonicboom
+    image: flipparr:local
+    container_name: flipparr
     restart: unless-stopped
     init: true
     user: "${PUID:-1000}:${PGID:-10}"
@@ -20,20 +20,20 @@ services:
       - "127.0.0.1:${SONICBOOM_PORT:-8787}:8787"
     environment:
       TZ: "${TZ:-America/New_York}"
-      COMICARR_DATABASE: /config/comicarr.db
-      COMICARR_PROVIDER_CONFIG: /config/metadata-providers.json
-      COMICARR_ACQUISITION_CONFIG: /config/acquisition-services.json
-      COMICARR_SETTINGS_CONFIG: /config/settings.json
-      COMICARR_AUTH_CONFIG: /config/auth.json
+      FLIPPARR_DATABASE: /config/flipparr.db
+      FLIPPARR_PROVIDER_CONFIG: /config/metadata-providers.json
+      FLIPPARR_ACQUISITION_CONFIG: /config/acquisition-services.json
+      FLIPPARR_SETTINGS_CONFIG: /config/settings.json
+      FLIPPARR_AUTH_CONFIG: /config/auth.json
       # Addresses whose X-Forwarded-For may be believed. Set this to the
       # reverse proxy's address when running behind one, otherwise the
       # "local addresses" auth bypass cannot see the real client.
-      COMICARR_TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
-      COMICARR_WEB_ROOT: /app/web
-      COMICARR_LIBRARY_ROOT: /comics
-      COMICARR_SAB_COMPLETE_ROOT: /downloads/complete/comics
-      COMICARR_IMPORT_POLL_SECONDS: "${IMPORT_POLL_SECONDS:-15}"
-      COMICARR_MIN_FREE_SPACE_MB: "${MIN_FREE_SPACE_MB:-100}"
+      FLIPPARR_TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
+      FLIPPARR_WEB_ROOT: /app/web
+      FLIPPARR_LIBRARY_ROOT: /comics
+      FLIPPARR_SAB_COMPLETE_ROOT: /downloads/complete/comics
+      FLIPPARR_IMPORT_POLL_SECONDS: "${IMPORT_POLL_SECONDS:-15}"
+      FLIPPARR_MIN_FREE_SPACE_MB: "${MIN_FREE_SPACE_MB:-100}"
     volumes:
       - "${CONFIG_PATH:-./docker-data}:/config"
       - "${COMICS_PATH:?Set COMICS_PATH to the NAS comics directory}:/comics:rw"

@@ -1,4 +1,4 @@
-"""Persistent catalog storage and incremental library scans for Comicarr V1."""
+"""Persistent catalog storage and incremental library scans for Flipparr."""
 
 from __future__ import annotations
 
@@ -2543,7 +2543,7 @@ class CatalogStore:
                     f"{provider.replace('_', ' ').title()} returned a {provider_start_year} "
                     f"publication run, but local opening issues identify "
                     f"{series['canonical_title']} as {expected_start_year}. "
-                    "SonicBoom left the catalog unchanged."
+                    "Flipparr left the catalog unchanged."
                 )
             connection.execute(
                 """INSERT INTO series_provider_ids(
@@ -4341,7 +4341,7 @@ class CatalogStore:
             raise ValueError("Replacement preference must be issues, volumes, or either")
         if preference == "volumes":
             raise ValueError(
-                "Volume acquisition is not available yet. Choose issues or either so SonicBoom can replace the mapped issues safely."
+                "Volume acquisition is not available yet. Choose issues or either so Flipparr can replace the mapped issues safely."
             )
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
@@ -4385,7 +4385,7 @@ class CatalogStore:
             ))
             if not targets:
                 raise ValueError(
-                    "SonicBoom cannot replace this comic safely until its issue contents are mapped. Open the volume and confirm its issues first."
+                    "Flipparr cannot replace this comic safely until its issue contents are mapped. Open the volume and confirm its issues first."
                 )
             existing = connection.execute(
                 "SELECT * FROM file_replacement_requests WHERE file_id=?", (file_id,)

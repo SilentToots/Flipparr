@@ -1,4 +1,4 @@
-# Releasing SonicBoom
+# Releasing Flipparr
 
 How a build is identified, what a release involves, and what an upgrade or a
 rollback does to your data. For day-to-day operation see [OPERATING.md](OPERATING.md).
@@ -12,7 +12,7 @@ Three numbers, and they answer different questions.
 | | Where | Changes when |
 | --- | --- | --- |
 | **App version** | `APP_VERSION` in `app.py` | a release is cut, by hand |
-| **Build stamp** | `COMICARR_BUILD`, a build argument | every image build — the commit that made it |
+| **Build stamp** | `FLIPPARR_BUILD`, a build argument | every image build — the commit that made it |
 | **Schema version** | `SCHEMA_VERSION` in `catalog_store.py` | the catalog's shape changes |
 
 A running instance reports the first two without authentication, so you can
@@ -46,16 +46,16 @@ for a local `docker build`; a release image should never say it.
 4. **Build with the commit stamped in:**
 
    ```bash
-   docker build --build-arg COMICARR_BUILD=$(git rev-parse HEAD) \
-                -t sonicboom:0.1.0 -t sonicboom:latest .
+   docker build --build-arg FLIPPARR_BUILD=$(git rev-parse HEAD) \
+                -t flipparr:0.1.0 -t flipparr:latest .
    ```
 
 5. **Verify the artefact, not just the build:**
 
    ```bash
-   docker run --rm --entrypoint printenv sonicboom:0.1.0 COMICARR_BUILD
-   docker run -d --name sb-check -p 8787:8787 sonicboom:0.1.0
-   curl -s http://127.0.0.1:8787/healthz && docker rm -f sb-check
+   docker run --rm --entrypoint printenv flipparr:0.1.0 FLIPPARR_BUILD
+   docker run -d --name fp-check -p 8787:8787 flipparr:0.1.0
+   curl -s http://127.0.0.1:8787/healthz && docker rm -f fp-check
    ```
 
 6. **Write the release notes below**, including the migration line.
@@ -108,7 +108,7 @@ previous tag.** Not just the previous tag.
 
 ```bash
 docker compose down
-tar -xzf sonicboom-backup-YYYY-MM-DD.tgz -C /path/to
+tar -xzf flipparr-backup-YYYY-MM-DD.tgz -C /path/to
 docker compose up -d          # previous image tag pinned
 ```
 

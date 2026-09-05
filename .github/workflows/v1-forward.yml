@@ -60,24 +60,24 @@ jobs:
           context: .
           push: false
           load: true
-          tags: sonicboom:ci
-          build-args: COMICARR_BUILD=${{ github.sha }}
+          tags: flipparr:ci
+          build-args: FLIPPARR_BUILD=${{ github.sha }}
           provenance: false
       # Proves the artefact carries the commit that made it, rather than only
       # that it compiled.
       - name: Image is stamped with this commit
         run: |
-          BUILD=$(docker run --rm --entrypoint printenv sonicboom:ci COMICARR_BUILD)
+          BUILD=$(docker run --rm --entrypoint printenv flipparr:ci FLIPPARR_BUILD)
           echo "image build stamp: $BUILD"
           test "$BUILD" = "${{ github.sha }}"
       # And that it starts and serves, which compiling does not prove.
       - name: Image starts and reports its version
         run: |
-          docker run -d --name sonicboom-ci -p 8787:8787 sonicboom:ci
+          docker run -d --name flipparr-ci -p 8787:8787 flipparr:ci
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then break; fi
             sleep 1
           done
           curl -fsS http://127.0.0.1:8787/healthz | tee /tmp/health.json
           grep -q '"build": "${{ github.sha }}"' /tmp/health.json
-          docker rm -f sonicboom-ci
+          docker rm -f flipparr-ci

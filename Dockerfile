@@ -16,17 +16,17 @@ FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b60333
 
 # Stamped by the build with the commit that produced it, and reported by
 # /healthz, so a running container can be traced back to its source.
-ARG COMICARR_BUILD=source
+ARG FLIPPARR_BUILD=source
 
-ENV COMICARR_BUILD=${COMICARR_BUILD} \
+ENV FLIPPARR_BUILD=${FLIPPARR_BUILD} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    COMICARR_WEB_ROOT=/app/web \
-    COMICARR_DATABASE=/config/comicarr.db \
-    COMICARR_PROVIDER_CONFIG=/config/metadata-providers.json \
-    COMICARR_ACQUISITION_CONFIG=/config/acquisition-services.json \
-    COMICARR_SETTINGS_CONFIG=/config/settings.json \
-    COMICARR_AUTH_CONFIG=/config/auth.json
+    FLIPPARR_WEB_ROOT=/app/web \
+    FLIPPARR_DATABASE=/config/flipparr.db \
+    FLIPPARR_PROVIDER_CONFIG=/config/metadata-providers.json \
+    FLIPPARR_ACQUISITION_CONFIG=/config/acquisition-services.json \
+    FLIPPARR_SETTINGS_CONFIG=/config/settings.json \
+    FLIPPARR_AUTH_CONFIG=/config/auth.json
 
 WORKDIR /app
 COPY requirements.txt ./
