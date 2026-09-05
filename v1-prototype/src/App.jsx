@@ -1193,17 +1193,17 @@ function SetupArtwork() {
 const SETUP_STEPS = [
   { id: "welcome", label: "Welcome", required: false },
   {
-    id: "library", label: "Folder path", required: true, icon: FolderOpen,
+    id: "library", label: "Folder path", required: true,
     title: "Select Folder Path",
     lead: "Files are read where they are. Nothing is renamed or moved.",
   },
   {
-    id: "acquisition", label: "Download services", required: false, icon: CloudArrowDown,
+    id: "acquisition", label: "Download services", required: false,
     title: "Setup Download Services (Optional)",
     lead: "Finds and downloads issues you are missing.",
   },
   {
-    id: "metadata", label: "Data sources", required: false, icon: Database,
+    id: "metadata", label: "Data sources", required: false,
     title: "Setup Data Sources",
     lead: "Where issue details, covers and dates come from.",
   },
@@ -1325,15 +1325,14 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
   return <div className="setup-shell">
     <div className={`setup-card${step.id === "welcome" ? " welcome" : ""}`}>
       <header className="setup-header">
-        <span className="setup-brand"><BookOpen size={20} weight="duotone" /> SonicBoom</span>
+        <div className="setup-topline">
+          <span className="setup-brand"><BookOpen size={20} weight="duotone" /> SonicBoom</span>
+          {step.id === "welcome" ? null : <SetupStepper stepIndex={stepIndex} />}
+        </div>
         {step.id === "welcome" ? null : <>
-          <SetupStepper stepIndex={stepIndex} />
           <div className="setup-step-heading">
-            <span className="setup-step-icon"><step.icon size={26} weight="duotone" /></span>
-            <div>
-              <h1>{step.title}</h1>
-              <p>{step.lead}</p>
-            </div>
+            <h1>{step.title}</h1>
+            <p>{step.lead}</p>
           </div>
         </>}
       </header>
