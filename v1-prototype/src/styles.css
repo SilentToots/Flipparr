@@ -1428,3 +1428,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .drawer-backdrop.closing { animation: drawer-backdrop-in var(--motion-duration-standard) ease reverse forwards; }
 .series-drawer { animation: drawer-slide-in var(--motion-duration-standard) cubic-bezier(.22,.61,.36,1); }
 .series-drawer.closing { animation: drawer-slide-out var(--motion-duration-standard) cubic-bezier(.55,.06,.68,.19) forwards; }
+
+/* Settings section switcher. Settings ran to ~3,600px of scrolling on a phone;
+   one section at a time replaces that. Tabs where there is room, a select where
+   there is not — the select is the same control the OS already renders as a
+   native picker on mobile. */
+.settings-switcher { margin: 18px 0 4px; }
+.settings-switcher-select { display: none; }
+.settings-tabs { display: flex; flex-wrap: wrap; gap: 22px; border-bottom: 1px solid var(--line); }
+.settings-tabs button { padding: 12px 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: var(--control-font-md); cursor: pointer; white-space: nowrap; }
+.settings-tabs button:hover { color: var(--muted-strong); }
+.settings-tabs button.active { color: var(--text); border-color: var(--violet); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 640px) {
+  .settings-tabs { display: none; }
+  .settings-switcher-select { display: block; }
+  .settings-switcher-select select { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0d121a; color: var(--text); font-size: 16px; }
+}
