@@ -1177,7 +1177,21 @@ const SETTINGS_SECTIONS = [
 // The documented Docker mount, so most installs need no typing at all.
 const DEFAULT_LIBRARY_FOLDER = "/comics";
 
+function SetupArtwork() {
+  return <svg className="setup-art" viewBox="0 0 200 200" fill="none" role="img" aria-hidden="true">
+    <circle cx="100" cy="100" r="84" fill="rgba(139,92,246,.10)" />
+    <g stroke="#a99af5" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="48" y="120" width="104" height="22" rx="6" />
+      <rect x="55" y="94" width="104" height="22" rx="6" />
+      <rect x="44" y="68" width="104" height="22" rx="6" />
+      <path d="M61 120v22M68 94v22M57 68v22" />
+    </g>
+    <path d="M133 46l4.4 10.6L148 61l-10.6 4.4L133 76l-4.4-10.6L118 61l10.6-4.4z" fill="#8b5cf6" opacity=".9" />
+  </svg>;
+}
+
 const SETUP_STEPS = [
+  { id: "welcome", label: "Welcome", required: false },
   {
     id: "library", label: "Library folder", required: true, icon: FolderOpen,
     title: "Where are your comics?",
@@ -1196,9 +1210,11 @@ const SETUP_STEPS = [
 ];
 
 function SetupStepper({ stepIndex }) {
+  const steps = SETUP_STEPS.slice(1);
+  const position = stepIndex - 1;
   return <ol className="setup-stepper" aria-label="Setup progress">
-    {SETUP_STEPS.map((step, index) => {
-      const state = index < stepIndex ? "done" : index === stepIndex ? "current" : "upcoming";
+    {steps.map((step, index) => {
+      const state = index < position ? "done" : index === position ? "current" : "upcoming";
       return <li className={state} key={step.id} aria-current={state === "current" ? "step" : undefined}>
         <span className="setup-step-marker">{state === "done" ? <Check size={14} weight="bold" /> : index + 1}</span>
         <span className="setup-step-label">{step.label}{step.required ? null : <em>Optional</em>}</span>
@@ -1307,18 +1323,34 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
   }
 
   return <div className="setup-shell">
-    <div className="setup-card">
+    <div className={`setup-card${step.id === "welcome" ? " welcome" : ""}`}>
       <header className="setup-header">
         <span className="setup-brand"><BookOpen size={20} weight="duotone" /> SonicBoom</span>
-        <SetupStepper stepIndex={stepIndex} />
-        <div className="setup-step-heading">
-          <span className="setup-step-icon"><step.icon size={26} weight="duotone" /></span>
-          <div>
-            <h1>{step.title}</h1>
-            <p>{step.lead}</p>
+        {step.id === "welcome" ? null : <>
+          <SetupStepper stepIndex={stepIndex} />
+          <div className="setup-step-heading">
+            <span className="setup-step-icon"><step.icon size={26} weight="duotone" /></span>
+            <div>
+              <h1>{step.title}</h1>
+              <p>{step.lead}</p>
+            </div>
           </div>
-        </div>
+        </>}
       </header>
+
+      {step.id === "welcome" ? <div className="setup-welcome">
+        <div className="setup-welcome-copy">
+          <span className="setup-eyebrow">Welcome</span>
+          <h1>Your comics, finally in order</h1>
+          <p>SonicBoom reads the comics already on your disk, works out what each one is, and shows you what is missing.</p>
+          <div className="setup-welcome-actions">
+            <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
+            <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip for now</button>
+          </div>
+          <small className="setup-welcome-note">Takes about a minute. You can change any of it later in Settings.</small>
+        </div>
+        <SetupArtwork />
+      </div> : null}
 
       {step.id === "library" ? <SetupLibraryStep
         folder={folder} recursive={recursive} existingRoots={existingRoots}
@@ -1339,15 +1371,15 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
 
       {error ? <p className="setup-check-error" role="alert"><WarningCircle size={18} weight="fill" /> {error}</p> : null}
 
-      <footer className="setup-actions">
-        {stepIndex > 0 ? <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex - 1)} disabled={finishing}><ArrowLeft size={17} /> Back</button> : <button type="button" className="ghost-button" onClick={onSkipSetup} disabled={finishing}>Set up later</button>}
+      {step.id === "welcome" ? null : <footer className="setup-actions">
+        <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex - 1)} disabled={finishing}><ArrowLeft size={17} /> Back</button>
         <div className="setup-actions-primary">
           {!step.required && stepIndex < SETUP_STEPS.length - 1 ? <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex + 1)} disabled={finishing}>Skip for now</button> : null}
           {stepIndex < SETUP_STEPS.length - 1
             ? <button type="button" className="primary-button" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue <ArrowRight size={17} /></button>
             : <button type="button" className="primary-button" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan</button>}
         </div>
-      </footer>
+      </footer>}
     </div>
     {editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}
     {editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}

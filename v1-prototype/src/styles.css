@@ -1562,3 +1562,48 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .setup-actions button { width: 100%; justify-content: center; }
   .setup-step-body > .secondary-button { align-self: stretch; justify-content: center; }
 }
+
+/* Welcome screen. Copy on the left, artwork on the right, and only two things
+   to decide: set up now, or go straight in. The stepper starts on the step
+   after this one -- a welcome screen is not a step you complete. */
+.setup-welcome { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 40px; align-items: center; padding: 26px 0 8px; }
+.setup-welcome-copy { min-width: 0; }
+.setup-eyebrow { display: block; margin-bottom: 14px; color: #a394f2; font-size: var(--text-xs); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.setup-welcome h1 { margin: 0 0 14px; font-size: var(--text-3xl); line-height: 1.18; letter-spacing: -.015em; }
+.setup-welcome > .setup-welcome-copy > p { margin: 0 0 28px; max-width: 42ch; color: var(--muted-strong); font-size: var(--text-lg); line-height: 1.55; }
+.setup-welcome-note { display: block; margin-top: 18px; color: var(--muted); font-size: var(--text-sm); }
+.setup-art { width: 190px; height: 190px; flex: none; }
+
+.setup-welcome-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+/* Pill buttons: one filled, one tinted rather than outlined, so the pair reads
+   as two offers rather than an action and a warning. */
+.setup-pill { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 50px; padding: 0 26px; border: 0; border-radius: 999px; font-size: var(--control-font-md); font-weight: 600; cursor: pointer; }
+.setup-pill.primary { background: var(--violet); color: #fff; }
+.setup-pill.primary:hover { background: #7c68e8; }
+.setup-pill.soft { background: rgba(139,92,246,.14); color: #bcaaff; }
+.setup-pill.soft:hover { background: rgba(139,92,246,.22); }
+.setup-pill:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+
+@media (max-width: 760px) {
+  /* Artwork above the copy, and smaller: on a phone the words are the point. */
+  .setup-welcome { grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 8px 0 0; }
+  .setup-art { width: 132px; height: 132px; order: -1; margin: 0 auto; }
+  .setup-welcome h1 { font-size: var(--text-2xl); }
+  .setup-welcome > .setup-welcome-copy > p { font-size: var(--text-base); margin-bottom: 24px; }
+  .setup-welcome-actions { flex-direction: column; }
+  .setup-pill { width: 100%; }
+}
+
+/* The welcome screen is one idea and two choices, so it gets a wider card and
+   no rule under the wordmark -- the divider belongs to the working steps, where
+   it separates the heading from the controls under it. */
+.setup-card.welcome { width: min(880px, 100%); padding: 44px 48px 48px; }
+.setup-card.welcome .setup-header { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
+.setup-card.welcome .setup-brand { margin-bottom: 0; }
+.setup-card.welcome .setup-welcome h1 { font-size: clamp(1.75rem, 1.2rem + 1.9vw, 2.375rem); }
+.setup-card.welcome .setup-art { width: 226px; height: 226px; }
+
+@media (max-width: 760px) {
+  .setup-card.welcome { padding: 24px 18px 28px; width: 100%; }
+  .setup-card.welcome .setup-art { width: 132px; height: 132px; }
+}
