@@ -1960,6 +1960,24 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(store.provider_cache_get("gcd:abc:/series/1/")["data"], {"v": "new"})
             self.assertEqual(store.provider_cache_get("gcd:abc:/series/2/")["data"], {"v": "fresh"})
 
+    def test_provider_retry_reports_the_wait_that_is_actually_outstanding(self):
+        """A flat minute made a 15s cooldown stall enrichment for 60."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+
+            # Nothing recorded: nothing is waiting, so the default stands.
+            self.assertEqual(store.metadata_provider_retry_seconds(["gcd"]), 60)
+
+            store.record_metadata_provider_outcome("gcd", minimum_delay_seconds=15)
+            wait = store.metadata_provider_retry_seconds(["gcd"])
+            self.assertGreater(wait, 0)
+            self.assertLessEqual(wait, 15)
+
+            # The soonest provider wins, and the default caps the answer.
+            store.record_metadata_provider_outcome("metron", minimum_delay_seconds=3)
+            self.assertLessEqual(store.metadata_provider_retry_seconds(["gcd", "metron"]), 3)
+            self.assertEqual(store.metadata_provider_retry_seconds([]), 60)
+
 
 if __name__ == "__main__":
     unittest.main()

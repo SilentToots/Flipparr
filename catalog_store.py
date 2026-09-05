@@ -8,6 +8,7 @@ import datetime as dt
 import difflib
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -5244,6 +5245,43 @@ class CatalogStore:
                 (provider,),
             ).fetchone()
         return not row or not row["next_allowed_at"] or row["next_allowed_at"] <= now
+
+    def metadata_provider_retry_seconds(
+        self, providers: Iterable[str], default: int = 60
+    ) -> int:
+        """Seconds until the earliest of these providers may be called again.
+
+        Callers used to report a flat minute regardless of the real wait, so a
+        15-second per-series cooldown stalled enrichment for 60 -- four times
+        longer than the pacing actually asks for, on every series in the run.
+        """
+        names = [str(provider) for provider in providers]
+        if not names:
+            return default
+        placeholders = ",".join("?" for _ in names)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT next_allowed_at FROM metadata_provider_state
+                    WHERE provider IN ({placeholders})
+                      AND next_allowed_at IS NOT NULL""",
+                names,
+            ).fetchall()
+        now = dt.datetime.now(dt.timezone.utc)
+        waits = []
+        for row in rows:
+            try:
+                allowed_at = dt.datetime.fromisoformat(str(row["next_allowed_at"]))
+            except ValueError:
+                continue
+            if allowed_at.tzinfo is None:
+                allowed_at = allowed_at.replace(tzinfo=dt.timezone.utc)
+            waits.append((allowed_at - now).total_seconds())
+        if not waits:
+            return default
+        # A provider with no recorded wait is already free; one already past its
+        # window rounds up to a second rather than to zero, so a caller that
+        # sleeps on this value always makes progress.
+        return max(1, min(default, math.ceil(min(waits))))
 
     def record_metadata_provider_outcome(
         self,

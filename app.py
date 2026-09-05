@@ -383,9 +383,14 @@ _PROVIDER_MIN_INTERVAL_SECONDS = {
     # Comic Vine requires burst control in addition to its hourly resource
     # quota.  Cached series identifiers keep sustained traffic under that cap.
     "comic_vine": max(1.1, float(os.environ.get("COMICARR_COMIC_VINE_MIN_INTERVAL_SECONDS", "1.1"))),
-    # GCD documents no fixed anonymous rate but explicitly throttles anonymous
-    # API traffic; this is the same cushion approach as the other providers,
-    # not a number GCD publishes.
+    # GCD publishes no anonymous rate, but its behaviour has been measured
+    # (2026-09-05): exhausting the anonymous quota returns 429 with a JSON body
+    # of {"detail": "Request was throttled. Expected available in N seconds."}
+    # and a matching Retry-After. The largest seen was 3189s, which puts the
+    # window at an hour rather than a minute -- so a burst is not repaid in a
+    # few seconds, and the cushion below is the wrong lever for it. What keeps
+    # us under the cap is the per-series cooldown in enrich_catalog_series plus
+    # the response cache; this interval only stops two lookups colliding.
     "gcd": max(1.5, float(os.environ.get("COMICARR_GCD_MIN_INTERVAL_SECONDS", "1.5"))),
 }
 def catalog_database_path() -> Path:
@@ -4631,7 +4636,9 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
     errors: list[str] = []
     deferred_limit: MetadataRateLimited | None = None
     available_provider = False
+    considered: list[str] = []
     for provider_id, values in _series_enrichment_provider_order():
+        considered.append(provider_id)
         if not store.metadata_provider_available(provider_id):
             continue
         available_provider = True
@@ -4686,7 +4693,14 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
             store.record_metadata_provider_outcome(provider_id, message)
             errors.append(f"{PROVIDER_DEFINITIONS[provider_id]['name']}: {message}")
     if not available_provider:
-        raise MetadataRateLimited("all", 60, "Metadata providers are cooling down.")
+        # Report the wait that is actually outstanding. A flat minute here made
+        # every series in a run wait 60s for a 15s cooldown, so a 75-series
+        # library took four times longer than its own pacing requires.
+        raise MetadataRateLimited(
+            "all",
+            store.metadata_provider_retry_seconds(considered),
+            "Metadata providers are cooling down.",
+        )
     if deferred_limit:
         raise deferred_limit
     if errors:

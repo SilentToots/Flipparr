@@ -136,6 +136,25 @@ library from what it already knows. You will see a banner saying metadata lookup
 is paused, with the time it will resume. **This is normal and self-heals** —
 nothing is lost, and enrichment continues once the provider allows it.
 
+#### What each provider actually allows
+
+| Provider | Published limit | Measured behaviour |
+| --- | --- | --- |
+| Grand Comics Database | none published | Anonymous traffic is throttled on an **hourly** window. Exhausting it returns `429` with `Retry-After` and a body of `{"detail": "Request was throttled. Expected available in N seconds."}`. The longest observed was **3189 s (53 min)** — measured 2026-09-05. |
+| Metron | 20 requests/minute sustained | paced at one request per 3.2 s |
+| Comic Vine | hourly resource quota plus burst control | paced at one request per 1.1 s |
+
+The GCD figure is the one worth knowing, because an hourly window does not
+repay a burst in a few seconds: spend the quota and metadata lookup is paused
+for up to the rest of the hour. Two things keep normal use well inside it —
+responses are cached on disk, and each series waits **15 s** after a successful
+lookup before the next one starts.
+
+Enrichment therefore costs roughly **2 GCD requests and 17 s per series**
+(measured over a sample: 15 requests for 8 series in 125 s). A 75-series
+library is about 20 minutes and ~140 requests. Almost all of that time is the
+15 s cooldown, not GCD: the actual work averaged 2.5 s per series.
+
 ---
 
 ## 4. Library import, backup and upgrade
