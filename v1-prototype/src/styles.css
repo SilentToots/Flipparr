@@ -1433,7 +1433,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    one section at a time replaces that. Tabs where there is room, a select where
    there is not — the select is the same control the OS already renders as a
    native picker on mobile. */
-.settings-switcher { margin: 18px 0 4px; }
+.settings-switcher { margin: 18px 0 20px; }
 .settings-switcher-select { display: none; }
 .settings-tabs { display: flex; flex-wrap: wrap; gap: 22px; border-bottom: 1px solid var(--line); }
 .settings-tabs button { padding: 12px 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: var(--control-font-md); cursor: pointer; white-space: nowrap; }
@@ -1443,6 +1443,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (max-width: 640px) {
   .settings-tabs { display: none; }
+  .settings-switcher { margin: 18px 0 24px; }
   .settings-switcher-select { display: block; }
-  .settings-switcher-select select { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0d121a; color: var(--text); font-size: 16px; }
+  /* This select is the only way to move between settings sections on a phone,
+     so its height is the whole tap target. 48px is the accessibility floor, not
+     a size to design to. appearance:none replaces the native chevron -- which
+     renders tiny and jammed against the border -- with one that has room around
+     it; the OS still opens its own picker on tap. */
+  .settings-switcher-select select {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    min-height: 56px;
+    padding: 0 46px 0 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background-color: #0d121a;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23b8c0cc' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 16px 16px;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .settings-switcher-select select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 }
