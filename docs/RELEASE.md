@@ -31,7 +31,12 @@ that matters when something is wrong: it names the exact commit, where the app
 version only names the release.
 
 An image built without the argument reports `build: "source"`. That is expected
-for a local `docker build`; a release image should never say it.
+for a local build; a release image should never say it. Compose passes the
+argument through, so a stamped build from a checkout is:
+
+```bash
+FLIPPARR_BUILD=$(git rev-parse HEAD) docker compose up -d --build
+```
 
 ---
 
