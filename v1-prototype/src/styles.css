@@ -522,6 +522,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .file-problem button { min-height: 38px; display: flex; align-items: center; gap: 8px; }
 .file-problem .primary-button { border-color: #725bd5; background: var(--violet); color: white; }
 .file-problem button:disabled { cursor: progress; opacity: .75; }
+/* Space the card's contents structurally rather than relying on a paragraph's
+   margin: removing the duplicated detail sentence left the label sitting flush
+   against the buttons. */
+.file-problem > div, .metadata-problem > div { display: flex; flex-direction: column; align-items: flex-start; gap: 13px; }
 .file-problem-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .replacement-requested-inline { min-height: 38px; padding: 0 12px; border: 1px solid #31543c; border-radius: var(--radius-sm); background: #14251a; color: #8ee6a7; display: inline-flex; align-items: center; gap: 7px; font-size: var(--text-md); font-weight: 700; }
 .replacement-help { display: block; max-width: 560px; margin-top: 11px; color: #a9b2bf; font-size: var(--text-sm); line-height: 1.45; }
@@ -1382,6 +1386,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sort-field select { width: 100%; padding-right: 28px; }
   .filter-button { grid-column: 3; margin-left: 0; white-space: nowrap; }
   .scope-toggle { grid-column: 1 / -1; }
+
+  /* #2: this card is a two-column grid (text | action) with no mobile
+     treatment, so at 375px the copy was crushed into a narrow column beside a
+     button taking half the width, and its heading wrapped to four lines. Stack
+     it and let the action sit full width beneath. */
+  .issue-catalog-card { grid-template-columns: minmax(0, 1fr); }
+  .issue-catalog-card button { width: 100%; justify-content: center; min-height: 44px; }
 
   /* Touch targets. Apple's guideline is 44px; several controls sat at 16-30px,
      which is fine to click and awkward to tap. Raised where it does not disturb
