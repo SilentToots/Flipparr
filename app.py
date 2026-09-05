@@ -490,24 +490,28 @@ PROVIDER_DEFINITIONS = {
         "name": "Grand Comics Database", "credentialField": None,
         "capabilities": ["Series structure", "Issue records", "Volume records"],
         "description": "Built-in anonymous catalog source. No account or API key is required. Responses are cached to disk and reused until they age out, so a re-scan of series you've already matched does not repeat the same lookups.",
+        "setupSummary": "Works straight away. No account needed.",
         "defaultEnabled": True, "defaultPriority": 10,
     },
     "metron": {
         "name": "Metron", "credentialField": "token",
         "capabilities": ["Issue titles", "Release dates", "Covers", "Creators", "Collected-edition contents", "Cross-provider IDs"],
         "description": "Optional authenticated source for detailed issue metadata, structured reprints, and cross-provider matching.",
+        "setupSummary": "Free account. The fastest way to fill in issue details.",
         "defaultEnabled": False, "defaultPriority": 20,
     },
     "comic_vine": {
         "name": "Comic Vine", "credentialField": "apiKey",
         "capabilities": ["Issue titles", "Release dates", "Covers", "Volumes"],
         "description": "Optional API-key source for issue and volume enrichment. Comic Vine restricts its API to non-commercial use.",
+        "setupSummary": "Free API key. Good cover art and issue details.",
         "defaultEnabled": False, "defaultPriority": 30,
     },
     "open_library": {
         "name": "Open Library", "credentialField": None,
         "capabilities": ["ISBN editions", "Volumes", "Book covers"],
         "description": "Built-in source for ISBN-based trades, hardcovers, omnibuses, and ebooks.",
+        "setupSummary": "Works straight away. Covers trades and graphic novels.",
         "defaultEnabled": True, "defaultPriority": 40,
     },
 }
@@ -517,12 +521,14 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "name": "Prowlarr", "kind": "Indexer manager",
         "capabilities": ["Usenet indexer search", "Release candidates", "Indexer health"],
         "description": "Search your configured indexers for wanted issues and volumes.",
+        "setupSummary": "Searches your sources for issues you are missing.",
         "defaultUrl": "http://localhost:9696", "defaultEnabled": False,
     },
     "sabnzbd": {
         "name": "SABnzbd", "kind": "Download client",
         "capabilities": ["NZB downloads", "Queue status", "Completed-download tracking"],
         "description": "Download selected NZBs and report their progress back to SonicBoom.",
+        "setupSummary": "Downloads what you pick and reports progress back.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
     },
 }
@@ -610,6 +616,7 @@ def public_provider_config() -> dict[str, Any]:
         providers.append({
             "id": provider_id, "name": definition["name"],
             "description": definition["description"],
+            "setupSummary": definition.get("setupSummary") or definition["description"],
             "capabilities": definition["capabilities"],
             "builtIn": credential_field is None, "configured": configured,
             "enabled": bool(values.get("enabled")) and configured,
@@ -1021,7 +1028,9 @@ def public_acquisition_service_config() -> dict[str, Any]:
         configured = bool(values.get("url") and values.get("apiKey"))
         services.append({
             "id": service_id, "name": definition["name"], "kind": definition["kind"],
-            "description": definition["description"], "capabilities": definition["capabilities"],
+            "description": definition["description"],
+            "setupSummary": definition.get("setupSummary") or definition["description"],
+            "capabilities": definition["capabilities"],
             "configured": configured, "enabled": bool(values.get("enabled")) and configured,
             "url": _redacted_upstream_url(
                 str(values.get("url") or definition["defaultUrl"])

@@ -1174,10 +1174,25 @@ const SETTINGS_SECTIONS = [
   { id: "metadata", label: "Metadata sources" },
 ];
 
+// The documented Docker mount, so most installs need no typing at all.
+const DEFAULT_LIBRARY_FOLDER = "/comics";
+
 const SETUP_STEPS = [
-  { id: "library", label: "Library folder", required: true },
-  { id: "acquisition", label: "Download services", required: false },
-  { id: "metadata", label: "Metadata sources", required: false },
+  {
+    id: "library", label: "Library folder", required: true, icon: FolderOpen,
+    title: "Where are your comics?",
+    lead: "SonicBoom reads them where they sit. Nothing is renamed or moved.",
+  },
+  {
+    id: "acquisition", label: "Download services", required: false, icon: CloudArrowDown,
+    title: "Want help filling the gaps?",
+    lead: "These find and fetch issues you are missing. Skip if you just want to catalogue what you own.",
+  },
+  {
+    id: "metadata", label: "Metadata sources", required: false, icon: Database,
+    title: "Where should comic details come from?",
+    lead: "One source is already on and needs no account. Adding a second makes the first scan much quicker.",
+  },
 ];
 
 function SetupStepper({ stepIndex }) {
@@ -1186,60 +1201,74 @@ function SetupStepper({ stepIndex }) {
       const state = index < stepIndex ? "done" : index === stepIndex ? "current" : "upcoming";
       return <li className={state} key={step.id} aria-current={state === "current" ? "step" : undefined}>
         <span className="setup-step-marker">{state === "done" ? <Check size={14} weight="bold" /> : index + 1}</span>
-        <span className="setup-step-label">{step.label}</span>
+        <span className="setup-step-label">{step.label}{step.required ? null : <em>Optional</em>}</span>
       </li>;
     })}
   </ol>;
 }
 
-function SetupLibraryStep({ folder, onFolderChange, recursive, onRecursiveChange, existingRoots }) {
+function SetupLibraryStep({ folder, onFolderChange, recursive, onRecursiveChange, onCheckedChange, existingRoots }) {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
-  async function check() {
-    setChecking(true); setError(""); setResult(null);
-    try {
-      const found = await apiRequest("/api/v1/library-folder-check", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder, recursive }),
-      });
-      setResult(found);
-      onFolderChange(folder, found);
-    } catch (caught) {
-      setError(caught.message);
-      onFolderChange(folder, null);
-    } finally {
-      setChecking(false);
-    }
-  }
+  const notify = useRef(onCheckedChange);
+  notify.current = onCheckedChange;
+
+  // Checked as you type rather than behind a separate button press. The folder
+  // is pre-filled with the documented mount, so the common case is that the
+  // count is already on screen before the user has done anything at all.
+  useEffect(() => {
+    const value = String(folder || "").trim();
+    setResult(null);
+    setError("");
+    notify.current(null);
+    if (!value) { setChecking(false); return undefined; }
+    setChecking(true);
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const found = await apiRequest("/api/v1/library-folder-check", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder: value, recursive }),
+        });
+        if (cancelled) return;
+        setResult(found);
+        notify.current(found);
+      } catch (caught) {
+        if (!cancelled) setError(caught.message);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }, 450);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [folder, recursive]);
+
   return <div className="setup-step-body">
-    <p className="setup-lead">Point SonicBoom at the folder holding the comics you already own. It reads them where they are — nothing is renamed, moved or written.</p>
     {existingRoots.length ? <div className="setup-existing-roots">
-      <strong>Already configured</strong>
+      <strong>Already added</strong>
       {existingRoots.map((root) => <span key={root.id}><FolderOpen size={16} /> {root.path}</span>)}
     </div> : null}
     <label className="setup-field">
-      <span>Folder path inside the container</span>
-      <input value={folder} onChange={(event) => { setResult(null); setError(""); onFolderChange(event.target.value, null); }}
-        placeholder="/comics" spellCheck={false} autoCapitalize="none" autoCorrect="off" />
+      <span>Folder path</span>
+      <input value={folder} onChange={(event) => onFolderChange(event.target.value)}
+        placeholder={DEFAULT_LIBRARY_FOLDER} spellCheck={false} autoCapitalize="none" autoCorrect="off" />
     </label>
     <label className="setup-checkbox">
-      <input type="checkbox" checked={recursive} onChange={(event) => { setResult(null); onRecursiveChange(event.target.checked); }} />
+      <input type="checkbox" checked={recursive} onChange={(event) => onRecursiveChange(event.target.checked)} />
       <span>Include subfolders</span>
     </label>
-    <button type="button" className="secondary-button" onClick={check} disabled={!folder.trim() || checking} aria-busy={checking}>
-      {checking ? <LoadingSpinner size={17} /> : <MagnifyingGlass size={17} />} Check this folder
-    </button>
-    {result ? <p className="setup-check-ok" role="status">
-      <CheckCircle size={18} weight="fill" /> Found <strong>{result.comicCount}{result.countTruncatedAt ? "+" : ""}</strong> comic {result.comicCount === 1 ? "file" : "files"} in {result.path}.
-    </p> : null}
-    {error ? <p className="setup-check-error" role="alert"><WarningCircle size={18} weight="fill" /> {error}</p> : null}
+    <p className={`setup-check ${checking ? "busy" : result ? "ok" : error ? "bad" : "idle"}`} role="status" aria-live="polite">
+      {checking ? <><LoadingSpinner size={17} /> Looking…</>
+        : result ? <><CheckCircle size={18} weight="fill" /> <span><strong>{result.comicCount}{result.countTruncatedAt ? "+" : ""}</strong> {result.comicCount === 1 ? "comic" : "comics"} ready to import.</span></>
+        : error ? <><WarningCircle size={18} weight="fill" /> <span>{error}</span></>
+        : <span>The folder you gave SonicBoom access to.</span>}
+    </p>
   </div>;
 }
 
 function SetupView({ catalog, onFinish, onSkipSetup }) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [folder, setFolder] = useState("");
+  const [folder, setFolder] = useState(DEFAULT_LIBRARY_FOLDER);
   const [folderChecked, setFolderChecked] = useState(null);
   const [recursive, setRecursive] = useState(true);
   const [services, setServices] = useState([]);
@@ -1280,31 +1309,31 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
   return <div className="setup-shell">
     <div className="setup-card">
       <header className="setup-header">
-        <span className="setup-brand"><BookOpen size={22} weight="duotone" /> SonicBoom</span>
-        <h1>Set up your library</h1>
-        <p>Three steps, then SonicBoom takes stock of what you own.</p>
+        <span className="setup-brand"><BookOpen size={20} weight="duotone" /> SonicBoom</span>
         <SetupStepper stepIndex={stepIndex} />
+        <div className="setup-step-heading">
+          <span className="setup-step-icon"><step.icon size={26} weight="duotone" /></span>
+          <div>
+            <h1>{step.title}</h1>
+            <p>{step.lead}</p>
+          </div>
+        </div>
       </header>
 
       {step.id === "library" ? <SetupLibraryStep
         folder={folder} recursive={recursive} existingRoots={existingRoots}
-        onFolderChange={(value, checked) => { setFolder(value); setFolderChecked(checked); }}
+        onFolderChange={setFolder} onCheckedChange={setFolderChecked}
         onRecursiveChange={setRecursive} /> : null}
 
       {step.id === "acquisition" ? <div className="setup-step-body">
-        <p className="setup-lead">Connect Prowlarr to search for releases and SABnzbd to download the ones you choose. Skip this if you only want to catalogue comics you already have — you can add them later in Settings.</p>
-        {services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}
+        {services.map((service) => <AcquisitionService service={service} concise onConfigure={() => setEditingService(service)} key={service.id} />)}
       </div> : null}
 
       {step.id === "metadata" ? <div className="setup-step-body">
-        <p className="setup-lead">The Grand Comics Database works immediately with no account. Adding another source is optional but makes the first intake substantially faster.</p>
-        {providers.map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
-        <aside className="provider-policy-note">
-          <ClockCounterClockwise size={19} weight="fill" />
-          <span>
-            <strong>Why a second source is worth the two minutes</strong>
-            <small>The Grand Comics Database limits anonymous use to roughly 50–60 lookups an hour, which works out at about 25 series an hour. Metron allows 20 a minute. On a large library that is the difference between an afternoon and a few minutes — and your keys stay on this device.</small>
-          </span>
+        {providers.map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+        <aside className="setup-aside">
+          <ClockCounterClockwise size={18} weight="fill" />
+          <span>On a large library, a second source is the difference between a few minutes and most of an afternoon.</span>
         </aside>
       </div> : null}
 
@@ -1316,7 +1345,7 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
           {!step.required && stepIndex < SETUP_STEPS.length - 1 ? <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex + 1)} disabled={finishing}>Skip for now</button> : null}
           {stepIndex < SETUP_STEPS.length - 1
             ? <button type="button" className="primary-button" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue <ArrowRight size={17} /></button>
-            : <button type="button" className="primary-button" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan my library</button>}
+            : <button type="button" className="primary-button" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan</button>}
         </div>
       </footer>
     </div>
@@ -1462,15 +1491,15 @@ function Toggle({ checked, onChange, title, description }) {
   return <label className="toggle-row"><span><strong>{title}</strong><small>{description}</small></span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><i /></label>;
 }
 
-function Provider({ provider, onConfigure }) {
+function Provider({ provider, onConfigure, concise = false }) {
   const status = provider.builtIn ? "Available without an account" : provider.enabled ? "Enabled" : provider.configured ? "Configured but disabled" : "Not configured";
-  return <div className={`provider-row ${provider.enabled ? "enabled" : ""}`}><Database size={23} weight="duotone" /><span><span className="provider-title-line"><strong>{provider.name}</strong><b className={`provider-state ${provider.enabled ? "connected" : provider.configured ? "paused" : "optional"}`}>{status}</b></span><small>{provider.description}</small><em>{provider.capabilities.join(" · ")}</em></span>{provider.builtIn ? <b className="provider-priority">Priority {provider.priority}</b> : <button onClick={onConfigure}>{provider.configured ? "Manage" : "Configure"}</button>}</div>;
+  return <div className={`provider-row ${provider.enabled ? "enabled" : ""}`}><Database size={23} weight="duotone" /><span><span className="provider-title-line"><strong>{provider.name}</strong><b className={`provider-state ${provider.enabled ? "connected" : provider.configured ? "paused" : "optional"}`}>{status}</b></span><small>{concise ? provider.setupSummary || provider.description : provider.description}</small><em>{provider.capabilities.join(" · ")}</em></span>{provider.builtIn ? <b className="provider-priority">Priority {provider.priority}</b> : <button onClick={onConfigure}>{provider.configured ? "Manage" : "Configure"}</button>}</div>;
 }
 
-function AcquisitionService({ service, onConfigure }) {
+function AcquisitionService({ service, onConfigure, concise = false }) {
   const status = service.enabled ? "Ready" : service.configured ? "Configured but disabled" : "Not connected";
   const Icon = service.id === "prowlarr" ? MagnifyingGlass : CloudArrowDown;
-  return <div className={`provider-row ${service.enabled ? "enabled" : ""}`}><Icon size={23} weight="duotone" /><span><span className="provider-title-line"><strong>{service.name}</strong><b className={`provider-state ${service.enabled ? "connected" : service.configured ? "paused" : "optional"}`}>{status}</b></span><small>{service.description}</small><em>{service.kind} · {service.capabilities.join(" · ")}</em></span><button onClick={onConfigure}>{service.configured ? "Manage" : "Connect"}</button></div>;
+  return <div className={`provider-row ${service.enabled ? "enabled" : ""}`}><Icon size={23} weight="duotone" /><span><span className="provider-title-line"><strong>{service.name}</strong><b className={`provider-state ${service.enabled ? "connected" : service.configured ? "paused" : "optional"}`}>{status}</b></span><small>{concise ? service.setupSummary || service.description : service.description}</small><em>{service.kind} · {service.capabilities.join(" · ")}</em></span><button onClick={onConfigure}>{service.configured ? "Manage" : "Connect"}</button></div>;
 }
 
 function AcquisitionServiceSettingsModal({ service, onClose, onSaved }) {
