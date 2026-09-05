@@ -1551,17 +1551,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (max-width: 640px) {
   .setup-shell { padding: 0; align-items: stretch; }
-  /* A card here as well. Each step now fits inside one, so the viewport-pinned
-     footer that the long steps needed -- and the rule and fill that came with
-     it -- are no longer earning their keep. */
-  .setup-shell { padding: 16px 14px max(20px, env(safe-area-inset-bottom)); align-items: flex-start; }
-  .setup-card { padding: 22px 18px 24px; }
+  /* The card takes the height of the screen and the actions rest on its floor,
+     so Continue is in the same place on every step instead of wherever that
+     step's content happened to end. */
+  .setup-shell { min-height: 100dvh; padding: 14px 14px max(16px, env(safe-area-inset-bottom)); align-items: stretch; }
+  .setup-card { flex: 1 1 auto; max-height: none; padding: 22px 18px 20px; }
+  .setup-card > .setup-step-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .setup-actions { margin-top: auto; padding-top: 22px; }
+  /* Welcome has no step content to push against, so it centres in the space. */
+  .setup-card.welcome .setup-welcome { flex: 1 1 auto; align-content: center; }
   /* Stack the footer so neither action is squeezed, and put the primary one
      first in the reading order it is actually used in. */
   /* Back is a small square beside the action, not a second full-width button
      stacked under it -- stacked, the two competed for the same attention. */
   .setup-actions { flex-direction: row; align-items: center; flex-wrap: nowrap; }
-  .setup-actions .setup-pill { flex: 1 1 auto; min-width: 0; justify-content: center; }
+  .setup-actions .setup-pill { min-width: 0; }
   .setup-step-body > .secondary-button { align-self: stretch; justify-content: center; }
 }
 
@@ -1625,9 +1629,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-back:hover { color: var(--text); border-color: var(--muted); }
 .setup-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* .setup-actions button sets a 44px floor and outranks .setup-pill, which left
-   Continue 6px shorter than the Back button beside it. Sized to its label here;
-   stretched to the row only on a phone, where a thumb wants the width. */
-.setup-actions .setup-pill { flex: 0 0 auto; min-height: 50px; min-width: 190px; }
+   Continue 6px shorter than the Back button beside it. It takes the rest of the
+   row rather than hugging its label, so the target is the width of the card. */
+.setup-actions .setup-pill { flex: 1 1 auto; min-height: 50px; justify-content: center; }
 .setup-actions { justify-content: flex-start; }
 
 @media (max-width: 640px) {
