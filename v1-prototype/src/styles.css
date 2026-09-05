@@ -1594,8 +1594,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-welcome-note { display: block; margin-top: 18px; color: var(--muted); font-size: var(--text-sm); }
 .setup-art { width: 190px; height: 190px; flex: none; }
 
-.setup-welcome-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-start; }
-.setup-welcome-actions .setup-pill { flex: 1 1 0; }
+/* The offer takes the room; skipping is the small way out beside it -- the same
+   weighting as the Back circle next to Continue on every step that follows. */
+.setup-welcome-actions { display: flex; flex-wrap: nowrap; gap: 12px; justify-content: flex-start; }
+.setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; }
+.setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 24px; }
 /* Pill buttons: one filled, one tinted rather than outlined, so the pair reads
    as two offers rather than an action and a warning. */
 .setup-pill { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 50px; padding: 0 26px; border: 0; border-radius: 999px; font-size: var(--control-font-md); font-weight: 600; cursor: pointer; }
@@ -1614,7 +1617,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Side by side rather than stacked: two short labels fit across a phone, and
      the pair reads as one decision instead of a list. */
   .setup-welcome-actions { flex-wrap: nowrap; gap: 10px; }
-  .setup-welcome-actions .setup-pill { flex: 1 1 0; min-width: 0; padding: 0 14px; white-space: nowrap; }
+  .setup-welcome-actions .setup-pill { min-width: 0; white-space: nowrap; }
+  .setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; padding: 0 14px; }
+  .setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 20px; }
 }
 
 /* The welcome screen is one idea and two choices, so it gets a wider card and

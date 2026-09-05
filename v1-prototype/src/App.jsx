@@ -1359,7 +1359,7 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
             step, so the place you press does not move as you go. */}
         <footer className="setup-actions setup-welcome-actions">
           <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
-          <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip for now</button>
+          <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip</button>
         </footer>
       </> : null}
 
