@@ -140,20 +140,27 @@ nothing is lost, and enrichment continues once the provider allows it.
 
 | Provider | Published limit | Measured behaviour |
 | --- | --- | --- |
-| Grand Comics Database | none published | Anonymous traffic is throttled on an **hourly** window. Exhausting it returns `429` with `Retry-After` and a body of `{"detail": "Request was throttled. Expected available in N seconds."}`. The longest observed was **3189 s (53 min)** — measured 2026-09-05. |
+| Grand Comics Database | none published | Anonymous traffic is throttled on an **hourly** window of roughly **50–60 requests**. Exhausting it returns `429` with `Retry-After` and a body of `{"detail": "Request was throttled. Expected available in N seconds."}`; waits of **2922 s and 3189 s** (49 and 53 min) were observed — measured 2026-09-05. |
 | Metron | 20 requests/minute sustained | paced at one request per 3.2 s |
 | Comic Vine | hourly resource quota plus burst control | paced at one request per 1.1 s |
 
 The GCD figure is the one worth knowing, because an hourly window does not
 repay a burst in a few seconds: spend the quota and metadata lookup is paused
-for up to the rest of the hour. Two things keep normal use well inside it —
-responses are cached on disk, and each series waits **15 s** after a successful
-lookup before the next one starts.
+for up to the rest of the hour.
 
-Enrichment therefore costs roughly **2 GCD requests and 17 s per series**
-(measured over a sample: 15 requests for 8 series in 125 s). A 75-series
-library is about 20 minutes and ~140 requests. Almost all of that time is the
-15 s cooldown, not GCD: the actual work averaged 2.5 s per series.
+Enrichment costs about **2 GCD requests per series**, so that hourly window is
+worth roughly **25 series an hour** — and the quota, not the pacing, is the
+binding constraint. A 75-series library takes around three hours on GCD alone,
+spread across several throttle windows; a library of a few thousand series is
+not practical on the anonymous tier at all. This is measured, not estimated: a
+run enriching 8 series at a time hit the throttle after 56 successful requests
+and paused for 49 minutes.
+
+**If you have more than a hundred or so series, configure Metron.** Its
+documented 20 requests/minute is around 1200 an hour against GCD's ~55, so it
+carries bulk enrichment comfortably while GCD stays the zero-configuration
+default and the stronger source for independent and small-press material.
+Nothing breaks without it; enrichment simply proceeds in hourly bursts.
 
 ---
 
