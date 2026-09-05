@@ -1368,14 +1368,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   :root { --control-font-sm: 15px; --control-font-md: 16px; }
   .filter-button, .scope-toggle button, .view-toggle button { font-size: 16px; }
 
-  /* The view toggle had no assigned column, so it auto-placed into column one
-     and pushed the sort field onto its own row. Give every control a column. */
-  .library-tools { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
-  .view-toggle { grid-column: 1; justify-self: start; }
-  .sort-field { grid-column: 2; min-width: 0; }
+  /* All three controls on one row came to 377px of demand inside 343px, so the
+     sort select was squeezed to 116px and clipped its own options -- "Needs
+     attention" by 37px. The two icon-sized controls share the first row and the
+     select, whose width is set by its longest label, takes the second. */
+  .library-tools { grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+  .view-toggle { grid-column: 1; grid-row: 1; justify-self: start; }
+  .filter-button { grid-column: 2; grid-row: 1; justify-self: end; margin-left: 0; white-space: nowrap; }
+  .sort-field { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
   .sort-field > span { display: none; }          /* the select is self-evident */
-  .sort-field select { width: 100%; padding-right: 28px; }
-  .filter-button { grid-column: 3; margin-left: 0; white-space: nowrap; }
+  .sort-field select { width: 100%; padding-left: 12px; padding-right: 28px; }
   .scope-toggle { grid-column: 1 / -1; }
 
   /* #2: this card is a two-column grid (text | action) with no mobile
@@ -1401,8 +1403,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .search-field input { min-height: 44px; }
   .search-field button, .search-field .ui-button { min-height: 44px; }
   .library-tools .sort-field select, .library-tools .filter-button { height: 44px; min-height: 44px; }
-  .view-toggle, .scope-toggle { padding: 2px; }
-  .view-toggle button, .scope-toggle button { min-height: 40px; }
+  /* The two view icons were 34x40 inside a 46px shell. Dropping the shell's
+     padding and squaring the buttons to 44 keeps the shell the same height it
+     already was, so the row does not grow. */
+  .view-toggle, .scope-toggle { padding: 0; }
+  .view-toggle button, .scope-toggle button { min-height: 44px; min-width: 44px; }
+  /* The banner's dismiss "x" was 30x30 -- the smallest control in the app, and
+     an icon-only one, which is the hardest kind to hit accurately. */
+  .metadata-setup-dismiss { width: 44px; height: 44px; }
+  /* Library health's per-problem actions sat at 38px, its inbox pager at 43. */
+  .file-problem-actions button { min-height: 44px; }
+  .mobile-inbox-nav button { min-height: 44px; }
 
   /* Settings rows: the status pill, the description and the action were all
      competing on one line. Stack them and let each breathe. */

@@ -16,7 +16,13 @@ export default defineConfig({
       // Defaults to a backend running on this machine. Point it at another
       // one -- a tunnelled QA instance, say, which has a real library behind
       // it -- with SONICBOOM_API_ORIGIN rather than editing this file.
-      "/api": process.env.SONICBOOM_API_ORIGIN || "http://127.0.0.1:8787",
+      "/api": {
+        target: process.env.SONICBOOM_API_ORIGIN || "http://127.0.0.1:8787",
+        // Forward the browser's own Host. The server rejects a state-changing
+        // request whose Origin does not match its Host, so rewriting Host to
+        // the target makes every POST from the dev server look cross-site.
+        changeOrigin: false,
+      },
     },
     warmup: {
       clientFiles: ["./src/main.jsx"],
