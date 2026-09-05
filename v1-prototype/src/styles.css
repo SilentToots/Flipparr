@@ -1485,7 +1485,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* First-run setup. A full-screen takeover rather than a view inside the nav:
    until a library folder exists there is nothing for the nav to lead to. */
 .setup-shell { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px 64px; background: var(--bg); }
-.setup-card { width: min(680px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px; }
+/* The same column at every width: heading, a body that scrolls if it must, and
+   actions that stay put. On a 760px-tall desktop the sources step still pushed
+   its action 30px past the fold without this. */
+.setup-card { width: min(680px, 100%); max-height: calc(100dvh - 56px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px; }
+.setup-card > .setup-header { flex: 0 0 auto; }
+.setup-card > .setup-step-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.setup-card > .setup-step-body > * { flex: 0 0 auto; }
+.setup-card > .setup-actions { flex: 0 0 auto; }
 .setup-header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 20px; }
 .setup-brand { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px; color: var(--muted-strong); font-size: var(--text-sm); font-weight: 600; letter-spacing: .02em; }
 
@@ -1537,7 +1544,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-aside > svg { flex: none; color: #8e7ce0; margin-top: 1px; }
 
 .setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); background: var(--surface); }
-.setup-actions-primary { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .setup-actions button { min-height: 44px; }
 
 @media (max-width: 640px) {
@@ -1557,9 +1563,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .setup-actions { flex: 0 0 auto; margin-top: 0; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   /* Stack the footer so neither action is squeezed, and put the primary one
      first in the reading order it is actually used in. */
-  .setup-actions { flex-direction: column-reverse; align-items: stretch; }
-  .setup-actions-primary { margin-left: 0; flex-direction: column-reverse; align-items: stretch; }
-  .setup-actions button { width: 100%; justify-content: center; }
+  /* Back is a small square beside the action, not a second full-width button
+     stacked under it -- stacked, the two competed for the same attention. */
+  .setup-actions { flex-direction: row; align-items: center; flex-wrap: nowrap; }
+  .setup-actions .setup-pill { flex: 1 1 auto; min-width: 0; justify-content: center; }
   .setup-step-body > .secondary-button { align-self: stretch; justify-content: center; }
 }
 
@@ -1609,3 +1616,42 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .setup-card.welcome { padding: 24px 18px 28px; width: 100%; }
   .setup-card.welcome .setup-art { width: 132px; height: 132px; }
 }
+
+/* --- Setup refinements ---------------------------------------------------- */
+
+/* Each source is its own card, so the eye lands on one decision at a time
+   rather than a run of rows separated by hairlines. */
+.setup-card .provider-row { border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255,255,255,.022); padding: 16px; margin: 0; }
+.setup-card .provider-row + .provider-row { border-top: 1px solid var(--line); }
+
+/* Back is a small square to the left of the action, not a third full-width
+   button competing with it. */
+.setup-back { flex: 0 0 auto; width: 50px; height: 50px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--muted-strong); cursor: pointer; }
+.setup-back:hover { color: var(--text); border-color: var(--muted); }
+.setup-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* .setup-actions button sets a 44px floor and outranks .setup-pill, which left
+   Continue 6px shorter than the Back button beside it. Sized to its label here;
+   stretched to the row only on a phone, where a thumb wants the width. */
+.setup-actions .setup-pill { flex: 0 0 auto; min-height: 50px; min-width: 190px; }
+.setup-actions { justify-content: flex-start; }
+
+@media (max-width: 640px) {
+  /* Full-bleed on a phone, so it is the page rather than a card floating on a
+     slightly different colour. */
+  .setup-card { background: transparent; }
+  .setup-card .provider-row { background: rgba(255,255,255,.03); }
+
+  /* Labelled steps wrapped onto a second line at this width. The heading already
+     names the step, so the stepper reduces to position. */
+  .setup-stepper { gap: 8px; }
+  .setup-step-label { display: none; }
+  .setup-stepper li { flex: 0 0 auto; }
+  .setup-step-marker { width: 9px; height: 9px; padding: 0; border-radius: 999px; border: 0; font-size: 0; background: var(--line-strong); }
+  .setup-stepper li.current .setup-step-marker { background: var(--violet); width: 24px; }
+  .setup-stepper li.done .setup-step-marker { background: #3fb950; }
+  .setup-stepper li.done .setup-step-marker svg { display: none; }
+}
+
+/* Built-in sources: informational, so a line rather than a card. */
+.setup-builtin { display: flex; gap: 9px; align-items: flex-start; margin: 0; padding: 2px 2px 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
+.setup-builtin > svg { flex: none; color: #3fb950; margin-top: 2px; }

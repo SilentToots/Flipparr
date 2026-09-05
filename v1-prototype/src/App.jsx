@@ -1193,19 +1193,19 @@ function SetupArtwork() {
 const SETUP_STEPS = [
   { id: "welcome", label: "Welcome", required: false },
   {
-    id: "library", label: "Library folder", required: true, icon: FolderOpen,
-    title: "Where are your comics?",
-    lead: "SonicBoom reads them where they sit. Nothing is renamed or moved.",
+    id: "library", label: "Folder path", required: true, icon: FolderOpen,
+    title: "Select Folder Path",
+    lead: "Files are read where they are. Nothing is renamed or moved.",
   },
   {
     id: "acquisition", label: "Download services", required: false, icon: CloudArrowDown,
-    title: "Want help filling the gaps?",
-    lead: "These find and fetch issues you are missing. Skip if you just want to catalogue what you own.",
+    title: "Setup Download Services (Optional)",
+    lead: "Finds and downloads issues you are missing.",
   },
   {
-    id: "metadata", label: "Metadata sources", required: false, icon: Database,
-    title: "Where should comic details come from?",
-    lead: "One source is already on and needs no account. Adding a second makes the first scan much quicker.",
+    id: "metadata", label: "Data sources", required: false, icon: Database,
+    title: "Setup Data Sources",
+    lead: "Where issue details, covers and dates come from.",
   },
 ];
 
@@ -1217,7 +1217,7 @@ function SetupStepper({ stepIndex }) {
       const state = index < position ? "done" : index === position ? "current" : "upcoming";
       return <li className={state} key={step.id} aria-current={state === "current" ? "step" : undefined}>
         <span className="setup-step-marker">{state === "done" ? <Check size={14} weight="bold" /> : index + 1}</span>
-        <span className="setup-step-label">{step.label}{step.required ? null : <em>Optional</em>}</span>
+        <span className="setup-step-label">{step.label}</span>
       </li>;
     })}
   </ol>;
@@ -1341,13 +1341,12 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
       {step.id === "welcome" ? <div className="setup-welcome">
         <div className="setup-welcome-copy">
           <span className="setup-eyebrow">Welcome</span>
-          <h1>Your comics, finally in order</h1>
-          <p>SonicBoom reads the comics already on your disk, works out what each one is, and shows you what is missing.</p>
+          <h1>Set up your comic library</h1>
+          <p>SonicBoom reads the comics on your disk, identifies them, and shows what is missing.</p>
           <div className="setup-welcome-actions">
             <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
             <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip for now</button>
           </div>
-          <small className="setup-welcome-note">Takes about a minute. You can change any of it later in Settings.</small>
         </div>
         <SetupArtwork />
       </div> : null}
@@ -1362,7 +1361,14 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
       </div> : null}
 
       {step.id === "metadata" ? <div className="setup-step-body">
-        {providers.map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+        {/* Sources you can act on come first. The built-in ones have no button
+            and nothing to decide, so they are one informational line at the
+            bottom rather than two cards competing with the real choices. */}
+        {providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+        {providers.some((provider) => provider.builtIn) ? <p className="setup-builtin">
+          <CheckCircle size={16} weight="fill" />
+          <span>Already on, no account needed: {providers.filter((provider) => provider.builtIn).map((provider) => provider.name).join(" and ")}.</span>
+        </p> : null}
         <aside className="setup-aside">
           <ClockCounterClockwise size={18} weight="fill" />
           <span>On a large library, a second source is the difference between a few minutes and most of an afternoon.</span>
@@ -1372,13 +1378,10 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
       {error ? <p className="setup-check-error" role="alert"><WarningCircle size={18} weight="fill" /> {error}</p> : null}
 
       {step.id === "welcome" ? null : <footer className="setup-actions">
-        <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex - 1)} disabled={finishing}><ArrowLeft size={17} /> Back</button>
-        <div className="setup-actions-primary">
-          {!step.required && stepIndex < SETUP_STEPS.length - 1 ? <button type="button" className="ghost-button" onClick={() => setStepIndex(stepIndex + 1)} disabled={finishing}>Skip for now</button> : null}
-          {stepIndex < SETUP_STEPS.length - 1
-            ? <button type="button" className="primary-button" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue <ArrowRight size={17} /></button>
-            : <button type="button" className="primary-button" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan</button>}
-        </div>
+        <button type="button" className="setup-back" onClick={() => setStepIndex(stepIndex - 1)} disabled={finishing} aria-label="Back"><ArrowLeft size={18} /></button>
+        {stepIndex < SETUP_STEPS.length - 1
+          ? <button type="button" className="setup-pill primary setup-continue" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue <ArrowRight size={17} weight="bold" /></button>
+          : <button type="button" className="setup-pill primary setup-continue" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan</button>}
       </footer>}
     </div>
     {editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}

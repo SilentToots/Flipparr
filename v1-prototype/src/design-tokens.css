@@ -1,8 +1,10 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #f1f3f7;
-  background: #0b0e14;
+  color: var(--color-neutral-50);
+  /* Was a hardcoded #0b0e14, which predates --bg and is a shade off it, so the
+     canvas behind an overscroll never matched the page it framed. */
+  background: var(--color-neutral-950);
   font-synthesis: none;
 
   /* Primitive color tokens */
