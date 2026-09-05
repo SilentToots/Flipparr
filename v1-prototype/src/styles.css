@@ -1590,8 +1590,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .setup-art { width: 132px; height: 132px; order: -1; margin: 0 auto; }
   .setup-welcome h1 { font-size: var(--text-2xl); }
   .setup-welcome > .setup-welcome-copy > p { font-size: var(--text-base); margin-bottom: 24px; }
-  .setup-welcome-actions { flex-direction: column; }
-  .setup-pill { width: 100%; }
+  /* Side by side rather than stacked: two short labels fit across a phone, and
+     the pair reads as one decision instead of a list. */
+  .setup-welcome-actions { flex-wrap: nowrap; gap: 10px; }
+  .setup-pill { flex: 1 1 0; min-width: 0; padding: 0 14px; white-space: nowrap; }
 }
 
 /* The welcome screen is one idea and two choices, so it gets a wider card and
