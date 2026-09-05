@@ -2098,11 +2098,28 @@ function LoginView({ onSignedIn }) {
     }
   }
   return <div className="login-shell"><form className="login-card" onSubmit={submit}>
-    <div className="brand"><div><FlipparrWordmark height={34} /><span>Sign in to continue</span></div></div>
-    <label><span>Username</span><input value={username} autoFocus autoComplete="username" onChange={(event) => setUsername(event.target.value)} /></label>
-    <label><span>Password</span><input type="password" value={password} autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} /></label>
-    {error ? <p className="workbench-error" role="alert">{error}</p> : null}
-    <button className="primary-button" disabled={busy || !username || !password} aria-busy={busy}>
+    {/* Its own brand block rather than the sidebar's: centred over a
+        left-aligned form is the usual shape of a sign-in, and the sidebar's
+        rules are tuned for a row in a nav. */}
+    <div className="login-brand">
+      <FlipparrWordmark height={30} />
+      <p>Sign in to continue</p>
+    </div>
+    <label>
+      <span>Username</span>
+      {/* name= matters as much as autoComplete=: password managers read both
+          when deciding what to offer and what to save. */}
+      <input name="username" value={username} autoFocus autoComplete="username"
+        autoCapitalize="none" autoCorrect="off" spellCheck={false}
+        onChange={(event) => setUsername(event.target.value)} />
+    </label>
+    <label>
+      <span>Password</span>
+      <input name="password" type="password" value={password} autoComplete="current-password"
+        onChange={(event) => setPassword(event.target.value)} />
+    </label>
+    {error ? <p className="login-error" role="alert">{error}</p> : null}
+    <button className="primary-button login-submit" disabled={busy || !username || !password} aria-busy={busy}>
       {busy ? <LoadingSpinner size={18} /> : <ShieldCheck size={18} />} {busy ? "Signing in…" : "Sign in"}
     </button>
   </form></div>;
