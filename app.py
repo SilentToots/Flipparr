@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import datetime as dt
 import difflib
 import email.message
 import gzip
@@ -51,6 +52,12 @@ from catalog_core_v2.provider_evidence import (
 )
 
 
+# Bumped by hand at release. COMICARR_BUILD is stamped by the image build (a
+# commit sha), so a running container can be traced to the source that made it
+# even between releases.
+APP_VERSION = "0.1.0"
+APP_BUILD = os.environ.get("COMICARR_BUILD", "").strip() or "source"
+
 SUPPORTED_EXTENSIONS = {".cbz", ".cbr", ".pdf", ".epub", ".cb7", ".cbt"}
 ZIP_COMIC_EXTENSIONS = {".cbz", ".epub"}
 ARCHIVE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"}
@@ -60,6 +67,61 @@ COVER_SOURCE_MAX_BYTES = 50_000_000
 COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-v1"
 USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
 _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
+
+
+# --- Structured logging ------------------------------------------------------
+#
+# One JSON object per line on stdout, which is where a container collects logs.
+# Every line carries the id of the request that produced it, and that same id
+# goes back on the response as X-Request-Id, so a user reporting a failure can
+# quote a string that finds the exact server-side record.
+#
+# Support-safe by construction: the logger writes the fields it is given and
+# never a request body, a header, or a query string. Query strings are dropped
+# rather than filtered -- an allowlist only holds until someone adds a
+# parameter nobody thought to list.
+
+_LOG_LOCK = threading.Lock()
+_REQUEST_CONTEXT = threading.local()
+
+
+def current_request_id() -> str | None:
+    return getattr(_REQUEST_CONTEXT, "request_id", None)
+
+
+def log_event(event: str, level: str = "info", **fields: Any) -> None:
+    record: dict[str, Any] = {
+        "ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+        "level": level,
+        "event": event,
+    }
+    request_id = current_request_id()
+    if request_id:
+        record["request_id"] = request_id
+    for key, value in fields.items():
+        if value is not None:
+            record[key] = value
+    line = json.dumps(record, ensure_ascii=False, default=str)
+    # One write under a lock: interleaved partial lines are unparseable, and
+    # every worker thread logs to the same stream.
+    with _LOG_LOCK:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+
+
+def log_exception(event: str, exc: BaseException, level: str = "error", **fields: Any) -> None:
+    """Record a failure with its stack, keeping the detail server-side.
+
+    Callers answer the client separately and generically; the request id is
+    what ties that answer back to this record.
+    """
+    log_event(
+        event, level=level,
+        error_type=type(exc).__name__,
+        error=str(exc),
+        traceback="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip(),
+        **fields,
+    )
 
 
 def _configured_path(variable: str, default: Path) -> Path:
@@ -1896,14 +1958,14 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                 try:
                     result = reconcile_acquisition_download(download)
                     imported_any = imported_any or result.get("status") == "imported"
-                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
+                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
                     # Transient service outages are retried without changing the durable request state.
-                    traceback.print_exc()
+                    log_exception("acquisition_import_transient", exc, level="warning")
                     continue
                 except Exception as exc:
                     # Never leave a request looking active when the coordinator itself failed
                     # outside reconcile_acquisition_download's normal validation path.
-                    traceback.print_exc()
+                    log_exception("acquisition_import_failed", exc)
                     message = f"Import coordinator failed: {exc}"
                     try:
                         store = catalog_store()
@@ -1914,8 +1976,8 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                         store.update_acquisition_job(
                             int(download["job_id"]), "failed", message,
                         )
-                    except Exception:
-                        traceback.print_exc()
+                    except Exception as nested:
+                        log_exception("acquisition_failure_record_failed", nested)
             if imported_any:
                 start_catalog_scan(str(COMIC_LIBRARY_ROOT), True, "local")
         except Exception:
@@ -5859,9 +5921,17 @@ class Handler(BaseHTTPRequestHandler):
     # is still safe to write an error response.
     _response_started = False
 
+    _status: int | None = None
+
     def send_response(self, code, message=None):  # type: ignore[override]
         self._response_started = True
+        self._status = code
         super().send_response(code, message)
+        # Returned on every response so a user can quote it and land on the
+        # exact server-side record for their request.
+        request_id = current_request_id()
+        if request_id:
+            self.send_header("X-Request-Id", request_id)
 
     def _client_address(self) -> str:
         """The caller's real address, believing a forwarded header only from a
@@ -5928,29 +5998,48 @@ class Handler(BaseHTTPRequestHandler):
         none of them did. Without it an unexpected exception propagates out of
         the handler and the client sees the connection close with no response
         at all, which is indistinguishable from the server being down.
+
+        This is also where a request gets its id: assigned before anything can
+        fail, so even a rejection is traceable.
         """
         path = urllib.parse.urlparse(self.path).path
+        _REQUEST_CONTEXT.request_id = secrets.token_hex(6)
+        self._status = None
+        started = time.monotonic()
         try:
-            authorized = path == "/healthz" or self._authorized(path)
-        except AuthConfigUnreadable as exc:
-            traceback.print_exc()
-            self.send_json({"error": f"Authentication is misconfigured: {exc}"}, 503)
-            return
-        if not authorized:
-            self.send_json({"error": "Authentication required"}, 401)
-            return
-        if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():
-            self.send_json({"error": "Cross-site request rejected"}, 403)
-            return
-        try:
-            route()
-        except Exception:
-            traceback.print_exc()
-            if self._response_started:
+            try:
+                authorized = path == "/healthz" or self._authorized(path)
+            except AuthConfigUnreadable as exc:
+                log_exception("auth_config_unreadable", exc, path=path)
+                self.send_json({"error": f"Authentication is misconfigured: {exc}"}, 503)
                 return
-            self.send_json(
-                {"error": "The server could not complete this request."}, 500
+            if not authorized:
+                self.send_json({"error": "Authentication required"}, 401)
+                return
+            if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():
+                self.send_json({"error": "Cross-site request rejected"}, 403)
+                return
+            try:
+                route()
+            except Exception as exc:
+                log_exception("request_failed", exc, method=self.command, path=path)
+                if self._response_started:
+                    return
+                self.send_json(
+                    {"error": "The server could not complete this request."}, 500
+                )
+        finally:
+            # Path only: a query string can carry anything a caller put there,
+            # and this line is meant to be safe to paste into a bug report.
+            log_event(
+                "http_request",
+                method=self.command,
+                path=path,
+                status=self._status,
+                duration_ms=round((time.monotonic() - started) * 1000, 1),
+                client=self._client_address(),
             )
+            _REQUEST_CONTEXT.request_id = None
 
     def do_GET(self) -> None:
         self._dispatch(self._route_get)
@@ -5969,7 +6058,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/healthz":
             # Separate from "/" so the container healthcheck keeps working once
             # authentication is switched on.
-            self.send_json({"status": "ok"})
+            self.send_json({"status": "ok", "version": APP_VERSION, "build": APP_BUILD})
             return
         if parsed_url.path == "/api/v1/auth/status":
             # Reachable unauthenticated: the app needs to know whether to show a
@@ -6602,7 +6691,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:  # pragma: no cover - surfaced for diagnosis
-                traceback.print_exc()
+                log_exception("settings_save_failed", exc)
                 self.send_json({"error": f"Could not save settings: {exc}"}, 500)
                 return
             self.send_json(updated)
@@ -6949,7 +7038,10 @@ class Handler(BaseHTTPRequestHandler):
         self.render_page(folder, checked, content)
 
     def log_message(self, format: str, *args: Any) -> None:
-        print(f"{self.address_string()} - {format % args}")
+        """Superseded by the structured http_request line in _dispatch."""
+
+    def log_error(self, format: str, *args: Any) -> None:
+        log_event("http_error", level="warning", detail=format % args)
 
 
 def main() -> None:
@@ -6962,7 +7054,8 @@ def main() -> None:
     start_metadata_enrichment_worker()
     start_acquisition_import_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"SonicBoom running at http://{args.host}:{args.port}")
+    log_event("server_started", host=args.host, port=args.port,
+              version=APP_VERSION, build=APP_BUILD)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1,5 +1,10 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-bookworm-slim AS web-build
+
+# Base images are pinned by digest, not tag. A tag is a moving target: the same
+# Dockerfile built a month apart otherwise produces a different image with no
+# change in this repository to explain it. Refresh these deliberately, as their
+# own commit, so the change is visible in history.
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS web-build
 
 WORKDIR /build/v1-prototype
 COPY v1-prototype/package.json v1-prototype/package-lock.json ./
@@ -7,9 +12,14 @@ RUN npm ci
 COPY v1-prototype/ ./
 RUN npm run build
 
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# Stamped by the build with the commit that produced it, and reported by
+# /healthz, so a running container can be traced back to its source.
+ARG COMICARR_BUILD=source
+
+ENV COMICARR_BUILD=${COMICARR_BUILD} \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     COMICARR_WEB_ROOT=/app/web \
     COMICARR_DATABASE=/config/comicarr.db \

@@ -198,12 +198,32 @@ destroy-and-restore cycle reproduced the catalog exactly, byte-for-byte on a
 docker compose pull && docker compose up -d
 ```
 
-Back up `/config` first. The database migrates forward on start.
+The database migrates forward on start. **Back up `/config` first — a rollback
+needs it.** The catalog refuses to open a database newer than the build reading
+it, so once an upgrade has raised the schema, the previous image will not start
+against that file:
 
-To roll back, restore your backup and run the previous image tag. *Verified: the
-previous release image runs a config an upgraded build has already opened,
-unchanged.* Rollback is clean because an upgrade does not write anything into
-`/config` that an older build cannot ignore.
+```
+RuntimeError: Unsupported catalog schema version 28
+```
+
+That is a deliberate refusal rather than a corruption: the older build stops
+instead of writing to a shape it does not understand. But it does mean a
+rollback is *restore the backup, then run the previous tag* — not just the
+previous tag. To roll back:
+
+```bash
+docker compose down
+tar -xzf sonicboom-backup-YYYY-MM-DD.tgz -C /path/to
+docker compose up -d          # with the previous image tag pinned
+```
+
+If you have no backup and need the previous version, the library itself is
+safe: your comics were never modified. Point a fresh `/config` at the same
+comics folder and re-scan.
+
+Whether a given upgrade raises the schema is in the release notes; see
+[RELEASE.md](RELEASE.md).
 
 ---
 

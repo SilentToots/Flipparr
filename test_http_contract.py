@@ -12,6 +12,8 @@ existing test touched the transport layer at all.
 """
 
 import gzip
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -332,6 +334,72 @@ class HttpContractTests(unittest.TestCase):
         self.assertTrue(app.verify_password("same password", first))
         self.assertFalse(app.verify_password("other password", first))
         self.assertFalse(app.verify_password("same password", "not-a-hash"))
+
+    def _captured_log(self, run):
+        """Run `run` with stdout captured, returning the JSON lines it emitted."""
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            result = run()
+        lines = []
+        for line in buffer.getvalue().splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                lines.append(json.loads(line))
+        return result, lines
+
+    def test_every_request_is_logged_as_one_json_object(self):
+        response, lines = self._captured_log(lambda: self.get("/healthz"))
+        self.assertEqual(response.status, 200)
+        requests = [line for line in lines if line.get("event") == "http_request"]
+        self.assertEqual(len(requests), 1)
+        entry = requests[0]
+        for field in ("ts", "level", "event", "request_id", "method", "path", "status", "duration_ms"):
+            self.assertIn(field, entry)
+        self.assertEqual(entry["method"], "GET")
+        self.assertEqual(entry["path"], "/healthz")
+        self.assertEqual(entry["status"], 200)
+
+    def test_the_logged_request_id_is_returned_to_the_caller(self):
+        """A user quoting the header lands on the exact server-side record."""
+        response, lines = self._captured_log(lambda: self.get("/healthz"))
+        header_id = response.headers.get("X-Request-Id")
+        self.assertTrue(header_id)
+        logged = [line for line in lines if line.get("event") == "http_request"][0]
+        self.assertEqual(logged["request_id"], header_id)
+
+    def test_request_ids_differ_between_requests(self):
+        first = self.get("/healthz").headers.get("X-Request-Id")
+        second = self.get("/healthz").headers.get("X-Request-Id")
+        self.assertNotEqual(first, second)
+
+    def test_a_query_string_is_never_written_to_the_log(self):
+        """This line is meant to be safe to paste into a bug report, so the part
+        of the URL a caller controls freely does not go into it."""
+        _, lines = self._captured_log(
+            lambda: self.get("/api/v1/catalog?token=super-secret-value&q=private")
+        )
+        rendered = json.dumps(lines)
+        self.assertNotIn("super-secret-value", rendered)
+        self.assertNotIn("private", rendered)
+        entry = [line for line in lines if line.get("event") == "http_request"][0]
+        self.assertEqual(entry["path"], "/api/v1/catalog")
+
+    def test_a_failing_route_logs_the_stack_and_answers_generically(self):
+        """The detail stays server-side; the id is what ties the two together."""
+        with patch("app.catalog_api_payload", side_effect=RuntimeError("inner detail")):
+            response, lines = self._captured_log(lambda: self.get("/api/v1/catalog"))
+        self.assertEqual(response.status, 500)
+        self.assertNotIn("inner detail", response.body.decode())
+        failures = [line for line in lines if line.get("event") == "request_failed"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["error_type"], "RuntimeError")
+        self.assertIn("inner detail", failures[0]["traceback"])
+        self.assertEqual(failures[0]["request_id"], response.headers.get("X-Request-Id"))
+
+    def test_health_reports_the_running_version_and_build(self):
+        body = self.get("/healthz").json()
+        self.assertEqual(body["version"], app.APP_VERSION)
+        self.assertTrue(body["build"])
 
     def test_setup_completion_is_stored_with_the_instance(self):
         """Browser storage would re-prompt on a second device."""
