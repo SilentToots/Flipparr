@@ -2102,7 +2102,7 @@ function LoginView({ onSignedIn }) {
         left-aligned form is the usual shape of a sign-in, and the sidebar's
         rules are tuned for a row in a nav. */}
     <div className="login-brand">
-      <FlipparrWordmark height={42} />
+      <FlipparrWordmark height={64} />
     </div>
     <label>
       <span>Username</span>

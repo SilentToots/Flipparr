@@ -1356,7 +1356,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* The wordmark stands alone: the button says what this does, and the browser
    tab and password manager both name the app already. */
-.login-brand { display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; color: var(--text); }
+.login-brand { display: flex; flex-direction: column; align-items: center; margin-bottom: 26px; color: var(--text); }
 /* The wordmark is wide (about 2.7:1), so cap it against the card as well as by
    height -- on a narrow phone the height alone would push it past the edges. */
 .login-brand .brand-wordmark { max-width: 100%; }
