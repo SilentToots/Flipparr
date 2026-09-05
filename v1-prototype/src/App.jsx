@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { FlipparrMark, FlipparrWordmark } from "./brand.jsx";
 import {
   ArrowsClockwise,
   ArrowLeft,
@@ -442,7 +443,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   const counts = { requests: catalog?.stats?.openRequests ?? 0, metadata: catalog?.stats?.needAttention ?? 0 };
   return (
     <aside className="sidebar">
-      <div className="brand"><Books size={24} weight="duotone" /><div><strong>Flipparr</strong><span>Comic library</span></div></div>
+      <div className="brand"><div><FlipparrWordmark height={26} /><span>Comic library</span></div></div>
       <nav aria-label="Primary navigation">
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
           <button className={`nav-item ${active === id ? "active" : ""}`} key={id} onClick={() => onNavigate(id)} aria-label={label} aria-current={active === id ? "page" : undefined}>
@@ -1177,28 +1178,6 @@ const SETTINGS_SECTIONS = [
 // The documented Docker mount, so most installs need no typing at all.
 const DEFAULT_LIBRARY_FOLDER = "/comics";
 
-function FlipparrMark() {
-  // A comic burst -- the shape a sound makes in a panel. Drawn rather than
-  // imported so it inherits the accent and costs no request; the spikes are
-  // deliberately uneven so it reads as inked, not generated.
-  const burst = "100.0,26.0 113.0,55.9 137.2,42.1 134.8,69.9 170.7,67.7 145.5,93.5 165.9,109.5 141.8,119.1 157.0,149.4 124.9,138.7 120.0,168.2 100.0,146.0 77.9,175.3 75.1,138.7 48.5,144.6 58.2,119.1 26.8,110.5 54.5,93.5 36.1,70.8 65.2,69.9 58.8,35.9 87.0,55.9";
-  return <svg className="setup-art" viewBox="0 0 200 200" role="img" aria-label="Flipparr">
-    <defs>
-      <linearGradient id="sb-burst" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stopColor="#9e87ff" />
-        <stop offset="1" stopColor="#6a4fd8" />
-      </linearGradient>
-    </defs>
-    <polygon points={burst} fill="url(#sb-burst)" opacity=".16" />
-    <polygon points={burst} fill="none" stroke="url(#sb-burst)" strokeWidth="4" strokeLinejoin="round" />
-    <g stroke="#b3a4f5" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="72" y="106" width="56" height="13" rx="4" />
-      <rect x="76" y="90" width="56" height="13" rx="4" />
-      <rect x="68" y="74" width="56" height="13" rx="4" />
-    </g>
-  </svg>;
-}
-
 const SETUP_STEPS = [
   { id: "welcome", label: "Welcome", required: false },
   {
@@ -1335,7 +1314,7 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
     <div className={`setup-card${step.id === "welcome" ? " welcome" : ""}`}>
       <header className="setup-header">
         <div className="setup-topline">
-          <span className="setup-brand"><BookOpen size={20} weight="duotone" /> Flipparr</span>
+          <span className="setup-brand"><FlipparrWordmark height={22} /></span>
           {step.id === "welcome" ? null : <SetupStepper stepIndex={stepIndex} />}
         </div>
         {step.id === "welcome" ? null : <>
@@ -1347,7 +1326,7 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
       </header>
 
       {step.id === "welcome" ? <div className="setup-welcome">
-        <FlipparrMark />
+        <FlipparrMark size={176} decorative />
         {/* The actions belong to the copy: beside the artwork they follow the
             sentence they answer, and on a phone the column stretches so they
             still land on the card floor, where Back and Continue sit later. */}
@@ -2119,7 +2098,7 @@ function LoginView({ onSignedIn }) {
     }
   }
   return <div className="login-shell"><form className="login-card" onSubmit={submit}>
-    <div className="brand"><Books size={26} weight="duotone" /><div><strong>Flipparr</strong><span>Sign in to continue</span></div></div>
+    <div className="brand"><div><FlipparrWordmark height={34} /><span>Sign in to continue</span></div></div>
     <label><span>Username</span><input value={username} autoFocus autoComplete="username" onChange={(event) => setUsername(event.target.value)} /></label>
     <label><span>Password</span><input type="password" value={password} autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} /></label>
     {error ? <p className="workbench-error" role="alert">{error}</p> : null}

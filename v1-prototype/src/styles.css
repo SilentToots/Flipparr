@@ -1684,3 +1684,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* Built-in sources: informational, so a line rather than a card. */
 .setup-builtin { display: flex; gap: 9px; align-items: flex-start; margin: 0; padding: 2px 2px 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
 .setup-builtin > svg { flex: none; color: var(--color-violet-400); margin-top: 2px; }
+
+/* Brand marks. Both are currentColor, so they take the colour of whatever they
+   sit in: full strength on the welcome screen, muted beside a nav label. */
+.brand-wordmark { display: block; width: auto; }
+.brand-mark { display: block; flex: none; }
+.setup-brand { color: var(--muted-strong); }
+.setup-welcome .brand-mark { color: var(--color-violet-400); margin: 0 auto; }
+.brand > div > .brand-wordmark { color: var(--text); margin-bottom: 5px; }
