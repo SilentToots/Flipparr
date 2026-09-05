@@ -2012,9 +2012,58 @@ function LoginView({ onSignedIn }) {
   </form></div>;
 }
 
+// URL <-> view. The server already serves the app shell for any path that is
+// not under /api and not a real asset, and the auth gate lets those through so
+// a login form can render, so these can be real paths rather than hash
+// fragments. Hand-rolled because seven routes do not justify a router.
+const ROUTE_BY_VIEW = {
+  library: "/library",
+  discover: "/discover",
+  requests: "/requests",
+  metadata: "/health",
+  settings: "/settings",
+  import: "/import",
+  search: "/search",
+};
+const VIEW_BY_ROUTE = Object.fromEntries(
+  Object.entries(ROUTE_BY_VIEW).map(([view, path]) => [path, view])
+);
+
+// The drawer rides as a query parameter rather than a path segment: it can be
+// open over the library, a search or a collection, so it is orthogonal to which
+// view is showing.
+function locationForState({ active, settingsSection, searchQuery, seriesId }) {
+  let path = ROUTE_BY_VIEW[active] || ROUTE_BY_VIEW.library;
+  if (active === "settings" && settingsSection) path += `/${settingsSection}`;
+  const params = new URLSearchParams();
+  if (active === "search" && searchQuery) params.set("q", searchQuery);
+  if (seriesId) params.set("series", String(seriesId));
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function stateFromLocation(pathname, search) {
+  const params = new URLSearchParams(search || "");
+  const segments = String(pathname || "").split("/").filter(Boolean);
+  const active = VIEW_BY_ROUTE[`/${segments[0] || ""}`] || "library";
+  const requestedSection = segments[1];
+  return {
+    active,
+    settingsSection: active === "settings" && SETTINGS_SECTIONS.some((item) => item.id === requestedSection)
+      ? requestedSection
+      : "library",
+    searchQuery: active === "search" ? params.get("q") || "" : "",
+    seriesId: params.get("series") || "",
+  };
+}
+
+const BOOT_ROUTE = stateFromLocation(window.location.pathname, window.location.search);
+
 export function App() {
-  const [active, setActive] = useState("library");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [active, setActive] = useState(BOOT_ROUTE.active);
+  const [searchQuery, setSearchQuery] = useState(BOOT_ROUTE.searchQuery);
+  // A ?series= link cannot be honoured until the catalog it refers to exists.
+  const [pendingSeriesId, setPendingSeriesId] = useState(BOOT_ROUTE.seriesId);
   const [selectedSeries, setSelectedSeries] = useState(null);
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [seriesParentCollection, setSeriesParentCollection] = useState(null);
@@ -2025,7 +2074,7 @@ export function App() {
   const [catalog, setCatalog] = useState(null);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
-  const [settingsSection, setSettingsSection] = useState("library");
+  const [settingsSection, setSettingsSection] = useState(BOOT_ROUTE.settingsSection);
   const [workbench, setWorkbench] = useState(null);
   const [workbenchBusy, setWorkbenchBusy] = useState(false);
   const [workbenchError, setWorkbenchError] = useState("");
@@ -2152,7 +2201,8 @@ export function App() {
     const targets = folder
       ? [{ path: folder, recursive }]
       : (catalog?.roots || []).map((root) => ({ path: root.path, recursive: Boolean(root.recursive) }));
-    if (!targets.length) { navigate("add"); return; }
+    // "add" was never a rendered view, so this navigated to a blank screen.
+    if (!targets.length) { navigate("import"); return; }
     setScanState("scanning");
     setScanProgress(null);
     try {
@@ -2672,6 +2722,54 @@ export function App() {
   }
   useEffect(() => { loadCatalog(); }, []);
   useEffect(() => { loadSetupState(); }, []);
+  // Write the current view into the address bar so a refresh, a bookmark or a
+  // shared link lands where the user actually was. Held back while a ?series=
+  // link is still waiting on the catalog, or this would strip the parameter
+  // before it could be resolved.
+  useEffect(() => {
+    if (pendingSeriesId) return;
+    const target = locationForState({
+      active, settingsSection, searchQuery, seriesId: selectedSeries?.id,
+    });
+    if (target !== window.location.pathname + window.location.search) {
+      window.history.pushState(null, "", target);
+    }
+  }, [active, settingsSection, searchQuery, selectedSeries?.id, pendingSeriesId]);
+  // Back and forward move between views, and close the drawer when the entry
+  // being returned to did not have it open.
+  useEffect(() => {
+    function applyLocation() {
+      const next = stateFromLocation(window.location.pathname, window.location.search);
+      setActive(next.active);
+      setSettingsSection(next.settingsSection);
+      setSearchQuery(next.searchQuery);
+      if (next.seriesId) setPendingSeriesId(next.seriesId);
+      else { setPendingSeriesId(""); setSelectedSeries(null); }
+      canonicaliseLocation(next);
+    }
+    // An address that parses to a view but is not how that view is spelled --
+    // an unknown path, or a settings section that does not exist -- renders
+    // correctly but would otherwise leave the wrong text in the address bar,
+    // so a bookmark of a typo stays a typo. Replace rather than push: this is
+    // a correction, not somewhere the user navigated to.
+    function canonicaliseLocation(next) {
+      const canonical = locationForState(next);
+      if (canonical !== window.location.pathname + window.location.search) {
+        window.history.replaceState(null, "", canonical);
+      }
+    }
+    canonicaliseLocation(BOOT_ROUTE);
+    window.addEventListener("popstate", applyLocation);
+    return () => window.removeEventListener("popstate", applyLocation);
+  }, []);
+  // Resolve a ?series= link once the catalog is in. An id that no longer exists
+  // simply clears, and the effect above then tidies it out of the URL.
+  useEffect(() => {
+    if (!pendingSeriesId || !catalog) return;
+    const match = (catalog.series || []).find((item) => String(item.id) === String(pendingSeriesId));
+    if (match) setSelectedSeries(match);
+    setPendingSeriesId("");
+  }, [pendingSeriesId, catalog]);
   useEffect(() => {
     const acquisitionEntries = [...(catalog?.requests || []), ...(catalog?.replacementRequests || [])];
     const activeDownload = acquisitionEntries.some((request) =>
