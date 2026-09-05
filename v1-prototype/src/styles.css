@@ -1640,6 +1640,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      slightly different colour. */
   .setup-card { background: transparent; }
   .setup-card .provider-row { background: rgba(255,255,255,.03); }
+  /* Settings stacks these on a phone, because there the row carries a status
+     pill, a description and an action all competing. A setup card carries one
+     decision, so the action sits beside the text rather than under it. */
+  .setup-card .provider-row { flex-direction: row; align-items: center; gap: 14px; }
+  .setup-card .provider-row > span { flex: 1 1 auto; min-width: 0; }
+  .setup-card .provider-row button { flex: 0 0 auto; align-self: center; margin-top: 0; }
 
   /* Labelled steps wrapped onto a second line at this width. The heading already
      names the step, so the stepper reduces to position. */
