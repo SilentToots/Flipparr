@@ -2103,7 +2103,6 @@ function LoginView({ onSignedIn }) {
         rules are tuned for a row in a nav. */}
     <div className="login-brand">
       <FlipparrWordmark height={42} />
-      <p>Sign in to continue</p>
     </div>
     <label>
       <span>Username</span>

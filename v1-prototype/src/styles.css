@@ -1354,11 +1354,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .login-shell { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--bg); }
 .login-card { width: min(380px, 100%); display: flex; flex-direction: column; gap: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px 28px; }
 
-.login-brand { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--text); }
+/* The wordmark stands alone: the button says what this does, and the browser
+   tab and password manager both name the app already. */
+.login-brand { display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; color: var(--text); }
 /* The wordmark is wide (about 2.7:1), so cap it against the card as well as by
    height -- on a narrow phone the height alone would push it past the edges. */
 .login-brand .brand-wordmark { max-width: 100%; }
-.login-brand p { margin: 0; color: var(--muted); font-size: var(--text-base); }
 
 .login-card label { display: flex; flex-direction: column; gap: 7px; font-size: var(--text-sm); color: var(--muted); }
 /* 16px: a smaller font makes iOS zoom the page when the field takes focus. */
