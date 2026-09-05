@@ -59,30 +59,42 @@ COVER_THUMBNAIL_QUALITY = 82
 COVER_SOURCE_MAX_BYTES = 50_000_000
 COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-v1"
 USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
-PROVIDER_CONFIG_PATH = Path(
-    os.environ.get(
-        "COMICARR_PROVIDER_CONFIG",
-        str(Path(__file__).parent / ".data" / "metadata-providers.json"),
+_DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
+
+
+def _configured_path(variable: str, default: Path) -> Path:
+    """Resolve a configured path when it is used, not when this module loads.
+
+    Reading these at import time let whichever module imported `app` first fix
+    them for the whole process. A caller that prepared its environment and then
+    imported `app` got those settings only when it happened to be the first
+    importer; arriving second, its `import app` hit sys.modules and its
+    environment was silently ignored.
+    """
+    override = os.environ.get(variable)
+    return Path(override) if override else default
+
+
+def provider_config_path() -> Path:
+    return _configured_path(
+        "COMICARR_PROVIDER_CONFIG", _DEFAULT_CONFIG_DIR / "metadata-providers.json"
     )
-)
-ACQUISITION_CONFIG_PATH = Path(
-    os.environ.get(
-        "COMICARR_ACQUISITION_CONFIG",
-        str(Path(__file__).parent / ".data" / "acquisition-services.json"),
+
+
+def acquisition_config_path() -> Path:
+    return _configured_path(
+        "COMICARR_ACQUISITION_CONFIG", _DEFAULT_CONFIG_DIR / "acquisition-services.json"
     )
-)
-SETTINGS_CONFIG_PATH = Path(
-    os.environ.get(
-        "COMICARR_SETTINGS_CONFIG",
-        str(Path(__file__).parent / ".data" / "settings.json"),
+
+
+def settings_config_path() -> Path:
+    return _configured_path(
+        "COMICARR_SETTINGS_CONFIG", _DEFAULT_CONFIG_DIR / "settings.json"
     )
-)
-AUTH_CONFIG_PATH = Path(
-    os.environ.get(
-        "COMICARR_AUTH_CONFIG",
-        str(Path(__file__).parent / ".data" / "auth.json"),
-    )
-)
+
+
+def auth_config_path() -> Path:
+    return _configured_path("COMICARR_AUTH_CONFIG", _DEFAULT_CONFIG_DIR / "auth.json")
 # Addresses whose X-Forwarded-For may be believed. A reverse proxy makes every
 # request look like it came from the proxy, so without this the "local
 # addresses" bypass would treat the whole internet as local. Empty by default:
@@ -116,7 +128,7 @@ def load_app_settings() -> dict[str, Any]:
     with _SETTINGS_CONFIG_LOCK:
         settings = dict(_APP_SETTINGS_DEFAULTS)
         try:
-            saved = json.loads(SETTINGS_CONFIG_PATH.read_text())
+            saved = json.loads(settings_config_path().read_text())
         except (OSError, ValueError, json.JSONDecodeError):
             saved = {}
         if isinstance(saved, dict):
@@ -139,16 +151,17 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
     with _SETTINGS_CONFIG_LOCK:
         current = dict(_APP_SETTINGS_DEFAULTS)
         try:
-            saved = json.loads(SETTINGS_CONFIG_PATH.read_text())
+            saved = json.loads(settings_config_path().read_text())
             if isinstance(saved, dict):
                 current.update({k: v for k, v in saved.items() if k in _APP_SETTINGS_DEFAULTS})
         except (OSError, ValueError, json.JSONDecodeError):
             pass
         current.update(clean)
-        SETTINGS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = SETTINGS_CONFIG_PATH.parent / (SETTINGS_CONFIG_PATH.name + ".tmp")
+        config_path = settings_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = config_path.parent / (config_path.name + ".tmp")
         tmp.write_text(json.dumps(current, indent=2, sort_keys=True))
-        tmp.replace(SETTINGS_CONFIG_PATH)
+        tmp.replace(config_path)
         return current
 
 
@@ -215,22 +228,23 @@ class AuthConfigUnreadable(RuntimeError):
 
 def load_auth_config() -> dict[str, Any]:
     defaults = _auth_defaults()
+    config_path = auth_config_path()
     with _AUTH_CONFIG_LOCK:
         try:
-            stored = json.loads(AUTH_CONFIG_PATH.read_text())
+            stored = json.loads(config_path.read_text())
         except FileNotFoundError:
             stored = {}
         except OSError as exc:
             raise AuthConfigUnreadable(
-                f"{AUTH_CONFIG_PATH} exists but cannot be read ({exc.strerror}). "
+                f"{config_path} exists but cannot be read ({exc.strerror}). "
                 "Check that it is owned by the user the service runs as."
             ) from exc
         except ValueError as exc:
             raise AuthConfigUnreadable(
-                f"{AUTH_CONFIG_PATH} is not valid JSON ({exc})."
+                f"{config_path} is not valid JSON ({exc})."
             ) from exc
     if not isinstance(stored, dict):
-        raise AuthConfigUnreadable(f"{AUTH_CONFIG_PATH} must contain a JSON object.")
+        raise AuthConfigUnreadable(f"{config_path} must contain a JSON object.")
     merged = {**defaults, **{k: v for k, v in stored.items() if k in defaults}}
     if str(merged.get("method")) not in _AUTH_METHODS:
         merged["method"] = "none"
@@ -267,12 +281,13 @@ def save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
         current["localBypass"] = patch["localBypass"]
     if not current["sessionSecret"]:
         current["sessionSecret"] = secrets.token_urlsafe(32)
+    config_path = auth_config_path()
     with _AUTH_CONFIG_LOCK:
-        AUTH_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = AUTH_CONFIG_PATH.parent / (AUTH_CONFIG_PATH.name + ".tmp")
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = config_path.parent / (config_path.name + ".tmp")
         tmp.write_text(json.dumps(current, indent=2))
         os.chmod(tmp, 0o600)
-        tmp.replace(AUTH_CONFIG_PATH)
+        tmp.replace(config_path)
     return current
 
 
@@ -373,22 +388,27 @@ _PROVIDER_MIN_INTERVAL_SECONDS = {
     # not a number GCD publishes.
     "gcd": max(1.5, float(os.environ.get("COMICARR_GCD_MIN_INTERVAL_SECONDS", "1.5"))),
 }
-CATALOG_DATABASE_PATH = Path(
-    os.environ.get("COMICARR_DATABASE", str(Path(__file__).parent / ".data" / "comicarr.db"))
-)
-_REMOTE_CACHE_FILE = Path(
-    os.environ.get(
+def catalog_database_path() -> Path:
+    return _configured_path("COMICARR_DATABASE", _DEFAULT_CONFIG_DIR / "comicarr.db")
+
+
+def _remote_cache_file() -> Path:
+    return _configured_path(
         "COMICARR_REMOTE_CACHE",
-        str(CATALOG_DATABASE_PATH.parent / "remote-metadata-cache.json"),
+        catalog_database_path().parent / "remote-metadata-cache.json",
     )
-)
-_PROVIDER_CACHE_FILE = Path(
-    os.environ.get(
+
+
+def _provider_cache_file() -> Path:
+    return _configured_path(
         "COMICARR_PROVIDER_CACHE",
-        str(CATALOG_DATABASE_PATH.parent / "provider-metadata-cache-v1.json"),
+        catalog_database_path().parent / "provider-metadata-cache-v1.json",
     )
-)
-WEB_ROOT = Path(os.environ.get("COMICARR_WEB_ROOT", "")).resolve() if os.environ.get("COMICARR_WEB_ROOT") else None
+
+
+def web_root() -> Path | None:
+    configured = os.environ.get("COMICARR_WEB_ROOT")
+    return Path(configured).resolve() if configured else None
 _CATALOG_STORE: CatalogStore | None = None
 _CATALOG_STORE_LOCK = threading.Lock()
 _ENRICHMENT_STOP = threading.Event()
@@ -447,9 +467,13 @@ class ParsedFile:
 
 def catalog_store() -> CatalogStore:
     global _CATALOG_STORE
+    database_path = catalog_database_path()
     with _CATALOG_STORE_LOCK:
-        if _CATALOG_STORE is None:
-            _CATALOG_STORE = CatalogStore(CATALOG_DATABASE_PATH)
+        # Re-open when the configured database moves. Holding the first store
+        # forever would reintroduce, one layer up, the import-time capture that
+        # `_configured_path` exists to avoid.
+        if _CATALOG_STORE is None or _CATALOG_STORE.database_path != database_path:
+            _CATALOG_STORE = CatalogStore(database_path)
         return _CATALOG_STORE
 
 
@@ -511,7 +535,7 @@ def load_provider_config() -> dict[str, dict[str, Any]]:
     with _PROVIDER_CONFIG_LOCK:
         config = _provider_defaults()
         try:
-            saved = json.loads(PROVIDER_CONFIG_PATH.read_text())
+            saved = json.loads(provider_config_path().read_text())
         except (OSError, ValueError, json.JSONDecodeError):
             saved = {}
         if isinstance(saved, dict):
@@ -538,7 +562,7 @@ def save_provider_config(provider_id: str, payload: dict[str, Any]) -> dict[str,
     with _PROVIDER_CONFIG_LOCK:
         config = _provider_defaults()
         try:
-            saved = json.loads(PROVIDER_CONFIG_PATH.read_text())
+            saved = json.loads(provider_config_path().read_text())
         except (OSError, ValueError, json.JSONDecodeError):
             saved = {}
         if isinstance(saved, dict):
@@ -559,11 +583,12 @@ def save_provider_config(provider_id: str, payload: dict[str, Any]) -> dict[str,
                 current["priority"] = max(1, min(99, int(payload["priority"])))
             except (TypeError, ValueError) as exc:
                 raise ValueError("Provider priority must be a number") from exc
-        PROVIDER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary = PROVIDER_CONFIG_PATH.with_suffix(".tmp")
+        config_path = provider_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = config_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(config, indent=2, ensure_ascii=False))
         os.chmod(temporary, 0o600)
-        os.replace(temporary, PROVIDER_CONFIG_PATH)
+        os.replace(temporary, config_path)
     return public_provider_config()
 
 
@@ -957,7 +982,7 @@ def load_acquisition_service_config() -> dict[str, dict[str, Any]]:
     with _ACQUISITION_CONFIG_LOCK:
         config = _acquisition_service_defaults()
         try:
-            saved = json.loads(ACQUISITION_CONFIG_PATH.read_text())
+            saved = json.loads(acquisition_config_path().read_text())
         except (OSError, ValueError, json.JSONDecodeError):
             saved = {}
         if isinstance(saved, dict):
@@ -1005,7 +1030,7 @@ def save_acquisition_service_config(service_id: str, payload: dict[str, Any]) ->
     with _ACQUISITION_CONFIG_LOCK:
         config = _acquisition_service_defaults()
         try:
-            saved = json.loads(ACQUISITION_CONFIG_PATH.read_text())
+            saved = json.loads(acquisition_config_path().read_text())
         except (OSError, ValueError, json.JSONDecodeError):
             saved = {}
         if isinstance(saved, dict):
@@ -1027,11 +1052,12 @@ def save_acquisition_service_config(service_id: str, payload: dict[str, Any]) ->
             if not category:
                 raise ValueError("Enter a SABnzbd category")
             current["category"] = category
-        ACQUISITION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary = ACQUISITION_CONFIG_PATH.with_suffix(".tmp")
+        config_path = acquisition_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = config_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(config, indent=2, ensure_ascii=False))
         os.chmod(temporary, 0o600)
-        os.replace(temporary, ACQUISITION_CONFIG_PATH)
+        os.replace(temporary, config_path)
     return public_acquisition_service_config()
 
 
@@ -2481,7 +2507,7 @@ def load_persisted_remote_cache() -> None:
     global _PERSIST_REMOTE_CACHE
     _PERSIST_REMOTE_CACHE = True
     try:
-        payload = json.loads(_REMOTE_CACHE_FILE.read_text())
+        payload = json.loads(_remote_cache_file().read_text())
     except (OSError, ValueError, json.JSONDecodeError):
         return
     cutoff = time.time() - _REMOTE_CACHE_TTL_SECONDS
@@ -2502,8 +2528,9 @@ def _import_retired_provider_cache_file() -> None:
     on each miss. Existing rows win the import: anything already in SQLite was
     written by the current path and is at least as trustworthy.
     """
+    cache_file = _provider_cache_file()
     try:
-        payload = json.loads(_PROVIDER_CACHE_FILE.read_text())
+        payload = json.loads(cache_file.read_text())
     except (OSError, ValueError):
         return
     if not isinstance(payload, dict):
@@ -2528,7 +2555,7 @@ def _import_retired_provider_cache_file() -> None:
     except Exception:
         return
     try:
-        _PROVIDER_CACHE_FILE.replace(_PROVIDER_CACHE_FILE.with_suffix(".migrated"))
+        cache_file.replace(cache_file.with_suffix(".migrated"))
     except OSError:
         pass
 
@@ -2569,11 +2596,12 @@ def persist_remote_cache(snapshot: dict[str, Any]) -> None:
         url: {"saved_at": time.time(), "data": data}
         for url, data in snapshot.items()
     }
-    temporary = _REMOTE_CACHE_FILE.with_suffix(".tmp")
+    cache_file = _remote_cache_file()
+    temporary = cache_file.with_suffix(".tmp")
     try:
-        _REMOTE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(json.dumps(payload, ensure_ascii=False))
-        os.replace(temporary, _REMOTE_CACHE_FILE)
+        os.replace(temporary, cache_file)
     except OSError:
         pass
 
@@ -5972,7 +6000,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/results":
             self.handle_results(parsed_url)
             return
-        if WEB_ROOT and WEB_ROOT.is_dir():
+        configured_web_root = web_root()
+        if configured_web_root and configured_web_root.is_dir():
             self.handle_web_asset(parsed_url.path)
             return
         self.handle_page(parsed_url)
@@ -6581,15 +6610,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_web_asset(self, request_path: str) -> None:
         """Serve the production React build and fall back to its app shell."""
-        assert WEB_ROOT is not None
+        root = web_root()
+        assert root is not None
         relative = urllib.parse.unquote(request_path).lstrip("/") or "index.html"
-        requested = (WEB_ROOT / relative).resolve()
+        requested = (root / relative).resolve()
         try:
-            requested.relative_to(WEB_ROOT)
+            requested.relative_to(root)
         except ValueError:
             self.send_json({"error": "Asset not found"}, 404)
             return
-        target = requested if requested.is_file() else WEB_ROOT / "index.html"
+        target = requested if requested.is_file() else root / "index.html"
         if not target.is_file():
             self.send_json({"error": "Web interface is not installed"}, 404)
             return

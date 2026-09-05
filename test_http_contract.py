@@ -249,7 +249,7 @@ class HttpContractTests(unittest.TestCase):
         proxy or container bridge all present a private address."""
         fresh = _ROOT / "default-auth.json"
         fresh.unlink(missing_ok=True)
-        with patch("app.AUTH_CONFIG_PATH", fresh):
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(fresh)}):
             self.assertFalse(app.load_auth_config()["localBypass"])
             app.save_auth_config({"method": "none", "username": "x", "password": "password-here"})
             self.assertFalse(app.load_auth_config()["localBypass"])
@@ -336,7 +336,7 @@ class HttpContractTests(unittest.TestCase):
     def test_unreadable_auth_config_fails_closed_rather_than_disabling_auth(self):
         """A config written as root and read as a normal user must not silently
         turn into "authentication disabled"."""
-        with patch("app.AUTH_CONFIG_PATH", Path("/proc/1/mem")):  # exists, unreadable
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(Path("/proc/1/mem"))}):  # exists, unreadable
             with self.assertRaises(app.AuthConfigUnreadable):
                 app.load_auth_config()
         response = None
@@ -352,13 +352,13 @@ class HttpContractTests(unittest.TestCase):
     def test_malformed_auth_config_is_also_a_hard_failure(self):
         bad = _ROOT / "broken-auth.json"
         bad.write_text("{not json")
-        with patch("app.AUTH_CONFIG_PATH", bad):
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(bad)}):
             with self.assertRaises(app.AuthConfigUnreadable):
                 app.load_auth_config()
 
     def test_missing_auth_config_is_fine_and_means_no_auth(self):
         """First run must not be a hard failure."""
-        with patch("app.AUTH_CONFIG_PATH", _ROOT / "definitely-absent.json"):
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(_ROOT / "definitely-absent.json")}):
             self.assertEqual(app.load_auth_config()["method"], "none")
 
     def test_credentials_can_be_set_while_sign_in_is_still_off(self):
@@ -395,7 +395,7 @@ class HttpContractTests(unittest.TestCase):
         password stored by an earlier test would otherwise satisfy this one."""
         fresh = _ROOT / "no-password-auth.json"
         fresh.unlink(missing_ok=True)
-        with patch("app.AUTH_CONFIG_PATH", fresh):
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(fresh)}):
             with self.assertRaises(ValueError) as caught:
                 app.save_auth_config({"method": "forms", "username": "nopass"})
         self.assertIn("password", str(caught.exception).lower())

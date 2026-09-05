@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 import threading
 import unittest
@@ -829,10 +830,63 @@ class FilenameParserTests(unittest.TestCase):
             ["metron", "comic_vine", "gcd"],
         )
 
+    def test_configured_paths_follow_the_environment_after_import(self):
+        """Reading these at import time made the suites order-dependent.
+
+        Whichever module imported `app` first fixed every path for the whole
+        process; a module that prepared its own environment and imported `app`
+        second had that environment silently ignored, because `import app` hit
+        sys.modules and re-ran nothing.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            moved = Path(temp_dir)
+            with patch.dict("app.os.environ", {
+                "COMICARR_WEB_ROOT": str(moved / "web"),
+                "COMICARR_DATABASE": str(moved / "catalog.db"),
+                "COMICARR_AUTH_CONFIG": str(moved / "auth.json"),
+                "COMICARR_PROVIDER_CONFIG": str(moved / "providers.json"),
+                "COMICARR_ACQUISITION_CONFIG": str(moved / "services.json"),
+                "COMICARR_SETTINGS_CONFIG": str(moved / "settings.json"),
+            }):
+                self.assertEqual(app.web_root(), (moved / "web").resolve())
+                self.assertEqual(app.catalog_database_path(), moved / "catalog.db")
+                self.assertEqual(app.auth_config_path(), moved / "auth.json")
+                self.assertEqual(app.provider_config_path(), moved / "providers.json")
+                self.assertEqual(app.acquisition_config_path(), moved / "services.json")
+                self.assertEqual(app.settings_config_path(), moved / "settings.json")
+                # The cache files sit beside whichever database is configured.
+                self.assertEqual(app._provider_cache_file().parent, moved)
+                self.assertEqual(app._remote_cache_file().parent, moved)
+
+    def test_an_unset_web_root_is_absent_rather_than_the_working_directory(self):
+        """Handler.do_GET treats a falsy web root as "no React build installed"."""
+        environment = dict(os.environ)
+        environment.pop("COMICARR_WEB_ROOT", None)
+        with patch.dict("app.os.environ", environment, clear=True):
+            self.assertIsNone(app.web_root())
+
+    def test_the_catalog_store_reopens_when_the_database_moves(self):
+        """Caching the first store would restore the import-time capture a layer up."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "first.db"
+            second = Path(temp_dir) / "second.db"
+            with patch.dict("app.os.environ", {"COMICARR_DATABASE": str(first)}):
+                store_one = app.catalog_store()
+                self.assertEqual(store_one.database_path, first)
+            with patch.dict("app.os.environ", {"COMICARR_DATABASE": str(second)}):
+                store_two = app.catalog_store()
+                self.assertEqual(store_two.database_path, second)
+            self.assertIsNot(store_one, store_two)
+
     def test_optional_provider_configuration_is_local_and_masked(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
-            "app.PROVIDER_CONFIG_PATH", Path(temp_dir) / "providers.json"
-        ), patch.dict("app.os.environ", {"METRON_API_TOKEN": "", "COMIC_VINE_API_KEY": ""}):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {
+                "COMICARR_PROVIDER_CONFIG": str(Path(temp_dir) / "providers.json"),
+                "METRON_API_TOKEN": "",
+                "COMIC_VINE_API_KEY": "",
+            },
+        ):
             save_provider_config("metron", {"token": "secret-token", "enabled": True, "priority": 20})
             public = public_provider_config()
             metron = next(item for item in public["providers"] if item["id"] == "metron")
@@ -843,9 +897,11 @@ class FilenameParserTests(unittest.TestCase):
             self.assertEqual((Path(temp_dir) / "providers.json").stat().st_mode & 0o777, 0o600)
 
     def test_acquisition_service_configuration_is_local_and_masked(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
-            "app.ACQUISITION_CONFIG_PATH", Path(temp_dir) / "acquisition-services.json"
-        ) as config_path:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_ACQUISITION_CONFIG": str(Path(temp_dir) / "acquisition-services.json")},
+        ):
+            config_path = Path(temp_dir) / "acquisition-services.json"
             public = save_acquisition_service_config("prowlarr", {
                 "url": "http://comic-nas.local:9696/",
                 "apiKey": "prowlarr-secret",
@@ -862,9 +918,11 @@ class FilenameParserTests(unittest.TestCase):
             self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
 
     def test_collected_editions_default_off_and_round_trip(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
-            "app.SETTINGS_CONFIG_PATH", Path(temp_dir) / "settings.json"
-        ) as settings_path:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
+        ):
+            settings_path = Path(temp_dir) / "settings.json"
             self.assertEqual(
                 app.load_app_settings(), {"collectedEditionsEnabled": False}
             )
@@ -880,8 +938,9 @@ class FilenameParserTests(unittest.TestCase):
             self.assertFalse(app.collected_editions_enabled())
 
     def test_app_settings_rejects_unknown_keys_and_non_bool(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
-            "app.SETTINGS_CONFIG_PATH", Path(temp_dir) / "settings.json"
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
         ):
             with self.assertRaises(ValueError):
                 app.save_app_settings({"somethingElse": True})
@@ -931,8 +990,9 @@ class FilenameParserTests(unittest.TestCase):
         self.assertNotIn("X-Api-Key", headers)
 
     def test_acquisition_service_url_rejects_embedded_credentials(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
-            "app.ACQUISITION_CONFIG_PATH", Path(temp_dir) / "acquisition-services.json"
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_ACQUISITION_CONFIG": str(Path(temp_dir) / "acquisition-services.json")},
         ):
             with self.assertRaisesRegex(ValueError, "API key field"):
                 save_acquisition_service_config("sabnzbd", {
