@@ -81,9 +81,12 @@ it fails if the built image is not stamped with the commit under test.
 docker compose pull && docker compose up -d
 ```
 
-The catalog migrates itself forward on start. Nothing in your comics folder is
-read-write at any point: it is mounted read-only and the app never renames or
-moves a file.
+The catalog migrates itself forward on start.
+
+Your library is mounted read-write, and two things write to it: importing a
+completed download, and replacing a damaged file — which moves the original you
+replaced into `.flipparr/quarantine/` inside the library root rather than
+deleting it. Scanning never writes; it reads sizes and modification times.
 
 **Back up `/config` before every upgrade.** Not because upgrading is risky, but
 because *rolling back* needs it — see below.

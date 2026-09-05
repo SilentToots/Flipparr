@@ -12,23 +12,30 @@ given rather than just the workaround.
 ## 1. Install
 
 Flipparr ships as a Docker image and keeps all of its state in one `/config`
-volume. It needs read access to your comics, and read access to your download
-client's completed folder if you want automatic import.
+volume. It needs read-write access to your comics (see [Volumes](#volumes)) and
+read access to your download client's completed folder if you want automatic
+import.
 
 ```bash
-cp .env.example .env      # set COMICS_PATH, SAB_COMPLETE_PATH, CONFIG_PATH
+cp .env.example .env      # set CONFIG_PATH, COMICS_PATH, SAB_COMPLETE_PATH
 docker compose up -d
 ```
 
-Then open the port you published (`SONICBOOM_PORT`, default 8787) and add your
-library folder under **Settings → Library folders → Manage folders**.
+Open the port you published (`FLIPPARR_PORT`, default 8787). A new install
+opens on setup, which asks for your library folder, then optionally a download
+client and a metadata source, and scans when you finish. Everything it asks is
+also under **Settings** afterwards.
+
+The compose file attaches to an external network named `home-services-proxy`.
+If you are not running one, delete the `networks:` blocks from
+`compose.yaml` before starting.
 
 ### Volumes
 
 | Mount | Mode | Purpose |
 | --- | --- | --- |
 | `/config` | read-write | database, settings, credentials, caches. **This is the only thing you need to back up.** |
-| `/comics` | read-write | your library. Written to only when importing a completed download. |
+| `/comics` | read-write | your library. Written to when a completed download is imported, and when replacing a file moves the original into `.flipparr/quarantine/`. Scanning only reads. |
 | `/downloads/complete/comics` | read-only | where the download client puts finished files |
 
 ### Permissions
