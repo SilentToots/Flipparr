@@ -1223,14 +1223,16 @@ function SetupLibraryStep({ folder, onFolderChange, recursive, onRecursiveChange
   // that is worse than no count: it looks current and is not.
   const [recheck, setRecheck] = useState(0);
   useEffect(() => {
-    function onVisible() {
-      if (document.visibilityState === "visible") setRecheck((count) => count + 1);
-    }
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
+    const again = () => setRecheck((count) => count + 1);
+    // Two separate signals rather than one guarded by visibility: a window that
+    // regains focus is reason enough on its own, and an embedded or backgrounded
+    // view can report itself hidden while still being looked at.
+    const onVisibility = () => { if (document.visibilityState === "visible") again(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", again);
     return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", again);
     };
   }, []);
 
