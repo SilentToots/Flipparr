@@ -587,6 +587,8 @@ PROVIDER_DEFINITIONS = {
         "capabilities": ["Issue titles", "Release dates", "Covers", "Creators", "Collected-edition contents", "Cross-provider IDs"],
         "description": "Optional authenticated source for detailed issue metadata, structured reprints, and cross-provider matching.",
         "setupSummary": "Free account. The fastest way to fill in issue details.",
+        "credentialUrl": "https://metron.cloud/",
+        "credentialHelp": "Create a free account, then copy the token from your Metron profile.",
         "defaultEnabled": False, "defaultPriority": 20,
     },
     "comic_vine": {
@@ -594,6 +596,8 @@ PROVIDER_DEFINITIONS = {
         "capabilities": ["Issue titles", "Release dates", "Covers", "Volumes"],
         "description": "Optional API-key source for issue and volume enrichment. Comic Vine restricts its API to non-commercial use.",
         "setupSummary": "Free API key. Good cover art and issue details.",
+        "credentialUrl": "https://comicvine.gamespot.com/api/",
+        "credentialHelp": "Sign in and the API page shows your key. Comic Vine restricts API access to personal, non-commercial use.",
         "defaultEnabled": False, "defaultPriority": 30,
     },
     "open_library": {
@@ -706,6 +710,8 @@ def public_provider_config() -> dict[str, Any]:
             "id": provider_id, "name": definition["name"],
             "description": definition["description"],
             "setupSummary": definition.get("setupSummary") or definition["description"],
+            "credentialUrl": definition.get("credentialUrl"),
+            "credentialHelp": definition.get("credentialHelp"),
             "capabilities": definition["capabilities"],
             "builtIn": credential_field is None, "configured": configured,
             "enabled": bool(values.get("enabled")) and configured,

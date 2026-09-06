@@ -401,6 +401,18 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(body["version"], app.APP_VERSION)
         self.assertTrue(body["build"])
 
+    def test_providers_needing_an_account_say_where_to_get_one(self):
+        """An account is the one prerequisite the setup screen cannot satisfy,
+        so the provider that needs it carries the link."""
+        providers = {p["id"]: p for p in self.get("/api/v1/providers").json()["providers"]}
+        for provider_id in ("metron", "comic_vine"):
+            with self.subTest(provider=provider_id):
+                self.assertTrue(providers[provider_id]["credentialUrl"].startswith("https://"))
+                self.assertTrue(providers[provider_id]["credentialHelp"])
+        # built-ins need no account, so they offer no link
+        self.assertIsNone(providers["gcd"]["credentialUrl"])
+        self.assertIsNone(providers["open_library"]["credentialUrl"])
+
     def test_setup_completion_is_stored_with_the_instance(self):
         """Browser storage would re-prompt on a second device."""
         self.assertFalse(self.get("/api/v1/settings").json()["setupCompleted"])
