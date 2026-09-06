@@ -1641,7 +1641,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .setup-welcome-copy { display: contents; }
   .setup-welcome .brand-mark { width: 148px; height: 148px; margin: auto auto 22px; }
   .setup-welcome h1 { font-size: var(--text-2xl); margin: 0 0 14px; }
-  .setup-welcome > .setup-welcome-copy > p { font-size: var(--text-base); max-width: 32ch; margin: 0 auto auto; }
+  /* 42ch is a readability ceiling for a wide phone, not a wrap point: at 375px
+     the column is narrower than it, and the sentence falls in two lines. The
+     32ch it replaces was binding, which is what forced a third. */
+  .setup-welcome > .setup-welcome-copy > p { font-size: var(--text-base); max-width: 42ch; margin: 0 auto auto; }
   /* Full width rather than sized to "Quick setup": it is the only way forward,
      so the tap target is the width of the card. */
   .setup-welcome-actions { padding-top: 22px; }
