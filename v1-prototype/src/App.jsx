@@ -1332,10 +1332,12 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
   return <div className="setup-shell">
     <div className={`setup-card${step.id === "welcome" ? " welcome" : ""}`}>
       <header className="setup-header">
-        <div className="setup-topline">
+        {/* The welcome screen has the mark as its subject and no stepper to
+            label, so the small wordmark above it was the name twice over. */}
+        {step.id === "welcome" ? null : <div className="setup-topline">
           <span className="setup-brand"><FlipparrWordmark height={22} /></span>
-          {step.id === "welcome" ? null : <SetupStepper stepIndex={stepIndex} />}
-        </div>
+          <SetupStepper stepIndex={stepIndex} />
+        </div>}
         {step.id === "welcome" ? null : <>
           <div className="setup-step-heading">
             <h1>{step.title}</h1>
