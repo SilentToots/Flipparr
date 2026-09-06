@@ -431,6 +431,25 @@ class HttpContractTests(unittest.TestCase):
         )
         self.assertEqual(shallow.json()["comicCount"], 0)
 
+    def test_library_folder_check_counts_what_a_scan_would_actually_import(self):
+        """It counted the originals held in quarantine, promising more comics
+        than the scan that follows would import."""
+        library = _ROOT / "count-library"
+        (library / "Series").mkdir(parents=True, exist_ok=True)
+        (library / "Series" / "Saga 001.cbz").write_bytes(b"x")
+        (library / "Series" / "Saga 002.cbz").write_bytes(b"x")
+        for managed in (".flipparr", ".sonicboom"):
+            held = library / managed / "quarantine" / "1" / "Series"
+            held.mkdir(parents=True, exist_ok=True)
+            (held / "Replaced 003.cbz").write_bytes(b"x")
+
+        counted = self.post(
+            "/api/v1/library-folder-check", {"folder": str(library), "recursive": True}
+        ).json()["comicCount"]
+        scanned = len(app.scan_folder(str(library), True))
+        self.assertEqual(counted, 2)
+        self.assertEqual(counted, scanned)
+
     def test_library_folder_check_explains_why_a_folder_is_unusable(self):
         """Setup used to accept a typo and only fail at the first scan."""
         missing = self.post("/api/v1/library-folder-check", {"folder": str(_ROOT / "nope")})

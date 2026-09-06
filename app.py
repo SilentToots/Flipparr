@@ -2059,7 +2059,11 @@ def inspect_library_folder(folder: str, recursive: bool = True) -> dict[str, Any
     comics = 0
     truncated = False
     walker = os.walk(path) if recursive else [(str(path), [], os.listdir(path))]
-    for _, _, names in walker:
+    for _, dirnames, names in walker:
+        # Skip the same directories a scan skips. Counting the originals held
+        # in quarantine promised more comics than the scan would then import,
+        # which is the one number this screen exists to get right.
+        dirnames[:] = [name for name in dirnames if name not in MANAGED_LIBRARY_DIRS]
         for name in names:
             if os.path.splitext(name)[1].casefold() in SUPPORTED_EXTENSIONS:
                 comics += 1
