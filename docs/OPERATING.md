@@ -116,6 +116,54 @@ If you are not sure of the proxy's address, leave the variable unset and turn
 the local bypass **off** — you will sign in once per device, which is correct
 and safe.
 
+If a request arrives claiming `X-Forwarded-Proto: https` from an address that is
+*not* in the list, the app ignores it and logs a warning once:
+
+```json
+{"level": "warning", "event": "untrusted_forwarded_proto", "detail": "…"}
+```
+
+That is the case worth catching. Without it the site looks correctly served over
+HTTPS while its session cookie quietly lacks `Secure`.
+
+### HTTPS
+
+Flipparr speaks plain HTTP and does not terminate TLS, which is why a browser
+shows **Not Secure** against it directly. That is not something the app can fix
+from the inside: something in front has to hold the certificate. Two routes:
+
+**A reverse proxy with a certificate.** In Nginx Proxy Manager, add a Proxy Host:
+
+| Field | Value |
+| --- | --- |
+| Domain Names | `flipparr.example.com` |
+| Scheme | `http` |
+| Forward Hostname / IP | the container or host address |
+| Forward Port | your `FLIPPARR_PORT` |
+| Websockets Support | on |
+| Block Common Exploits | on |
+| SSL → Certificate | request a Let's Encrypt certificate |
+| SSL → Force SSL | on |
+| SSL → HTTP/2 | on |
+
+Then set `FLIPPARR_TRUSTED_PROXIES` to the proxy's address, or the app will
+ignore the proxy's headers and the cookie will not be marked `Secure`.
+
+The domain must resolve to the proxy. On a local network that usually means a
+DNS override on your router or Pi-hole pointing `flipparr.example.com` at the
+proxy, so the name works inside the house as well as outside.
+
+**Tailscale.** If the machine is on a tailnet, Tailscale can issue a real
+certificate for its `*.ts.net` name with no domain and no port forwarding —
+enable **HTTPS Certificates** in the tailnet admin console, then:
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:8787
+```
+
+Either way the padlock comes from the thing in front, and Flipparr's job is to
+believe it only when told whom to believe.
+
 ---
 
 ## 3. Providers and acquisition

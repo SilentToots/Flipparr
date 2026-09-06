@@ -63,13 +63,15 @@ class Response:
 
 def request(
     method: str, url: str, data: bytes | None = None, content_type: str | None = None,
-    accept_encoding: str | None = None,
+    accept_encoding: str | None = None, headers: dict[str, str] | None = None,
 ) -> Response:
     req = urllib.request.Request(url, data=data, method=method)
     if content_type:
         req.add_header("Content-Type", content_type)
     if accept_encoding:
         req.add_header("Accept-Encoding", accept_encoding)
+    for name, value in (headers or {}).items():
+        req.add_header(name, value)
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             return Response(response.status, dict(response.headers), response.read())
@@ -85,9 +87,9 @@ class HttpContractTests(unittest.TestCase):
     def get(self, path, **kw):
         return request("GET", self.base + path, **kw)
 
-    def post(self, path, payload=None, raw=None):
+    def post(self, path, payload=None, raw=None, headers=None):
         body = raw if raw is not None else (json.dumps(payload).encode() if payload is not None else b"{}")
-        return request("POST", self.base + path, body, "application/json")
+        return request("POST", self.base + path, body, "application/json", headers=headers)
 
     def patch(self, path, payload):
         return request("PATCH", self.base + path, json.dumps(payload).encode(), "application/json")
@@ -313,7 +315,7 @@ class HttpContractTests(unittest.TestCase):
         req.add_header("X-Forwarded-For", "127.0.0.1")
         # The test client really is local, so assert on the resolution rule
         # itself rather than on the response.
-        self.assertEqual(app.TRUSTED_PROXIES, ())
+        self.assertEqual(app.trusted_proxies(), ())
 
     def test_cross_site_state_change_is_refused(self):
         req = urllib.request.Request(
@@ -477,6 +479,49 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(
             self.post("/api/v1/library-folder-check", {"folder": str(a_file)}).status, 400
         )
+
+    def test_session_cookie_is_marked_secure_behind_a_trusted_proxy(self):
+        """Behind TLS the cookie must not be sendable over a plain-HTTP hop."""
+        self._configure_auth(localBypass=False)
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "127.0.0.1"}):
+            response = self.post(
+                "/api/v1/auth/login",
+                {"username": "reader", "password": "correct horse battery"},
+                headers={"X-Forwarded-Proto": "https"},
+            )
+        self.assertEqual(response.status, 200)
+        self.assertIn("Secure", response.headers.get("Set-Cookie", ""))
+
+    def test_an_untrusted_https_claim_is_ignored_but_not_silently(self):
+        """The header is a claim anyone can make, so it counts only from a named
+        proxy -- and the operator is told, because the cost of the mistake is a
+        cookie quietly missing Secure on a site that looks correctly served."""
+        app._PROXY_HEADER_WARNED = False
+        self._configure_auth(localBypass=False)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            response = self.post(
+                "/api/v1/auth/login",
+                {"username": "reader", "password": "correct horse battery"},
+                headers={"X-Forwarded-Proto": "https"},
+            )
+        self.assertEqual(response.status, 200)
+        self.assertNotIn("Secure", response.headers.get("Set-Cookie", ""))
+        warnings = [
+            json.loads(line) for line in buffer.getvalue().splitlines()
+            if line.strip().startswith("{") and "untrusted_forwarded_proto" in line
+        ]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("FLIPPARR_TRUSTED_PROXIES", warnings[0]["detail"])
+
+    def test_trusted_proxies_are_read_when_used_not_at_import(self):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "10.0.0.5, 10.0.0.6"}):
+            self.assertEqual(app.trusted_proxies(), ("10.0.0.5", "10.0.0.6"))
+        cleared = dict(os.environ)
+        cleared.pop("FLIPPARR_TRUSTED_PROXIES", None)
+        cleared.pop("COMICARR_TRUSTED_PROXIES", None)
+        with patch.dict("app.os.environ", cleared, clear=True):
+            self.assertEqual(app.trusted_proxies(), ())
 
     def test_unreadable_auth_config_fails_closed_rather_than_disabling_auth(self):
         """A config written as root and read as a normal user must not silently

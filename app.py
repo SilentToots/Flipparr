@@ -179,11 +179,17 @@ def auth_config_path() -> Path:
 # request look like it came from the proxy, so without this the "local
 # addresses" bypass would treat the whole internet as local. Empty by default:
 # an unconfigured deployment trusts nothing and falls back to the real peer.
-TRUSTED_PROXIES = tuple(
-    entry.strip()
-    for entry in _env("TRUSTED_PROXIES", "").split(",")
-    if entry.strip()
-)
+def trusted_proxies() -> tuple[str, ...]:
+    return tuple(
+        entry.strip()
+        for entry in _env("TRUSTED_PROXIES", "").split(",")
+        if entry.strip()
+    )
+
+
+# Set once, so a misconfigured proxy is reported rather than repeated on every
+# request for the life of the process.
+_PROXY_HEADER_WARNED = False
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
 GCD_API_BASE = "https://www.comics.org/api"
 METRON_API_BASE = "https://metron.cloud/api"
@@ -266,7 +272,7 @@ def _auth_defaults() -> dict[str, Any]:
         # arrives from a private address, so defaulting this on makes
         # "require sign-in" appear to do nothing on exactly the setups people
         # actually run. Opt in once you know the traffic really is local --
-        # and set COMICARR_TRUSTED_PROXIES if a proxy is in front, or the
+        # and set FLIPPARR_TRUSTED_PROXIES if a proxy is in front, or the
         # real client address cannot be seen at all.
         "localBypass": False,
         "username": "",
@@ -5992,7 +5998,7 @@ class Handler(BaseHTTPRequestHandler):
         treated as local — which would silently disable authentication.
         """
         peer = self.client_address[0] if self.client_address else ""
-        if peer in TRUSTED_PROXIES:
+        if peer in trusted_proxies():
             forwarded = self.headers.get("X-Forwarded-For", "")
             first = forwarded.split(",")[0].strip()
             if first:
@@ -6000,9 +6006,29 @@ class Handler(BaseHTTPRequestHandler):
         return peer
 
     def _request_is_https(self) -> bool:
+        """Whether the browser reached us over TLS, which only a proxy can say.
+
+        The app speaks plain HTTP, so HTTPS always means something in front
+        terminated it. That claim arrives in a header, and a header from an
+        untrusted peer is a claim anyone can make -- so it counts only from an
+        address the operator named.
+        """
+        global _PROXY_HEADER_WARNED
         peer = self.client_address[0] if self.client_address else ""
-        if peer in TRUSTED_PROXIES:
-            return self.headers.get("X-Forwarded-Proto", "").strip().lower() == "https"
+        claimed = self.headers.get("X-Forwarded-Proto", "").strip().lower() == "https"
+        if peer in trusted_proxies():
+            return claimed
+        if claimed and not _PROXY_HEADER_WARNED:
+            # Otherwise this fails silently: the session cookie quietly loses
+            # its Secure flag on a deployment that looks correctly served.
+            _PROXY_HEADER_WARNED = True
+            log_event(
+                "untrusted_forwarded_proto", level="warning", peer=peer,
+                detail="A request claimed HTTPS via X-Forwarded-Proto but came from "
+                       "an address not in FLIPPARR_TRUSTED_PROXIES, so it is ignored "
+                       "and session cookies are not marked Secure. Set "
+                       "FLIPPARR_TRUSTED_PROXIES to your proxy's address.",
+            )
         return False
 
     def _authorized(self, path: str) -> bool:
