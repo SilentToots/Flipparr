@@ -1352,7 +1352,6 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
             sentence they answer, and on a phone the column stretches so they
             still land on the card floor, where Back and Continue sit later. */}
         <div className="setup-welcome-copy">
-          <span className="setup-eyebrow">Welcome</span>
           <h1>Set up your comic library</h1>
           <p>Flipparr reads the comics on your disk, identifies them, and shows what is missing.</p>
           <div className="setup-welcome-actions">
