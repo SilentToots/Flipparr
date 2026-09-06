@@ -1620,39 +1620,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    so the phone kept the full-size desktop artwork. */
 .setup-welcome .brand-mark { width: 190px; height: 190px; flex: none; }
 
-/* The offer takes the room; skipping is the small way out beside it -- the same
-   weighting as the Back circle next to Continue on every step that follows. */
+/* One action: setup is how you get in, so there is nothing to weigh it
+   against and nothing to decline. */
 .setup-welcome-actions { display: flex; flex-wrap: nowrap; gap: 12px; justify-content: flex-start; }
 /* Sized to its label with a floor, not to the column: the copy runs to 46ch,
-   and a button as wide as a paragraph stops reading as a button. It still
-   dwarfs Skip beside it. */
+   and a button as wide as a paragraph stops reading as a button. */
 .setup-welcome-actions .setup-pill.primary { flex: 0 0 auto; min-width: 200px; }
-.setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 24px; }
-/* Pill buttons: one filled, one tinted rather than outlined, so the pair reads
-   as two offers rather than an action and a warning. */
 .setup-pill { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 50px; padding: 0 26px; border: 0; border-radius: 999px; font-size: var(--control-font-md); font-weight: 600; cursor: pointer; }
 .setup-pill.primary { background: var(--violet); color: #fff; }
 .setup-pill.primary:hover { background: #7c68e8; }
-.setup-pill.soft { background: rgba(139,92,246,.14); color: #bcaaff; }
-.setup-pill.soft:hover { background: rgba(139,92,246,.22); }
 .setup-pill:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 
 @media (max-width: 760px) {
-  /* Artwork above the copy, and smaller: on a phone the words are the point. */
-  /* Stacked, with the copy column stretching so its actions still finish on the
-     card floor rather than tucking under the paragraph. */
-  .setup-welcome { display: flex; flex-direction: column; gap: 22px; padding: 8px 0 0; }
-  .setup-welcome-copy { display: flex; flex-direction: column; flex: 1 1 auto; }
-  .setup-welcome-actions { margin-top: auto; padding-top: 22px; }
-  .setup-welcome .brand-mark { width: 148px; height: 148px; margin: 0 auto; }
-  .setup-welcome h1 { font-size: var(--text-2xl); }
-  .setup-welcome > .setup-welcome-copy > p { font-size: var(--text-base); margin-bottom: 24px; }
-  /* Side by side rather than stacked: two short labels fit across a phone, and
-     the pair reads as one decision instead of a list. */
-  .setup-welcome-actions { flex-wrap: nowrap; gap: 10px; }
-  .setup-welcome-actions .setup-pill { min-width: 0; white-space: nowrap; }
-  .setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; min-width: 0; padding: 0 14px; }
-  .setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 20px; }
+  /* One centred column. `display: contents` drops the copy's own box so the
+     mark, the heading, the sentence and the button are all children of the
+     same column -- the first three then centre as a group between the two
+     auto margins, and the button keeps the card floor, where Continue sits on
+     every step after this one. */
+  .setup-welcome { flex: 1 1 auto; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 0 0; text-align: center; }
+  .setup-welcome-copy { display: contents; }
+  .setup-welcome .brand-mark { width: 148px; height: 148px; margin: auto auto 22px; }
+  .setup-welcome h1 { font-size: var(--text-2xl); margin: 0 0 14px; }
+  .setup-welcome > .setup-welcome-copy > p { font-size: var(--text-base); max-width: 32ch; margin: 0 auto auto; }
+  /* Full width rather than sized to "Quick setup": it is the only way forward,
+     so the tap target is the width of the card. */
+  .setup-welcome-actions { padding-top: 22px; }
+  .setup-welcome-actions .setup-pill.primary { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
 }
 
 /* Same card as the steps that follow it -- a wider one made the first screen
@@ -1715,7 +1708,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .brand-wordmark { display: block; width: auto; }
 .brand-mark { display: block; flex: none; }
 .setup-brand { color: var(--muted-strong); }
-.setup-welcome .brand-mark { color: var(--color-violet-400); margin: 0 auto; }
+.setup-welcome .brand-mark { color: var(--color-violet-400); }
 /* The sidebar wordmark stands alone -- it names the app, so a "Comic library"
    line under it was labelling the label. The login screen keeps its subtitle,
    which says what to do rather than what this is. */
