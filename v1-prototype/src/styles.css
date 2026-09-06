@@ -1600,7 +1600,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* Welcome screen. Copy on the left, artwork on the right, and only two things
    to decide: set up now, or go straight in. The stepper starts on the step
    after this one -- a welcome screen is not a step you complete. */
-.setup-welcome { flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 40px; align-items: center; align-content: center; padding: 26px 0 8px; }
+.setup-welcome { flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 28px; align-items: center; align-content: center; padding: 22px 0 8px; }
 .setup-welcome-copy { min-width: 0; }
 .setup-eyebrow { display: block; margin-bottom: 14px; color: #a394f2; font-size: var(--text-xs); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .setup-welcome h1 { margin: 0 0 14px; font-size: var(--text-3xl); line-height: 1.18; letter-spacing: -.015em; }
@@ -1643,17 +1643,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .setup-welcome-actions .setup-pill.soft { flex: 0 0 auto; padding: 0 20px; }
 }
 
-/* The welcome screen is one idea and two choices, so it gets a wider card and
-   no rule under the wordmark -- the divider belongs to the working steps, where
-   it separates the heading from the controls under it. */
-.setup-card.welcome { width: min(880px, 100%); padding: 44px 48px 48px; }
+/* Same card as the steps that follow it -- a wider one made the first screen
+   jump to a different shape on Continue. It keeps its own two differences: no
+   rule under the wordmark, since there is no heading to separate from controls,
+   and a larger title. */
 .setup-card.welcome .setup-header { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
 .setup-card.welcome .setup-brand { margin-bottom: 0; }
 .setup-card.welcome .setup-welcome h1 { font-size: clamp(1.75rem, 1.2rem + 1.9vw, 2.375rem); }
-.setup-card.welcome .setup-art { width: 226px; height: 226px; }
+.setup-card.welcome .setup-art { width: 168px; height: 168px; }
 
 @media (max-width: 760px) {
-  .setup-card.welcome { padding: 22px 18px 26px; width: 100%; }
   .setup-card.welcome .setup-art { width: 132px; height: 132px; }
 }
 
