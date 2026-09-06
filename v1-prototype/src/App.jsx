@@ -1218,6 +1218,22 @@ function SetupLibraryStep({ folder, onFolderChange, recursive, onRecursiveChange
   const notify = useRef(onCheckedChange);
   notify.current = onCheckedChange;
 
+  // Re-check when the tab is returned to. Setting up a library usually means
+  // going away to tidy the folder and coming back, and a count from before
+  // that is worse than no count: it looks current and is not.
+  const [recheck, setRecheck] = useState(0);
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === "visible") setRecheck((count) => count + 1);
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, []);
+
   // Checked as you type rather than behind a separate button press. The folder
   // is pre-filled with the documented mount, so the common case is that the
   // count is already on screen before the user has done anything at all.
@@ -1245,7 +1261,7 @@ function SetupLibraryStep({ folder, onFolderChange, recursive, onRecursiveChange
       }
     }, 450);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [folder, recursive]);
+  }, [folder, recursive, recheck]);
 
   return <div className="setup-step-body">
     {existingRoots.length ? <div className="setup-existing-roots">
