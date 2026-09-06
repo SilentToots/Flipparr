@@ -1522,6 +1522,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-card > .setup-step-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .setup-card > .setup-step-body > * { flex: 0 0 auto; }
 .setup-card > .setup-actions { flex: 0 0 auto; }
+
+/* One height for every step on a desktop. Sized to content, the card grew and
+   shrank between steps and took Back and Continue with it -- 200px of travel
+   between the shortest step and the tallest, so the button you were about to
+   press moved while you reached for it. Content taller than this scrolls
+   inside the body rather than pushing the actions down. */
+@media (min-width: 641px) {
+  .setup-card { height: min(580px, calc(100dvh - 56px)); }
+}
 .setup-header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 20px; }
 /* Wordmark and progress share the top line: the stepper is a label for where
    you are, not a thing to read on its own row. */

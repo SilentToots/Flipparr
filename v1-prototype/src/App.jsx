@@ -1354,7 +1354,7 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
           <h1>Set up your comic library</h1>
           <p>Flipparr reads the comics on your disk, identifies them, and shows what is missing.</p>
           <div className="setup-welcome-actions">
-            <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup <ArrowRight size={17} weight="bold" /></button>
+            <button type="button" className="setup-pill primary" onClick={() => setStepIndex(1)}>Quick setup</button>
             <button type="button" className="setup-pill soft" onClick={onSkipSetup}>Skip</button>
           </div>
         </div>
@@ -1389,7 +1389,7 @@ function SetupView({ catalog, onFinish, onSkipSetup }) {
       {step.id === "welcome" ? null : <footer className="setup-actions">
         <button type="button" className="setup-back" onClick={() => setStepIndex(stepIndex - 1)} disabled={finishing} aria-label="Back"><ArrowLeft size={18} /></button>
         {stepIndex < SETUP_STEPS.length - 1
-          ? <button type="button" className="setup-pill primary setup-continue" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue <ArrowRight size={17} weight="bold" /></button>
+          ? <button type="button" className="setup-pill primary setup-continue" disabled={step.id === "library" && !canLeaveLibraryStep} onClick={() => setStepIndex(stepIndex + 1)}>Continue</button>
           : <button type="button" className="setup-pill primary setup-continue" onClick={finish} disabled={finishing} aria-busy={finishing}>{finishing ? <LoadingSpinner size={18} /> : <CheckCircle size={18} weight="fill" />} Finish and scan</button>}
       </footer>}
     </div>
