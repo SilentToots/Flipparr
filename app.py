@@ -91,7 +91,7 @@ COVER_THUMBNAIL_MAX_DIMENSION = 600
 COVER_THUMBNAIL_QUALITY = 82
 COVER_SOURCE_MAX_BYTES = 50_000_000
 COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-v1"
-USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
+_LEGACY_USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
 _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
 
 
@@ -503,6 +503,46 @@ _PROVIDER_MIN_INTERVAL_SECONDS = {
     # the response cache; this interval only stops two lookups colliding.
     "gcd": max(1.5, float(_env("GCD_MIN_INTERVAL_SECONDS", "1.5"))),
 }
+def user_cover_dir(kind: str = "files") -> Path:
+    """Where a cover the user supplied is kept, beside the catalog.
+
+    It used to live next to this file, inside the image. The container runs
+    with a read-only root and mounts only the config, comics and download
+    directories, so every upload failed on mkdir and came back as a 422 --
+    the feature has never worked once in a deployed container.
+
+    A function rather than a constant for the reason in `_configured_path`:
+    a module-level Path is fixed by whichever module imports `app` first.
+    """
+    configured = _configured_path("USER_COVERS", catalog_database_path().parent / "user-covers")
+    _adopt_legacy_user_covers(configured)
+    return configured / kind
+
+
+def _adopt_legacy_user_covers(destination: Path) -> None:
+    """Carry covers over from the old in-image location, once.
+
+    In a container the old directory is always empty, because writing to it
+    could never succeed. A developer's checkout may hold real files, and
+    starting empty beside them would look like losing them.
+    """
+    marker = destination / ".adopted-legacy"
+    try:
+        if marker.exists() or not _LEGACY_USER_COVER_DIR.is_dir():
+            return
+        target = destination / "files"
+        target.mkdir(parents=True, exist_ok=True)
+        for cover in _LEGACY_USER_COVER_DIR.glob("*.jpg"):
+            copy = target / cover.name
+            if not copy.exists():
+                shutil.copy2(cover, copy)
+        marker.write_text("")
+    except OSError:
+        # Nothing here is worth failing a request over; the originals are
+        # never removed, so a failed copy can be retried by hand.
+        return
+
+
 def catalog_database_path() -> Path:
     """Where the catalog lives, honouring a database written before the rename.
 
@@ -7547,8 +7587,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def handle_uploaded_cover(self, file_id: int) -> None:
-        path = USER_COVER_DIR / f"{file_id}.jpg"
+    def handle_uploaded_cover(self, file_id: int, kind: str = "files") -> None:
+        path = user_cover_dir(kind) / f"{file_id}.jpg"
         if not path.is_file():
             self.send_json({"error": "Uploaded cover was not found"}, 404)
             return
@@ -7590,9 +7630,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             body = render_uploaded_cover_thumbnail(self.rfile.read(length), allowed_types[content_type])
-            USER_COVER_DIR.mkdir(parents=True, exist_ok=True)
-            destination = USER_COVER_DIR / f"{file_id}.jpg"
-            temporary = USER_COVER_DIR / f".{file_id}-{threading.get_ident()}.tmp"
+            covers = user_cover_dir()
+            covers.mkdir(parents=True, exist_ok=True)
+            destination = covers / f"{file_id}.jpg"
+            temporary = covers / f".{file_id}-{threading.get_ident()}.tmp"
             temporary.write_bytes(body)
             os.replace(temporary, destination)
             result = catalog_store().set_file_cover_preference(file_id, "upload")

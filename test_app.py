@@ -3126,3 +3126,67 @@ class EveryWayOfFollowingSearchesTests(unittest.TestCase):
             unhooked, [],
             "these create a request without starting the search for its issues",
         )
+
+
+class UserCoverLocationTests(unittest.TestCase):
+    """Uploaded covers have to land somewhere the container can write.
+
+    They were kept next to app.py, inside the image. The container runs
+    with a read-only root and mounts only config, comics and downloads, so
+    the mkdir failed and every upload came back 422. The feature had never
+    worked once in a deployed container, and no test covered it.
+    """
+
+    def test_user_covers_follow_the_configured_database(self):
+        # Sets its own environment, so it does not depend on whether some
+        # other test module imported app first.
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"FLIPPARR_DATABASE": str(Path(temp_dir) / "flipparr.db")},
+        ):
+            self.assertEqual(
+                app.user_cover_dir(), Path(temp_dir) / "user-covers" / "files",
+            )
+
+    def test_a_file_and_a_run_with_the_same_id_do_not_collide(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"FLIPPARR_DATABASE": str(Path(temp_dir) / "flipparr.db")},
+        ):
+            self.assertNotEqual(app.user_cover_dir("files"), app.user_cover_dir("series"))
+
+    def test_covers_from_the_old_location_are_carried_over(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"FLIPPARR_DATABASE": str(Path(temp_dir) / "flipparr.db")},
+        ):
+            legacy = Path(temp_dir) / "legacy"
+            legacy.mkdir()
+            (legacy / "7.jpg").write_bytes(b"cover")
+            with patch("app._LEGACY_USER_COVER_DIR", legacy):
+                covers = app.user_cover_dir()
+            self.assertEqual((covers / "7.jpg").read_bytes(), b"cover")
+            # The originals are never removed.
+            self.assertTrue((legacy / "7.jpg").exists())
+
+    def test_carrying_over_never_overwrites_what_is_already_there(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"FLIPPARR_DATABASE": str(Path(temp_dir) / "flipparr.db")},
+        ):
+            legacy = Path(temp_dir) / "legacy"
+            legacy.mkdir()
+            (legacy / "7.jpg").write_bytes(b"old")
+            current = Path(temp_dir) / "user-covers" / "files"
+            current.mkdir(parents=True)
+            (current / "7.jpg").write_bytes(b"new")
+            with patch("app._LEGACY_USER_COVER_DIR", legacy):
+                app.user_cover_dir()
+            self.assertEqual((current / "7.jpg").read_bytes(), b"new")
+
+    def test_an_unreadable_old_location_is_not_an_error(self):
+        """A read-only root makes the old directory unreadable, not absent."""
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"FLIPPARR_DATABASE": str(Path(temp_dir) / "flipparr.db")},
+        ):
+            with patch("app._LEGACY_USER_COVER_DIR") as legacy:
+                legacy.is_dir.side_effect = OSError("Read-only file system")
+                self.assertEqual(
+                    app.user_cover_dir(), Path(temp_dir) / "user-covers" / "files",
+                )
