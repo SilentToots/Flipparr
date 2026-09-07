@@ -610,5 +610,26 @@ class HttpContractTests(unittest.TestCase):
         refused = self.post("/api/v1/auth", {"method": "none", "username": "", "password": "orphan-password"})
         self.assertEqual(refused.status, 400)
 
+    # ---- search for missing --------------------------------------------
+
+    # Only a literal true starts downloads. The button passed its click
+    # event as this flag once: JSON could not encode it, but a truthy value
+    # that did encode would have meant "download all of them" with nobody
+    # asked.
+    def test_a_truthy_non_boolean_still_only_asks(self):
+        for value in ("yes", 1, {"nested": True}, ["x"]):
+            with self.subTest(value=value):
+                with patch("app.start_missing_release_search") as search:
+                    search.return_value = {"status": "confirm", "searching": 3, "detail": "x"}
+                    self.post("/api/v1/requests/search-missing", {"confirmed": value})
+                search.assert_called_once_with(False)
+
+    def test_a_literal_true_confirms(self):
+        with patch("app.start_missing_release_search") as search:
+            search.return_value = {"status": "searching", "searching": 3, "detail": "x"}
+            self.post("/api/v1/requests/search-missing", {"confirmed": True})
+        search.assert_called_once_with(True)
+
+
 if __name__ == "__main__":
     unittest.main()

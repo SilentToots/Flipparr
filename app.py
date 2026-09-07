@@ -6625,7 +6625,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/requests/search-missing":
             try:
-                result = start_missing_release_search(bool(payload.get("confirmed")))
+                # Literal true only. Anything else -- a stray object, a
+                # string, a number -- means the caller has not been asked yet,
+                # and this starts a download for every issue it finds.
+                result = start_missing_release_search(
+                    payload.get("confirmed") is True
+                )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
