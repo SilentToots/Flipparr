@@ -4333,7 +4333,22 @@ def _fetch_provider_pages(
     return rows
 
 
-def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str, list[dict[str, Any]]]:
+def _run_status_for_end_year(ended_year: int | None) -> str:
+    """Whether a publication run has finished, from the year it ended.
+
+    A run with no end year on record is still publishing as far as anyone
+    knows, so it is complete only up to today.
+    """
+    return (
+        "complete"
+        if ended_year and ended_year <= time.gmtime().tm_year
+        else "complete_to_date"
+    )
+
+
+def _metron_issue_entries(
+    context: dict[str, Any], token: str
+) -> tuple[str, str, list[dict[str, Any]], int | None]:
     if context.get("metronSeriesId"):
         series_id = str(context["metronSeriesId"])
     else:
@@ -4382,7 +4397,9 @@ def _metron_issue_entries(context: dict[str, Any], token: str) -> tuple[str, str
     if not entries:
         raise ValueError("Metron returned no issues for the matched series")
     source_url = str(detail.get("resource_url") or f"{METRON_API_BASE}/series/{series_id}/")
-    return series_id, source_url, entries
+    # Metron records the year a run ended. Returning it is what lets a finished
+    # run be marked finished; discarded, every Metron match looked ongoing.
+    return series_id, source_url, entries, _provider_year(detail.get("year_end"))
 
 
 def _metron_display_name(value: Any) -> str:
@@ -4663,7 +4680,7 @@ def request_discovered_series(
     context = {"title": cleaned}
     if provider == "metron":
         context["metronSeriesId"] = str(provider_series_id)
-        provider_id, source_url, entries = _metron_issue_entries(context, credential)
+        provider_id, source_url, entries, _ended_year = _metron_issue_entries(context, credential)
         detail = fetch_provider_json(
             provider, f"{METRON_API_BASE}/series/{provider_id}/", credential
         )
@@ -4723,10 +4740,12 @@ def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
                 credential = str(values.get("token") or "").strip()
                 if not credential:
                     continue
-                provider_series_id, api_url, entries = _metron_issue_entries(context, credential)
+                provider_series_id, api_url, entries, ended_year = _metron_issue_entries(
+                    context, credential
+                )
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
-                    status="complete_to_date",
+                    status=_run_status_for_end_year(ended_year),
                     detail="Issue structure and details synchronized through Metron.",
                     source="matched automatically by canonical title, year, and cross-provider identifiers",
                 )
@@ -4737,6 +4756,9 @@ def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
                 provider_series_id, api_url, entries = _comic_vine_issue_entries(context, credential)
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
+                    # Comic Vine volumes carry a start year and an issue count but
+                    # no end year, so a run matched here is only ever known to be
+                    # complete up to today.
                     status="complete_to_date",
                     detail="Issue structure and details synchronized through Comic Vine.",
                     source="matched automatically by canonical title, year, and cross-provider identifiers",
@@ -4928,10 +4950,12 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
                 token = str(values.get("token") or "").strip()
                 if not token:
                     continue
-                provider_series_id, api_url, entries = _metron_issue_entries(context, token)
+                provider_series_id, api_url, entries, ended_year = _metron_issue_entries(
+                    context, token
+                )
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
-                    status="complete_to_date",
+                    status=_run_status_for_end_year(ended_year),
                     detail=f"Matched automatically through Metron during initial library enrichment.",
                     source="initial import: unambiguous title, year, and provider identifiers",
                 )
@@ -4942,6 +4966,9 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
                 provider_series_id, api_url, entries = _comic_vine_issue_entries(context, api_key)
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
+                    # Comic Vine volumes carry a start year and an issue count but
+                    # no end year, so a run matched here is only ever known to be
+                    # complete up to today.
                     status="complete_to_date",
                     detail=f"Matched automatically through Comic Vine during initial library enrichment.",
                     source="initial import: unambiguous title, year, and provider identifiers",
@@ -5668,7 +5695,7 @@ def search_file_match_candidates(file_id: int, query: str) -> dict[str, Any]:
                     "publisher": effective.get("publisher"),
                     "strictYear": True,
                 }, token))
-                found = issue_candidate("Metron", *result) if result else []
+                found = issue_candidate("Metron", *result[:3]) if result else []
             elif provider_id == "comic_vine":
                 api_key = str(values.get("apiKey") or "").strip()
                 if not api_key:

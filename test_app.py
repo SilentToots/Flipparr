@@ -209,7 +209,7 @@ class FilenameParserTests(unittest.TestCase):
             return_value=[("metron", {"token": "saved"}), ("gcd", {})],
         ), patch(
             "app._metron_issue_entries",
-            return_value=("2025", "https://metron.example/series/2025/", entries),
+            return_value=("2025", "https://metron.example/series/2025/", entries, None),
         ) as metron, patch("app._gcd_discovery_search_rows") as gcd:
             result = search_file_match_candidates(7, "Batman 2025")
 
@@ -377,7 +377,7 @@ class FilenameParserTests(unittest.TestCase):
             return_value=[("metron", {"token": "secret"}), ("gcd", {})],
         ), patch("app._metron_issue_entries", return_value=(
             "42", "https://metron.cloud/series/42/",
-            [{"number": "1"}, {"number": "2"}],
+            [{"number": "1"}, {"number": "2"}], None,
         )), patch("app._apply_gcd_series_enrichment") as gcd:
             result = enrich_catalog_series(7)
 
@@ -805,7 +805,7 @@ class FilenameParserTests(unittest.TestCase):
 
         def metron(*_args):
             calls.append("metron")
-            return "20", "https://metron/20", [{"number": "1"}, {"number": "2"}]
+            return "20", "https://metron/20", [{"number": "1"}, {"number": "2"}], None
 
         def comic_vine(*_args):
             calls.append("comic_vine")
@@ -1070,7 +1070,7 @@ class FilenameParserTests(unittest.TestCase):
             {"results": [{"id": 701, "number": "1", "store_date": "2024-10-09", "image": "https://covers/1.jpg"}], "next": None},
         ]
         with patch("app.fetch_json_with_headers", side_effect=responses) as fetch:
-            series_id, _, entries = _metron_issue_entries(context, "token")
+            series_id, _, entries, _ended = _metron_issue_entries(context, "token")
         self.assertEqual(series_id, "77")
         self.assertEqual(entries[0]["publication_date"], "2024-10-09")
         self.assertEqual(entries[0]["cover"], "https://covers/1.jpg")
@@ -1317,7 +1317,7 @@ class FilenameParserTests(unittest.TestCase):
         ), patch("app.load_provider_config", return_value={
             "metron": {"enabled": True, "priority": 20, "token": "token"},
         }), patch("app._metron_issue_entries", return_value=(
-            "9", "https://metron/9", [{"number": "1"}, {"number": "2"}],
+            "9", "https://metron/9", [{"number": "1"}, {"number": "2"}], None,
         )):
             result = sync_issue_catalog(7)
         self.assertEqual(result["metadata"]["titlePolicy"], "numbered_only")
@@ -2466,3 +2466,47 @@ class SabRejectionReasonTests(unittest.TestCase):
                     {"url": "http://sab", "apiKey": "k", "category": "comics"},
                     "Some Comic 001", b"<nzb></nzb>",
                 )
+
+
+class FinishedRunsAreMarkedFinishedTests(unittest.TestCase):
+    """Automatic enrichment must not report every run as still publishing.
+
+    The issue list was fetched automatically all along, but the Metron branch
+    passed a hard-coded "complete_to_date", so a finished run stayed Ongoing
+    until someone refreshed it by hand -- for every run in the library.
+    """
+
+    def _enrich_with_end_year(self, ended_year):
+        store = Mock()
+        store.get_series_enrichment_context.return_value = {
+            "title": "Chew", "year": 2009, "publisher": "Image",
+        }
+        store.metadata_provider_available.return_value = True
+        store.apply_issue_list.return_value = {"issues": 60}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order",
+            return_value=[("metron", {"token": "t"})],
+        ), patch("app._metron_issue_entries", return_value=(
+            "12", "https://metron.cloud/series/12/",
+            [{"number": "1"}, {"number": "2"}], ended_year,
+        )):
+            enrich_catalog_series(7)
+        return store.apply_issue_list.call_args.kwargs["status"]
+
+    def test_a_run_that_ended_is_complete(self):
+        self.assertEqual(self._enrich_with_end_year(2016), "complete")
+
+    def test_a_run_with_no_end_year_is_only_complete_to_date(self):
+        self.assertEqual(self._enrich_with_end_year(None), "complete_to_date")
+
+    def test_a_run_ending_this_year_counts_as_finished(self):
+        import time as _time
+        self.assertEqual(
+            self._enrich_with_end_year(_time.gmtime().tm_year), "complete"
+        )
+
+    def test_a_run_ending_in_a_future_year_is_still_publishing(self):
+        import time as _time
+        self.assertEqual(
+            self._enrich_with_end_year(_time.gmtime().tm_year + 1), "complete_to_date"
+        )
