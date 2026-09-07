@@ -3190,3 +3190,160 @@ class UserCoverLocationTests(unittest.TestCase):
                 self.assertEqual(
                     app.user_cover_dir(), Path(temp_dir) / "user-covers" / "files",
                 )
+
+
+class ArchiveReadingTests(unittest.TestCase):
+    """Comic archives are not all zips.
+
+    RAR is about a quarter of a real library. Reading only zips meant those
+    files had no cover and, worse, no ComicInfo at all -- so nothing about
+    them was known beyond their filename, and a comic in the wrong language
+    could never be recognised as one.
+    """
+
+    COMIC_INFO = (
+        b"<?xml version='1.0'?><ComicInfo>"
+        b"<Series>Example</Series><Number>3</Number>"
+        b"<LanguageISO>fr</LanguageISO><Publisher>Example Press</Publisher>"
+        b"</ComicInfo>"
+    )
+
+    def _png(self):
+        import struct, zlib
+        def chunk(tag, data):
+            body = tag + data
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+        raw = b"".join(b"\x00" + bytes([90, 140, 200]) * 4 for _ in range(4))
+        return (b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+    def _tar_comic(self, folder, name="Example 003.cbt"):
+        """A tar-backed comic, read through the same external tool RAR uses."""
+        import tarfile, io
+        path = Path(folder) / name
+        with tarfile.open(path, "w") as archive:
+            for member, payload in (
+                ("ComicInfo.xml", self.COMIC_INFO),
+                ("pages/001.png", self._png()),
+                ("pages/002.png", self._png()),
+            ):
+                info = tarfile.TarInfo(member)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+        return path
+
+    def _zip_comic(self, folder, name="Example 003.cbz"):
+        path = Path(folder) / name
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("ComicInfo.xml", self.COMIC_INFO)
+            archive.writestr("pages/001.png", self._png())
+        return path
+
+    # ---- what the file actually is ---------------------------------------
+
+    def test_the_container_is_read_from_the_file_not_the_name(self):
+        cases = {
+            b"PK\x03\x04rest": "zip",
+            b"Rar!\x1a\x07\x00rest": "rar",
+            b"Rar!\x1a\x07\x01\x00rest": "rar5",
+            b"7z\xbc\xaf\x27\x1crest": "7z",
+            b"not an archive at all": None,
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            for index, (head, expected) in enumerate(cases.items()):
+                path = Path(folder) / f"probe{index}.cbz"
+                path.write_bytes(head + b"\0" * 300)
+                self.assertEqual(app.archive_kind(path), expected, head[:6])
+
+    def test_a_cbr_that_is_really_a_zip_is_read_as_one(self):
+        """Mislabelled extensions are common, and cost nothing to handle."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._zip_comic(folder, name="Example 003.cbr")
+            self.assertEqual(app.archive_kind(path), "zip")
+            self.assertEqual(app.read_embedded_metadata(path)["language"], "fr")
+
+    # ---- the external path, which RAR also takes --------------------------
+
+    def test_a_non_zip_comic_yields_its_embedded_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._tar_comic(folder)
+            self.assertEqual(app.archive_kind(path), "tar")
+            embedded = app.read_embedded_metadata(path)
+            self.assertEqual(embedded["series"], "Example")
+            self.assertEqual(embedded["number"], "3")
+            # The field the wrong-language check reads.
+            self.assertEqual(embedded["language"], "fr")
+
+    def test_a_non_zip_comic_yields_a_cover(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._tar_comic(folder)
+            member = app.find_archive_cover_member(path)
+            self.assertEqual(member, "pages/001.png")
+            self.assertTrue(app.render_file_cover_thumbnail(path, member).startswith(b"\xff\xd8"))
+
+    def test_members_are_listed_without_directories(self):
+        with tempfile.TemporaryDirectory() as folder:
+            names = app.archive_member_names(self._tar_comic(folder))
+            self.assertIn("pages/001.png", names)
+            self.assertFalse([n for n in names if n.endswith("/")])
+
+    # ---- refusals and degradation ----------------------------------------
+
+    def test_a_member_named_like_an_option_is_refused(self):
+        """It would reach the archive tool as a flag rather than a name."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._tar_comic(folder)
+            with self.assertRaises(ValueError):
+                app.read_archive_member(path, "--one-file-system")
+
+    def test_without_the_tool_a_non_zip_comic_is_skipped_not_fatal(self):
+        """A developer checkout has no bsdtar; that must not break scanning."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._tar_comic(folder)
+            with patch("app._external_archive_tool", return_value=None):
+                self.assertEqual(app.read_embedded_metadata(path), {})
+                self.assertIsNone(app.find_archive_cover_member(path))
+
+    def test_a_zip_comic_never_needs_the_tool(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._zip_comic(folder)
+            with patch("app._external_archive_tool", return_value=None):
+                self.assertEqual(app.read_embedded_metadata(path)["series"], "Example")
+                self.assertEqual(app.find_archive_cover_member(path), "pages/001.png")
+
+    def test_a_file_that_is_not_an_archive_reports_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "Example 003.cbr"
+            path.write_bytes(b"this is not an archive")
+            self.assertEqual(app.read_embedded_metadata(path), {})
+            self.assertIsNone(app.find_archive_cover_member(path))
+
+    def test_a_partly_damaged_archive_still_gives_up_what_it_can(self):
+        """Comic archives in the wild are often slightly malformed.
+
+        bsdtar lists their pages and extracts a good first page, then exits
+        non-zero over something later in the file. Judging that on the exit
+        code alone left fifteen comics in a real library with no cover.
+        """
+        class Partial:
+            returncode = 1
+            stdout = b"pages/001.png\npages/002.png\n"
+            stderr = b"bsdtar: Bad RAR file\n"
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._tar_comic(folder)
+            with patch("app.subprocess.run", return_value=Partial()):
+                self.assertEqual(
+                    app.archive_member_names(path), ["pages/001.png", "pages/002.png"],
+                )
+
+    def test_an_archive_that_gives_nothing_back_is_an_error(self):
+        class Empty:
+            returncode = 1
+            stdout = b""
+            stderr = b"bsdtar: Unrecognized archive format\n"
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._tar_comic(folder)
+            with patch("app.subprocess.run", return_value=Empty()):
+                with self.assertRaises(ValueError):
+                    app.read_archive_member(path, "pages/001.png")

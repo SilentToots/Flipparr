@@ -25,6 +25,7 @@ import os
 import posixpath
 import re
 import secrets
+import functools
 import shutil
 import subprocess
 import sys
@@ -2836,6 +2837,102 @@ def parse_filename(path: Path) -> ParsedFile:
     )
 
 
+# Comic archives are not all zips. RAR is a quarter of a typical library, and
+# its compression cannot be decoded in pure Python, so those go through
+# bsdtar (libarchive): BSD-licensed, and unlike unrar or 7-Zip's RAR decoder
+# it carries no restriction on redistributing the image that ships it.
+class ArchiveToolMissing(RuntimeError):
+    """bsdtar is not installed, so non-zip comics cannot be opened here."""
+
+
+_ARCHIVE_READ_TIMEOUT_SECONDS = 60
+_EXTERNAL_ARCHIVE_SIGNATURES = (
+    (b"Rar!\x1a\x07\x00", "rar"),        # RAR 4.x
+    (b"Rar!\x1a\x07\x01\x00", "rar5"),  # RAR 5.x
+    (b"7z\xbc\xaf\x27\x1c", "7z"),
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _external_archive_tool() -> str | None:
+    return shutil.which("bsdtar")
+
+
+def archive_kind(path: Path) -> str | None:
+    """What this archive really is, read from the file rather than its name.
+
+    A .cbr that is secretly a zip is common enough that trusting the
+    extension would keep failing on files Python can already open.
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(264)
+    except OSError:
+        return None
+    if head[:2] == b"PK":
+        return "zip"
+    for signature, name in _EXTERNAL_ARCHIVE_SIGNATURES:
+        if head.startswith(signature):
+            return name
+    if head[257:262] == b"ustar":
+        return "tar"
+    return None
+
+
+def _run_archive_tool(arguments: list[str], limit: int) -> bytes:
+    tool = _external_archive_tool()
+    if not tool:
+        raise ArchiveToolMissing(
+            "This comic is a RAR archive, which needs bsdtar (libarchive-tools) to read."
+        )
+    completed = subprocess.run(  # noqa: S603 - argv list, never a shell string
+        [tool, *arguments], capture_output=True, timeout=_ARCHIVE_READ_TIMEOUT_SECONDS,
+    )
+    if len(completed.stdout) > limit:
+        raise ValueError("Archive entry is larger than the limit")
+    # A partly damaged archive still answers for the members it can reach, and
+    # the cover is usually the first of them. Fifteen comics in a real library
+    # list their pages and hand over a perfectly good first page while the tool
+    # exits non-zero over something later in the file; refusing that output on
+    # the exit code alone left those comics with no cover at all.
+    if not completed.stdout and completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise ValueError(detail[-1] if detail else "The archive could not be read")
+    return completed.stdout
+
+
+def archive_member_names(path: Path) -> list[str]:
+    """Every member name, from whichever reader suits the container."""
+    kind = archive_kind(path)
+    if kind == "zip":
+        with zipfile.ZipFile(path) as archive:
+            return [info.filename for info in archive.infolist() if not info.is_dir()]
+    if kind is None:
+        return []
+    listing = _run_archive_tool(["-tf", str(path)], 8_000_000)
+    return [
+        name for name in listing.decode("utf-8", "replace").splitlines()
+        if name and not name.endswith("/")
+    ]
+
+
+def read_archive_member(path: Path, member: str, limit: int = COVER_SOURCE_MAX_BYTES) -> bytes:
+    """One member's bytes, without unpacking the rest of the archive."""
+    kind = archive_kind(path)
+    if kind == "zip":
+        with zipfile.ZipFile(path) as archive:
+            info = archive.getinfo(member)
+            if info.file_size <= 0 or info.file_size > limit:
+                raise ValueError("Archive entry is larger than the limit")
+            return archive.read(info)
+    if kind is None:
+        raise ValueError("This file is not an archive Flipparr can read")
+    if member.startswith("-"):
+        # It would arrive at the tool as an option rather than a name.
+        raise ValueError("Flipparr will not read a member whose name begins with a dash")
+    return _run_archive_tool(["-xOf", str(path), member], limit)
+
+
 def _zip_xml(archive: zipfile.ZipFile, member_name: str) -> ET.Element | None:
     try:
         info = archive.getinfo(member_name)
@@ -2938,50 +3035,62 @@ def read_epub_metadata(path: Path) -> dict[str, Any]:
 
 
 def read_comicinfo_metadata(path: Path) -> dict[str, Any]:
-    with zipfile.ZipFile(path) as archive:
-        member = next((name for name in archive.namelist() if name.lower().endswith("comicinfo.xml")), None)
-        if not member:
-            return {}
-        root = _zip_xml(archive, member)
-        if root is None:
-            return {}
-        def value(name: str) -> str | None:
-            return _text(root.find(name))
-        contributors = {
-            role: value(tag)
-            for role, tag in (
-                ("writer", "Writer"), ("penciller", "Penciller"), ("inker", "Inker"),
-                ("colorist", "Colorist"), ("letterer", "Letterer"), ("cover_artist", "CoverArtist"),
-            )
-            if value(tag)
-        }
-        return {
-            "source": "ComicInfo.xml",
-            "series": value("Series"),
-            "title": value("Title"),
-            "number": value("Number"),
-            "volume": value("Volume"),
-            "year": value("Year"),
-            "publisher": value("Publisher"),
-            "imprint": value("Imprint"),
-            "format": value("Format"),
-            "summary": value("Summary"),
-            "language": value("LanguageISO"),
-            "web": value("Web"),
-            "comicvine_volume_id": value("ComicVineVolumeId"),
-            "comicvine_issue_id": value("ComicVineIssueId"),
-            "metron_id": value("MetronId") or value("MetronIssueId"),
-            "contributors": contributors,
-        }
+    member = next(
+        (name for name in archive_member_names(path)
+         if name.lower().endswith("comicinfo.xml")),
+        None,
+    )
+    if not member:
+        return {}
+    try:
+        body = read_archive_member(path, member, 2_000_000)
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return {}
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return {}
+    def value(name: str) -> str | None:
+        return _text(root.find(name))
+    contributors = {
+        role: value(tag)
+        for role, tag in (
+            ("writer", "Writer"), ("penciller", "Penciller"), ("inker", "Inker"),
+            ("colorist", "Colorist"), ("letterer", "Letterer"), ("cover_artist", "CoverArtist"),
+        )
+        if value(tag)
+    }
+    return {
+        "source": "ComicInfo.xml",
+        "series": value("Series"),
+        "title": value("Title"),
+        "number": value("Number"),
+        "volume": value("Volume"),
+        "year": value("Year"),
+        "publisher": value("Publisher"),
+        "imprint": value("Imprint"),
+        "format": value("Format"),
+        "summary": value("Summary"),
+        "language": value("LanguageISO"),
+        "web": value("Web"),
+        "comicvine_volume_id": value("ComicVineVolumeId"),
+        "comicvine_issue_id": value("ComicVineIssueId"),
+        "metron_id": value("MetronId") or value("MetronIssueId"),
+        "contributors": contributors,
+    }
 
 
 def read_embedded_metadata(path: Path) -> dict[str, Any]:
     try:
         if path.suffix.lower() == ".epub":
             return read_epub_metadata(path)
-        if path.suffix.lower() in {".cbz", ".cb7", ".cbt"}:
+        # Every comic container can hold a ComicInfo.xml. Listing .cbz here and
+        # not .cbr meant a quarter of a typical library had no embedded series,
+        # issue, publisher or language at all -- and so a comic in the wrong
+        # language could never be recognised as one.
+        if archive_kind(path) is not None:
             return read_comicinfo_metadata(path)
-    except (zipfile.BadZipFile, OSError, RuntimeError):
+    except (zipfile.BadZipFile, OSError, RuntimeError, subprocess.SubprocessError):
         return {}
     return {}
 
@@ -2996,27 +3105,23 @@ def _natural_member_key(member: str) -> list[tuple[int, Any]]:
 
 def find_archive_cover_member(path: Path, embedded: dict[str, Any] | None = None) -> str | None:
     """Find the file's declared cover or its first plausible comic page."""
-    if path.suffix.lower() not in ZIP_COMIC_EXTENSIONS:
-        return None
     if embedded and embedded.get("cover_member"):
         return str(embedded["cover_member"])
     try:
-        with zipfile.ZipFile(path) as archive:
-            images = []
-            for info in archive.infolist():
-                member = info.filename
-                parts = Path(member).parts
-                if (
-                    info.is_dir()
-                    or info.file_size <= 0
-                    or info.file_size > COVER_SOURCE_MAX_BYTES
-                    or Path(member).suffix.lower() not in ARCHIVE_IMAGE_EXTENSIONS
-                    or "__MACOSX" in parts
-                    or any(part.startswith(".") for part in parts)
-                ):
-                    continue
-                images.append(member)
-    except (zipfile.BadZipFile, OSError, RuntimeError):
+        images = []
+        for member in archive_member_names(path):
+            parts = Path(member).parts
+            if (
+                Path(member).suffix.lower() not in ARCHIVE_IMAGE_EXTENSIONS
+                or "__MACOSX" in parts
+                or any(part.startswith(".") for part in parts)
+            ):
+                continue
+            images.append(member)
+    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError,
+            subprocess.SubprocessError):
+        # An unreadable archive has no cover; it is reported as a file problem
+        # by the health check, not by failing this.
         return None
     if not images:
         return None
@@ -3130,12 +3235,7 @@ def render_file_cover_thumbnail(path: Path, member: str) -> bytes:
     except OSError:
         pass
 
-    with zipfile.ZipFile(path) as archive:
-        info = archive.getinfo(member)
-        if info.file_size <= 0 or info.file_size > COVER_SOURCE_MAX_BYTES:
-            raise ValueError("Embedded cover is too large")
-        source_bytes = archive.read(info)
-
+    source_bytes = read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
     body = normalize_image_to_jpeg(source_bytes)
     try:
         COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)

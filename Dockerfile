@@ -28,6 +28,15 @@ ENV FLIPPARR_BUILD=${FLIPPARR_BUILD} \
     FLIPPARR_SETTINGS_CONFIG=/config/settings.json \
     FLIPPARR_AUTH_CONFIG=/config/auth.json
 
+# RAR is about a quarter of a real comic library and its compression cannot be
+# decoded in pure Python. bsdtar (libarchive) reads it, and unlike unrar or
+# 7-Zip's RAR decoder it is BSD-licensed, so redistributing this image with it
+# carries no condition. It also covers .cb7 and .cbt, which were routed to a
+# zip reader and could never have worked.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes libarchive-tools \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --requirement requirements.txt
