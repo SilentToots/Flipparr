@@ -2391,6 +2391,53 @@ class RebuildSeriesRunTests(unittest.TestCase):
                 store.rebuild_series_run(9999)
 
 
+class IssueFileCoverTests(unittest.TestCase):
+    """Each issue shows the cover of the file that actually satisfies it.
+
+    A download that turned out to be the wrong comic was only findable by
+    opening the file; nothing in the issue list showed what had landed.
+    """
+
+    def _store_with(self, root, file_cover, present=True):
+        path = root / "Example 002.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="2")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "2", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": file_cover,
+            })
+        return store
+
+    def _issues(self, store):
+        return [
+            issue for series in store.catalog()["series"]
+            for issue in (series.get("issues") or [])
+        ]
+
+    def test_an_owned_issue_carries_the_cover_from_its_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._store_with(
+                Path(folder), {"url": "/api/file-cover?path=example.cbz"},
+            )
+            owned = [i for i in self._issues(store) if i["directOwned"]]
+            self.assertEqual(len(owned), 1)
+            self.assertEqual(owned[0]["fileCover"], "/api/file-cover?path=example.cbz")
+
+    def test_an_issue_with_no_file_cover_has_none(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._store_with(Path(folder), None)
+            owned = [i for i in self._issues(store) if i["directOwned"]]
+            self.assertEqual(len(owned), 1)
+            self.assertIsNone(owned[0]["fileCover"])
+
+
 class WrongLanguageIsFlaggedTests(unittest.TestCase):
     """A comic in a language nobody asked for has to be visible.
 

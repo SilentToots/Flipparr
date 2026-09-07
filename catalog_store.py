@@ -5968,6 +5968,24 @@ class CatalogStore:
                 item.setdefault("missingTitleCount", 0)
                 item.setdefault("missingDateCount", 0)
                 item.setdefault("metadataIssueCount", 0)
+            # The cover inside the file that satisfies each issue. Shown so a
+            # wrong download is visible at a glance rather than only to someone
+            # who already knows to open the file. Deliberately unfiltered by
+            # language: seeing the French cover is how the mistake is spotted.
+            issue_file_covers: dict[int, str] = {}
+            for link in connection.execute(
+                """SELECT file_issue_links.issue_id AS issue_id, files.result_json
+                   FROM file_issue_links
+                   JOIN files ON files.id=file_issue_links.file_id
+                   WHERE files.present=1
+                   ORDER BY files.id"""
+            ):
+                issue_id = int(link["issue_id"])
+                if issue_id in issue_file_covers:
+                    continue
+                url = ((_load_json(link["result_json"], {}).get("file_cover")) or {}).get("url")
+                if url:
+                    issue_file_covers[issue_id] = url
             issues_by_series: dict[int, list[dict[str, Any]]] = {}
             for issue in connection.execute(
                 """SELECT issues.*,
@@ -6032,6 +6050,7 @@ class CatalogStore:
                         "providerPublicationYear": issue["publication_year"],
                         "providerPublicationDate": issue["publication_date"],
                         "cover": issue["cover"],
+                        "fileCover": issue_file_covers.get(int(issue["id"])),
                         "metadataLocked": bool(issue["metadata_locked"]),
                         "directOwned": direct, "collectionOwned": collected,
                         "ownership": ownership, "releaseState": release_state,

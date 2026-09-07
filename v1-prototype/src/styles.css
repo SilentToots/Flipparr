@@ -774,8 +774,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .issue-run-group > header small { color: var(--muted); font-size: var(--text-2xs); }
 .issue-run-group > header > strong { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; background: #222c3a; color: #b8c2cf; font-size: var(--text-xs); }
 .issue-run-group > div { padding: 0 13px; }
-.issue-run-group article { min-height: 55px; display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 11px; align-items: center; border-bottom: 1px solid var(--line); }
+.issue-run-group article { min-height: 55px; display: grid; grid-template-columns: 32px 40px minmax(0, 1fr) auto; gap: 11px; align-items: center; border-bottom: 1px solid var(--line); }
 .issue-run-group article:last-child { border-bottom: 0; }
+/* The cover inside the file that satisfies this issue, so a download that
+   turned out to be the wrong comic is visible in the list itself. */
+.grouped-issue-cover { width: 32px; height: 48px; border-radius: 4px; overflow: hidden; background: #1b2331; border: 1px solid var(--line); display: grid; place-items: center; }
+.grouped-issue-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.grouped-issue-cover .cover-placeholder { color: #46536a; display: grid; place-items: center; }
 .grouped-issue-number { color: #c5b8ff; font-size: var(--text-md); font-weight: 780; }
 .issue-run-group article > div { display: grid; gap: 3px; }
 .issue-run-group article > div strong { font-size: var(--text-sm); display: flex; align-items: center; gap: 5px; }
