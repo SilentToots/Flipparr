@@ -18,13 +18,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .app-shell { min-height: 100vh; background: var(--bg); }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; width: 248px; background: var(--sidebar); border-right: 1px solid #1e2531; padding: 26px 16px 22px; display: flex; flex-direction: column; }
+/* The mark alone, the way Plex sits its logo above the nav: the name is on the
+   sign-in screen and in the tab, and repeating it over a list of the app's own
+   sections earned no room. It also survives the collapse to the icon rail,
+   which the wordmark had to be squeezed into. */
 .brand { display: flex; gap: 11px; align-items: center; min-height: 42px; padding: 0 10px 22px; color: #a994ff; }
-.brand div { display: grid; gap: 2px; }
-/* The product name is a wordmark -- Flipparr, S and B capitalised. No
-   text-transform: it used to render SONICBOOM. The wide letter-spacing
-   that suited all-caps is dialled back for mixed case. */
-.brand strong { color: var(--text); font-size: var(--text-base); letter-spacing: .005em; }
-.brand span { font-size: var(--text-sm); color: var(--muted); }
 .sidebar nav { display: grid; gap: 4px; }
 .nav-item { width: 100%; border: 0; background: transparent; color: #aeb7c4; padding: 12px 12px; border-radius: var(--radius-sm); display: grid; grid-template-columns: 25px 1fr auto; gap: 11px; align-items: center; text-align: left; cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
 .nav-item:hover { background: #141a25; color: #e6e8ed; }
@@ -1107,7 +1105,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 880px) {
   .sidebar { width: 76px; padding-inline: 10px; }
   .brand { justify-content: center; padding-inline: 0; }
-  .brand div, .nav-item span, .nav-item b, .sidebar-footer { display: none; }
+  .nav-item span, .nav-item b, .sidebar-footer { display: none; }
   .nav-item { grid-template-columns: 1fr; place-items: center; padding: 13px 0; }
   .main-content { margin-left: 76px; padding: 24px; }
   .topbar { grid-template-columns: 1fr; }
@@ -1716,11 +1714,102 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    line under it was labelling the label. The login screen keeps its subtitle,
    which says what to do rather than what this is. */
 .sidebar .brand { padding-bottom: 18px; }
-.sidebar .brand-wordmark { color: var(--text); }
-.brand > div > .brand-wordmark { color: var(--text); margin-bottom: 5px; }
 
 /* "Get a key" beside the credential help: an account is the one prerequisite
    this screen cannot satisfy for you, so it links out to where you get one. */
 .provider-credential-link { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; color: #aa9bf0; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .provider-credential-link:hover { text-decoration: underline; }
 .provider-credential-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 3px; }
+
+/* --- Desktop app bar ------------------------------------------------------ */
+
+/* A bar above everything, identical on every screen: mark, search, settings,
+   and the control that collapses the nav beside it. A phone keeps the layout it
+   already had -- bottom bar, search inside the page -- so this starts at the
+   first breakpoint above it. */
+.appbar { display: none; }
+
+/* The active marker is a straight edge. As `inset 3px 0` it was clipped by the
+   pill's own radius and bowed at both ends; the pill keeps its rounded corners
+   and the marker no longer borrows them. */
+.nav-item { position: relative; }
+.nav-item.active { box-shadow: none; }
+.nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; border-radius: 0; background: #8d6cff;
+}
+
+@media (min-width: 641px) {
+  .appbar {
+    position: fixed; inset: 0 0 auto 0; z-index: 40; height: 56px;
+    display: grid; grid-template-columns: auto auto minmax(0, 520px) 1fr;
+    gap: 12px; align-items: center; padding: 0 16px;
+    background: var(--sidebar); border-bottom: 1px solid #1e2531;
+  }
+  .appbar-menu, .appbar-action {
+    display: grid; place-items: center; width: 38px; height: 38px;
+    border: 0; border-radius: var(--radius-sm); background: transparent;
+    color: #aeb7c4; cursor: pointer;
+    transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease;
+  }
+  .appbar-menu:hover, .appbar-action:hover { background: #141a25; color: #e6e8ed; }
+  .appbar-menu:focus-visible, .appbar-action:focus-visible,
+  .appbar-brand:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .appbar-brand {
+    display: grid; place-items: center; width: 38px; height: 38px; padding: 0;
+    border: 0; border-radius: var(--radius-sm); background: transparent;
+    color: #a994ff; cursor: pointer;
+  }
+  .appbar-search { min-width: 0; }
+  .appbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+
+  /* Both columns start below the bar. */
+  .sidebar { top: 56px; }
+  .main-content { padding-top: 84px; }
+  /* Search lives in the bar now, so the copy of it inside the page is the
+     phone's alone. */
+  .topbar, .search-results-topbar { display: none; }
+}
+
+/* Collapsing is only meaningful where the nav is not already an icon rail. */
+@media (min-width: 881px) {
+  .sidebar { transition: width var(--motion-duration-fast) ease; }
+  .main-content { transition: margin-left var(--motion-duration-fast) ease; }
+  .app-shell.nav-collapsed .sidebar { width: 76px; padding-inline: 10px; }
+  .app-shell.nav-collapsed .nav-item span,
+  .app-shell.nav-collapsed .nav-item b,
+  .app-shell.nav-collapsed .sidebar-footer { display: none; }
+  .app-shell.nav-collapsed .nav-item {
+    grid-template-columns: 1fr; place-items: center; padding: 13px 0;
+  }
+  .app-shell.nav-collapsed .main-content { margin-left: 76px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .main-content { transition: none; }
+}
+
+/* The bar's own field: a pill with the magnifier inside it as a label, and
+   Enter to submit. The page's search keeps its button, where searching is the
+   reason you are on the screen; in a bar that is always present, a permanent
+   accent button competes with whatever you are actually doing. */
+@media (min-width: 641px) {
+  .appbar .search-field {
+    height: 38px; gap: 9px; padding: 0 15px;
+    border-radius: 999px; border-color: transparent; background: #10161f;
+  }
+  .appbar .search-field:hover { background: #131a25; }
+  .appbar .search-field:focus-within {
+    border-color: #6556a3; background: #0d121a; box-shadow: 0 0 0 3px #201a39;
+  }
+  .appbar .search-field > svg { flex: none; color: #7d8798; }
+  .appbar .search-field input { font-size: var(--text-md); }
+}
+
+/* Settings lives in the bar on desktop, so the left nav stops repeating it.
+   The phone has no bar, so it keeps the item -- hiding it there would leave no
+   way in at all. */
+@media (min-width: 641px) {
+  .nav-item[data-nav="settings"] { display: none; }
+  .appbar-action.active { color: #beadff; background: var(--violet-soft); }
+}
