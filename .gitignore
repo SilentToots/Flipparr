@@ -22,3 +22,6 @@ sonicboom_ui/node_modules/
 # Claude Design export runtime (regenerable, vendored)
 design/support.js
 design/.thumbnail
+
+# Personal Claude Code overrides for this checkout
+.claude/settings.local.json
