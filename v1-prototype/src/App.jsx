@@ -1743,7 +1743,7 @@ function FileActionButtons({ file, onOpenWorkbench, onOpenCover, onOpenContents,
   const editionsOn = useCollectedEditions();
   // Editing a collected edition's issue contents is an edition-management
   // surface; the file itself stays visible and fixable either way.
-  return <>{file.identityKind === "edition" && editionsOn ? <button onClick={() => onOpenContents(file)}><ListBullets size={15} /> Issues</button> : null}<button onClick={() => onReplace(file)}><CloudArrowDown size={15} /> Replace</button><button onClick={() => onChangeRun(file)}><Books size={15} /> Change run</button><button onClick={() => onOpenCover(file)}><BookOpen size={15} /> Cover</button><button onClick={() => onOpenWorkbench(file, "match")}><ArrowsClockwise size={15} /> Fix match</button><button onClick={() => onOpenWorkbench(file, "edit")}><PencilSimple size={15} /> Edit metadata</button></>;
+  return <>{file.identityKind === "edition" && editionsOn ? <button onClick={() => onOpenContents(file)}><ListBullets size={14} /> Issues</button> : null}<button onClick={() => onReplace(file)}><CloudArrowDown size={14} /> Replace</button><button onClick={() => onChangeRun(file)}><Books size={14} /> Change run</button><button onClick={() => onOpenCover(file)}><BookOpen size={14} /> Cover</button><button onClick={() => onOpenWorkbench(file, "match")}><ArrowsClockwise size={14} /> Fix match</button><button onClick={() => onOpenWorkbench(file, "edit")}><PencilSimple size={14} /> Metadata</button></>;
 }
 
 function FileInventory({ files, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {

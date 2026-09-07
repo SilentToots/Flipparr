@@ -812,8 +812,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .file-health { max-width: 115px; text-transform: capitalize; color: var(--green); font-size: var(--text-xs); text-align: right; }
 .file-health.error { color: var(--red); }
 .metadata-lock { color: #8edba4 !important; display: flex; align-items: center; gap: 4px; }
-.file-row-actions { grid-column: 1 / -1; padding-left: 34px; display: flex; flex-wrap: wrap; gap: 6px; }
-.file-row-actions button { min-height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: #202938; color: #b8c2d0; display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: var(--text-xs); }
+/* One line for the whole set. The row is the file's actions, so it takes the
+   full width rather than indenting to the filename, and the buttons are sized
+   to leave real headroom: at the old indent and padding the five needed 487 of
+   518px, which held here and wrapped on any wider font or zoom. Wrapping stays
+   as the fallback rather than letting a label truncate. */
+.file-row-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; }
+.file-row-actions button { min-height: 30px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 5px; background: #202938; color: #b8c2d0; display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: var(--text-xs); white-space: nowrap; }
 .file-row-actions button:hover { border-color: #6557a2; color: #d6cdff; }
 .file-actions-menu { display: none; }
 .alias-list { display: grid; gap: 7px; }
