@@ -2317,3 +2317,75 @@ class FailedReleasesAreSearchedAgainTests(unittest.TestCase):
             )
             store.update_acquisition_download(int(download["id"]), "imported")
             self.assertEqual(store.acquisition_jobs_awaiting_release(), [])
+
+
+class RebuildSeriesRunTests(unittest.TestCase):
+    """A run whose data is wrong has to be fixable without touching files.
+
+    A provider refresh fills a blank and never corrects a value, so a title
+    written onto a shared issue by a file that turned out to be a different
+    comic survived every refresh: "Numéro 2", from a French edition filed as
+    Saga #2.
+    """
+
+    def _run_with_a_bad_title(self, root):
+        path = root / "Example 002.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="2")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "2", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        series_id = int(store.catalog()["series"][0]["id"])
+        store.apply_issue_list(
+            series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+            [{"number": "2", "provider_id": "102", "publication_year": 2012}],
+        )
+        with store._connect() as connection:
+            connection.execute(
+                "UPDATE issues SET title='Numéro 2' WHERE series_run_id=?", (series_id,)
+            )
+        return store, series_id
+
+    def test_a_refresh_cannot_take_a_wrong_title_back_off(self):
+        """The behaviour that made a rebuild necessary."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._run_with_a_bad_title(Path(folder))
+            # The provider has no title for this issue, so COALESCE keeps it.
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [{"number": "2", "provider_id": "102", "publication_year": 2012}],
+            )
+            issue = store.catalog()["series"][0]["issues"][0]
+            self.assertEqual(issue["title"], "Numéro 2")
+
+    def test_rebuilding_clears_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._run_with_a_bad_title(Path(folder))
+            result = store.rebuild_series_run(series_id)
+            self.assertGreaterEqual(result["clearedIssues"], 1)
+            issue = store.catalog()["series"][0]["issues"][0]
+            self.assertIsNone(issue["title"])
+
+    def test_a_manual_correction_survives_the_rebuild(self):
+        """Corrections are layered over the derived values, not stored in them."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._run_with_a_bad_title(Path(folder))
+            issue_id = int(store.catalog()["series"][0]["issues"][0]["id"])
+            store.update_issue_metadata(issue_id, "The one I typed")
+            store.rebuild_series_run(series_id)
+            issue = store.catalog()["series"][0]["issues"][0]
+            self.assertEqual(issue["title"], "The one I typed")
+
+    def test_an_unknown_run_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            with self.assertRaisesRegex(ValueError, "not found"):
+                store.rebuild_series_run(9999)

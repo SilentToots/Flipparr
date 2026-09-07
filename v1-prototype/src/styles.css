@@ -1862,3 +1862,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (prefers-reduced-motion: reduce) {
   .job-progress-track > i { transition: none; }
 }
+
+/* What a rebuild changed, said where the button is rather than in a toast the
+   drawer would hide. */
+.rebuild-result { display: block; margin-top: 9px; color: var(--muted-strong); font-size: var(--text-sm); }

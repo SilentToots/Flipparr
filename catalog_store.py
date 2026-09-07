@@ -2661,6 +2661,68 @@ class CatalogStore:
             "titleCount": sum(bool(str(entry.get("title") or "").strip()) for entry in entries),
         }
 
+    def rebuild_series_run(self, series_run_id: int) -> dict[str, Any]:
+        """Discard what was derived for a run and work it out again.
+
+        Every other repair only adds. A provider refresh fills a blank and
+        never corrects a value -- `COALESCE(excluded.title, issues.title)` --
+        and a file-level fix touches that file's own record. So a wrong value
+        written onto a shared issue survives all of them: a French edition
+        filed as Saga #2 left "Numéro 2" as the issue's title, and no refresh
+        could take it back off.
+
+        Derived identity is cleared and re-derived from the files present now.
+        Manual corrections are not touched -- they live in
+        issue_metadata_overrides, which is layered over this at read time --
+        and the provider link is kept, so a refresh afterwards refills what
+        the provider knows.
+        """
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            if not connection.execute(
+                "SELECT id FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone():
+                raise ValueError("Canonical series was not found")
+            cleared = int(connection.execute(
+                """UPDATE issues SET title=NULL, publication_date=NULL, cover=NULL,
+                          updated_at=?
+                    WHERE series_run_id=?""",
+                (now, series_run_id),
+            ).rowcount or 0)
+            retained = connection.execute(
+                """SELECT DISTINCT issues.id
+                     FROM issues
+                     JOIN file_issue_links ON file_issue_links.issue_id=issues.id
+                     JOIN files ON files.id=file_issue_links.file_id
+                    WHERE issues.series_run_id=? AND files.present=1""",
+                (series_run_id,),
+            ).fetchall()
+            rederived = 0
+            for issue in retained:
+                issue_id = int(issue["id"])
+                local = self._local_issue_values(connection, issue_id)
+                if not local:
+                    continue
+                connection.execute(
+                    """UPDATE issues SET
+                           title=COALESCE(?, title),
+                           publication_year=COALESCE(?, publication_year),
+                           publication_date=COALESCE(?, publication_date),
+                           cover=COALESCE(?, cover), updated_at=?
+                       WHERE id=?""",
+                    (
+                        local.get("title"), local.get("publication_year"),
+                        local.get("publication_date"), local.get("cover"),
+                        now, issue_id,
+                    ),
+                )
+                rederived += 1
+        return {
+            "seriesRunId": str(series_run_id),
+            "clearedIssues": cleared,
+            "rederivedFromFiles": rederived,
+        }
+
     def repair_provider_run_mismatch(self, series_run_id: int) -> dict[str, Any]:
         """Remove a provider catalog whose era conflicts with owned opening issues.
 

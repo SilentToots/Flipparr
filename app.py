@@ -4554,10 +4554,18 @@ def confirm_gcd_series_run(series_run_id: int, provider_series_id: str) -> dict[
         f"You confirmed GCD series {provider_series_id}; {len(entries)} canonical issues were imported "
         "and cover variants were collapsed by issue number."
     )
-    return catalog_store().apply_issue_list(
+    store = catalog_store()
+    # Confirming a match has to undo what the old one left behind. Otherwise
+    # apply_issue_list's COALESCE only fills blanks, and a title written by a
+    # comic that turned out to be something else -- "Numéro 2", from a French
+    # edition filed as Saga #2 -- survives the correction that was meant to
+    # remove it. Manual corrections are layered at read time and are untouched.
+    rebuilt = store.rebuild_series_run(series_run_id)
+    applied = store.apply_issue_list(
         series_run_id, "gcd", provider_series_id, series.get("api_url") or "", entries,
         status=status, detail=detail, source="user-confirmed series run",
     )
+    return {**applied, "rebuilt": rebuilt}
 
 
 def confirm_gcd_series_collection(
@@ -5163,6 +5171,26 @@ def request_discovered_series(
         "request": request, "issueCount": len(entries),
         "metadata": {"provider": provider, "status": status},
     }
+
+
+def rebuild_series_run(series_run_id: int) -> dict[str, Any]:
+    """Clear a run's derived identity, then work it out again.
+
+    Its own action beside fixing a match, because they repair different faults:
+    a wrong match links the run to the wrong comic, while this undoes what a
+    file that turned out to be something else left on a run whose match was
+    right all along.
+    """
+    outcome = catalog_store().rebuild_series_run(series_run_id)
+    try:
+        outcome["refresh"] = sync_issue_catalog(series_run_id)
+    except Exception as exc:
+        # The clearing is the part worth keeping. A provider that cannot answer
+        # now is a reason to refresh again later, not to put the wrong titles
+        # back.
+        log_exception("rebuild_refresh_failed", exc, level="warning")
+        outcome["refresh"] = {"status": "unavailable", "detail": str(exc)}
+    return outcome
 
 
 def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
@@ -7112,6 +7140,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
+            return
+        series_rebuild = re.fullmatch(r"/api/v1/series/(\d+)/rebuild", parsed_url.path)
+        if series_rebuild:
+            try:
+                self.send_json(rebuild_series_run(int(series_rebuild.group(1))))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
             return
         series_monitoring = re.fullmatch(r"/api/v1/series/(\d+)/monitoring", parsed_url.path)
         if series_monitoring:
