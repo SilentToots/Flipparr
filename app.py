@@ -2325,6 +2325,12 @@ def _automatic_release_grabs(request_id: int | None = None) -> None:
 def _start_automatic_release_grabs(request: Any) -> None:
     """Run the automatic search off the request thread.
 
+    Called beside every `create_acquisition_request`, not on one route.
+    Following a run from Discover creates its request through a different path
+    than following one already in the library, and hooking only the latter
+    meant a series added from Discover sat with fifty queued issues and never
+    looked for any of them.
+
     Twenty issues means twenty indexer searches and twenty uploads, which must
     not hold up the response that tells the page its request exists. Nothing
     downstream waits on the result: the jobs update themselves as they go and
@@ -4481,6 +4487,7 @@ def request_discovered_gcd_series(
     request = store.create_acquisition_request(
         "series", int(run["id"]), acquisition_preference, True
     )
+    _start_automatic_release_grabs(request)
     return {
         "series": {**run, "publisher": candidate.get("publisher"), "year": candidate.get("yearBegan")},
         "request": request,
@@ -5152,6 +5159,7 @@ def request_discovered_series(
     request = catalog_store().create_acquisition_request(
         "series", int(run["id"]), acquisition_preference, True
     )
+    _start_automatic_release_grabs(request)
     return {
         "series": {**run, "publisher": publisher, "year": year},
         "request": request, "issueCount": len(entries),

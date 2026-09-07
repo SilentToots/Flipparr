@@ -1,5 +1,6 @@
 import email.message
 import io
+import pathlib
 import os
 import tempfile
 import threading
@@ -2996,3 +2997,33 @@ class DownloadProgressTests(unittest.TestCase):
             queue={"queue": {"slots": [{"nzo_id": "SAB-1", "percentage": "n/a"}]}},
         )
         self.assertEqual(result["downloads"]["7"]["percent"], 0)
+
+
+class EveryWayOfFollowingSearchesTests(unittest.TestCase):
+    """Following a run must look for its issues however it was followed.
+
+    Discover creates its request through a different path than following a run
+    already in the library, and only the latter started the search. A series
+    added from Discover sat with fifty queued issues and never looked for one
+    of them.
+
+    This reads the source rather than the behaviour on purpose: what went
+    wrong was a call site nobody had connected, and a new one is exactly what
+    this has to catch.
+    """
+
+    def test_every_request_creation_starts_a_search(self):
+        lines = pathlib.Path("app.py").read_text().split("\n")
+        unhooked = []
+        for index, line in enumerate(lines):
+            if "create_acquisition_request(" not in line:
+                continue
+            if line.lstrip().startswith(("def ", "#")):
+                continue
+            window = "\n".join(lines[index:index + 10])
+            if "_start_automatic_release_grabs(" not in window:
+                unhooked.append(f"app.py:{index + 1}: {line.strip()[:70]}")
+        self.assertEqual(
+            unhooked, [],
+            "these create a request without starting the search for its issues",
+        )
