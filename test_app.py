@@ -2584,7 +2584,7 @@ class SearchForMissingTests(unittest.TestCase):
         with patch("app.catalog_store", return_value=store), patch(
             "app._enabled_acquisition_service", return_value={}
         ), patch("app.threading.Thread") as thread:
-            result = app.start_missing_release_search()
+            result = app.start_missing_release_search(confirmed=True)
 
         self.assertEqual((result["status"], result["searching"]), ("searching", 3))
         self.assertIn("3 missing issues", result["detail"])
@@ -2598,7 +2598,10 @@ class SearchForMissingTests(unittest.TestCase):
         with patch("app.catalog_store", return_value=store), patch(
             "app._enabled_acquisition_service", return_value={}
         ), patch("app.threading.Thread"):
-            self.assertIn("1 missing issue.", app.start_missing_release_search()["detail"])
+            self.assertIn(
+                "1 missing issue.",
+                app.start_missing_release_search(confirmed=True)["detail"],
+            )
 
     def test_an_empty_backlog_starts_nothing(self):
         store = Mock()
@@ -2618,4 +2621,55 @@ class SearchForMissingTests(unittest.TestCase):
         ), patch("app.threading.Thread") as thread:
             with self.assertRaisesRegex(ValueError, "Prowlarr is not configured"):
                 app.start_missing_release_search()
+        thread.assert_not_called()
+
+
+class StaleJobsAreNotRedownloadedTests(unittest.TestCase):
+    """Job status records what was true when it was written.
+
+    A followed run's jobs are created for every missing issue. Issues acquired
+    afterwards leave their job sitting at "queued" until reconciliation runs,
+    and searching from that list re-downloads comics already in the library --
+    160 of 161 Fables issues, in the case that found this.
+    """
+
+    def test_the_backlog_is_reconciled_before_it_is_searched(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [1]
+        calls = []
+        store.reconcile_acquisition_jobs.side_effect = lambda *a: calls.append("reconcile")
+        store.acquisition_jobs_awaiting_release.side_effect = (
+            lambda *a: calls.append("select") or [1]
+        )
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={}
+        ), patch("app.threading.Thread"):
+            app.start_missing_release_search(confirmed=True)
+        self.assertEqual(calls, ["reconcile", "select"])
+
+    def test_one_request_is_reconciled_before_its_jobs_are_grabbed(self):
+        store = Mock()
+        calls = []
+        store.reconcile_acquisition_jobs.side_effect = lambda *a: calls.append("reconcile")
+        store.acquisition_jobs_awaiting_release.side_effect = (
+            lambda *a: calls.append("select") or []
+        )
+        with patch("app.catalog_store", return_value=store):
+            app._automatic_release_grabs(7)
+        self.assertEqual(calls, ["reconcile", "select"])
+        store.reconcile_acquisition_jobs.assert_called_once_with(7)
+
+
+class SearchMissingAsksFirstTests(unittest.TestCase):
+    def test_nothing_starts_until_the_count_is_accepted(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = list(range(161))
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={}
+        ), patch("app.threading.Thread") as thread:
+            result = app.start_missing_release_search()
+
+        self.assertEqual(result["status"], "confirm")
+        self.assertEqual(result["searching"], 161)
+        self.assertIn("161 missing issues", result["detail"])
         thread.assert_not_called()

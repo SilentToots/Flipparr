@@ -1990,6 +1990,13 @@ def _automatic_release_grabs(request_id: int | None = None) -> None:
     """
     try:
         store = catalog_store()
+        # Align the jobs with what is actually on disk before acting on them.
+        # A job's status records what was true when it was written; issues
+        # acquired since are still marked queued until this runs, and grabbing
+        # from that list re-downloads comics already in the library.
+        store.reconcile_acquisition_jobs(
+            None if request_id is None else int(request_id)
+        )
         job_ids = store.acquisition_jobs_awaiting_release(
             None if request_id is None else int(request_id)
         )
@@ -2043,7 +2050,7 @@ def _start_automatic_release_grabs(request: Any) -> None:
     ).start()
 
 
-def start_missing_release_search() -> dict[str, Any]:
+def start_missing_release_search(confirmed: bool = False) -> dict[str, Any]:
     """Search for every wanted issue that still has no release.
 
     The equivalent of Radarr's and Sonarr's Wanted list: everything monitored
@@ -2055,6 +2062,10 @@ def start_missing_release_search() -> dict[str, Any]:
     report their own progress, and the page is already polling them.
     """
     store = catalog_store()
+    # Same reason as the per-request pass: the count reported here has to be of
+    # issues genuinely still missing, not of jobs left over from before they
+    # were acquired.
+    store.reconcile_acquisition_jobs()
     job_ids = store.acquisition_jobs_awaiting_release()
     if not job_ids:
         return {"status": "idle", "searching": 0, "detail": "Nothing is waiting on a release."}
@@ -2066,13 +2077,21 @@ def start_missing_release_search() -> dict[str, Any]:
             raise ValueError(
                 f"{name} is not configured, so there is nothing to search with"
             ) from None
+    plural = "" if len(job_ids) == 1 else "s"
+    if not confirmed:
+        # This spends real bandwidth on every issue at once, so the count is
+        # reported and nothing starts until it is accepted.
+        return {
+            "status": "confirm", "searching": len(job_ids),
+            "detail": f"This will search for {len(job_ids)} missing issue{plural} "
+                      f"and download {'it' if len(job_ids) == 1 else 'them'}.",
+        }
     threading.Thread(
         target=_automatic_release_grabs, name="flipparr-search-missing", daemon=True,
     ).start()
     return {
         "status": "searching", "searching": len(job_ids),
-        "detail": f"Searching for {len(job_ids)} missing issue"
-                  f"{'' if len(job_ids) == 1 else 's'}.",
+        "detail": f"Searching for {len(job_ids)} missing issue{plural}.",
     }
 
 
@@ -6606,7 +6625,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/requests/search-missing":
             try:
-                result = start_missing_release_search()
+                result = start_missing_release_search(bool(payload.get("confirmed")))
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

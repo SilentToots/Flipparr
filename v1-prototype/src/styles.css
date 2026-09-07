@@ -1827,3 +1827,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--violet-soft); color: #c3b6ff;
   font-size: var(--text-sm);
 }
+
+/* The Wanted search says what it is about to cost before it costs it. */
+.request-search-confirm {
+  margin: -4px 0 0; padding: 13px 15px;
+  border: 1px solid #5b4aa8; border-radius: var(--radius-sm);
+  background: var(--violet-soft);
+  display: flex; flex-wrap: wrap; gap: 14px;
+  align-items: center; justify-content: space-between;
+}
+.request-search-confirm strong { display: block; color: #d6cdff; font-size: var(--text-md); }
+.request-search-confirm small { display: block; margin-top: 3px; color: var(--muted-strong); font-size: var(--text-sm); }
+.request-search-confirm > span { display: flex; gap: 9px; flex: none; }
