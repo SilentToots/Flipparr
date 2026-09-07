@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from app import SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_release_for_retry, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -2358,7 +2358,7 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
             "status": "grabbed", "queueIds": ["queue-1"],
             "detail": "Release sent to SABnzbd.",
         }) as send:
-            result = _auto_release_for_retry(7)
+            result = _auto_grab_release(7)
 
         search.assert_called_once_with(7)
         # The list is already ranked, so the first entry is the best available.
@@ -2370,14 +2370,14 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
         with patch("app.search_prowlarr_releases", return_value={
             "candidateCount": 0, "candidates": [],
         }), patch("app.send_release_to_sabnzbd") as send:
-            self.assertIsNone(_auto_release_for_retry(7))
+            self.assertIsNone(_auto_grab_release(7))
         send.assert_not_called()
 
     def test_retry_defers_to_a_person_when_the_indexer_cannot_answer(self):
         with patch(
             "app.search_prowlarr_releases", side_effect=RuntimeError("Prowlarr is down")
         ), patch("app.send_release_to_sabnzbd") as send:
-            self.assertIsNone(_auto_release_for_retry(7))
+            self.assertIsNone(_auto_grab_release(7))
         send.assert_not_called()
 
     def test_retry_defers_to_a_person_when_the_chosen_release_cannot_be_sent(self):
@@ -2387,7 +2387,7 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
         }), patch(
             "app.send_release_to_sabnzbd", side_effect=ReleaseDownloadError("nzb gone")
         ):
-            self.assertIsNone(_auto_release_for_retry(7))
+            self.assertIsNone(_auto_grab_release(7))
 
 
 def _redirect(location, code=301):
@@ -2510,3 +2510,66 @@ class FinishedRunsAreMarkedFinishedTests(unittest.TestCase):
         self.assertEqual(
             self._enrich_with_end_year(_time.gmtime().tm_year + 1), "complete_to_date"
         )
+
+
+class AutomaticSearchOnCreationTests(unittest.TestCase):
+    """A new request searches and grabs by itself, as the -arr tools do.
+
+    Adding something monitored there triggers a search that takes the best
+    release clearing the bar; the candidate list is a deliberate interactive
+    step, not the first one. Flipparr had that backwards.
+    """
+
+    def test_every_waiting_job_is_grabbed(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [11, 12, 13]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._auto_grab_release", return_value={"status": "grabbed"}
+        ) as grab:
+            app._automatic_release_grabs(5)
+
+        store.acquisition_jobs_awaiting_release.assert_called_once_with(5)
+        self.assertEqual([call.args[0] for call in grab.call_args_list], [11, 12, 13])
+
+    def test_one_issue_without_a_release_does_not_stop_the_others(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [11, 12, 13]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._auto_grab_release",
+            side_effect=[{"status": "grabbed"}, None, {"status": "grabbed"}],
+        ) as grab:
+            app._automatic_release_grabs(5)
+        self.assertEqual(grab.call_count, 3)
+
+    def test_a_raising_job_does_not_stop_the_others(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [11, 12]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._auto_grab_release",
+            side_effect=[RuntimeError("indexer exploded"), {"status": "grabbed"}],
+        ) as grab:
+            app._automatic_release_grabs(5)
+        self.assertEqual(grab.call_count, 2)
+
+    def test_nothing_is_searched_without_an_indexer_or_download_client(self):
+        """Otherwise every issue runs a search that cannot succeed."""
+        with patch("app._enabled_acquisition_service", side_effect=ValueError("off")), \
+             patch("app.threading.Thread") as thread:
+            app._start_automatic_release_grabs({"id": "5"})
+        thread.assert_not_called()
+
+    def test_a_request_without_an_id_starts_nothing(self):
+        with patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app.threading.Thread") as thread:
+            app._start_automatic_release_grabs({})
+        thread.assert_not_called()
+
+    def test_the_search_runs_off_the_request_thread(self):
+        """Twenty issues is twenty searches; the response must not wait."""
+        with patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app.threading.Thread") as thread:
+            app._start_automatic_release_grabs({"id": "5"})
+        thread.assert_called_once()
+        self.assertTrue(thread.call_args.kwargs["daemon"])
+        self.assertEqual(thread.call_args.kwargs["args"], (5,))
+        thread.return_value.start.assert_called_once()

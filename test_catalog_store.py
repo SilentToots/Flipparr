@@ -2019,3 +2019,55 @@ class CatalogSlugGroupTests(unittest.TestCase):
             entry = next(item for item in catalog["series"] if item["title"] == "Ice Cream Man")
             self.assertEqual(entry["id"], "ice-cream-man")
             self.assertIsNone(entry["family"])
+
+
+class JobsAwaitingReleaseTests(unittest.TestCase):
+    def test_a_job_stops_waiting_once_something_is_sent_to_the_download_client(self):
+        """The automatic search must not grab a second release for one issue."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "Example 001.cbz"
+            path.write_bytes(b"comic")
+            item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+            series_id = int(store.catalog()["series"][0]["id"])
+            today = dt.datetime.now().astimezone().date()
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [
+                    {"number": "1", "provider_id": "101",
+                     "publication_date": str(today - dt.timedelta(days=30)),
+                     "publication_year": today.year},
+                    {"number": "2", "provider_id": "102",
+                     "publication_date": str(today - dt.timedelta(days=1)),
+                     "publication_year": today.year},
+                ],
+            )
+            request = store.create_acquisition_request("series", series_id, "issues")
+            request_id = int(request["id"])
+
+            waiting = store.acquisition_jobs_awaiting_release(request_id)
+            self.assertEqual(len(waiting), 1, "the one wanted issue is waiting")
+
+            job_id = waiting[0]
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            store.record_acquisition_download(
+                job_id, "SAB-1", "Example.002.2026", "release-key-1"
+            )
+
+            self.assertEqual(store.acquisition_jobs_awaiting_release(request_id), [])
+
+    def test_another_request_s_jobs_are_not_returned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            self.assertEqual(store.acquisition_jobs_awaiting_release(9999), [])

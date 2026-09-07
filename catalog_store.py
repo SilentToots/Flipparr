@@ -4201,6 +4201,27 @@ class CatalogStore:
             ).fetchone()
         return dict(row)
 
+    def acquisition_jobs_awaiting_release(self, request_id: int) -> list[int]:
+        """Jobs on this request with nothing sent to the download client yet.
+
+        A job qualifies when no download row exists for it and it has not been
+        cancelled or already fulfilled -- the state every job is in the moment
+        a request is created.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT acquisition_jobs.id AS id
+                   FROM acquisition_jobs
+                   LEFT JOIN acquisition_downloads
+                     ON acquisition_downloads.job_id=acquisition_jobs.id
+                   WHERE acquisition_jobs.request_id=?
+                     AND acquisition_downloads.id IS NULL
+                     AND acquisition_jobs.status IN ('queued', 'waiting')
+                   ORDER BY acquisition_jobs.id""",
+                (int(request_id),),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
     def retry_acquisition_job(self, job_id: int) -> dict[str, Any]:
         """Retry a failed import in place, or return a failed download to release search."""
         now = _utc_now()

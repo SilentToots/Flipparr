@@ -1936,17 +1936,18 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
-def _auto_release_for_retry(job_id: int) -> dict[str, Any] | None:
-    """Send the strongest unused release for a retried job to SABnzbd.
+def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
+    """Send the strongest unused release for one job to SABnzbd.
 
-    Retrying a failed acquisition used to reset the job and hand the person a
-    list to choose from. The scoring that already picks a fallback release on
-    its own once SABnzbd proves one unusable is the same scoring that ranks
-    that list, so a retry can make the same choice without being asked.
+    This is the automatic search, in the sense Radarr and Sonarr use the term:
+    the scoring that ranks the candidate list picks from it, and the list
+    itself is a separate deliberate action rather than the first step. Only
+    releases already filtered to a strong match are eligible, so "nothing good
+    enough" is a real outcome rather than a reason to grab something weak.
 
     Returns None when the choice genuinely needs a person -- nothing scored
-    high enough, or a service could not answer -- and the caller falls back to
-    presenting the list.
+    high enough, or a service could not answer -- and the job is left for the
+    candidate list to handle.
     """
     try:
         search = search_prowlarr_releases(job_id)
@@ -1969,6 +1970,70 @@ def _auto_release_for_retry(job_id: int) -> dict[str, Any] | None:
         )
         return None
     return {**grabbed, "release": best}
+
+
+def _automatic_release_grabs(request_id: int) -> None:
+    """Grab the best release for every job a newly created request is waiting on.
+
+    Adding something monitored in Radarr or Sonarr triggers a search that grabs
+    the best release clearing the quality bar; you only meet a list of releases
+    when you deliberately open an interactive search. Flipparr had the opposite
+    default -- every issue of every new request waited on a person to pick,
+    including a collected edition mapping to twenty of them.
+
+    Failures are per job. One issue with no usable release must not stop the
+    rest, and it simply stays on the list where "Find release" still works.
+    """
+    try:
+        store = catalog_store()
+        job_ids = store.acquisition_jobs_awaiting_release(int(request_id))
+    except Exception as exc:
+        log_exception("automatic_grab_lookup_failed", exc, level="warning")
+        return
+    if not job_ids:
+        return
+    grabbed = 0
+    for job_id in job_ids:
+        try:
+            if _auto_grab_release(job_id):
+                grabbed += 1
+        except Exception as exc:
+            log_exception("automatic_grab_failed", exc, level="warning")
+    log_event(
+        "automatic_release_grabs", request_id=int(request_id),
+        jobs=len(job_ids), grabbed=grabbed, left_to_choose=len(job_ids) - grabbed,
+    )
+
+
+def _start_automatic_release_grabs(request: Any) -> None:
+    """Run the automatic search off the request thread.
+
+    Twenty issues means twenty indexer searches and twenty uploads, which must
+    not hold up the response that tells the page its request exists. Nothing
+    downstream waits on the result: the jobs update themselves as they go and
+    the page is already polling them.
+    """
+    try:
+        request_id = int(str((request or {}).get("id") or "").strip() or 0)
+    except (TypeError, ValueError):
+        request_id = 0
+    if not request_id:
+        return
+    # No indexer or no download client means every search would fail in a loop
+    # and say nothing useful. Leave the jobs for the list.
+    for service in ("prowlarr", "sabnzbd"):
+        try:
+            _enabled_acquisition_service(service)
+        except Exception:
+            log_event(
+                "automatic_release_grabs_skipped", level="info",
+                request_id=request_id, reason=f"{service} is not configured",
+            )
+            return
+    threading.Thread(
+        target=_automatic_release_grabs, args=(request_id,),
+        name=f"flipparr-auto-grab-{request_id}", daemon=True,
+    ).start()
 
 
 def _fallback_after_sab_failure(
@@ -6509,6 +6574,7 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError) as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
+            _start_automatic_release_grabs(request)
             self.send_json(request, 201)
             return
 
@@ -6540,6 +6606,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
+            _start_automatic_release_grabs(request)
             self.send_json(request, 201)
             return
         replacement_status = re.fullmatch(r"/api/v1/replacements/(\d+)/status", parsed_url.path)
@@ -6600,7 +6667,7 @@ class Handler(BaseHTTPRequestHandler):
             # than stopping to ask which one. The list is the fallback, not the
             # first step.
             if result["action"] == "research":
-                grabbed = _auto_release_for_retry(retry_job_id)
+                grabbed = _auto_grab_release(retry_job_id)
                 if grabbed:
                     release_title = str((grabbed.get("release") or {}).get("title") or "")
                     result = {
