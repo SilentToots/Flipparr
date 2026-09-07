@@ -1914,6 +1914,52 @@ class CatalogStore:
                         ),
                     )
 
+    @staticmethod
+    def _candidate_cover_urls(result: dict[str, Any]) -> list[str]:
+        """Provider cover urls, in the order the candidates were ranked.
+
+        _candidate_payloads sha1s every candidate to key it. Reading covers
+        does not need those keys, and the whole-library pass was paying that
+        hash for every candidate of every file to throw it away.
+        """
+        urls: list[str] = []
+        recommendation = result.get("recommendation")
+        pools = ([recommendation] if recommendation else []) + [
+            candidate
+            for source_candidates in (result.get("candidates") or {}).values()
+            for candidate in (source_candidates or [])
+        ]
+        for candidate in pools:
+            if not isinstance(candidate, dict):
+                continue
+            cover = candidate.get("cover")
+            if cover and cover not in urls:
+                urls.append(cover)
+        return urls
+
+    @staticmethod
+    def _resolved_file_cover(
+        file_id: Any, result: dict[str, Any],
+        cover_source: str | None, preferred_cover_url: str | None,
+    ) -> str | None:
+        """The cover this file should show, honouring what the user chose.
+
+        One rule for the library, the issue rows and the run picker, so a
+        cover chosen in one place cannot fail to appear in another.
+        """
+        embedded = (result.get("file_cover") or {}).get("url")
+        if cover_source == "upload":
+            return f"/api/v1/files/{file_id}/cover/image"
+        if cover_source == "provider" and preferred_cover_url:
+            return preferred_cover_url
+        if cover_source == "file" and embedded:
+            return embedded
+        recommendation = result.get("recommendation") or {}
+        return (
+            embedded or recommendation.get("cover")
+            or next(iter(CatalogStore._candidate_cover_urls(result)), None)
+        )
+
     def _candidate_payloads(self, result: dict[str, Any]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -5974,16 +6020,23 @@ class CatalogStore:
             # language: seeing the French cover is how the mistake is spotted.
             issue_file_covers: dict[int, str] = {}
             for link in connection.execute(
-                """SELECT file_issue_links.issue_id AS issue_id, files.result_json
+                """SELECT file_issue_links.issue_id AS issue_id, files.id AS file_id,
+                          files.result_json,
+                          file_cover_preferences.source AS cover_source,
+                          file_cover_preferences.cover_url AS preferred_cover_url
                    FROM file_issue_links
                    JOIN files ON files.id=file_issue_links.file_id
+                   LEFT JOIN file_cover_preferences ON file_cover_preferences.file_id=files.id
                    WHERE files.present=1
                    ORDER BY files.id"""
             ):
                 issue_id = int(link["issue_id"])
                 if issue_id in issue_file_covers:
                     continue
-                url = ((_load_json(link["result_json"], {}).get("file_cover")) or {}).get("url")
+                url = self._resolved_file_cover(
+                    link["file_id"], _load_json(link["result_json"], {}),
+                    link["cover_source"], link["preferred_cover_url"],
+                )
                 if url:
                     issue_file_covers[issue_id] = url
             issues_by_series: dict[int, list[dict[str, Any]]] = {}
@@ -6205,20 +6258,10 @@ class CatalogStore:
             publisher = row["series_publisher"] or recommendation.get("publisher") or embedded.get("publisher") or "Publisher unknown"
             issue = row["identity_issue"] or recommendation.get("issue") or identity.get("issue")
             cover_info = result.get("file_cover") or {}
-            provider_covers = [
-                candidate.get("cover")
-                for candidate in self._candidate_payloads(result)
-                if candidate.get("cover")
-            ]
-            automatic_cover = cover_info.get("url") or recommendation.get("cover") or next(iter(provider_covers), None)
-            if row["cover_source"] == "upload":
-                cover = f"/api/v1/files/{row['id']}/cover/image"
-            elif row["cover_source"] == "provider" and row["preferred_cover_url"]:
-                cover = row["preferred_cover_url"]
-            elif row["cover_source"] == "file" and cover_info.get("url"):
-                cover = cover_info["url"]
-            else:
-                cover = automatic_cover
+            provider_covers = self._candidate_cover_urls(result)
+            cover = self._resolved_file_cover(
+                row["id"], result, row["cover_source"], row["preferred_cover_url"],
+            )
             key = str(row["series_run_id"] or _normalized(title))
             if not key:
                 key = hashlib.sha1(row["path"].encode()).hexdigest()

@@ -2471,6 +2471,24 @@ class IssueFileCoverTests(unittest.TestCase):
             self.assertEqual(len(owned), 1)
             self.assertEqual(owned[0]["fileCover"], "/api/file-cover?path=example.cbz")
 
+    def test_a_chosen_file_cover_reaches_the_issue_row(self):
+        """The issue row read the embedded cover directly.
+
+        A cover the user picked for a file therefore never appeared beside
+        that file's issue, which is the row it is meant to identify.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._store_with(
+                Path(folder), {"url": "/api/file-cover?path=example.cbz"},
+            )
+            with sqlite3.connect(store.database_path) as connection:
+                file_id = int(connection.execute("SELECT id FROM files").fetchone()[0])
+            store.set_file_cover_preference(file_id, "upload")
+            owned = [i for i in self._issues(store) if i["directOwned"]]
+            self.assertEqual(
+                owned[0]["fileCover"], f"/api/v1/files/{file_id}/cover/image",
+            )
+
     def test_an_issue_with_no_file_cover_has_none(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._store_with(Path(folder), None)
