@@ -19,7 +19,10 @@ from typing import Any, Callable, Iterable
 
 
 SCHEMA_VERSION = 28
-LOCAL_ANALYSIS_VERSION = 2
+# Bumped when local analysis starts producing something it did not before, so
+# the next scan re-reads files it would otherwise reuse on their fingerprint.
+# 3: comics that are not zip archives yield covers and embedded metadata.
+LOCAL_ANALYSIS_VERSION = 3
 MONITORED_RUN_REFRESH_HOURS = 24
 
 
