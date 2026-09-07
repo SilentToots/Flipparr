@@ -1972,8 +1972,12 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     return {**grabbed, "release": best}
 
 
-def _automatic_release_grabs(request_id: int) -> None:
-    """Grab the best release for every job a newly created request is waiting on.
+def _automatic_release_grabs(request_id: int | None = None) -> None:
+    """Grab the best release for every job still waiting on one.
+
+    With a request id this covers one newly created request. Without one it
+    covers the whole backlog, which is the "search for missing" pass Radarr
+    and Sonarr put behind a button on their Wanted list.
 
     Adding something monitored in Radarr or Sonarr triggers a search that grabs
     the best release clearing the quality bar; you only meet a list of releases
@@ -1986,7 +1990,9 @@ def _automatic_release_grabs(request_id: int) -> None:
     """
     try:
         store = catalog_store()
-        job_ids = store.acquisition_jobs_awaiting_release(int(request_id))
+        job_ids = store.acquisition_jobs_awaiting_release(
+            None if request_id is None else int(request_id)
+        )
     except Exception as exc:
         log_exception("automatic_grab_lookup_failed", exc, level="warning")
         return
@@ -2000,7 +2006,8 @@ def _automatic_release_grabs(request_id: int) -> None:
         except Exception as exc:
             log_exception("automatic_grab_failed", exc, level="warning")
     log_event(
-        "automatic_release_grabs", request_id=int(request_id),
+        "automatic_release_grabs",
+        request_id=None if request_id is None else int(request_id),
         jobs=len(job_ids), grabbed=grabbed, left_to_choose=len(job_ids) - grabbed,
     )
 
@@ -2034,6 +2041,39 @@ def _start_automatic_release_grabs(request: Any) -> None:
         target=_automatic_release_grabs, args=(request_id,),
         name=f"flipparr-auto-grab-{request_id}", daemon=True,
     ).start()
+
+
+def start_missing_release_search() -> dict[str, Any]:
+    """Search for every wanted issue that still has no release.
+
+    The equivalent of Radarr's and Sonarr's Wanted list: everything monitored
+    and still missing, searched on demand. Requests created before automatic
+    search existed, and issues nothing good enough was found for last time,
+    both land here.
+
+    Returns immediately with what it is about to work through -- the jobs
+    report their own progress, and the page is already polling them.
+    """
+    store = catalog_store()
+    job_ids = store.acquisition_jobs_awaiting_release()
+    if not job_ids:
+        return {"status": "idle", "searching": 0, "detail": "Nothing is waiting on a release."}
+    for service in ("prowlarr", "sabnzbd"):
+        try:
+            _enabled_acquisition_service(service)
+        except Exception:
+            name = ACQUISITION_SERVICE_DEFINITIONS[service]["name"]
+            raise ValueError(
+                f"{name} is not configured, so there is nothing to search with"
+            ) from None
+    threading.Thread(
+        target=_automatic_release_grabs, name="flipparr-search-missing", daemon=True,
+    ).start()
+    return {
+        "status": "searching", "searching": len(job_ids),
+        "detail": f"Searching for {len(job_ids)} missing issue"
+                  f"{'' if len(job_ids) == 1 else 's'}.",
+    }
 
 
 def _fallback_after_sab_failure(
@@ -6563,6 +6603,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/reveal-file":
             self.handle_reveal_file(str(payload.get("path") or ""))
+            return
+        if parsed_url.path == "/api/v1/requests/search-missing":
+            try:
+                result = start_missing_release_search()
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result, 202 if result["status"] == "searching" else 200)
             return
         if parsed_url.path == "/api/v1/requests":
             try:

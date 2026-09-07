@@ -2573,3 +2573,49 @@ class AutomaticSearchOnCreationTests(unittest.TestCase):
         self.assertTrue(thread.call_args.kwargs["daemon"])
         self.assertEqual(thread.call_args.kwargs["args"], (5,))
         thread.return_value.start.assert_called_once()
+
+
+class SearchForMissingTests(unittest.TestCase):
+    """The Wanted list's own action: everything still missing, on demand."""
+
+    def test_it_reports_how_many_issues_it_will_work_through(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [1, 2, 3]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={}
+        ), patch("app.threading.Thread") as thread:
+            result = app.start_missing_release_search()
+
+        self.assertEqual((result["status"], result["searching"]), ("searching", 3))
+        self.assertIn("3 missing issues", result["detail"])
+        # The whole backlog, not one request.
+        store.acquisition_jobs_awaiting_release.assert_called_once_with()
+        thread.return_value.start.assert_called_once()
+
+    def test_one_issue_is_not_described_in_the_plural(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [1]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={}
+        ), patch("app.threading.Thread"):
+            self.assertIn("1 missing issue.", app.start_missing_release_search()["detail"])
+
+    def test_an_empty_backlog_starts_nothing(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = []
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.threading.Thread"
+        ) as thread:
+            result = app.start_missing_release_search()
+        self.assertEqual(result["status"], "idle")
+        thread.assert_not_called()
+
+    def test_it_says_which_service_is_missing_rather_than_failing_quietly(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [1]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", side_effect=ValueError("off")
+        ), patch("app.threading.Thread") as thread:
+            with self.assertRaisesRegex(ValueError, "Prowlarr is not configured"):
+                app.start_missing_release_search()
+        thread.assert_not_called()

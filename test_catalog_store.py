@@ -2071,3 +2071,48 @@ class JobsAwaitingReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store = CatalogStore(Path(folder) / "catalog.db")
             self.assertEqual(store.acquisition_jobs_awaiting_release(9999), [])
+
+
+class WholeBacklogAwaitingReleaseTests(unittest.TestCase):
+    def test_a_cancelled_request_is_not_searched_again(self):
+        """Cancelling a request must take its issues off the missing list."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "Example 001.cbz"
+            path.write_bytes(b"comic")
+            item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+            series_id = int(store.catalog()["series"][0]["id"])
+            today = dt.datetime.now().astimezone().date()
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [
+                    {"number": "1", "provider_id": "101",
+                     "publication_date": str(today - dt.timedelta(days=30)),
+                     "publication_year": today.year},
+                    {"number": "2", "provider_id": "102",
+                     "publication_date": str(today - dt.timedelta(days=1)),
+                     "publication_year": today.year},
+                ],
+            )
+            request = store.create_acquisition_request("series", series_id, "issues")
+            request_id = int(request["id"])
+            self.assertEqual(len(store.acquisition_jobs_awaiting_release()), 1)
+
+            with store._connect() as connection:
+                connection.execute(
+                    "UPDATE acquisition_requests SET status='cancelled' WHERE id=?",
+                    (request_id,),
+                )
+
+            self.assertEqual(store.acquisition_jobs_awaiting_release(), [])

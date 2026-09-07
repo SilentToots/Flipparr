@@ -956,6 +956,27 @@ function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh
   const [requestOpen, setRequestOpen] = useState(false);
   const [releaseJob, setReleaseJob] = useState(null);
   const [tab, setTab] = useState("wanted");
+  const [searchingMissing, setSearchingMissing] = useState(false);
+  const [searchMissingMessage, setSearchMissingMessage] = useState("");
+  // The Wanted list's own action, the way Radarr and Sonarr put one there:
+  // everything still missing, searched on demand. It covers issues nothing
+  // good enough was found for last time, and requests made before Flipparr
+  // searched on its own.
+  async function searchMissing() {
+    setSearchingMissing(true);
+    setSearchMissingMessage("");
+    try {
+      const result = await apiRequest("/api/v1/requests/search-missing", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      setSearchMissingMessage(result.detail || "");
+      await onRefresh?.();
+    } catch (error) {
+      setSearchMissingMessage(error.message || "That search could not be started");
+    } finally {
+      setSearchingMissing(false);
+    }
+  }
   const requests = catalog?.requests || [];
   const replacements = catalog?.replacementRequests || [];
   const activeReplacements = replacements.filter((request) => !["fulfilled", "cancelled"].includes(request.status));
@@ -985,7 +1006,7 @@ function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh
       emptyDetail: "Follow a run and Flipparr will keep checking it for newly released issues.",
     },
   }[tab];
-  return <><PageHeader title="Requests" description="Follow runs, find missing comics, and replace files that are damaged, incorrect, or poor quality."><button className="primary-button" onClick={() => setRequestOpen(true)}><Plus size={19} /> Follow a run</button></PageHeader><div className="request-tabs"><button className={tab === "wanted" ? "active" : ""} onClick={() => setTab("wanted")}>Wanted <b>{wantedCount}</b></button><button className={tab === "acquired" ? "active" : ""} onClick={() => setTab("acquired")}>Acquired <b>{acquiredCount}</b></button><button className={tab === "following" ? "active" : ""} onClick={() => setTab("following")}>Following <b>{followingCount}</b></button></div><p className="request-tab-description">{tabCopy.description}</p><section className="request-list">{hasEntries ? <>{replacementEntries.map((request) => <ReplacementRequestRow request={request} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />)}{seriesEntries.map((request) => <RequestRow request={request} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`series-${request.id}`} />)}</> : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{requestOpen ? <RequestModal catalog={catalog} onCreate={async (target) => { const result = await onCreateRequest(target); if (result?.ok) setRequestOpen(false); return result; }} onClose={() => setRequestOpen(false)} /> : null}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
+  return <><PageHeader title="Requests" description="Follow runs, find missing comics, and replace files that are damaged, incorrect, or poor quality."><button className="secondary-button" onClick={searchMissing} disabled={searchingMissing} aria-busy={searchingMissing}>{searchingMissing ? <LoadingSpinner size={18} /> : <MagnifyingGlass size={18} />} Search for missing</button><button className="primary-button" onClick={() => setRequestOpen(true)}><Plus size={19} /> Follow a run</button></PageHeader><div className="request-tabs"><button className={tab === "wanted" ? "active" : ""} onClick={() => setTab("wanted")}>Wanted <b>{wantedCount}</b></button><button className={tab === "acquired" ? "active" : ""} onClick={() => setTab("acquired")}>Acquired <b>{acquiredCount}</b></button><button className={tab === "following" ? "active" : ""} onClick={() => setTab("following")}>Following <b>{followingCount}</b></button></div><p className="request-tab-description">{tabCopy.description}</p>{searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{hasEntries ? <>{replacementEntries.map((request) => <ReplacementRequestRow request={request} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />)}{seriesEntries.map((request) => <RequestRow request={request} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`series-${request.id}`} />)}</> : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{requestOpen ? <RequestModal catalog={catalog} onCreate={async (target) => { const result = await onCreateRequest(target); if (result?.ok) setRequestOpen(false); return result; }} onClose={() => setRequestOpen(false)} /> : null}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }
 
 function acquisitionFailureDetails(job) {

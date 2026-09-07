@@ -1818,3 +1818,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .nav-item[data-nav="settings"] { display: none; }
   .appbar-action.active { color: #beadff; background: var(--violet-soft); }
 }
+
+/* What the Wanted list's search reports back: how many issues it is working
+   through, or why it could not start. */
+.request-search-result {
+  margin: -4px 0 0; padding: 9px 13px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--violet-soft); color: #c3b6ff;
+  font-size: var(--text-sm);
+}

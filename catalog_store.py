@@ -4201,24 +4201,38 @@ class CatalogStore:
             ).fetchone()
         return dict(row)
 
-    def acquisition_jobs_awaiting_release(self, request_id: int) -> list[int]:
-        """Jobs on this request with nothing sent to the download client yet.
+    def acquisition_jobs_awaiting_release(
+        self, request_id: int | None = None
+    ) -> list[int]:
+        """Jobs with nothing sent to the download client yet.
 
-        A job qualifies when no download row exists for it and it has not been
-        cancelled or already fulfilled -- the state every job is in the moment
-        a request is created.
+        A job qualifies when no download row exists for it and neither it nor
+        its request has been cancelled or fulfilled -- the state every job is
+        in the moment a request is created.
+
+        Without a request id this is every such job in the library, which is
+        what a "search for missing" pass over the whole backlog needs.
         """
+        clauses = [
+            "acquisition_downloads.id IS NULL",
+            "acquisition_jobs.status IN ('queued', 'waiting')",
+            "acquisition_requests.status='open'",
+        ]
+        parameters: list[Any] = []
+        if request_id is not None:
+            clauses.append("acquisition_jobs.request_id=?")
+            parameters.append(int(request_id))
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT acquisition_jobs.id AS id
+                f"""SELECT acquisition_jobs.id AS id
                    FROM acquisition_jobs
+                   JOIN acquisition_requests
+                     ON acquisition_requests.id=acquisition_jobs.request_id
                    LEFT JOIN acquisition_downloads
                      ON acquisition_downloads.job_id=acquisition_jobs.id
-                   WHERE acquisition_jobs.request_id=?
-                     AND acquisition_downloads.id IS NULL
-                     AND acquisition_jobs.status IN ('queued', 'waiting')
+                   WHERE {" AND ".join(clauses)}
                    ORDER BY acquisition_jobs.id""",
-                (int(request_id),),
+                parameters,
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
