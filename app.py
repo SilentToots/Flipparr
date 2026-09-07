@@ -6812,6 +6812,21 @@ class Handler(BaseHTTPRequestHandler):
         if uploaded_cover_match:
             self.handle_uploaded_cover(int(uploaded_cover_match.group(1)))
             return
+        series_cover_image_match = re.fullmatch(r"/api/v1/series/(\d+)/cover/image", parsed_url.path)
+        if series_cover_image_match:
+            self.handle_uploaded_cover(int(series_cover_image_match.group(1)), "series")
+            return
+        series_cover_match = re.fullmatch(r"/api/v1/series/(\d+)/cover", parsed_url.path)
+        if series_cover_match:
+            try:
+                payload = catalog_store().get_series_cover_workbench(
+                    int(series_cover_match.group(1))
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
         if parsed_url.path == "/api/enrich":
             self.handle_enrich(parsed_url)
             return
@@ -6844,6 +6859,12 @@ class Handler(BaseHTTPRequestHandler):
         cover_upload_match = re.fullmatch(r"/api/v1/files/(\d+)/cover/upload", parsed_url.path)
         if cover_upload_match:
             self.handle_cover_upload(int(cover_upload_match.group(1)))
+            return
+        # Both upload routes carry a raw image, so they are matched before the
+        # body is read as JSON.
+        series_upload_match = re.fullmatch(r"/api/v1/series/(\d+)/cover/upload", parsed_url.path)
+        if series_upload_match:
+            self.handle_cover_upload(int(series_upload_match.group(1)), "series")
             return
         try:
             payload = self.read_json_body()
@@ -7243,6 +7264,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        series_cover_post = re.fullmatch(r"/api/v1/series/(\d+)/cover", parsed_url.path)
+        if series_cover_post:
+            file_id = str(payload.get("fileId") or "").strip()
+            try:
+                result = catalog_store().set_series_cover_preference(
+                    int(series_cover_post.group(1)), str(payload.get("source") or ""),
+                    str(payload.get("url") or "") or None,
+                    int(file_id) if file_id.isdigit() else None,
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
         file_cover_match = re.fullmatch(r"/api/v1/files/(\d+)/cover", parsed_url.path)
         if file_cover_match:
             try:
@@ -7606,10 +7644,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def handle_cover_upload(self, file_id: int) -> None:
+    def handle_cover_upload(self, entity_id: int, kind: str = "files") -> None:
+        """Take a raw image body for a comic file or for a series run.
+
+        Only the existence check and the setter differ between the two; the
+        type gate, the size limit, the thumbnailing and the atomic write are
+        the same job either way.
+        """
         try:
-            catalog_store().get_file_workbench(file_id)
-        except ValueError as exc:
+            if kind == "series":
+                catalog_store().get_series_cover_workbench(entity_id)
+            else:
+                catalog_store().get_file_workbench(entity_id)
+        except (LookupError, ValueError) as exc:
             self.send_json({"error": str(exc)}, 404)
             return
         try:
@@ -7630,13 +7677,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             body = render_uploaded_cover_thumbnail(self.rfile.read(length), allowed_types[content_type])
-            covers = user_cover_dir()
+            covers = user_cover_dir(kind)
             covers.mkdir(parents=True, exist_ok=True)
-            destination = covers / f"{file_id}.jpg"
-            temporary = covers / f".{file_id}-{threading.get_ident()}.tmp"
+            destination = covers / f"{entity_id}.jpg"
+            temporary = covers / f".{entity_id}-{threading.get_ident()}.tmp"
             temporary.write_bytes(body)
             os.replace(temporary, destination)
-            result = catalog_store().set_file_cover_preference(file_id, "upload")
+            result = (
+                catalog_store().set_series_cover_preference(entity_id, "upload")
+                if kind == "series"
+                else catalog_store().set_file_cover_preference(entity_id, "upload")
+            )
         except (OSError, ValueError) as exc:
             self.send_json({"error": str(exc)}, 422)
             return

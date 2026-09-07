@@ -630,6 +630,35 @@ class HttpContractTests(unittest.TestCase):
             self.post("/api/v1/requests/search-missing", {"confirmed": True})
         search.assert_called_once_with(True)
 
+    # ---- series cover picker ---------------------------------------------
+
+    # Uploading a cover returned a 422 carrying a raw errno for the life of
+    # the feature, because the directory it wrote to was inside a read-only
+    # image. Nothing asked these routes anything, which is how that lasted.
+
+    def test_an_unknown_run_has_no_cover_workbench(self):
+        response = self.get("/api/v1/series/999999/cover")
+        self.assertEqual(response.status, 404)
+        self.assertIn("error", json.loads(response.body))
+
+    def test_an_unknown_source_is_refused_as_a_bad_request(self):
+        response = self.post("/api/v1/series/1/cover", {"source": "nonsense"})
+        self.assertIn(response.status, (400, 404))
+        self.assertIn("error", json.loads(response.body))
+
+    def test_a_run_with_no_uploaded_cover_says_so_in_json(self):
+        response = self.get("/api/v1/series/1/cover/image")
+        self.assertEqual(response.status, 404)
+        # A stack trace here would mean the handler raised rather than answered.
+        self.assertIn("error", json.loads(response.body))
+
+    def test_a_cover_upload_that_is_not_an_image_is_refused(self):
+        response = self.post(
+            "/api/v1/series/1/cover/upload", raw=b"not an image",
+            headers={"Content-Type": "text/plain"},
+        )
+        self.assertIn(response.status, (404, 415))
+
 
 if __name__ == "__main__":
     unittest.main()
