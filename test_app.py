@@ -2927,3 +2927,72 @@ class ReleaseLanguageTests(unittest.TestCase):
         self.assertEqual(
             app.release_language_conflicts("Batman 001 (2016) (English)", "fr"), "en"
         )
+
+
+class DownloadProgressTests(unittest.TestCase):
+    """Progress is asked of SABnzbd while someone is watching, not stored."""
+
+    QUEUE = {"queue": {"paused": False, "slots": [
+        {"nzo_id": "SAB-1", "percentage": "42", "sizeleft": "58 MB",
+         "timeleft": "0:01:12", "status": "Downloading"},
+        {"nzo_id": "SAB-other", "percentage": "9"},
+    ]}}
+
+    def _progress(self, pending, queue=None, sab=True):
+        store = Mock()
+        store.pending_acquisition_downloads.return_value = pending
+        service = (lambda *_a, **_k: {"url": "http://sab", "apiKey": "k"}) if sab else Mock(
+            side_effect=ValueError("not configured"))
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", side_effect=service if sab else service
+        ), patch("app.fetch_json_with_headers", return_value=queue or self.QUEUE):
+            return app.acquisition_download_progress()
+
+    def test_a_downloading_job_reports_how_far_along_it_is(self):
+        result = self._progress([
+            {"job_id": 7, "sab_nzo_id": "SAB-1", "status": "downloading"},
+        ])
+        self.assertEqual(result["downloads"]["7"]["percent"], 42)
+        self.assertEqual(result["downloads"]["7"]["timeLeft"], "0:01:12")
+        self.assertEqual(result["downloads"]["7"]["sizeLeft"], "58 MB")
+
+    def test_a_job_past_downloading_is_not_asked_about(self):
+        """Importing and imported are not queue states; SABnzbd is done with them."""
+        result = self._progress([
+            {"job_id": 7, "sab_nzo_id": "SAB-1", "status": "importing"},
+        ])
+        self.assertEqual(result["downloads"], {})
+
+    def test_nothing_downloading_asks_sabnzbd_nothing(self):
+        store = Mock()
+        store.pending_acquisition_downloads.return_value = []
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.fetch_json_with_headers"
+        ) as fetch:
+            self.assertEqual(app.acquisition_download_progress()["downloads"], {})
+        fetch.assert_not_called()
+
+    def test_a_download_client_that_cannot_answer_shows_no_progress(self):
+        """The page must load whether or not SABnzbd is reachable."""
+        store = Mock()
+        store.pending_acquisition_downloads.return_value = [
+            {"job_id": 7, "sab_nzo_id": "SAB-1", "status": "downloading"},
+        ]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={"url": "http://sab", "apiKey": "k"}
+        ), patch("app.fetch_json_with_headers", side_effect=urllib.error.URLError("down")):
+            self.assertEqual(app.acquisition_download_progress()["downloads"], {})
+
+    def test_a_percentage_outside_the_range_is_clamped(self):
+        result = self._progress(
+            [{"job_id": 7, "sab_nzo_id": "SAB-1", "status": "downloading"}],
+            queue={"queue": {"slots": [{"nzo_id": "SAB-1", "percentage": "137"}]}},
+        )
+        self.assertEqual(result["downloads"]["7"]["percent"], 100)
+
+    def test_an_unreadable_percentage_is_zero_rather_than_an_error(self):
+        result = self._progress(
+            [{"job_id": 7, "sab_nzo_id": "SAB-1", "status": "downloading"}],
+            queue={"queue": {"slots": [{"nzo_id": "SAB-1", "percentage": "n/a"}]}},
+        )
+        self.assertEqual(result["downloads"]["7"]["percent"], 0)

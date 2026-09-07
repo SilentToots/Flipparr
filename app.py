@@ -2181,6 +2181,64 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
+def acquisition_download_progress() -> dict[str, Any]:
+    """How far along whatever is downloading right now is.
+
+    Asked of SABnzbd when someone is looking rather than stored on the
+    download: the figure is only wanted while it is moving, it is stale the
+    moment the poll that wrote it ends, and keeping it would put a column and
+    a migration behind a number that SABnzbd already has.
+
+    Never raises. A download client that cannot be reached means no progress
+    to show, not a page that fails to load.
+    """
+    empty: dict[str, Any] = {"downloads": {}, "paused": False}
+    try:
+        store = catalog_store()
+        active = [
+            row for row in store.pending_acquisition_downloads()
+            if str(row.get("status") or "") in {"queued", "downloading"}
+        ]
+    except Exception:
+        return empty
+    if not active:
+        return empty
+    try:
+        sab = _enabled_acquisition_service("sabnzbd")
+        endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+            "mode": "queue", "limit": 200, "output": "json", "apikey": sab["apiKey"],
+        })
+        payload = fetch_json_with_headers(
+            endpoint,
+            {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"},
+            timeout=15.0,
+        )
+    except Exception:
+        log_event("sab_queue_unavailable", level="warning")
+        return empty
+    queue = payload.get("queue") if isinstance(payload, dict) else None
+    slots = {
+        str(slot.get("nzo_id")): slot
+        for slot in ((queue or {}).get("slots") or []) if isinstance(slot, dict)
+    }
+    downloads: dict[str, Any] = {}
+    for row in active:
+        slot = slots.get(str(row.get("sab_nzo_id") or ""))
+        if not slot:
+            continue
+        try:
+            percent = int(float(slot.get("percentage") or 0))
+        except (TypeError, ValueError):
+            percent = 0
+        downloads[str(row["job_id"])] = {
+            "percent": max(0, min(100, percent)),
+            "sizeLeft": str(slot.get("sizeleft") or "").strip(),
+            "timeLeft": str(slot.get("timeleft") or "").strip(),
+            "state": str(slot.get("status") or "").strip().casefold(),
+        }
+    return {"downloads": downloads, "paused": bool((queue or {}).get("paused"))}
+
+
 def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     """Send the strongest unused release for one job to SABnzbd.
 
@@ -6675,6 +6733,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/settings":
             self.send_json(load_app_settings())
+            return
+        if parsed_url.path == "/api/v1/acquisition/progress":
+            self.send_json(acquisition_download_progress())
             return
         if parsed_url.path == "/api/v1/providers":
             self.send_json(public_provider_config())
