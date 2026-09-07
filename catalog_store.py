@@ -900,6 +900,13 @@ class CatalogStore:
                     cover_url TEXT,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS series_cover_preferences (
+                    series_run_id INTEGER PRIMARY KEY REFERENCES series_runs(id) ON DELETE CASCADE,
+                    source TEXT NOT NULL,
+                    cover_url TEXT,
+                    file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -2379,6 +2386,162 @@ class CatalogStore:
                 "DELETE FROM edition_coverage_overrides WHERE edition_id=?", (row["edition_id"],)
             )
         return self.get_file_workbench(file_id)
+
+    def get_series_cover_workbench(self, series_run_id: int) -> dict[str, Any]:
+        """Every cover this run could wear, and which one it wears now.
+
+        Deliberately not get_file_workbench in a loop: that does a wide
+        multi-join, hashes every candidate and resolves collection contents
+        per call, which for a 161-issue run is seconds of work to produce a
+        list of image urls.
+        """
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT * FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone()
+            if run is None:
+                raise LookupError("That series run is not in the catalog")
+            preference = connection.execute(
+                "SELECT * FROM series_cover_preferences WHERE series_run_id=?",
+                (series_run_id,),
+            ).fetchone()
+            file_rows = list(connection.execute(
+                """SELECT files.id, files.filename, files.result_json,
+                          file_identities.identity_kind, file_identities.issue_number,
+                          file_cover_preferences.source AS cover_source,
+                          file_cover_preferences.cover_url AS preferred_cover_url
+                   FROM files
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   LEFT JOIN file_cover_preferences ON file_cover_preferences.file_id=files.id
+                   WHERE file_identities.series_run_id=? AND files.present=1
+                   ORDER BY files.filename COLLATE NOCASE""",
+                (series_run_id,),
+            ))
+            issue_rows = list(connection.execute(
+                """SELECT issue_number, cover FROM issues
+                   WHERE series_run_id=? AND cover IS NOT NULL
+                   ORDER BY id""",
+                (series_run_id,),
+            ))
+
+        options: list[dict[str, Any]] = []
+        selected_source = (preference["source"] if preference else None) or "auto"
+        if selected_source == "upload":
+            options.append({
+                "optionId": "upload", "source": "upload",
+                "url": f"/api/v1/series/{series_run_id}/cover/image",
+                "label": "Uploaded cover", "detail": "Local preference",
+            })
+        seen: set[str] = {option["url"] for option in options}
+        provider_urls: list[tuple[str, str]] = []
+        for row in file_rows:
+            result = _load_json(row["result_json"], {})
+            url = self._resolved_file_cover(
+                row["id"], result, row["cover_source"], row["preferred_cover_url"],
+            )
+            embedded = (result.get("file_cover") or {}).get("url")
+            language = normalize_language(
+                (result.get("embedded_metadata") or {}).get("language")
+            ) or detect_language(row["filename"])
+            detail = row["filename"]
+            # A wrong-language cover is offered rather than hidden, but it says
+            # so: the choice is the user's to make knowingly.
+            if language and language != str(self.preferred_language or "").strip().casefold():
+                detail = f"{detail} · states {language_name(language)}"
+            if url and url not in seen:
+                seen.add(url)
+                label = (
+                    f"Issue #{row['issue_number']}"
+                    if row["identity_kind"] == "issue" and row["issue_number"]
+                    else Path(row["filename"]).stem
+                )
+                options.append({
+                    "optionId": f"file:{row['id']}", "source": "file", "url": url,
+                    "label": label, "detail": detail, "fileId": str(row["id"]),
+                })
+            if embedded and url != embedded:
+                seen.add(embedded)
+            for candidate in self._candidate_cover_urls(result):
+                provider_urls.append((candidate, row["issue_number"] or ""))
+        for url, issue_number in provider_urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            options.append({
+                "optionId": f"provider:{url}", "source": "provider", "url": url,
+                "label": f"Issue #{issue_number} cover" if issue_number else "Catalog cover",
+                "detail": "Metadata provider",
+            })
+        for row in issue_rows:
+            if row["cover"] in seen:
+                continue
+            seen.add(row["cover"])
+            options.append({
+                "optionId": f"provider:{row['cover']}", "source": "provider",
+                "url": row["cover"],
+                "label": f"Issue #{row['issue_number']} cover",
+                "detail": "Metadata provider",
+            })
+        selected_option_id = None
+        if selected_source == "upload":
+            selected_option_id = "upload"
+        elif selected_source == "file" and preference["file_id"] is not None:
+            selected_option_id = f"file:{preference['file_id']}"
+        elif selected_source == "provider" and preference["cover_url"]:
+            selected_option_id = f"provider:{preference['cover_url']}"
+        return {
+            "series": {
+                "id": str(series_run_id), "title": run["canonical_title"],
+                "year": str(run["start_year"] or "Unknown"),
+                "publisher": run["publisher"] or "Publisher unknown",
+            },
+            "covers": {
+                "selectedSource": selected_source,
+                "selectedUrl": preference["cover_url"] if preference else None,
+                "selectedOptionId": selected_option_id,
+                "options": options,
+            },
+        }
+
+    def set_series_cover_preference(
+        self, series_run_id: int, source: str,
+        cover_url: str | None = None, file_id: int | None = None,
+    ) -> dict[str, Any]:
+        if source not in {"auto", "file", "provider", "upload"}:
+            raise ValueError("Unsupported cover source")
+        workbench = self.get_series_cover_workbench(series_run_id)
+        options = workbench["covers"]["options"]
+        if source == "file":
+            # Only a file in this run, so a chosen id cannot reach across runs.
+            if not any(
+                option["source"] == "file" and option.get("fileId") == str(file_id)
+                for option in options
+            ):
+                raise ValueError("That comic is not part of this run")
+            cover_url = None
+        elif source == "provider":
+            if not any(
+                option["source"] == "provider" and option["url"] == cover_url
+                for option in options
+            ):
+                raise ValueError("The selected cover is not part of this run's metadata evidence")
+            file_id = None
+        elif source == "upload":
+            cover_url = f"/api/v1/series/{series_run_id}/cover/image"
+            file_id = None
+        else:
+            cover_url, file_id = None, None
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO series_cover_preferences(
+                       series_run_id, source, cover_url, file_id, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(series_run_id) DO UPDATE SET
+                       source=excluded.source, cover_url=excluded.cover_url,
+                       file_id=excluded.file_id, updated_at=excluded.updated_at""",
+                (series_run_id, source, cover_url, file_id, _utc_now()),
+            )
+        return self.get_series_cover_workbench(series_run_id)
 
     def set_file_cover_preference(
         self, file_id: int, source: str, cover_url: str | None = None
@@ -5921,6 +6084,13 @@ class CatalogStore:
                 int(row["series_run_id"]): dict(row)
                 for row in connection.execute("SELECT * FROM series_monitor_refreshes")
             }
+            cover_preference_by_run = {
+                int(row["series_run_id"]): dict(row)
+                for row in connection.execute("SELECT * FROM series_cover_preferences")
+            }
+            # A file-sourced pick points at a file, not a url, so that "make
+            # issue 4 the face" keeps following issue 4's own chosen cover.
+            resolved_cover_by_file: dict[int, str] = {}
             rows = list(connection.execute(
                 """SELECT files.*,
                           file_identities.series_run_id,
@@ -6262,6 +6432,8 @@ class CatalogStore:
             cover = self._resolved_file_cover(
                 row["id"], result, row["cover_source"], row["preferred_cover_url"],
             )
+            if cover:
+                resolved_cover_by_file[int(row["id"])] = cover
             key = str(row["series_run_id"] or _normalized(title))
             if not key:
                 key = hashlib.sha1(row["path"].encode()).hexdigest()
@@ -6397,6 +6569,19 @@ class CatalogStore:
                 run = f"{group['year']} · {len(group['files'])} volume{'s' if len(group['files']) != 1 else ''} cataloged"
                 unknown_ownership = f"{owned} volume{'s' if owned != 1 else ''} owned · complete-series progress unknown"
             date, clock = _display_time(group["updatedAt"])
+            # The pick leads; everything derived stays behind it. CoverArt walks
+            # this list on error, so an uploaded cover that has gone missing
+            # falls back to real art instead of a placeholder.
+            preference = cover_preference_by_run.get(_run_id(group["id"]) or -1)
+            run_cover_preference = (preference or {}).get("source") or "auto"
+            chosen = None
+            if preference and preference["source"] == "file":
+                chosen = resolved_cover_by_file.get(preference["file_id"])
+            elif preference and preference["source"] in {"provider", "upload"}:
+                chosen = preference["cover_url"]
+            run_covers = list(dict.fromkeys(
+                ([chosen] if chosen else []) + group["covers"]
+            ))
             status = "warning" if group["hasProblem"] else "unknown" if not catalog_known else "partial" if unowned else "complete"
             ownership = (
                 "Needs attention" if status == "warning" else
@@ -6423,8 +6608,9 @@ class CatalogStore:
                     "ownership": ownership,
                     "format": display_format, "updated": date, "time": clock,
                     "addedAt": group["addedAt"],
-                    "cover": group["covers"][0] if group["covers"] else None,
-                    "coverCandidates": list(dict.fromkeys(group["covers"])),
+                    "cover": run_covers[0] if run_covers else None,
+                    "coverCandidates": run_covers,
+                    "coverPreference": run_cover_preference,
                     "status": status, "files": group["files"],
                     "aliases": group["aliases"],
                     "identityConfidence": min(group["identityConfidences"]) if group["identityConfidences"] else None,

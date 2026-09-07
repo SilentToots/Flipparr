@@ -2664,3 +2664,212 @@ class WrongLanguageIsFlaggedTests(unittest.TestCase):
                 [i for i in store.catalog()["inbox"] if i["code"] == "wrong_language"],
                 [], "no preference passed at all",
             )
+
+
+class SeriesCoverPreferenceTests(unittest.TestCase):
+    """A run's face was whatever the alphabetically-first file carried.
+
+    That is how a French DC Saga edition became the face of an English
+    Image run, and there was no way to say otherwise.
+    """
+
+    def _library(self, root, files, preferred_language=""):
+        parsed = []
+        for name, issue, embedded, cover in files:
+            (root / name).write_bytes(b"comic")
+            parsed.append((ParsedFile(str(root / name), name, ".cbz", "Example", issue=issue), embedded, cover))
+        by_path = {item[0].path: (item[1], item[2]) for item in parsed}
+        store = CatalogStore(root / "catalog.db")
+        store.preferred_language = preferred_language
+        store.perform_scan(
+            store.begin_scan(str(root), True),
+            lambda *_: [item[0] for item in parsed],
+            lambda p: {
+                "parsed": p.__dict__, "lookup_identity": p.__dict__,
+                "embedded_metadata": by_path[p.path][0],
+                "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": p.issue,
+                    "record_type": "single_issue", "publisher": "Example Press",
+                    "source": "Test", "cover": "https://provider/example.jpg",
+                },
+                "file_cover": {"url": by_path[p.path][1]} if by_path[p.path][1] else None,
+            })
+        return store
+
+    def _run_id(self, store):
+        with sqlite3.connect(store.database_path) as connection:
+            return int(connection.execute("SELECT id FROM series_runs").fetchone()[0])
+
+    def _file_id(self, store, filename):
+        with sqlite3.connect(store.database_path) as connection:
+            return int(connection.execute(
+                "SELECT id FROM files WHERE filename=?", (filename,)
+            ).fetchone()[0])
+
+    def _series(self, store):
+        return store.catalog()["series"][0]
+
+    def _three_files(self, root, **kwargs):
+        return self._library(root, [
+            ("Example 001.cbz", "1", {}, "/api/file-cover?path=one.cbz"),
+            ("Example 002.cbz", "2", {}, "/api/file-cover?path=two.cbz"),
+            ("Example 003.cbz", "3", {}, "/api/file-cover?path=three.cbz"),
+        ], **kwargs)
+
+    def test_options_name_the_issue_each_cover_came_from(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            options = store.get_series_cover_workbench(
+                self._run_id(store))["covers"]["options"]
+            files = [o for o in options if o["source"] == "file"]
+            self.assertEqual([o["label"] for o in files],
+                             ["Issue #1", "Issue #2", "Issue #3"])
+            self.assertEqual(len({o["optionId"] for o in files}), 3,
+                             "each file needs its own option id")
+            providers = [o for o in options if o["source"] == "provider"]
+            self.assertEqual(len(providers), 1, "one provider cover, deduped")
+
+    def test_choosing_a_cover_makes_it_the_run_face(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            self.assertIn("one.cbz", self._series(store)["cover"])
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 003.cbz"))
+            self.assertIn("three.cbz", self._series(store)["cover"])
+
+    def test_the_chosen_cover_leads_and_the_fallbacks_remain(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            before = self._series(store)["coverCandidates"]
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 003.cbz"))
+            after = self._series(store)["coverCandidates"]
+            self.assertEqual(after[0], self._series(store)["cover"])
+            # CoverArt walks this on error, so the chain must not shrink.
+            self.assertEqual(set(before) - set(after), set())
+
+    def test_a_pick_survives_a_rescan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            run = self._run_id(store)
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 003.cbz"))
+            items = [
+                ParsedFile(str(root / name), name, ".cbz", "Example", issue=issue)
+                for name, issue in [("Example 001.cbz", "1"), ("Example 002.cbz", "2"), ("Example 003.cbz", "3")]
+            ]
+            store.perform_scan(
+                store.begin_scan(str(root), True), lambda *_: items, lambda p: {
+                    "parsed": p.__dict__, "lookup_identity": p.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "title": "Example", "issue": p.issue,
+                        "record_type": "single_issue", "source": "Test",
+                    },
+                    "file_cover": {"url": f"/api/file-cover?path={p.filename}"},
+                })
+            self.assertIn(
+                "three.cbz", self._series(store)["cover"],
+                "the run should still wear the cover that was chosen",
+            )
+            self.assertEqual(self._series(store)["coverPreference"], "file")
+
+    def test_a_pick_falls_back_when_its_comic_leaves_the_library(self):
+        """Files are soft-deleted, so ON DELETE CASCADE never fires here."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            run = self._run_id(store)
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 003.cbz"))
+            (root / "Example 003.cbz").unlink()
+            remaining = [
+                ParsedFile(str(root / name), name, ".cbz", "Example", issue=issue)
+                for name, issue in [("Example 001.cbz", "1"), ("Example 002.cbz", "2")]
+            ]
+            store.perform_scan(
+                store.begin_scan(str(root), True), lambda *_: remaining, lambda p: {
+                    "parsed": p.__dict__, "lookup_identity": p.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "title": "Example", "issue": p.issue,
+                        "record_type": "single_issue", "source": "Test",
+                    },
+                    "file_cover": {"url": f"/api/file-cover?path={p.filename}"},
+                })
+            series = self._series(store)
+            self.assertTrue(series["cover"], "the run should still show a cover")
+            self.assertNotIn("003", series["cover"])
+
+    def test_a_comic_from_another_run_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with self.assertRaises(ValueError):
+                store.set_series_cover_preference(
+                    self._run_id(store), "file", file_id=98765)
+
+    def test_a_cover_from_outside_this_run_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with self.assertRaises(ValueError):
+                store.set_series_cover_preference(
+                    self._run_id(store), "provider",
+                    cover_url="https://elsewhere.example/art.jpg")
+
+    def test_an_unknown_source_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with self.assertRaises(ValueError):
+                store.set_series_cover_preference(self._run_id(store), "nonsense")
+
+    def test_choosing_again_replaces_rather_than_stacks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 002.cbz"))
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 003.cbz"))
+            with sqlite3.connect(store.database_path) as connection:
+                rows = connection.execute(
+                    "SELECT COUNT(*) FROM series_cover_preferences").fetchone()[0]
+            self.assertEqual(rows, 1)
+            self.assertIn("three.cbz", self._series(store)["cover"])
+
+    def test_going_back_to_automatic_restores_the_derived_cover(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 003.cbz"))
+            store.set_series_cover_preference(run, "auto")
+            self.assertIn("one.cbz", self._series(store)["cover"])
+            self.assertEqual(self._series(store)["coverPreference"], "auto")
+
+    def test_an_explicit_pick_overrides_the_wrong_language_guard(self):
+        """The guard stops a French file being promoted silently.
+
+        It must not stop the user saying so on purpose -- otherwise the
+        picker shows a cover, accepts the click, and changes nothing.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library(Path(folder), [
+                ("Example 001.cbz", "1", {}, "/api/file-cover?path=one.cbz"),
+                ("Example 002.cbz", "2", {"language": "fr"}, "/api/file-cover?path=french.cbz"),
+            ], preferred_language="en")
+            run = self._run_id(store)
+            self.assertNotIn(
+                "french.cbz", " ".join(self._series(store)["coverCandidates"]),
+                "the automatic chain must still exclude it",
+            )
+            options = store.get_series_cover_workbench(run)["covers"]["options"]
+            french = [o for o in options if "french.cbz" in o["url"]]
+            self.assertEqual(len(french), 1, "it must still be offered")
+            self.assertIn("French", french[0]["detail"], "and say what it is")
+            store.set_series_cover_preference(
+                run, "file", file_id=self._file_id(store, "Example 002.cbz"))
+            self.assertIn("french.cbz", self._series(store)["cover"])
