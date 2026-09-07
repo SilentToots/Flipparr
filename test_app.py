@@ -2747,3 +2747,75 @@ class ReleaseSeriesMatchTests(unittest.TestCase):
                     self.score(title, series, issue), 85,
                     f"{title!r} is {series}",
                 )
+
+
+class ProwlarrQueryFormsTests(unittest.TestCase):
+    """An indexer matches the words it is given.
+
+    A padded number is a different word from an unpadded one: searching
+    "If Destruction Be Our Lot 002" returned nothing, while
+    "If Destruction Be Our Lot 2" returned the issue and the series title alone
+    returned the run. Padding by itself made those series unfindable.
+    """
+
+    def test_it_widens_from_padded_to_bare_to_the_series_alone(self):
+        self.assertEqual(
+            app._prowlarr_query_forms(
+                {"seriesTitle": "If Destruction Be Our Lot", "issueNumber": "2"}
+            ),
+            [
+                "If Destruction Be Our Lot 002",
+                "If Destruction Be Our Lot 2",
+                "If Destruction Be Our Lot",
+            ],
+        )
+
+    def test_a_three_digit_issue_has_no_bare_form_to_add(self):
+        self.assertEqual(
+            app._prowlarr_query_forms({"seriesTitle": "Fables", "issueNumber": "129"}),
+            ["Fables 129", "Fables"],
+        )
+
+    def test_a_run_with_no_issue_number_searches_the_series(self):
+        self.assertEqual(
+            app._prowlarr_query_forms({"seriesTitle": "Saga", "issueNumber": ""}),
+            ["Saga"],
+        )
+
+    def test_nothing_is_searched_without_a_series_title(self):
+        self.assertEqual(
+            app._prowlarr_query_forms({"seriesTitle": "", "issueNumber": "2"}), []
+        )
+
+    def test_the_first_form_that_returns_anything_wins(self):
+        """The wider forms exist for when the narrow one finds nothing."""
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "If Destruction Be Our Lot", "issueNumber": "2",
+        }
+        store.rejected_acquisition_releases.return_value = []
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={"url": "http://p", "apiKey": "k"}
+        ), patch("app._prowlarr_search", side_effect=[[], [], []]) as search:
+            app.search_prowlarr_releases(7)
+        self.assertEqual(
+            [call.args[1] for call in search.call_args_list],
+            [
+                "If Destruction Be Our Lot 002",
+                "If Destruction Be Our Lot 2",
+                "If Destruction Be Our Lot",
+            ],
+        )
+
+    def test_a_query_typed_by_a_person_is_used_as_given(self):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "If Destruction Be Our Lot", "issueNumber": "2",
+        }
+        store.rejected_acquisition_releases.return_value = []
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._enabled_acquisition_service", return_value={"url": "http://p", "apiKey": "k"}
+        ), patch("app._prowlarr_search", return_value=[]) as search:
+            app.search_prowlarr_releases(7, "destruction lot 02")
+        search.assert_called_once()
+        self.assertEqual(search.call_args.args[1], "destruction lot 02")

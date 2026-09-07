@@ -466,8 +466,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .modal-hint { line-height: 1.55; margin: 18px 0 0; }
 .release-search-modal { width: min(900px, calc(100% - 32px)); max-height: calc(100vh - 44px); overflow: auto; }
 .release-search-modal h2 { margin-bottom: 7px; }
-.release-query { min-height: 42px; margin: 16px 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 7px; background: #0e141e; display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-sm); }
-.release-query strong { color: #d9deea; font-size: var(--text-md); }
+/* The query is a field, and now behaves like one: it looked editable long
+   before it was, which is precisely when someone wants to change it. */
+.release-query { min-height: 46px; margin: 16px 0 6px; padding: 4px 6px 4px 12px; border: 1px solid var(--line); border-radius: 7px; background: #0e141e; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; color: var(--muted); }
+.release-query:focus-within { border-color: #6556a3; box-shadow: 0 0 0 3px #201a39; }
+.release-query input { min-width: 0; border: 0; outline: 0; background: transparent; color: #d9deea; font-size: var(--text-md); }
+.release-query input::placeholder { color: #697588; }
+.release-query button { flex: none; min-height: 34px; padding: 0 14px; font-size: var(--text-sm); }
+.release-query-note { margin: 0 0 14px; color: var(--muted); font-size: var(--text-sm); }
 .release-loading, .release-empty { min-height: 190px; border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); text-align: center; }
 .release-loading { flex-direction: row; text-align: left; }
 .release-loading .loading-indicator { color: var(--violet); }

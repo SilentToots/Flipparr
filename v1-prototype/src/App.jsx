@@ -997,8 +997,21 @@ function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh
   const replacements = catalog?.replacementRequests || [];
   const activeReplacements = replacements.filter((request) => !["fulfilled", "cancelled"].includes(request.status));
   const completedReplacements = replacements.filter((request) => request.status === "fulfilled");
-  const wantedRuns = requests.filter((request) => request.status === "open");
-  const followedRuns = requests.filter((request) => request.status === "fulfilled");
+  // Wanted is what can be acted on now. A followed run whose only remaining
+  // issues are unpublished has nothing to look for, so it belongs under
+  // Following rather than sitting in Wanted marked "Waiting for release".
+  const hasSomethingToFind = (request) => Boolean(
+    (request.wantedIssueCount || 0)
+    || (request.queuedJobCount || 0)
+    || (request.jobs || []).some((job) => !["fulfilled", "cancelled"].includes(job.status))
+  );
+  const wantedRuns = requests.filter(
+    (request) => request.status === "open" && hasSomethingToFind(request)
+  );
+  const followedRuns = requests.filter(
+    (request) => request.status === "fulfilled"
+      || (request.status === "open" && !hasSomethingToFind(request))
+  );
   const seriesEntries = tab === "wanted" ? wantedRuns : tab === "following" ? followedRuns : [];
   const replacementEntries = tab === "wanted" ? activeReplacements : tab === "acquired" ? completedReplacements : [];
   const wantedCount = wantedRuns.length + activeReplacements.length;
@@ -1106,7 +1119,13 @@ function RequestRow({ request, onFindRelease, onRefresh }) {
   const status = request.status === "fulfilled" ? "Up to date" : failed ? requestFailureStatus(jobs) : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
   const tone = request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
   const display = { id: `request-${request.id}`, title: request.title, cover: request.cover };
-  const jobGroups = jobs.reduce((groups, job) => {
+  // An issue already in the library is not a missing issue. Listing its job
+  // under "Missing issues" put "Added to library" in the middle of a list of
+  // things still being looked for.
+  const outstandingJobs = jobs.filter(
+    (job) => !["fulfilled", "cancelled"].includes(job.status)
+  );
+  const jobGroups = outstandingJobs.reduce((groups, job) => {
     const key = job.seriesId || "series";
     if (!groups[key]) groups[key] = { id: key, title: job.seriesTitle || request.title, jobs: [] };
     groups[key].jobs.push(job);
@@ -1136,7 +1155,7 @@ function RequestRow({ request, onFindRelease, onRefresh }) {
     </div>
     {expanded ? <div className="request-job-panel">
       <header><div><strong>{request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{request.status === "fulfilled" ? (request.publicationStatus === "ongoing" ? "Flipparr will keep checking this run and add newly released issues to Wanted." : "Every issue in this completed run is in your library.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div><b>Following</b></header>
-      {jobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
+      {outstandingJobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
         {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>
           <b>#{job.issueNumber}</b>
@@ -1162,19 +1181,29 @@ function ReleaseSearchModal({ job, onClose, onGrabbed }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [grabbingId, setGrabbingId] = useState(null);
-  async function search() {
+  // The query is editable. It looked like a field and was not one, which is
+  // exactly when you want it: nothing was found, and the wording is the thing
+  // worth changing.
+  const [query, setQuery] = useState("");
+  const [edited, setEdited] = useState(false);
+  async function search(custom) {
     setLoading(true); setError("");
+    const asked = typeof custom === "string" ? custom.trim() : "";
     try {
-      setResult(await apiRequest(`/api/v1/acquisition-jobs/${job.id}/search`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-      }));
+      const found = await apiRequest(`/api/v1/acquisition-jobs/${job.id}/search`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(asked ? { query: asked } : {}),
+      });
+      setResult(found);
+      // Show the query that ran, which is not always the one first tried.
+      if (!asked) setQuery(found?.query || "");
     } catch (searchError) {
       setError(searchError.message || "Prowlarr search failed");
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => { search(); }, [job.id]);
+  useEffect(() => { setEdited(false); setQuery(""); search(); }, [job.id]);
   async function grab(candidate) {
     setGrabbingId(candidate.id); setError("");
     try {
@@ -1189,7 +1218,7 @@ function ReleaseSearchModal({ job, onClose, onGrabbed }) {
     }
   }
   const candidates = result?.candidates || [];
-  return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}><section className="modal release-search-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-search-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close release search"><X size={20} /></button><span className="eyebrow">Find one missing issue</span><h2 id="release-search-title">{job.seriesTitle} #{job.issueNumber}</h2><p className="workbench-intro">Compare Prowlarr results below. Nothing is sent to SABnzbd until you choose a release.</p>{result?.query ? <div className="release-query"><MagnifyingGlass size={16} /><span>Search</span><strong>{result.query}</strong></div> : null}{loading ? <div className="release-loading"><LoadingSpinner size={24} /><div><strong>Searching your indexers…</strong><span>This can take a few seconds.</span></div></div> : null}{error ? <div className="release-error"><WarningCircle size={19} weight="fill" /><span><strong>Release search needs attention</strong>{error}</span><button type="button" onClick={search}>Try again</button></div> : null}{!loading && !error && !candidates.length ? <div className="release-empty"><MagnifyingGlass size={28} /><strong>No credible releases found</strong><span>Prowlarr returned no Usenet results that matched both this series and issue number.</span><button type="button" className="secondary-button" onClick={search}>Search again</button></div> : null}{candidates.length ? <div className="release-candidates"><header><div><strong>{candidates.length} candidate{candidates.length === 1 ? "" : "s"}</strong><span>Best matches appear first. Confirm the title, issue, language, and format.</span></div></header>{candidates.map((candidate) => { const isGrabbing = grabbingId === candidate.id; return <article className="release-candidate" key={candidate.id}><div className="release-candidate-main"><StatusBadge tone={candidate.matchScore >= 85 ? "green" : "amber"}>{candidate.matchStrength}</StatusBadge><h3>{candidate.title}</h3><p>{candidate.indexer} · {candidate.protocol} · {formatReleaseSize(candidate.sizeBytes)}{candidate.publishDate ? ` · ${new Date(candidate.publishDate).toLocaleDateString()}` : ""}</p>{candidate.formatTags?.length ? <div className="release-tags">{candidate.formatTags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}</div><div className="release-match"><strong>{candidate.matchScore}</strong><span>match score</span></div><ul>{candidate.matchReasons.map((reason) => <li key={reason}><CheckCircle size={14} weight="fill" />{reason}</li>)}</ul><button type="button" className={`primary-button ${isGrabbing ? "loading" : ""}`} aria-busy={isGrabbing} disabled={Boolean(grabbingId)} onClick={() => grab(candidate)}>{isGrabbing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />}{isGrabbing ? "Sending…" : "Send to SABnzbd"}</button></article>; })}</div> : null}<footer className="release-modal-footer"><ShieldCheck size={17} weight="fill" /> Prowlarr download links stay on the server and are never exposed in this page.</footer></section></div>;
+  return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}><section className="modal release-search-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-search-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close release search"><X size={20} /></button><span className="eyebrow">Find one missing issue</span><h2 id="release-search-title">{job.seriesTitle} #{job.issueNumber}</h2><p className="workbench-intro">Compare Prowlarr results below. Nothing is sent to SABnzbd until you choose a release.</p><form className="release-query" onSubmit={(event) => { event.preventDefault(); search(query); }}><MagnifyingGlass size={16} /><input value={query} onChange={(event) => { setQuery(event.target.value); setEdited(true); }} aria-label="Search terms" placeholder="Series and issue to search for…" disabled={loading} /><button type="submit" className="secondary-button" disabled={loading || query.trim().length < 2}>{loading ? <LoadingSpinner size={16} /> : null} Search</button></form>{edited ? null : <p className="release-query-note">Flipparr widens this automatically when a narrower wording finds nothing. Edit it to search for something else.</p>}{loading ? <div className="release-loading"><LoadingSpinner size={24} /><div><strong>Searching your indexers…</strong><span>This can take a few seconds.</span></div></div> : null}{error ? <div className="release-error"><WarningCircle size={19} weight="fill" /><span><strong>Release search needs attention</strong>{error}</span><button type="button" onClick={() => search(query)}>Try again</button></div> : null}{!loading && !error && !candidates.length ? <div className="release-empty"><MagnifyingGlass size={28} /><strong>No credible releases found</strong><span>Prowlarr returned no Usenet results that matched both this series and issue number.</span><button type="button" className="secondary-button" onClick={() => search(query)}>Search again</button></div> : null}{candidates.length ? <div className="release-candidates"><header><div><strong>{candidates.length} candidate{candidates.length === 1 ? "" : "s"}</strong><span>Best matches appear first. Confirm the title, issue, language, and format.</span></div></header>{candidates.map((candidate) => { const isGrabbing = grabbingId === candidate.id; return <article className="release-candidate" key={candidate.id}><div className="release-candidate-main"><StatusBadge tone={candidate.matchScore >= 85 ? "green" : "amber"}>{candidate.matchStrength}</StatusBadge><h3>{candidate.title}</h3><p>{candidate.indexer} · {candidate.protocol} · {formatReleaseSize(candidate.sizeBytes)}{candidate.publishDate ? ` · ${new Date(candidate.publishDate).toLocaleDateString()}` : ""}</p>{candidate.formatTags?.length ? <div className="release-tags">{candidate.formatTags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}</div><div className="release-match"><strong>{candidate.matchScore}</strong><span>match score</span></div><ul>{candidate.matchReasons.map((reason) => <li key={reason}><CheckCircle size={14} weight="fill" />{reason}</li>)}</ul><button type="button" className={`primary-button ${isGrabbing ? "loading" : ""}`} aria-busy={isGrabbing} disabled={Boolean(grabbingId)} onClick={() => grab(candidate)}>{isGrabbing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />}{isGrabbing ? "Sending…" : "Send to SABnzbd"}</button></article>; })}</div> : null}<footer className="release-modal-footer"><ShieldCheck size={17} weight="fill" /> Prowlarr download links stay on the server and are never exposed in this page.</footer></section></div>;
 }
 
 function RequestModal({ catalog, onClose, onCreate }) {

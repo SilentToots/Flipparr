@@ -1550,15 +1550,33 @@ def _submit_nzb_to_sabnzbd(
     return response
 
 
-def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
-    """Search one wanted issue and return credential-free release summaries."""
-    store = catalog_store()
-    context = store.get_acquisition_job_context(job_id)
-    prowlarr = _enabled_acquisition_service("prowlarr")
-    issue_number = str(context.get("issueNumber") or "").strip()
-    padded_issue = issue_number.zfill(3) if issue_number.isdigit() else issue_number
-    query = " ".join(part for part in (context.get("seriesTitle"), padded_issue) if part)
-    store.update_acquisition_job(job_id, "searching", f"Searching Prowlarr for {query}")
+def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
+    """The queries to try for one wanted issue, widest match last.
+
+    An indexer matches the words it is given, so a padded number is a
+    different word from an unpadded one: "If Destruction Be Our Lot 002"
+    returned nothing while "If Destruction Be Our Lot 2" returned the issue
+    and "If Destruction Be Our Lot" returned the run. Padding alone therefore
+    made some series permanently unfindable. Scoring still decides which
+    result is the right issue, so a wider query costs recall nothing.
+    """
+    series = str(context.get("seriesTitle") or "").strip()
+    if not series:
+        return []
+    issue = str(context.get("issueNumber") or "").strip()
+    forms = []
+    if issue.isdigit():
+        forms.append(f"{series} {issue.zfill(3)}")
+        if issue.lstrip("0") != issue.zfill(3):
+            forms.append(f"{series} {issue.lstrip('0') or '0'}")
+    elif issue:
+        forms.append(f"{series} {issue}")
+    forms.append(series)
+    seen: set[str] = set()
+    return [form for form in forms if not (form in seen or seen.add(form))]
+
+
+def _prowlarr_search(prowlarr: dict[str, Any], query: str) -> list[dict[str, Any]]:
     endpoint = f"{prowlarr['url']}/api/v1/search?" + urllib.parse.urlencode({
         "query": query, "type": "search", "categories": "7030", "limit": 100,
     })
@@ -1568,7 +1586,30 @@ def search_prowlarr_releases(job_id: int) -> dict[str, Any]:
          "User-Agent": f"Flipparr/{APP_VERSION}"},
         timeout=45.0,
     )
-    releases = payload if isinstance(payload, list) else []
+    return payload if isinstance(payload, list) else []
+
+
+def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str, Any]:
+    """Search one wanted issue and return credential-free release summaries.
+
+    `query` replaces the generated one, so a person who can see that nothing
+    was found can word the search themselves.
+    """
+    store = catalog_store()
+    context = store.get_acquisition_job_context(job_id)
+    prowlarr = _enabled_acquisition_service("prowlarr")
+    asked = str(query or "").strip()
+    forms = [asked] if asked else _prowlarr_query_forms(context)
+    if not forms:
+        raise ValueError("This issue has no series title to search for")
+    query = forms[0]
+    store.update_acquisition_job(job_id, "searching", f"Searching Prowlarr for {query}")
+    releases: list[dict[str, Any]] = []
+    for form in forms:
+        query = form
+        releases = _prowlarr_search(prowlarr, form)
+        if releases:
+            break
     rejected_records = store.rejected_acquisition_releases(job_id)
     if not isinstance(rejected_records, (list, tuple)):
         rejected_records = []
@@ -6792,7 +6833,9 @@ class Handler(BaseHTTPRequestHandler):
         if acquisition_search:
             job_id = int(acquisition_search.group(1))
             try:
-                result = search_prowlarr_releases(job_id)
+                result = search_prowlarr_releases(
+                    job_id, str(payload.get("query") or "").strip() or None
+                )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
