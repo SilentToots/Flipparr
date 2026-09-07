@@ -979,25 +979,6 @@ function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh
   const [searchingMissing, setSearchingMissing] = useState(false);
   const [searchMissingMessage, setSearchMissingMessage] = useState("");
   const [pendingSearch, setPendingSearch] = useState(null);
-  const [progress, setProgress] = useState({});
-  // Every job on the page, so the poll can stop as soon as none are moving.
-  const allJobs = [...requests, ...replacements].flatMap((request) => request.jobs || []);
-  const anyDownloading = allJobs.some(
-    (job) => ["queued", "downloading"].includes(job.downloadStatus)
-  );
-  useEffect(() => {
-    if (!anyDownloading) { setProgress({}); return undefined; }
-    let cancelled = false;
-    async function poll() {
-      try {
-        const result = await apiRequest("/api/v1/acquisition/progress");
-        if (!cancelled) setProgress(result?.downloads || {});
-      } catch (error) { /* a download client that cannot answer shows no bar */ }
-    }
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [anyDownloading]);
   // The Wanted list's own action, the way Radarr and Sonarr put one there:
   // everything still missing, searched on demand. It covers issues nothing
   // good enough was found for last time, and requests made before Flipparr
@@ -1034,6 +1015,25 @@ function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh
   }
   const requests = catalog?.requests || [];
   const replacements = catalog?.replacementRequests || [];
+  const [progress, setProgress] = useState({});
+  // Declared after the lists it reads: `requests` and `replacements` are const,
+  // so reaching them from above is a ReferenceError that blanks the page.
+  const anyDownloading = [...requests, ...replacements]
+    .flatMap((request) => request.jobs || [])
+    .some((job) => ["queued", "downloading"].includes(job.downloadStatus));
+  useEffect(() => {
+    if (!anyDownloading) { setProgress({}); return undefined; }
+    let cancelled = false;
+    async function poll() {
+      try {
+        const result = await apiRequest("/api/v1/acquisition/progress");
+        if (!cancelled) setProgress(result?.downloads || {});
+      } catch (error) { /* a download client that cannot answer shows no bar */ }
+    }
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [anyDownloading]);
   const activeReplacements = replacements.filter((request) => !["fulfilled", "cancelled"].includes(request.status));
   const completedReplacements = replacements.filter((request) => request.status === "fulfilled");
   // Wanted is what can be acted on now. A followed run whose only remaining
