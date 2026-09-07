@@ -2819,3 +2819,45 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
             app.search_prowlarr_releases(7, "destruction lot 02")
         search.assert_called_once()
         self.assertEqual(search.call_args.args[1], "destruction lot 02")
+
+
+class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
+    """A release whose download held the wrong comic must not come back.
+
+    Retrying the import of a download that is the wrong comic can only fail
+    the same way, and searching again would rank the same release first. The
+    failure says something about the release, not about this machine.
+    """
+
+    def _reconcile_with_import_failure(self, error):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+            "release_title": "Thor-The.Deviants.Saga.001", "release_key": "deviants-key",
+            "sab_storage": "/downloads/complete/comics/x",
+        }
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/x",
+            },
+        ), patch("app.import_downloaded_comic", side_effect=error):
+            app.reconcile_acquisition_download(download)
+        return store
+
+    def test_a_download_of_the_wrong_comic_is_recorded_against_the_release(self):
+        store = self._reconcile_with_import_failure(
+            app.DownloadContentMismatch("No downloaded comic confidently matched Saga #1")
+        )
+        store.record_acquisition_release_failure.assert_called_once()
+        self.assertEqual(store.record_acquisition_release_failure.call_args.args[0], 7)
+        self.assertEqual(
+            store.record_acquisition_release_failure.call_args.args[1], "deviants-key"
+        )
+
+    def test_a_local_failure_is_not_blamed_on_the_release(self):
+        """A disk or quarantine problem says nothing about the download."""
+        store = self._reconcile_with_import_failure(
+            OSError("Read-only file system")
+        )
+        store.record_acquisition_release_failure.assert_not_called()

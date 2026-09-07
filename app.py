@@ -1813,19 +1813,31 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
     }
 
 
+class DownloadContentMismatch(ValueError):
+    """A finished download did not contain the comic it was grabbed for.
+
+    Distinct from the other ways an import fails -- a disk error, a rollback
+    that needs attention -- because it says something about the release rather
+    than about this machine: it is the wrong comic, and asking for it again
+    will fail the same way.
+    """
+
+
 def select_downloaded_comic(
     source: Path, context: dict[str, Any], completed_root: Path = SAB_COMPLETE_ROOT
 ) -> dict[str, Any]:
     candidates = _comic_files_under(source, completed_root)
     if not candidates:
-        raise ValueError("The completed download does not contain a supported comic file")
+        raise DownloadContentMismatch(
+            "The completed download does not contain a supported comic file"
+        )
     ranked = sorted(
         (_download_candidate_score(path, context) for path in candidates),
         key=lambda item: (-item[0], str(item[1]["path"])),
     )
     score, selected = ranked[0]
     if score < 180 or not selected.get("issueMatch") or selected.get("titleRatio", 0) < 0.55:
-        raise ValueError(
+        raise DownloadContentMismatch(
             f"No downloaded comic confidently matched {context.get('seriesTitle')} "
             f"#{context.get('issueNumber')}"
         )
@@ -2320,6 +2332,19 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             int(download["id"]), "failed", sab_storage=storage,
             error=message, failure_stage="import",
         )
+        if isinstance(exc, DownloadContentMismatch):
+            # The release is the problem, not the machine. Recording it keeps
+            # the next search -- automatic or by hand -- from offering the same
+            # download again.
+            try:
+                store.record_acquisition_release_failure(
+                    int(download["job_id"]),
+                    str(download.get("release_key") or "") or _legacy_release_key(download),
+                    str(download.get("release_title") or "Unknown release"),
+                    message,
+                )
+            except Exception as record_error:
+                log_exception("release_failure_record_failed", record_error, level="warning")
         store.update_acquisition_job(int(download["job_id"]), "failed", f"Import needs attention: {message}")
         return {"status": "failed", "error": message}
     store.update_acquisition_download(
