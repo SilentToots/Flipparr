@@ -2873,3 +2873,194 @@ class SeriesCoverPreferenceTests(unittest.TestCase):
             store.set_series_cover_preference(
                 run, "file", file_id=self._file_id(store, "Example 002.cbz"))
             self.assertIn("french.cbz", self._series(store)["cover"])
+
+
+class ReplacementStaysItsOwnRequestTests(unittest.TestCase):
+    """Replacing one comic must not enrol the run it belongs to.
+
+    Replacing Saga #2 and #3 downloaded every missing issue in the run,
+    twice -- once per open replacement -- and then neither replacement
+    could finish, because the request it was waiting on had seventy other
+    issues on it that would never all complete.
+    """
+
+    def _library(self, root, numbers=(1, 2, 3)):
+        def parsed_for(number):
+            path = root / f"Example {number:03d}.cbz"
+            path.write_bytes(b"comic")
+            return ParsedFile(str(path), path.name, ".cbz", "Example", issue=str(number))
+
+        files = [parsed_for(n) for n in numbers]
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: files, lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": parsed.issue,
+                    "record_type": "single_issue", "publisher": "Example Press",
+                    "source": "Test",
+                },
+                "file_cover": None,
+            })
+        return store
+
+    def _sync_issue_list(self, store, series_id, numbers):
+        today = dt.datetime.now().astimezone().date()
+        store.apply_issue_list(
+            series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+            [
+                {"number": str(n), "provider_id": str(100 + n),
+                 "publication_date": str(today - dt.timedelta(days=30)),
+                 "publication_year": today.year}
+                for n in numbers
+            ],
+        )
+
+    def _file_id(self, store, fragment):
+        return int(next(
+            item for item in store.catalog()["series"][0]["fileDetails"]
+            if fragment in item["filename"]
+        )["id"])
+
+    def _request_issue_numbers(self, store, request_id):
+        with store._connect() as connection:
+            return sorted(
+                row["issue_number"] for row in connection.execute(
+                    """SELECT issues.issue_number FROM acquisition_request_issues ari
+                       JOIN issues ON issues.id=ari.issue_id
+                       WHERE ari.request_id=?""",
+                    (request_id,),
+                )
+            )
+
+    def test_syncing_the_issue_list_does_not_enrol_the_whole_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._library(root)
+            series_id = int(store.catalog()["series"][0]["id"])
+            self._sync_issue_list(store, series_id, (1, 2, 3))
+            replacement = store.request_file_replacement(
+                self._file_id(store, "001"), "wrong_language", "en", "issues"
+            )
+            request_id = int(replacement["acquisitionRequestId"])
+            self.assertEqual(self._request_issue_numbers(store, request_id), ["1"])
+
+            # The trigger: any later issue-list sync -- a metadata refresh, a
+            # rebuild -- used to enrol every issue into every open request.
+            self._sync_issue_list(store, series_id, (1, 2, 3))
+            self.assertEqual(
+                self._request_issue_numbers(store, request_id), ["1"],
+                "the replacement request must still cover only its own comic",
+            )
+
+    def test_a_followed_run_is_still_enrolled(self):
+        """The exclusion must not stop an ordinary request tracking its run."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._library(root)
+            series_id = int(store.catalog()["series"][0]["id"])
+            self._sync_issue_list(store, series_id, (1, 2))
+            run_request = int(
+                store.create_acquisition_request("series", series_id, "issues")["id"]
+            )
+            self._sync_issue_list(store, series_id, (1, 2, 3))
+            self.assertEqual(
+                self._request_issue_numbers(store, run_request), ["1", "2", "3"],
+            )
+
+    def test_another_issue_landing_is_not_this_comic_arriving(self):
+        """replacement_for_job matched on the request, not on the comic.
+
+        Importing any issue in the run therefore looked like the replacement
+        arriving, and would have retired the original on the strength of it.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._library(root, numbers=(1,))
+            series_id = int(store.catalog()["series"][0]["id"])
+            self._sync_issue_list(store, series_id, (1, 2))
+            replacement = store.request_file_replacement(
+                self._file_id(store, "001"), "wrong_language", "en", "issues"
+            )
+            request_id = int(replacement["acquisitionRequestId"])
+            # Put a job for an issue this comic does not cover on the same
+            # request, the way the enrolment bug used to.
+            with store._connect() as connection:
+                other = int(connection.execute(
+                    "SELECT id FROM issues WHERE issue_number='2'"
+                ).fetchone()[0])
+                connection.execute(
+                    """INSERT INTO acquisition_jobs(
+                           request_id, issue_id, status, queue_reason,
+                           created_at, updated_at)
+                       VALUES (?, ?, 'queued', 'x', '2026-01-01', '2026-01-01')""",
+                    (request_id, other),
+                )
+                foreign_job = int(connection.execute(
+                    "SELECT id FROM acquisition_jobs WHERE issue_id=?", (other,)
+                ).fetchone()[0])
+                own_job = int(connection.execute(
+                    "SELECT id FROM acquisition_jobs WHERE issue_id!=?", (other,)
+                ).fetchone()[0])
+            self.assertIsNone(
+                store.replacement_for_job(foreign_job),
+                "issue 2 has nothing to do with the comic being replaced",
+            )
+            own = store.replacement_for_job(own_job)
+            self.assertIsNotNone(own)
+            self.assertEqual(
+                int(own["unfinished_jobs"]), 1,
+                "only this comic's own jobs may hold the replacement open",
+            )
+
+    def test_a_replacement_that_landed_is_not_searched_again(self):
+        """The job went fulfilled on import and back to queued seconds later.
+
+        reconcile re-queued it because a replacement was still outstanding,
+        which it always was, because the job it was waiting on kept being
+        put back in the queue.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._library(root)
+            series_id = int(store.catalog()["series"][0]["id"])
+            self._sync_issue_list(store, series_id, (1, 2, 3))
+            replacement = store.request_file_replacement(
+                self._file_id(store, "001"), "wrong_language", "en", "issues"
+            )
+            request_id = int(replacement["acquisitionRequestId"])
+            store.reconcile_acquisition_jobs(request_id)
+            with store._connect() as connection:
+                job_id = int(connection.execute(
+                    "SELECT id FROM acquisition_jobs WHERE request_id=?", (request_id,)
+                ).fetchone()[0])
+            download = store.record_acquisition_download(job_id, "nzo-1", "Example 001 English")
+            store.update_acquisition_download(int(download["id"]), "imported")
+            store.update_acquisition_job(job_id, "fulfilled", "Imported and verified")
+
+            store.reconcile_acquisition_jobs(request_id)
+            with store._connect() as connection:
+                status = connection.execute(
+                    "SELECT status FROM acquisition_jobs WHERE id=?", (job_id,)
+                ).fetchone()[0]
+            self.assertEqual(status, "fulfilled", "reconcile must not re-queue it")
+
+    def test_a_replacement_still_waiting_is_searched(self):
+        """The guard must not stop a replacement that has not landed yet."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._library(root)
+            series_id = int(store.catalog()["series"][0]["id"])
+            self._sync_issue_list(store, series_id, (1, 2, 3))
+            replacement = store.request_file_replacement(
+                self._file_id(store, "001"), "wrong_language", "en", "issues"
+            )
+            request_id = int(replacement["acquisitionRequestId"])
+            store.reconcile_acquisition_jobs(request_id)
+            with store._connect() as connection:
+                row = connection.execute(
+                    "SELECT id, status FROM acquisition_jobs WHERE request_id=?",
+                    (request_id,),
+                ).fetchone()
+            self.assertEqual(row[1], "queued")

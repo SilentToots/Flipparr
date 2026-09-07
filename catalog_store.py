@@ -2851,7 +2851,18 @@ class CatalogStore:
                 active_requests = connection.execute(
                     """SELECT acquisition_requests.id
                        FROM acquisition_requests
-                       WHERE acquisition_requests.status='open' AND (
+                       WHERE acquisition_requests.status='open'
+                         -- A request standing behind a replacement covers the
+                         -- issues of one comic, not the run it belongs to.
+                         -- Enrolled like a followed run, replacing one issue
+                         -- pulled every missing issue in the run, twice over
+                         -- when two replacements were open, and left the
+                         -- replacement unable to finish.
+                         AND NOT EXISTS(
+                             SELECT 1 FROM file_replacement_requests
+                             WHERE file_replacement_requests.acquisition_request_id=
+                                   acquisition_requests.id
+                         ) AND (
                            (acquisition_requests.scope_type='series'
                             AND acquisition_requests.series_run_id=?)
                            OR
@@ -4203,7 +4214,13 @@ class CatalogStore:
             existing = {
                 (int(row["request_id"]), int(row["issue_id"])): row
                 for row in connection.execute(
-                    f"""SELECT acquisition_jobs.* FROM acquisition_jobs
+                    f"""SELECT acquisition_jobs.*,
+                               EXISTS(
+                                   SELECT 1 FROM acquisition_downloads
+                                   WHERE acquisition_downloads.job_id=acquisition_jobs.id
+                                     AND acquisition_downloads.status='imported'
+                               ) AS download_imported
+                        FROM acquisition_jobs
                         JOIN acquisition_requests
                           ON acquisition_requests.id=acquisition_jobs.request_id
                         WHERE 1=1 {request_filter}""",
@@ -4221,6 +4238,11 @@ class CatalogStore:
                     desired, reason = "cancelled", "Request cancelled"
                 elif row["request_status"] == "fulfilled" or replacement_status == "fulfilled":
                     desired, reason = "fulfilled", "Replacement completed"
+                elif replacement and job and job["download_imported"]:
+                    # The new comic is here. Retiring the original is a separate
+                    # step; until this said so, reconcile put the job back in the
+                    # queue seconds after every import, forever.
+                    desired, reason = "fulfilled", "Replacement downloaded and imported"
                 elif replacement:
                     # A replacement target is intentionally searched even though the damaged
                     # file currently satisfies ownership. Its presence is also sufficient
@@ -4880,6 +4902,26 @@ class CatalogStore:
             item for item in refreshed["replacementRequests"] if item["id"] == str(request_id)
         )
 
+    # Whether one comic file stands for one issue: directly, or as a collected
+    # edition whose contents have been resolved. Written once because the
+    # replacement flow has been wrong twice by joining on the request alone --
+    # a request is shared by a whole run, a file is not.
+    _FILE_COVERS_ISSUE = """(
+        EXISTS(
+            SELECT 1 FROM file_issue_links
+            WHERE file_issue_links.file_id={file_id}
+              AND file_issue_links.issue_id={issue_id}
+        )
+        OR EXISTS(
+            SELECT 1 FROM file_edition_links
+            JOIN edition_coverage_claims
+              ON edition_coverage_claims.edition_id=file_edition_links.edition_id
+            WHERE file_edition_links.file_id={file_id}
+              AND edition_coverage_claims.issue_id={issue_id}
+              AND edition_coverage_claims.resolution_status='resolved'
+        )
+    )"""
+
     def replacement_for_job(self, job_id: int) -> dict[str, Any] | None:
         """Return replacement/quarantine context for a durable acquisition job."""
         with self._connect() as connection:
@@ -4892,15 +4934,32 @@ class CatalogStore:
                           files.path AS original_path,
                           library_roots.path AS library_root,
                           (SELECT COUNT(*) FROM acquisition_jobs AS replacement_jobs
-                           WHERE replacement_jobs.request_id=file_replacement_requests.acquisition_request_id
-                             AND replacement_jobs.status!='fulfilled') AS unfinished_jobs
+                           WHERE replacement_jobs.request_id=
+                                 file_replacement_requests.acquisition_request_id
+                             AND replacement_jobs.status!='fulfilled'
+                             -- Counted across the whole request, an unrelated
+                             -- issue kept the replacement unfinished forever.
+                             AND {covers_replacement_job}) AS unfinished_jobs
                    FROM acquisition_jobs
                    JOIN file_replacement_requests
                      ON file_replacement_requests.acquisition_request_id=acquisition_jobs.request_id
+                    -- Matched on the request alone, importing any issue in the
+                    -- run looked like this comic's replacement arriving, and
+                    -- would have retired the original on the strength of it.
+                    AND {covers_this_job}
                    JOIN files ON files.id=file_replacement_requests.file_id
                    JOIN library_roots ON library_roots.id=files.root_id
                    WHERE acquisition_jobs.id=?
-                   """,
+                   """.format(
+                    covers_replacement_job=self._FILE_COVERS_ISSUE.format(
+                        file_id="file_replacement_requests.file_id",
+                        issue_id="replacement_jobs.issue_id",
+                    ),
+                    covers_this_job=self._FILE_COVERS_ISSUE.format(
+                        file_id="file_replacement_requests.file_id",
+                        issue_id="acquisition_jobs.issue_id",
+                    ),
+                ),
                 (job_id,),
             ).fetchone()
         return dict(row) if row else None
