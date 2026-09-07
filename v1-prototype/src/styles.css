@@ -781,6 +781,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .grouped-issue-cover { width: 32px; height: 48px; border-radius: 4px; overflow: hidden; background: #1b2331; border: 1px solid var(--line); display: grid; place-items: center; }
 .grouped-issue-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .grouped-issue-cover .cover-placeholder { color: #46536a; display: grid; place-items: center; }
+/* The poster is the obvious thing to click to change a poster. */
+.drawer-cover-button { position: relative; width: 100%; height: 100%; padding: 0; border: 0; border-radius: inherit; background: transparent; overflow: hidden; display: block; cursor: pointer; }
+.drawer-cover-button img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.drawer-cover-hint { position: absolute; inset: auto 0 0 0; padding: 7px 6px 6px; background: linear-gradient(to top, rgba(6,9,14,.94), rgba(6,9,14,0)); color: #e2e6ee; font-size: var(--text-2xs); font-weight: 620; display: flex; align-items: center; justify-content: center; gap: 5px; opacity: 0; transition: opacity var(--motion-duration-fast) ease; }
+.drawer-cover-button:hover .drawer-cover-hint, .drawer-cover-button:focus-visible .drawer-cover-hint { opacity: 1; }
+/* No hover on touch, and Advanced tools carries the same action for keyboards. */
+@media (hover: none) { .drawer-cover-hint { opacity: 1; } }
+
 .grouped-issue-number { color: #c5b8ff; font-size: var(--text-md); font-weight: 780; }
 
 /* Cover view. auto-fill means the same rule gives four across in the drawer
