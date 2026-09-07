@@ -2508,18 +2508,16 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             error=message, failure_stage="import",
         )
         if isinstance(exc, DownloadContentMismatch):
-            # The release is the problem, not the machine. Recording it keeps
-            # the next search -- automatic or by hand -- from offering the same
-            # download again.
+            # The release is the problem, not the machine, so the same thing
+            # happens as when SABnzbd proves one unusable: record it and take
+            # the next candidate. Without this the issue sat failed until
+            # somebody noticed and asked for another search by hand.
             try:
-                store.record_acquisition_release_failure(
-                    int(download["job_id"]),
-                    str(download.get("release_key") or "") or _legacy_release_key(download),
-                    str(download.get("release_title") or "Unknown release"),
-                    message,
-                )
-            except Exception as record_error:
-                log_exception("release_failure_record_failed", record_error, level="warning")
+                outcome = _fallback_after_sab_failure(store, download, message)
+            except Exception as fallback_error:
+                log_exception("import_fallback_failed", fallback_error, level="warning")
+            else:
+                return {"error": message, **outcome}
         store.update_acquisition_job(int(download["job_id"]), "failed", f"Import needs attention: {message}")
         return {"status": "failed", "error": message}
     store.update_acquisition_download(

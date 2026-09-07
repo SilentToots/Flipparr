@@ -2822,6 +2822,73 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
         self.assertEqual(search.call_args.args[1], "destruction lot 02")
 
 
+class ImportFailureHealsItselfTests(unittest.TestCase):
+    """A download of the wrong comic takes the next release on its own.
+
+    Recording the bad release made a later search skip it, but nothing ran
+    that search: the issue sat failed until someone noticed and asked. SABnzbd
+    proving a release unusable has always fallen through to the next
+    candidate; a download that finishes and turns out to be the wrong comic
+    is the same situation one step later.
+    """
+
+    DOWNLOAD = {
+        "id": 31, "job_id": 7, "sab_nzo_id": "queue-id",
+        "release_title": "Thor-The.Deviants.Saga.001", "release_key": "deviants-key",
+        "sab_storage": "/downloads/complete/comics/x",
+    }
+
+    def _reconcile(self, error, store):
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed",
+                "storage": "/downloads/complete/comics/x",
+            },
+        ), patch("app.import_downloaded_comic", side_effect=error):
+            return app.reconcile_acquisition_download(dict(self.DOWNLOAD))
+
+    def test_the_next_release_is_grabbed_without_being_asked(self):
+        store = Mock()
+        store.record_acquisition_release_failure.return_value = {"failureCount": 1}
+        with patch("app.search_prowlarr_releases", return_value={
+            "candidates": [{"id": "next-candidate", "title": "Saga 001 (2012)"}],
+        }) as search, patch("app.send_release_to_sabnzbd", return_value={
+            "status": "grabbed", "queueIds": ["new-queue-id"],
+        }) as send:
+            result = self._reconcile(
+                app.DownloadContentMismatch("No downloaded comic confidently matched Saga #1"),
+                store,
+            )
+        store.record_acquisition_release_failure.assert_called_once()
+        search.assert_called_once_with(7)
+        send.assert_called_once_with(7, "next-candidate")
+        self.assertEqual(result["status"], "fallback_queued")
+
+    def test_it_stops_rather_than_working_through_every_release(self):
+        """The same cap that bounds a download failure bounds this one."""
+        store = Mock()
+        store.record_acquisition_release_failure.return_value = {"failureCount": 3}
+        with patch("app.search_prowlarr_releases") as search, patch(
+            "app.send_release_to_sabnzbd"
+        ) as send:
+            result = self._reconcile(
+                app.DownloadContentMismatch("wrong comic again"), store
+            )
+        search.assert_not_called()
+        send.assert_not_called()
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("stopped after 3 failed releases", result["error"])
+
+    def test_a_local_failure_still_just_stops(self):
+        """A read-only disk is not fixed by downloading something else."""
+        store = Mock()
+        with patch("app.search_prowlarr_releases") as search:
+            result = self._reconcile(OSError("Read-only file system"), store)
+        search.assert_not_called()
+        store.record_acquisition_release_failure.assert_not_called()
+        self.assertEqual(result["status"], "failed")
+
+
 class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
     """A release whose download held the wrong comic must not come back.
 
