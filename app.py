@@ -232,7 +232,14 @@ def load_app_settings() -> dict[str, Any]:
             saved = {}
         if isinstance(saved, dict):
             for key, value in saved.items():
-                if key in _APP_SETTINGS_BOOL_KEYS and isinstance(value, bool):
+                if key not in _APP_SETTINGS_DEFAULTS:
+                    continue
+                # A malformed value falls back to the default rather than
+                # reaching the rest of the app as the wrong type.
+                if key in _APP_SETTINGS_BOOL_KEYS:
+                    if isinstance(value, bool):
+                        settings[key] = value
+                elif isinstance(value, str):
                     settings[key] = value
         return settings
 
@@ -591,6 +598,11 @@ def catalog_store() -> CatalogStore:
         # `_configured_path` exists to avoid.
         if _CATALOG_STORE is None or _CATALOG_STORE.database_path != database_path:
             _CATALOG_STORE = CatalogStore(database_path)
+        # The store derives issue titles and covers from the files themselves,
+        # so it needs to know which language the library asked for. Read it
+        # here rather than at construction: the setting can change while the
+        # server runs, and the store outlives any one request.
+        _CATALOG_STORE.preferred_language = preferred_language()
         return _CATALOG_STORE
 
 

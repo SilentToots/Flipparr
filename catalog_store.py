@@ -475,6 +475,12 @@ class CatalogStore:
 
     def __init__(self, database_path: str | Path):
         self.database_path = Path(database_path)
+        # The language the library asked for, set by the caller that knows the
+        # application settings. Empty means no preference, which trusts every
+        # file. A file that states another language still counts as owned and
+        # still appears in listings; it just stops writing its own title, year
+        # and cover onto records the whole run shares.
+        self.preferred_language = ""
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = threading.Lock()
         self._migrate()
@@ -1284,12 +1290,33 @@ class CatalogStore:
                 years.append(year)
         return min(years) if years else None
 
+    def _states_another_language(
+        self, filename: Any, embedded: dict[str, Any], wanted: str | None = None,
+    ) -> bool:
+        """True when a file says it is a language the library did not ask for.
+
+        A French edition filed as Saga #2 is right about the series and the
+        issue number, so its embedded title and cover land on the shared issue
+        record and the whole run reads as French. Silence is not a conflict:
+        most comics state no language at all.
+        """
+        wanted = str(
+            self.preferred_language if wanted is None else wanted or ""
+        ).strip().casefold()
+        if not wanted:
+            return False
+        stated = (
+            normalize_language((embedded or {}).get("language"))
+            or detect_language(filename)
+        )
+        return bool(stated and stated != wanted)
+
     def _local_issue_values(
         self, connection: sqlite3.Connection, issue_id: int
     ) -> dict[str, Any]:
         """Return the strongest file-owned values for an existing issue."""
         row = connection.execute(
-            """SELECT files.parsed_json, files.result_json,
+            """SELECT files.filename, files.parsed_json, files.result_json,
                       file_metadata_overrides.fields_json,
                       file_metadata_overrides.match_candidate_json
                FROM file_issue_links
@@ -1308,6 +1335,10 @@ class CatalogStore:
         selected = _load_json(row["match_candidate_json"], None)
         recommendation = selected or result.get("recommendation") or {}
         embedded = result.get("embedded_metadata") or {}
+        # A correction the user typed is theirs and stands either way; what a
+        # wrong-language file says about itself does not.
+        if self._states_another_language(row["filename"], embedded):
+            embedded = {}
         title = next((str(value).strip() for value in (
             override.get("subtitle"), recommendation.get("subtitle"),
             recommendation.get("story_title"), embedded.get("title"),
@@ -1671,6 +1702,14 @@ class CatalogStore:
         override = override or {}
         recommendation = dict(result.get("recommendation") or {})
         embedded = result.get("embedded_metadata") or {}
+        # The edition cover below prefers the cover inside the comic over the
+        # provider's. A French edition would otherwise become the face of an
+        # English run on the strength of being filed first.
+        wrong_language = self._states_another_language(
+            parsed.get("filename") or parsed.get("path"), embedded
+        )
+        if wrong_language:
+            embedded = {}
         override_mapping = {
             "title": "title", "subtitle": "subtitle", "publisher": "publisher",
             "publicationYear": "publication_year", "format": "format",
@@ -1809,7 +1848,9 @@ class CatalogStore:
                     recommendation.get("publication_year"),
                     recommendation.get("publisher") or embedded.get("publisher"),
                     recommendation.get("format") or embedded.get("format") or parsed.get("extension", "").lstrip(".").upper(),
-                    edition_kind, _json(isbns), (result.get("file_cover") or {}).get("url") or recommendation.get("cover"),
+                    edition_kind, _json(isbns),
+                    recommendation.get("cover") if wrong_language
+                    else (result.get("file_cover") or {}).get("url") or recommendation.get("cover"),
                     source, str(source_id) if source_id else None, recommendation.get("verification_status"),
                     recommendation.get("coverage_status"), now, now,
                 ),
@@ -6185,10 +6226,16 @@ class CatalogStore:
             if issue:
                 group["issueNumbers"].add(str(issue))
             group["files"].append(row["path"])
-            if cover:
+            # A French edition filed first would otherwise become the face of
+            # an English run. Its own cover is dropped; the provider's is not.
+            wrong_language = self._states_another_language(
+                row["filename"], embedded, preferred_language
+            )
+            file_covers = {cover_info.get("url")} if wrong_language else set()
+            if cover and cover not in file_covers:
                 group["covers"].append(cover)
             for candidate_cover in [cover_info.get("url"), *provider_covers]:
-                if candidate_cover:
+                if candidate_cover and candidate_cover not in file_covers:
                     group["covers"].append(candidate_cover)
             file_review = self._review_items(
                 row, result, parsed, recommendation, embedded, resolved, preferred_language

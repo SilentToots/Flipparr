@@ -2469,6 +2469,87 @@ class WrongLanguageIsFlaggedTests(unittest.TestCase):
             )
             self.assertEqual(len(self._language_items(store, "en")), 1)
 
+    def _library_with_embedded(self, root, embedded, filename="Example 002.cbz"):
+        """Like _library_with, but the caller supplies the whole metadata block."""
+        path = root / filename
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="2")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": embedded,
+                "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "2", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": {"url": "/api/file-cover?path=the-file.cbz"},
+            })
+        return store
+
+    def _only_series_run(self, store):
+        with sqlite3.connect(store.database_path) as connection:
+            rows = connection.execute("SELECT id FROM series_runs").fetchall()
+        self.assertEqual(len(rows), 1, "the fixture should make exactly one run")
+        return int(rows[0][0])
+
+    def _issue_titles(self, store):
+        with sqlite3.connect(store.database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            return [
+                row["title"] for row in connection.execute(
+                    "SELECT title FROM issues ORDER BY id"
+                ).fetchall()
+            ]
+
+    def test_a_wrong_language_file_does_not_name_the_issue(self):
+        """Rebuilding a run re-derives from the files that are present.
+
+        Saga's French edition supplied the title "Numero 2", so a rebuild
+        cleared the bad title and then wrote the same one straight back.
+        The run could not be repaired while that file was its input.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with_embedded(
+                Path(folder), {"language": "fr", "title": "Numero 2"},
+            )
+            store.preferred_language = "en"
+            run_id = self._only_series_run(store)
+            store.rebuild_series_run(run_id)
+            self.assertEqual(self._issue_titles(store), [None])
+
+    def test_a_file_in_the_wanted_language_still_names_the_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with_embedded(
+                Path(folder), {"language": "en", "title": "The Chapter"},
+            )
+            store.preferred_language = "en"
+            run_id = self._only_series_run(store)
+            store.rebuild_series_run(run_id)
+            self.assertEqual(self._issue_titles(store), ["The Chapter"])
+
+    def test_a_wrong_language_file_does_not_become_the_series_cover(self):
+        """The French Saga file was filed first and became the run's face."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with_embedded(
+                Path(folder), {"language": "fr", "title": "Numero 2"},
+            )
+            series = store.catalog("en")["series"]
+            self.assertEqual(len(series), 1)
+            self.assertNotIn(
+                "the-file.cbz", str(series[0].get("cover") or ""),
+                "the cover of a file in the wrong language",
+            )
+
+    def test_a_file_in_the_wanted_language_may_be_the_series_cover(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with_embedded(
+                Path(folder), {"language": "en", "title": "The Chapter"},
+            )
+            series = store.catalog("en")["series"]
+            self.assertIn("the-file.cbz", str(series[0].get("cover") or ""))
+
     def test_no_preference_flags_nothing(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._library_with(Path(folder), "fr")

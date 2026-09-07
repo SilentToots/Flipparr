@@ -1,3 +1,4 @@
+import json
 import email.message
 import io
 import pathlib
@@ -999,6 +1000,37 @@ class FilenameParserTests(unittest.TestCase):
 
             app.save_app_settings({"collectedEditionsEnabled": False})
             self.assertFalse(app.collected_editions_enabled())
+
+    def test_a_saved_language_preference_is_read_back(self):
+        """The loader used to copy only the boolean settings.
+
+        A preferred language was validated, written to disk, and then
+        silently ignored on every read, so the whole feature ran on the
+        default. It looked like it worked only because the default is en.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
+        ):
+            self.assertEqual(app.preferred_language(), "en")
+            app.save_app_settings({"preferredLanguage": "fr"})
+            self.assertEqual(app.load_app_settings()["preferredLanguage"], "fr")
+            self.assertEqual(app.preferred_language(), "fr")
+
+            app.save_app_settings({"preferredLanguage": ""})
+            self.assertEqual(app.preferred_language(), "")
+
+    def test_a_malformed_saved_setting_falls_back_to_the_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
+        ):
+            (Path(temp_dir) / "settings.json").write_text(json.dumps({
+                "preferredLanguage": 7, "collectedEditionsEnabled": "yes",
+            }))
+            settings = app.load_app_settings()
+            self.assertEqual(settings["preferredLanguage"], "en")
+            self.assertFalse(settings["collectedEditionsEnabled"])
 
     def test_app_settings_rejects_unknown_keys_and_non_bool(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
