@@ -834,11 +834,29 @@ function LibraryLoadingSkeleton({ scan = null }) {
   </div>;
 }
 
+// One ordering for runs and for collections, so the control is never inert on
+// whichever of the two is on screen. A collection has no addedAt or status of
+// its own, so those keys fall back to the title rather than to an arbitrary
+// order that would look like a broken sort.
+function sortLibrary(items, sort) {
+  const byTitle = (a, b) => String(a.title ?? a.name ?? "").localeCompare(String(b.title ?? b.name ?? ""), undefined, { numeric: true, sensitivity: "base" });
+  const sorted = [...items];
+  if (sort === "added") {
+    return sorted.sort((a, b) => String(b.addedAt ?? "").localeCompare(String(a.addedAt ?? "")) || byTitle(a, b));
+  }
+  if (sort === "attention") {
+    const rank = (item) => (item.status === "warning" ? 0 : 1);
+    return sorted.sort((a, b) => rank(a) - rank(b) || (b.unowned ?? 0) - (a.unowned ?? 0) || byTitle(a, b));
+  }
+  return sorted.sort(byTitle);
+}
+
 function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus }) {
   const [query, setQuery] = useState("");
   // Covers are the point of a comic library, so the grid leads.
   const [view, setView] = useState("grid");
   const [scope, setScope] = useState("runs");
+  const [sort, setSort] = useState("title");
   const [followingOnly, setFollowingOnly] = useState(false);
   const fallbackSeries = backendStatus === "offline" ? DEMO_SERIES : [];
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
@@ -850,7 +868,9 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const editionsOn = Boolean(catalog?.collectedEditionsEnabled);
   const effectiveScope = editionsOn ? scope : "runs";
   const scopedSeries = editionsOn ? series : series.filter((item) => !item.isCollectionSeries);
-  const displayedSeries = followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries;
+  const filteredSeries = followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries;
+  const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort), [filteredSeries, sort]);
+  const sortedFamilies = useMemo(() => sortLibrary(families, sort), [families, sort]);
   return (
     <>
       <div className="topbar"><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
@@ -862,8 +882,8 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
       <StatStrip stats={{ ...(catalog?.stats ?? { files: series.reduce((count, item) => count + item.owned, 0), needAttention: 0, damaged: 0 }), series: series.length }} />
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select><option>Title (A–Z)</option><option>Recently added</option><option>Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><CheckCircle size={18} weight={followingOnly ? "fill" : "regular"} /> Following</button> : null}</div>
-      {effectiveScope === "collections" ? (families.length ? <CollectionGroups families={families} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Title (A–Z)</option><option value="added">Recently added</option><option value="attention">Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><CheckCircle size={18} weight={followingOnly ? "fill" : "regular"} /> Following</button> : null}</div>
+      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       <AttentionPanel items={catalog?.inbox ?? []} onReview={() => onNavigate("metadata")} />
       </> : null}
     </>

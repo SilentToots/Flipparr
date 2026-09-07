@@ -6177,7 +6177,8 @@ class CatalogStore:
                 "monitoringStatus": run["monitoring_status"],
                 "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
-                "updatedAt": run["updated_at"], "aliases": alias_map.get(int(run["id"]), []),
+                "updatedAt": run["updated_at"], "addedAt": None,
+                "aliases": alias_map.get(int(run["id"]), []),
                 "identityConfidences": [], "issues": issues_by_series.get(int(run["id"]), []),
                 "editions": editions_by_series.get(int(run["id"]), []), "fileDetails": [],
                 "issueCatalog": issue_catalog_map.get(
@@ -6232,6 +6233,7 @@ class CatalogStore:
                     "acquisitionPreference": "either", "monitoringStatus": "cataloged",
                     "monitorRefresh": monitor_refresh_by_series.get(series_run_id) if series_run_id else None,
                     "hasProblem": False, "updatedAt": row["updated_at"],
+                    "addedAt": row["created_at"],
                     "aliases": alias_map.get(series_run_id, []) if series_run_id else [],
                     "identityConfidences": [],
                     "issues": issues_by_series.get(series_run_id, []) if series_run_id else [],
@@ -6274,6 +6276,11 @@ class CatalogStore:
                 group["identityConfidences"].append(int(row["identity_confidence"]))
             if row["updated_at"] > group["updatedAt"]:
                 group["updatedAt"] = row["updated_at"]
+            # When the newest comic in this run was first catalogued. "Recently
+            # added" means new comics arrived, so a run takes the newest of its
+            # files rather than the day the run itself appeared.
+            if group["addedAt"] is None or row["created_at"] > group["addedAt"]:
+                group["addedAt"] = row["created_at"]
             if publisher != "Publisher unknown":
                 group["publisher"] = publisher
             if year:
@@ -6372,6 +6379,7 @@ class CatalogStore:
                     "unowned": unowned, "missing": None,
                     "ownership": ownership,
                     "format": display_format, "updated": date, "time": clock,
+                    "addedAt": group["addedAt"],
                     "cover": group["covers"][0] if group["covers"] else None,
                     "coverCandidates": list(dict.fromkeys(group["covers"])),
                     "status": status, "files": group["files"],

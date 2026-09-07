@@ -2391,6 +2391,47 @@ class RebuildSeriesRunTests(unittest.TestCase):
                 store.rebuild_series_run(9999)
 
 
+class LibrarySortDataTests(unittest.TestCase):
+    """The dashboard sort needs a real timestamp to order by.
+
+    The control shipped as a bare select with no handler, so nothing had
+    ever asked the payload for an ordering key.
+    """
+
+    def _scan(self, root, names):
+        for name in names:
+            (root / name).write_bytes(b"comic")
+        items = [
+            ParsedFile(str(root / name), name, ".cbz", name.split(" ")[0], issue="1")
+            for name in names
+        ]
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: items, lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": parsed.series, "issue": "1",
+                    "record_type": "single_issue", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        return store
+
+    def test_every_run_reports_when_its_newest_comic_arrived(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._scan(Path(folder), ["Alpha 001.cbz", "Beta 001.cbz"])
+            series = store.catalog()["series"]
+            self.assertEqual(len(series), 2)
+            for item in series:
+                self.assertTrue(
+                    item["addedAt"], f"{item['title']} reported no addedAt",
+                )
+                # Sorting compares these as strings, so they must be
+                # comparable ISO timestamps, not display text.
+                self.assertRegex(item["addedAt"], r"^\d{4}-\d{2}-\d{2}T")
+
+
 class IssueFileCoverTests(unittest.TestCase):
     """Each issue shows the cover of the file that actually satisfies it.
 
