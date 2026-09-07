@@ -44,6 +44,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from catalog_store import CatalogStore
+from catalog_core_v2.language import (
+    LANGUAGE_NAMES,
+    detect_language as detect_release_language,
+    language_name,
+)
 from catalog_core_v2.provider_evidence import (
     COMIC_VINE_ISSUE_FIELDS,
     COMIC_VINE_VOLUME_FIELDS,
@@ -243,7 +248,7 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{key} must be true or false")
         if key == "preferredLanguage":
             value = str(value or "").strip().casefold()
-            if value and value not in _LANGUAGE_NAMES:
+            if value and value not in LANGUAGE_NAMES:
                 raise ValueError("Choose a language Flipparr can recognise in a release")
         clean[key] = value
     with _SETTINGS_CONFIG_LOCK:
@@ -1289,61 +1294,6 @@ def _enabled_acquisition_service(service_id: str) -> dict[str, Any]:
     return {**config, "url": _normalize_service_url(config.get("url"))}
 
 
-# Releases label a language as a word or as a short code. Two-letter codes are
-# ordinary words in other contexts -- "it", "de", "no" -- so they only count
-# written in capitals, which is how a release writes a tag and not how it
-# writes a title.
-_LANGUAGE_WORDS = {
-    "english": "en", "eng": "en",
-    "french": "fr", "francais": "fr", "français": "fr", "vf": "fr", "vostfr": "fr",
-    "spanish": "es", "espanol": "es", "español": "es", "castellano": "es",
-    "german": "de", "deutsch": "de",
-    "italian": "it", "italiano": "it",
-    "portuguese": "pt", "portugues": "pt", "português": "pt", "brazilian": "pt",
-    "russian": "ru", "japanese": "ja", "korean": "ko", "chinese": "zh",
-    "polish": "pl", "dutch": "nl", "turkish": "tr", "swedish": "sv",
-    "danish": "da", "finnish": "fi", "hungarian": "hu", "czech": "cs",
-    "greek": "el", "hebrew": "he", "arabic": "ar",
-}
-_LANGUAGE_CODES = {
-    "EN": "en", "ENG": "en",
-    "FR": "fr", "FRA": "fr", "FRE": "fr", "VF": "fr",
-    "ES": "es", "ESP": "es", "SPA": "es",
-    "DE": "de", "GER": "de", "DEU": "de",
-    "IT": "it", "ITA": "it",
-    "PT": "pt", "POR": "pt", "PTBR": "pt",
-    "RU": "ru", "RUS": "ru",
-    "JP": "ja", "JPN": "ja",
-    "KR": "ko", "KOR": "ko",
-    "PL": "pl", "POL": "pl",
-    "NL": "nl", "NLD": "nl",
-    "TR": "tr", "TUR": "tr",
-}
-
-
-def detect_release_language(title: Any) -> str | None:
-    """The language a release says it is, or None when it does not say.
-
-    Only what is stated is reported. Most releases say nothing, and guessing
-    from a publisher or a scanner's name would refuse far more than it caught.
-    """
-    found: set[str] = set()
-    for token in re.findall(r"[A-Za-zÀ-ÿ]+", str(title or "")):
-        word = _LANGUAGE_WORDS.get(token.casefold())
-        if word:
-            found.add(word)
-            continue
-        if token.isupper():
-            code = _LANGUAGE_CODES.get(token)
-            if code:
-                found.add(code)
-    if len(found) != 1:
-        # Nothing said, or a release claiming two languages -- a dual edition
-        # is not a wrong one, so it is left to the rest of the scoring.
-        return None
-    return found.pop()
-
-
 def preferred_language() -> str:
     return str(load_app_settings().get("preferredLanguage") or "").strip().casefold()
 
@@ -1448,21 +1398,6 @@ def _release_series_matches(title: str, series_title: Any, issue_number: Any) ->
         return False
     lead = _release_series_lead(title, issue_number)
     return lead is not None and normalized_title(lead) == wanted
-
-
-_LANGUAGE_NAMES = {
-    "en": "English", "fr": "French", "es": "Spanish", "de": "German",
-    "it": "Italian", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
-    "ko": "Korean", "zh": "Chinese", "pl": "Polish", "nl": "Dutch",
-    "tr": "Turkish", "sv": "Swedish", "da": "Danish", "fi": "Finnish",
-    "hu": "Hungarian", "cs": "Czech", "el": "Greek", "he": "Hebrew",
-    "ar": "Arabic",
-}
-
-
-def language_name(code: Any) -> str:
-    value = str(code or "").strip().casefold()
-    return _LANGUAGE_NAMES.get(value, value.upper() or "another language")
 
 
 def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
@@ -6534,7 +6469,7 @@ chooseButton.addEventListener('click', async () => {
 def catalog_api_payload() -> dict[str, Any]:
     """Add provider availability to the public catalog without exposing credentials."""
     store = catalog_store()
-    payload = store.catalog()
+    payload = store.catalog(preferred_language())
     enrichment = payload.get("enrichment") or {}
     provider_ids = [provider_id for provider_id, _values in _series_enrichment_provider_order()]
     cooldown_ids = {

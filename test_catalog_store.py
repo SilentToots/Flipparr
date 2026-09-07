@@ -2389,3 +2389,91 @@ class RebuildSeriesRunTests(unittest.TestCase):
             store = CatalogStore(Path(folder) / "catalog.db")
             with self.assertRaisesRegex(ValueError, "not found"):
                 store.rebuild_series_run(9999)
+
+
+class WrongLanguageIsFlaggedTests(unittest.TestCase):
+    """A comic in a language nobody asked for has to be visible.
+
+    The French DC Saga edition filed as Saga #2 looked correct everywhere:
+    right series, right issue number, right place on disk. The only way to
+    find it was to open the file.
+    """
+
+    def _library_with(self, root, embedded_language, filename="Example 002.cbz"):
+        path = root / filename
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="2")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": (
+                    {"language": embedded_language} if embedded_language else {}
+                ),
+                "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "2", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        return store
+
+    def _language_items(self, store, wanted):
+        return [
+            item for item in store.catalog(wanted)["inbox"]
+            if item["code"] == "wrong_language"
+        ]
+
+    def test_a_french_file_is_flagged_when_english_is_wanted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(Path(folder), "fr")
+            items = self._language_items(store, "en")
+            self.assertEqual(len(items), 1)
+            self.assertIn("French", items[0]["issue"])
+            self.assertEqual(items[0]["severity"], "warning")
+            self.assertEqual(items[0]["comparison"]["file"], "French")
+
+    def test_the_flag_offers_replace_rather_than_edit(self):
+        """The record is right and the file is wrong.
+
+        Library health renders the metadata category without a Replace
+        button, so a wrong-language file filed as metadata would tell the
+        user to replace it and then offer no way to do so.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(Path(folder), "fr")
+            self.assertEqual(self._language_items(store, "en")[0]["category"], "file")
+
+    def test_a_regional_tag_still_reads_as_its_language(self):
+        """ComicInfo often writes en-GB or pt_BR rather than a bare code."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(Path(folder), "fr-CA")
+            self.assertEqual(len(self._language_items(store, "en")), 1)
+
+    def test_the_wanted_language_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(Path(folder), "en")
+            self.assertEqual(self._language_items(store, "en"), [])
+
+    def test_a_file_that_says_nothing_is_not_guessed_at(self):
+        """Most comics state no language; inferring would flag the library."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(Path(folder), None)
+            self.assertEqual(self._language_items(store, "en"), [])
+
+    def test_the_filename_is_read_when_the_file_says_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(
+                Path(folder), None, filename="Example 002 (French).cbz"
+            )
+            self.assertEqual(len(self._language_items(store, "en")), 1)
+
+    def test_no_preference_flags_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library_with(Path(folder), "fr")
+            self.assertEqual(self._language_items(store, ""), [])
+            self.assertEqual(
+                [i for i in store.catalog()["inbox"] if i["code"] == "wrong_language"],
+                [], "no preference passed at all",
+            )

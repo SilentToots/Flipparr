@@ -12,6 +12,7 @@ import math
 import re
 import sqlite3
 import threading
+from catalog_core_v2.language import detect_language, language_name, normalize_language
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -5776,7 +5777,7 @@ class CatalogStore:
                 (file_path, code, fingerprint, _utc_now()),
             )
 
-    def catalog(self) -> dict[str, Any]:
+    def catalog(self, preferred_language: str | None = None) -> dict[str, Any]:
         self.reconcile_acquisition_jobs()
         with self._connect() as connection:
             roots = [dict(row) for row in connection.execute("SELECT * FROM library_roots ORDER BY id")]
@@ -6189,7 +6190,9 @@ class CatalogStore:
             for candidate_cover in [cover_info.get("url"), *provider_covers]:
                 if candidate_cover:
                     group["covers"].append(candidate_cover)
-            file_review = self._review_items(row, result, parsed, recommendation, embedded, resolved)
+            file_review = self._review_items(
+                row, result, parsed, recommendation, embedded, resolved, preferred_language
+            )
             active_replacement = replacement_by_file_id.get(int(row["id"]))
             if active_replacement:
                 for review in file_review:
@@ -6623,6 +6626,7 @@ class CatalogStore:
         recommendation: dict[str, Any],
         embedded: dict[str, Any],
         resolved: set[tuple[str, str, str]],
+        preferred_language: str | None = None,
     ) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
 
@@ -6660,6 +6664,32 @@ class CatalogStore:
                 "The filename and available sources did not produce a recommendation. Review the parsed identity before accepting a match.",
                 "warning",
             )
+        # A comic in a language nobody asked for looks correct in every listing:
+        # right series, right issue number, right place on disk. The only way to
+        # find the French edition filed as Saga #2 was to open it.
+        wanted = str(preferred_language or "").strip().casefold()
+        if wanted:
+            stated = (
+                normalize_language(embedded.get("language"))
+                or detect_language(row["filename"])
+            )
+            if stated and stated != wanted:
+                add(
+                    "wrong_language",
+                    f"Looks like a {language_name(stated)} edition",
+                    f"This file says it is {language_name(stated)}, and you asked for "
+                    f"{language_name(wanted)}. Replace it with \"Wrong edition or "
+                    "release\" if it is not the comic you wanted.",
+                    "warning",
+                    comparison={
+                        "field": "Language",
+                        "catalog": language_name(wanted),
+                        "file": language_name(stated),
+                    },
+                    # The record is right and the file is wrong, so this belongs
+                    # with the file problems: the fix is Replace, not Edit.
+                    category="file",
+                )
         rec_publisher = recommendation.get("publisher")
         embedded_publisher = embedded.get("publisher")
         rec_year = recommendation.get("publication_year")
