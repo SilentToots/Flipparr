@@ -2233,3 +2233,87 @@ class UpcomingIsNotMissingTests(unittest.TestCase):
             stats = store.catalog()["stats"]
             self.assertEqual(stats["unownedIssues"], 1, "only the released gap")
             self.assertEqual(stats["unpublishedIssues"], 1, "the unpublished issue")
+
+
+class FailedReleasesAreSearchedAgainTests(unittest.TestCase):
+    """A bad release must not need a person to replace it.
+
+    A download that turned out to be the wrong comic left its job failed with
+    a download row against it, so the missing search skipped it on both counts
+    and the only way forward was to open the release list by hand.
+    """
+
+    def _library_with_one_wanted_issue(self, root):
+        path = root / "Example 001.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        series_id = int(store.catalog()["series"][0]["id"])
+        today = dt.datetime.now().astimezone().date()
+        store.apply_issue_list(
+            series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+            [
+                {"number": str(n), "provider_id": str(100 + n),
+                 "publication_date": str(today - dt.timedelta(days=30)),
+                 "publication_year": today.year}
+                for n in (1, 2)
+            ],
+        )
+        store.create_acquisition_request("series", series_id, "issues")
+        waiting = store.acquisition_jobs_awaiting_release()
+        self.assertEqual(len(waiting), 1)
+        return store, waiting[0]
+
+    def _fail_the_download(self, store, job_id, *, blame_release):
+        store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+        download = store.record_acquisition_download(
+            job_id, "SAB-1", "Thor The Deviants Saga 002", "deviants-key"
+        )
+        self.assertEqual(store.acquisition_jobs_awaiting_release(), [],
+                         "a live download means nothing to search for")
+        if blame_release:
+            store.record_acquisition_release_failure(
+                job_id, "deviants-key", "Thor The Deviants Saga 002",
+                "No downloaded comic confidently matched Example #2",
+            )
+        store.update_acquisition_download(
+            int(download["id"]), "failed", error="import failed",
+            failure_stage="import",
+        )
+        store.update_acquisition_job(job_id, "failed", "Import needs attention")
+
+    def test_a_job_whose_release_was_blamed_is_searched_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, job_id = self._library_with_one_wanted_issue(Path(folder))
+            self._fail_the_download(store, job_id, blame_release=True)
+            self.assertEqual(
+                store.acquisition_jobs_awaiting_release(), [job_id],
+                "the release was the problem, so another one should be tried",
+            )
+
+    def test_a_local_failure_is_not_retried_with_a_different_release(self):
+        """A disk problem meets the same wall whatever is downloaded."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, job_id = self._library_with_one_wanted_issue(Path(folder))
+            self._fail_the_download(store, job_id, blame_release=False)
+            self.assertEqual(store.acquisition_jobs_awaiting_release(), [])
+
+    def test_an_imported_issue_is_never_searched_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, job_id = self._library_with_one_wanted_issue(Path(folder))
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            download = store.record_acquisition_download(
+                job_id, "SAB-2", "Example 002 (2020)", "good-key"
+            )
+            store.update_acquisition_download(int(download["id"]), "imported")
+            self.assertEqual(store.acquisition_jobs_awaiting_release(), [])

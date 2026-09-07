@@ -4226,16 +4226,38 @@ class CatalogStore:
     ) -> list[int]:
         """Jobs with nothing sent to the download client yet.
 
-        A job qualifies when no download row exists for it and neither it nor
-        its request has been cancelled or fulfilled -- the state every job is
-        in the moment a request is created.
+        A job qualifies when nothing it has downloaded is still standing and
+        neither it nor its request has been cancelled or fulfilled.
+
+        That includes a job whose download failed because the release was
+        wrong. The release is recorded as unusable when that happens, so
+        searching again picks a different one; leaving such a job out meant a
+        bad release could only be replaced by hand.
+
+        A job that failed without any release being blamed is left alone. Its
+        problem is local -- a disk, a quarantine that needs attention -- and
+        another release would meet the same wall.
 
         Without a request id this is every such job in the library, which is
         what a "search for missing" pass over the whole backlog needs.
         """
         clauses = [
-            "acquisition_downloads.id IS NULL",
-            "acquisition_jobs.status IN ('queued', 'waiting')",
+            # Nothing queued, downloading or already imported for this issue.
+            """NOT EXISTS(
+                   SELECT 1 FROM acquisition_downloads
+                    WHERE acquisition_downloads.job_id=acquisition_jobs.id
+                      AND acquisition_downloads.status <> 'failed'
+               )""",
+            """(
+                   acquisition_jobs.status IN ('queued', 'waiting')
+                   OR (
+                       acquisition_jobs.status='failed'
+                       AND EXISTS(
+                           SELECT 1 FROM acquisition_release_failures
+                            WHERE acquisition_release_failures.job_id=acquisition_jobs.id
+                       )
+                   )
+               )""",
             "acquisition_requests.status='open'",
         ]
         parameters: list[Any] = []
@@ -4248,8 +4270,6 @@ class CatalogStore:
                    FROM acquisition_jobs
                    JOIN acquisition_requests
                      ON acquisition_requests.id=acquisition_jobs.request_id
-                   LEFT JOIN acquisition_downloads
-                     ON acquisition_downloads.job_id=acquisition_jobs.id
                    WHERE {" AND ".join(clauses)}
                    ORDER BY acquisition_jobs.id""",
                 parameters,
