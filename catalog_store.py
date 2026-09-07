@@ -3862,8 +3862,28 @@ class CatalogStore:
                     JOIN acquisition_requests
                       ON acquisition_requests.id=acquisition_request_issues.request_id
                     JOIN issues ON issues.id=acquisition_request_issues.issue_id
+                    -- Scoped to the issues the replaced file actually covers.
+                    -- Joined on the request alone, one damaged issue turned
+                    -- every issue on a followed run into a replacement target,
+                    -- and the branch below then kept all of them queued no
+                    -- matter what was already owned.
                     LEFT JOIN file_replacement_requests
                       ON file_replacement_requests.acquisition_request_id=acquisition_requests.id
+                     AND (
+                       EXISTS(
+                           SELECT 1 FROM file_issue_links
+                            WHERE file_issue_links.file_id=file_replacement_requests.file_id
+                              AND file_issue_links.issue_id=issues.id
+                       )
+                       OR EXISTS(
+                           SELECT 1 FROM file_edition_links
+                             JOIN edition_coverage_claims
+                               ON edition_coverage_claims.edition_id=file_edition_links.edition_id
+                            WHERE file_edition_links.file_id=file_replacement_requests.file_id
+                              AND edition_coverage_claims.issue_id=issues.id
+                              AND edition_coverage_claims.resolution_status='resolved'
+                       )
+                     )
                     WHERE 1=1 {request_filter}""",
                 parameters,
             ).fetchall()

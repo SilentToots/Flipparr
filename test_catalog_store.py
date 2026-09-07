@@ -2116,3 +2116,77 @@ class WholeBacklogAwaitingReleaseTests(unittest.TestCase):
                 )
 
             self.assertEqual(store.acquisition_jobs_awaiting_release(), [])
+
+
+class ReplacementScopeTests(unittest.TestCase):
+    def test_a_replacement_sharing_a_run_s_request_only_wants_its_own_issue(self):
+        """A replacement must not turn a whole followed run back into wanted items.
+
+        Current code gives each replacement its own acquisition request, but
+        libraries carry rows from builds that attached it to the followed run's
+        request instead. Matched on the request alone, every issue on that run
+        then looked like a replacement target and reconciliation kept it queued
+        however much was already owned -- 160 of 161 issues, in the library
+        that found this, all re-downloaded.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+
+            def parsed_for(number):
+                path = root / f"Example {number:03d}.cbz"
+                path.write_bytes(b"comic")
+                return ParsedFile(str(path), path.name, ".cbz", "Example",
+                                  issue=str(number))
+
+            def inventory(parsed):
+                return {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "title": "Example", "issue": parsed.issue,
+                        "record_type": "single_issue",
+                        "publisher": "Example Press", "source": "Test",
+                    },
+                    "file_cover": None,
+                }
+
+            store = CatalogStore(root / "catalog.db")
+            files = [parsed_for(n) for n in (1, 2, 3)]
+            store.perform_scan(
+                store.begin_scan(str(root), True), lambda *_: files, inventory
+            )
+            series_id = int(store.catalog()["series"][0]["id"])
+            today = dt.datetime.now().astimezone().date()
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [
+                    {"number": str(n), "provider_id": str(100 + n),
+                     "publication_date": str(today - dt.timedelta(days=30)),
+                     "publication_year": today.year}
+                    for n in (1, 2, 3)
+                ],
+            )
+            run_request = int(
+                store.create_acquisition_request("series", series_id, "issues")["id"]
+            )
+
+            damaged = next(
+                item for item in store.catalog()["series"][0]["fileDetails"]
+                if "001" in item["filename"]
+            )
+            store.request_file_replacement(int(damaged["id"]), "corrupt")
+
+            # The shape older builds left behind: the replacement points at the
+            # followed run's request, which covers every issue in the run.
+            with store._connect() as connection:
+                connection.execute(
+                    "UPDATE file_replacement_requests SET acquisition_request_id=?",
+                    (run_request,),
+                )
+            store.reconcile_acquisition_jobs()
+
+            waiting = store.acquisition_jobs_awaiting_release()
+            self.assertEqual(
+                len(waiting), 1,
+                "only the replaced issue is wanted; #2 and #3 are owned",
+            )
