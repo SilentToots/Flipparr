@@ -1510,7 +1510,7 @@ function SecuritySettings({ onChanged, onSignOut }) {
       checked={Boolean(config.localBypass)}
       onChange={(next) => save({ localBypass: next })}
       title="Skip sign-in on local addresses"
-      description="Off by default. Anything reaching this app through a tunnel, reverse proxy or container bridge arrives from a private address and would be let straight in — so turn this on only if you know the traffic is genuinely local, and set COMICARR_TRUSTED_PROXIES when a proxy is in front."
+      description="Off by default. Anything reaching this app through a tunnel, reverse proxy or container bridge arrives from a private address and would be let straight in — so turn this on only if you know the traffic is genuinely local, and set FLIPPARR_TRUSTED_PROXIES when a proxy is in front."
     />
     <div className="auth-credentials">
       <label className="form-field"><span>Username</span>
