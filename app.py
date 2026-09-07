@@ -1857,6 +1857,41 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
+def _auto_release_for_retry(job_id: int) -> dict[str, Any] | None:
+    """Send the strongest unused release for a retried job to SABnzbd.
+
+    Retrying a failed acquisition used to reset the job and hand the person a
+    list to choose from. The scoring that already picks a fallback release on
+    its own once SABnzbd proves one unusable is the same scoring that ranks
+    that list, so a retry can make the same choice without being asked.
+
+    Returns None when the choice genuinely needs a person -- nothing scored
+    high enough, or a service could not answer -- and the caller falls back to
+    presenting the list.
+    """
+    try:
+        search = search_prowlarr_releases(job_id)
+    except Exception as exc:
+        log_event(
+            "retry_release_search_failed", level="warning",
+            job_id=job_id, error=str(exc),
+        )
+        return None
+    candidates = search.get("candidates") if isinstance(search, dict) else []
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    best = candidates[0]
+    try:
+        grabbed = send_release_to_sabnzbd(job_id, str(best["id"]))
+    except Exception as exc:
+        log_event(
+            "retry_release_send_failed", level="warning",
+            job_id=job_id, release=str(best.get("title") or ""), error=str(exc),
+        )
+        return None
+    return {**grabbed, "release": best}
+
+
 def _fallback_after_sab_failure(
     store: CatalogStore, download: dict[str, Any], message: str
 ) -> dict[str, Any]:
@@ -6449,13 +6484,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         acquisition_retry = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/retry", parsed_url.path)
         if acquisition_retry:
+            retry_job_id = int(acquisition_retry.group(1))
             try:
-                result = catalog_store().retry_acquisition_job(
-                    int(acquisition_retry.group(1))
-                )
+                result = catalog_store().retry_acquisition_job(retry_job_id)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
+            # Fixing a request should choose the best release available rather
+            # than stopping to ask which one. The list is the fallback, not the
+            # first step.
+            if result["action"] == "research":
+                grabbed = _auto_release_for_retry(retry_job_id)
+                if grabbed:
+                    release_title = str((grabbed.get("release") or {}).get("title") or "")
+                    result = {
+                        "id": str(retry_job_id), "status": "grabbed", "action": "grabbed",
+                        "detail": grabbed.get("detail") or "Release sent to SABnzbd.",
+                        "releaseTitle": release_title,
+                    }
             self.send_json(result, 202 if result["action"] == "reprocess" else 200)
             return
         acquisition_grab = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/grab", parsed_url.path)

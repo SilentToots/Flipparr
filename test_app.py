@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from app import CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_release_for_retry, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -2341,3 +2341,47 @@ class FilenameParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
+    """Fixing a request should pick the best available release, not ask for one."""
+
+    def test_retry_grabs_the_strongest_unused_release(self):
+        best = {"id": "best-candidate", "title": "Fables.095.repack"}
+        with patch("app.search_prowlarr_releases", return_value={
+            "candidateCount": 2,
+            "candidates": [best, {"id": "second", "title": "Fables.095.other"}],
+        }) as search, patch("app.send_release_to_sabnzbd", return_value={
+            "status": "grabbed", "queueIds": ["queue-1"],
+            "detail": "Release sent to SABnzbd.",
+        }) as send:
+            result = _auto_release_for_retry(7)
+
+        search.assert_called_once_with(7)
+        # The list is already ranked, so the first entry is the best available.
+        send.assert_called_once_with(7, "best-candidate")
+        self.assertEqual(result["status"], "grabbed")
+        self.assertEqual(result["release"], best)
+
+    def test_retry_defers_to_a_person_when_nothing_scores_well_enough(self):
+        with patch("app.search_prowlarr_releases", return_value={
+            "candidateCount": 0, "candidates": [],
+        }), patch("app.send_release_to_sabnzbd") as send:
+            self.assertIsNone(_auto_release_for_retry(7))
+        send.assert_not_called()
+
+    def test_retry_defers_to_a_person_when_the_indexer_cannot_answer(self):
+        with patch(
+            "app.search_prowlarr_releases", side_effect=RuntimeError("Prowlarr is down")
+        ), patch("app.send_release_to_sabnzbd") as send:
+            self.assertIsNone(_auto_release_for_retry(7))
+        send.assert_not_called()
+
+    def test_retry_defers_to_a_person_when_the_chosen_release_cannot_be_sent(self):
+        """A failed hand-off must not look like a queued download."""
+        with patch("app.search_prowlarr_releases", return_value={
+            "candidateCount": 1, "candidates": [{"id": "best", "title": "Fables.095"}],
+        }), patch(
+            "app.send_release_to_sabnzbd", side_effect=ReleaseDownloadError("nzb gone")
+        ):
+            self.assertIsNone(_auto_release_for_retry(7))
