@@ -209,6 +209,11 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # First-run setup. Stored with the instance rather than in the browser so
     # finishing setup on a laptop does not leave a phone still being prompted.
     "setupCompleted": False,
+    # The language wanted for acquisitions. A release that says it is another
+    # language is not grabbed, and one that gets as far as import is refused
+    # rather than filed silently under the issue it claims to be. Empty means
+    # no preference, which accepts anything.
+    "preferredLanguage": "en",
 }
 _APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted"})
 
@@ -236,6 +241,10 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"Unknown setting: {key}")
         if key in _APP_SETTINGS_BOOL_KEYS and not isinstance(value, bool):
             raise ValueError(f"{key} must be true or false")
+        if key == "preferredLanguage":
+            value = str(value or "").strip().casefold()
+            if value and value not in _LANGUAGE_NAMES:
+                raise ValueError("Choose a language Flipparr can recognise in a release")
         clean[key] = value
     with _SETTINGS_CONFIG_LOCK:
         current = dict(_APP_SETTINGS_DEFAULTS)
@@ -1280,6 +1289,74 @@ def _enabled_acquisition_service(service_id: str) -> dict[str, Any]:
     return {**config, "url": _normalize_service_url(config.get("url"))}
 
 
+# Releases label a language as a word or as a short code. Two-letter codes are
+# ordinary words in other contexts -- "it", "de", "no" -- so they only count
+# written in capitals, which is how a release writes a tag and not how it
+# writes a title.
+_LANGUAGE_WORDS = {
+    "english": "en", "eng": "en",
+    "french": "fr", "francais": "fr", "français": "fr", "vf": "fr", "vostfr": "fr",
+    "spanish": "es", "espanol": "es", "español": "es", "castellano": "es",
+    "german": "de", "deutsch": "de",
+    "italian": "it", "italiano": "it",
+    "portuguese": "pt", "portugues": "pt", "português": "pt", "brazilian": "pt",
+    "russian": "ru", "japanese": "ja", "korean": "ko", "chinese": "zh",
+    "polish": "pl", "dutch": "nl", "turkish": "tr", "swedish": "sv",
+    "danish": "da", "finnish": "fi", "hungarian": "hu", "czech": "cs",
+    "greek": "el", "hebrew": "he", "arabic": "ar",
+}
+_LANGUAGE_CODES = {
+    "EN": "en", "ENG": "en",
+    "FR": "fr", "FRA": "fr", "FRE": "fr", "VF": "fr",
+    "ES": "es", "ESP": "es", "SPA": "es",
+    "DE": "de", "GER": "de", "DEU": "de",
+    "IT": "it", "ITA": "it",
+    "PT": "pt", "POR": "pt", "PTBR": "pt",
+    "RU": "ru", "RUS": "ru",
+    "JP": "ja", "JPN": "ja",
+    "KR": "ko", "KOR": "ko",
+    "PL": "pl", "POL": "pl",
+    "NL": "nl", "NLD": "nl",
+    "TR": "tr", "TUR": "tr",
+}
+
+
+def detect_release_language(title: Any) -> str | None:
+    """The language a release says it is, or None when it does not say.
+
+    Only what is stated is reported. Most releases say nothing, and guessing
+    from a publisher or a scanner's name would refuse far more than it caught.
+    """
+    found: set[str] = set()
+    for token in re.findall(r"[A-Za-zÀ-ÿ]+", str(title or "")):
+        word = _LANGUAGE_WORDS.get(token.casefold())
+        if word:
+            found.add(word)
+            continue
+        if token.isupper():
+            code = _LANGUAGE_CODES.get(token)
+            if code:
+                found.add(code)
+    if len(found) != 1:
+        # Nothing said, or a release claiming two languages -- a dual edition
+        # is not a wrong one, so it is left to the rest of the scoring.
+        return None
+    return found.pop()
+
+
+def preferred_language() -> str:
+    return str(load_app_settings().get("preferredLanguage") or "").strip().casefold()
+
+
+def release_language_conflicts(title: Any, wanted: str | None = None) -> str | None:
+    """The language a release states, when that is not the one wanted."""
+    want = (wanted if wanted is not None else preferred_language()).strip().casefold()
+    if not want:
+        return None
+    stated = detect_release_language(title)
+    return stated if stated and stated != want else None
+
+
 def _release_tokens(value: Any) -> list[str]:
     return re.findall(r"[a-z0-9]+", str(value or "").casefold())
 
@@ -1373,8 +1450,28 @@ def _release_series_matches(title: str, series_title: Any, issue_number: Any) ->
     return lead is not None and normalized_title(lead) == wanted
 
 
+_LANGUAGE_NAMES = {
+    "en": "English", "fr": "French", "es": "Spanish", "de": "German",
+    "it": "Italian", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
+    "ko": "Korean", "zh": "Chinese", "pl": "Polish", "nl": "Dutch",
+    "tr": "Turkish", "sv": "Swedish", "da": "Danish", "fi": "Finnish",
+    "hu": "Hungarian", "cs": "Czech", "el": "Greek", "he": "Hebrew",
+    "ar": "Arabic",
+}
+
+
+def language_name(code: Any) -> str:
+    value = str(code or "").strip().casefold()
+    return _LANGUAGE_NAMES.get(value, value.upper() or "another language")
+
+
 def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
     title = str(release.get("title") or "")
+    # A release that says it is another language is not this comic in any
+    # useful sense, so it never reaches a score that could be grabbed.
+    conflict = release_language_conflicts(title, context.get("preferredLanguage"))
+    if conflict:
+        return 0, [f"Labelled as {language_name(conflict)}"]
     score = 0
     reasons: list[str] = []
     if _release_series_matches(
@@ -1603,6 +1700,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     if not forms:
         raise ValueError("This issue has no series title to search for")
     query = forms[0]
+    context.setdefault("preferredLanguage", preferred_language())
     store.update_acquisition_job(job_id, "searching", f"Searching Prowlarr for {query}")
     releases: list[dict[str, Any]] = []
     for form in forms:
@@ -1840,6 +1938,19 @@ def select_downloaded_comic(
         raise DownloadContentMismatch(
             f"No downloaded comic confidently matched {context.get('seriesTitle')} "
             f"#{context.get('issueNumber')}"
+        )
+    # Said in the file or in the folder it arrived in. Refusing here is what
+    # makes a foreign edition visible: filed silently, it looks like the issue
+    # it claims to be and is only found by opening it.
+    wanted = context.get("preferredLanguage")
+    conflict = (
+        release_language_conflicts(Path(selected["path"]).name, wanted)
+        or release_language_conflicts(Path(source).name, wanted)
+    )
+    if conflict:
+        raise DownloadContentMismatch(
+            f"The download is labelled as {language_name(conflict)}, "
+            f"not {language_name(wanted if wanted is not None else preferred_language())}"
         )
     return selected
 

@@ -2861,3 +2861,69 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
             OSError("Read-only file system")
         )
         store.record_acquisition_release_failure.assert_not_called()
+
+
+class ReleaseLanguageTests(unittest.TestCase):
+    """A foreign edition must be refused, not filed under the issue it claims.
+
+    The French "DC Saga" anthology imported as Saga #2 and #3 and sat in the
+    library looking correct. Nothing about the catalogue said otherwise; the
+    only way to find it was to open the file.
+    """
+
+    STATED = [
+        ("Comics.FR.-.DC.Saga.(Urban.Comics).-.002 (July, 2012) (cbz)", "fr"),
+        ("Batman 001 (2016) (Digital) (English)", "en"),
+        ("Batman 001 (2016) (Spanish) (Digital)", "es"),
+        ("Batman 001 ITA (2016)", "it"),
+    ]
+    UNSTATED = [
+        "Saga 006 (2012) (Digital) (Zone-Empire)",
+        "Saga.068.2024.Digital.Zone-Empire",
+        "Fables.095.(2010).(Digital).(NahgaEmpire)",
+        "Fables.Vol.1.No.129.Jul.2013.SCAN.Comic.eBook-iNTENSiTY",
+        "Grab Bag 2013.05.01 Fables 031 (2005) (Digital) (Nahga-Empire)",
+        '2022.04.27 [46/80] - yEnc "Saga 058 (2022) (Digital) (Zone-Empire).cbr"',
+        # A dual-language edition is not a wrong one.
+        "Batman 001 (English) (French) (2016)",
+        # "It" is a word long before it is Italian.
+        "Let It Bleed 003 (2019) (Digital)",
+    ]
+
+    def test_a_stated_language_is_read(self):
+        for title, expected in self.STATED:
+            with self.subTest(title=title):
+                self.assertEqual(app.detect_release_language(title), expected)
+
+    def test_silence_is_not_a_guess(self):
+        """Most releases say nothing, and inferring would refuse far too much."""
+        for title in self.UNSTATED:
+            with self.subTest(title=title):
+                self.assertIsNone(app.detect_release_language(title))
+
+    def test_a_foreign_release_cannot_reach_a_strong_match(self):
+        score, reasons = app._release_candidate_score(
+            {"title": "Comics.FR.-.DC.Saga.(Urban.Comics).-.002 (July, 2012) (cbz)",
+             "categories": [{"id": "7030"}]},
+            {"seriesTitle": "DC Saga", "issueNumber": "2", "preferredLanguage": "en"},
+        )
+        self.assertEqual(score, 0)
+        self.assertIn("French", reasons[0])
+
+    def test_the_wanted_language_is_not_penalised(self):
+        self.assertIsNone(
+            app.release_language_conflicts("Batman 001 (2016) (English)", "en")
+        )
+
+    def test_no_preference_accepts_any_language(self):
+        self.assertIsNone(
+            app.release_language_conflicts("Comics.FR.-.DC.Saga.-.002", "")
+        )
+
+    def test_a_reader_of_french_gets_french(self):
+        self.assertIsNone(
+            app.release_language_conflicts("Comics.FR.-.DC.Saga.-.002", "fr")
+        )
+        self.assertEqual(
+            app.release_language_conflicts("Batman 001 (2016) (English)", "fr"), "en"
+        )
