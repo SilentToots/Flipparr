@@ -1292,13 +1292,94 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     return bool(re.search(rf"(?:#|\b0*){escaped}(?!\d)", title, re.I))
 
 
+# Usenet subjects wrap the real name in quotes; posts are often prefixed with a
+# date stamp, a part counter, or a poster's tag. None of that is the series, and
+# the date in particular also looks like an issue number.
+_RELEASE_QUOTED_NAME = re.compile(r'"([^"]{4,})"')
+_RELEASE_NOISE_PREFIX = re.compile(
+    r"""^\s*(?:
+          \[[^\]]*\]                      # [46/80]
+        | \((?:\d{1,4}/\d{1,4})\)         # (1/12)
+        | \d{4}[.\-/\s]\d{2}[.\-/\s]\d{2}  # 2013.05.01, before or after dots go
+        | \d{1,3}/\d{1,3}                  # 46/80
+        | grab\s*bag | 0-?day | yenc | req(?:uest)?
+        | [-–—:]
+    )\s*""",
+    re.I | re.X,
+)
+# A trailing "Vol 1 No" or "#" belongs to the number, not to the series name.
+_RELEASE_NUMBER_LEAD = re.compile(
+    r"\b(?:v(?:ol(?:ume)?)?\.?\s*\d*|n(?:o|um(?:ber)?)?\.?|issue|#)\s*$", re.I
+)
+
+
+def _release_series_lead(title: str, issue_number: Any) -> str | None:
+    """The series name a release states, or None when it states none.
+
+    A release names its series before the issue number and its provenance
+    after, so the series is the text in front of that number -- once the
+    wrappers Usenet adds in front of the name are taken off.
+    """
+    number = str(issue_number or "").strip()
+    if not number:
+        return None
+    text = str(title or "")
+    quoted = _RELEASE_QUOTED_NAME.search(text)
+    if quoted:
+        # A yEnc subject carries the real filename in quotes.
+        text = quoted.group(1)
+    def strip_noise(value: str) -> str:
+        previous = None
+        while previous != value:
+            previous = value
+            value = _RELEASE_NOISE_PREFIX.sub("", value)
+        return value
+
+    # Once with the separators the poster used, once after they are normalised:
+    # a date is "2013.05.01" before and "2013 05 01" after.
+    text = strip_noise(text)
+    text = strip_noise(re.sub(r"[._]+", " ", text))
+    escaped = re.escape(number.lstrip("0") or "0")
+    found = re.search(rf"(?:#|\b0*){escaped}(?!\d)", text, re.I)
+    if not found:
+        return None
+    lead = text[: found.start()]
+    # "Fables Vol 1 No 129" leaves "Fables Vol 1 No", which takes two passes.
+    previous = None
+    while previous != lead:
+        previous = lead
+        lead = _RELEASE_NUMBER_LEAD.sub("", lead)
+    return lead
+
+
+def _release_series_matches(title: str, series_title: Any, issue_number: Any) -> bool:
+    """Whether a release is this series, not just a name containing its words.
+
+    Asking only that the wanted words appear somewhere made every release
+    containing them score as a title match. Wanting "Saga" took "Thor: The
+    Deviants Saga", the French "DC Saga" anthology, "Conan Saga", "The Saga of
+    Swamp Thing", and two Dragon Ball Z .mp4 files -- because the one word they
+    share is the whole of the wanted title. Any short name is a substring of
+    something longer: Chew, Hulk, Batman.
+
+    The series a release names has to be the series wanted. Comparing that
+    rather than the whole string also stops "Batman Beyond" answering a request
+    for "Batman", which testing only the end of the name would have allowed.
+    """
+    wanted = normalized_title(str(series_title or ""))
+    if not wanted:
+        return False
+    lead = _release_series_lead(title, issue_number)
+    return lead is not None and normalized_title(lead) == wanted
+
+
 def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
     title = str(release.get("title") or "")
-    release_tokens = set(_release_tokens(title))
-    series_tokens = set(_release_tokens(context.get("seriesTitle")))
     score = 0
     reasons: list[str] = []
-    if series_tokens and series_tokens.issubset(release_tokens):
+    if _release_series_matches(
+        title, context.get("seriesTitle"), context.get("issueNumber")
+    ):
         score += 50
         reasons.append("Series title matches")
     if _release_issue_matches(title, context.get("issueNumber")):

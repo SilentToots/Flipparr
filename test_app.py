@@ -2673,3 +2673,77 @@ class SearchMissingAsksFirstTests(unittest.TestCase):
         self.assertEqual(result["searching"], 161)
         self.assertIn("161 missing issues", result["detail"])
         thread.assert_not_called()
+
+
+class ReleaseSeriesMatchTests(unittest.TestCase):
+    """A release has to be the series, not merely contain its name.
+
+    Scoring asked whether the wanted title's words appeared anywhere in the
+    release name, so a one-word title matched everything containing that word.
+    Searching for Saga's missing issues grabbed Thor: The Deviants Saga, the
+    French DC Saga anthology, Conan Saga, The Saga of Swamp Thing, and two
+    Dragon Ball Z .mp4 files.
+
+    Every release below is one this actually grabbed. The split is by what the
+    file turned out to be, not by how its name looks.
+    """
+
+    # Different comics -- and, twice, not comics at all.
+    WRONG_SERIES = [
+        ("Thor-The.Deviants.Saga.001.2012.digital.Marika-Empire", "Saga", "1"),
+        ("Comics.FR.-.DC.Saga.(Urban.Comics).-.002 (July, 2012) (cbz)", "Saga", "2"),
+        ("Comics.FR.-.DC.Saga.(Urban.Comics).-.003 (July, 2012) (cbz)", "Saga", "3"),
+        ("Thor Deviants Saga 004 (2012) (Digital) (Shadowcat-Empire)", "Saga", "4"),
+        ("Thor Deviants Saga 005 (2012) (Digital) (Shadowcat-Empire)", "Saga", "5"),
+        ("Dragon Ball Z Revised Manga Cut Saga 1 - The Saiyan Invasion 16 - 008 - "
+         "Come Forth Shen Long The Saiyans Finally Arrive On Earth.mp4", "Saga", "8"),
+        ("Conan Saga v1 017 (1988)", "Saga", "17"),
+        ("The Saga of Swamp Thing 041 [1985] [digital] [Marika-Empire]", "Saga", "41"),
+        # Not from this incident: a prefix test would let these through.
+        ("Batman Beyond 001 (2016) (Digital)", "Batman", "1"),
+        ("Hulk and Power Pack 001 (2007) (Digital)", "Hulk", "1"),
+    ]
+
+    # The right comic, behind whatever wrapper the poster used.
+    RIGHT_SERIES = [
+        ("Saga 006 (2012) (Digital) (Zone-Empire)", "Saga", "6"),
+        ("Saga.068.2024.Digital.Zone-Empire", "Saga", "68"),
+        # No brackets, so the scene group trails the issue number.
+        ("Saga 015 2013 digital Minutemen-Spaztastic (cbr)", "Saga", "15"),
+        # A yEnc subject: the real name is the quoted part.
+        ('2022.04.27 [46/80] - yEnc "Saga 058 (2022) (Digital) (Zone-Empire).cbr"',
+         "Saga", "58"),
+        ('2022.05.25 [50/76] - yEnc "Saga 059 (2022) (Digital) (Zone-Empire).cbr"',
+         "Saga", "59"),
+        # A posting tag and a date in front of the name.
+        ("Grab Bag 2013.05.01 Fables 031 (2005) (Digital) (Nahga-Empire)", "Fables", "31"),
+        ("Grab Bag 2013.05.01 Fables 091 (2010) (Digital) (Nahga-Empire)", "Fables", "91"),
+        # The number is written out as "Vol 1 No 129".
+        ("Fables.Vol.1.No.129.Jul.2013.SCAN.Comic.eBook-iNTENSiTY", "Fables", "129"),
+        ("Fables.095.(2010).(Digital).(NahgaEmpire)", "Fables", "95"),
+        ("Absolute Flash 002 (2025) (Digital) (Shan-Empire)", "Absolute Flash", "2"),
+        ("The Department of Truth 012 (2021) (Digital) (Zone-Empire)",
+         "The Department of Truth", "12"),
+    ]
+
+    def score(self, title, series, issue):
+        return app._release_candidate_score(
+            {"title": title, "categories": [{"id": "7030"}]},
+            {"seriesTitle": series, "issueNumber": issue},
+        )[0]
+
+    def test_another_series_carrying_the_name_never_reaches_a_strong_match(self):
+        for title, series, issue in self.WRONG_SERIES:
+            with self.subTest(title=title):
+                self.assertLess(
+                    self.score(title, series, issue), 85,
+                    f"{title!r} is not {series}",
+                )
+
+    def test_the_series_itself_still_reaches_a_strong_match(self):
+        for title, series, issue in self.RIGHT_SERIES:
+            with self.subTest(title=title):
+                self.assertGreaterEqual(
+                    self.score(title, series, issue), 85,
+                    f"{title!r} is {series}",
+                )
