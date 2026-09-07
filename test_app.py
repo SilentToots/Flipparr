@@ -1,3 +1,4 @@
+import email.message
 import io
 import os
 import tempfile
@@ -11,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from app import CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_release_for_retry, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_release_for_retry, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -509,7 +510,9 @@ class FilenameParserTests(unittest.TestCase):
         upload.assert_not_called()
 
     def test_multipart_nzb_upload_uses_the_sab_file_field(self):
-        with patch("app.urllib.request.urlopen", return_value=io.BytesIO(b'{"status": true}')) as open_url:
+        opener = Mock()
+        opener.open.return_value = io.BytesIO(b'{"status": true}')
+        with patch("app.urllib.request.build_opener", return_value=opener):
             result = post_multipart_file_json(
                 "http://sab/api?mode=addfile",
                 field_name="name",
@@ -519,7 +522,7 @@ class FilenameParserTests(unittest.TestCase):
                 headers={"Accept": "application/json"},
             )
 
-        request = open_url.call_args.args[0]
+        request = opener.open.call_args.args[0]
         body = request.data
         self.assertTrue(request.get_header("Content-type").startswith("multipart/form-data; boundary="))
         self.assertIn(b'Content-Disposition: form-data; name="name"; filename="Absolute Batman 004.nzb"', body)
@@ -2385,3 +2388,81 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
             "app.send_release_to_sabnzbd", side_effect=ReleaseDownloadError("nzb gone")
         ):
             self.assertIsNone(_auto_release_for_retry(7))
+
+
+def _redirect(location, code=301):
+    headers = email.message.Message()
+    headers["Location"] = location
+    return urllib.error.HTTPError("http://sab/api", code, "Moved", headers, None)
+
+
+class RedirectedUploadTests(unittest.TestCase):
+    """A redirected POST arrives empty, and must not read as a rejection.
+
+    urllib answers a redirect by re-sending the request as a GET with no body,
+    so the file never leaves. SABnzbd then reports that it was sent nothing,
+    which looked exactly like SABnzbd refusing the file.
+    """
+
+    def test_an_https_upgrade_on_the_same_host_is_followed_with_the_body(self):
+        opener = Mock()
+        opener.open.side_effect = [
+            _redirect("https://sab/api?mode=addfile"),
+            io.BytesIO(b'{"status": true, "nzo_ids": ["a"]}'),
+        ]
+        with patch("app.urllib.request.build_opener", return_value=opener):
+            result = post_multipart_file_json(
+                "http://sab/api?mode=addfile", field_name="name",
+                filename="x.nzb", content=b"<nzb></nzb>",
+                content_type="application/x-nzb", headers={},
+            )
+
+        self.assertEqual(result, {"status": True, "nzo_ids": ["a"]})
+        retried = opener.open.call_args.args[0]
+        self.assertEqual(retried.full_url, "https://sab/api?mode=addfile")
+        # The point of the retry: the file goes with it.
+        self.assertIn(b"<nzb></nzb>", retried.data)
+        self.assertEqual(retried.get_method(), "POST")
+
+    def test_a_redirect_to_another_host_is_refused_rather_than_replayed(self):
+        """The request carries an API key, so it is not replayed anywhere."""
+        opener = Mock()
+        opener.open.side_effect = [_redirect("https://elsewhere.example/api")]
+        with patch("app.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(UploadRedirected, "elsewhere.example"):
+                post_multipart_file_json(
+                    "http://sab/api", field_name="name", filename="x.nzb",
+                    content=b"<nzb></nzb>", content_type="application/x-nzb",
+                    headers={},
+                )
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_a_redirect_loop_stops_instead_of_uploading_forever(self):
+        opener = Mock()
+        opener.open.side_effect = [
+            _redirect("https://sab/api"), _redirect("https://sab/api"),
+        ]
+        with patch("app.urllib.request.build_opener", return_value=opener):
+            with self.assertRaises(UploadRedirected):
+                post_multipart_file_json(
+                    "http://sab/api", field_name="name", filename="x.nzb",
+                    content=b"<nzb></nzb>", content_type="application/x-nzb",
+                    headers={},
+                )
+        self.assertEqual(opener.open.call_count, 2)
+
+
+class SabRejectionReasonTests(unittest.TestCase):
+    def test_the_reason_sabnzbd_gives_is_reported(self):
+        """SABnzbd names the problem; repeating only "did not accept" lost it."""
+        with patch("app.load_acquisition_service_config", return_value={
+            "sabnzbd": {"enabled": True, "url": "http://sab", "apiKey": "k",
+                        "category": "comics"},
+        }), patch("app.post_multipart_file_json", return_value={
+            "status": False, "error": "expects one parameter",
+        }):
+            with self.assertRaisesRegex(SABSubmissionError, "expects one parameter"):
+                app._submit_nzb_to_sabnzbd(
+                    {"url": "http://sab", "apiKey": "k", "category": "comics"},
+                    "Some Comic 001", b"<nzb></nzb>",
+                )

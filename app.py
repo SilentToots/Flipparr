@@ -1010,6 +1010,48 @@ def fetch_bytes_with_headers(
     return payload
 
 
+class UploadRedirected(Exception):
+    """An upload was redirected somewhere it must not be replayed."""
+
+
+_UPLOAD_REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+class _ReportRedirect(urllib.request.HTTPRedirectHandler):
+    """Report redirects instead of following them.
+
+    urllib answers a redirected POST by re-sending it as a GET with no body.
+    An upload that is redirected therefore arrives empty, and the service
+    replies as though nothing was sent -- which reads as "the service rejected
+    your file" when the truth is that the file never left. A proxy with
+    "force SSL" in front of an http:// address does exactly this.
+    """
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+def _upload_redirect_target(current: str, location: str) -> str | None:
+    """Where an upload may be retried, or None when it must not follow.
+
+    Only the same host, and only with the scheme unchanged or http upgrading
+    to https. A redirect can name any host, and this request carries an API
+    key in its query string, so anything else is refused rather than replayed.
+    """
+    if not location:
+        return None
+    target = urllib.parse.urljoin(current, location)
+    here = urllib.parse.urlsplit(current)
+    there = urllib.parse.urlsplit(target)
+    if not there.hostname or here.hostname != there.hostname:
+        return None
+    if there.scheme == here.scheme:
+        return target
+    if here.scheme == "http" and there.scheme == "https":
+        return target
+    return None
+
+
 def post_multipart_file_json(
     url: str,
     *,
@@ -1032,18 +1074,41 @@ def post_multipart_file_json(
         f'Content-Disposition: form-data; name="{safe_field}"; filename="{safe_filename}"\r\n'
         f"Content-Type: {content_type}\r\n\r\n"
     ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode("ascii")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            **headers,
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Content-Length": str(len(body)),
-        },
-        method="POST",
-    )
-    with _safe_urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+    request_headers = {
+        **headers,
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
+    }
+    opener = urllib.request.build_opener(_ReportRedirect)
+    target = url
+    # The original request, then at most one redirect. Following the upgrade
+    # keeps an http:// address working behind a proxy that forces SSL, rather
+    # than reporting the empty upload it would otherwise produce.
+    for _ in range(2):
+        request = urllib.request.Request(
+            target, data=body, headers=request_headers, method="POST"
+        )
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in _UPLOAD_REDIRECT_CODES:
+                raise urllib.error.HTTPError(
+                    _redacted_upstream_url(exc.geturl() or target),
+                    exc.code, exc.msg, exc.headers, None,
+                ) from None
+            following = _upload_redirect_target(
+                target, exc.headers.get("Location") or ""
+            )
+            if not following:
+                raise UploadRedirected(
+                    "the upload was redirected to "
+                    f"{_redacted_upstream_url(exc.headers.get('Location') or 'an unnamed location')}"
+                ) from None
+            target = following
+        except (urllib.error.URLError, TimeoutError):
+            raise urllib.error.URLError("upstream service unavailable") from None
+    raise UploadRedirected("the upload was redirected more than once")
 
 
 def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1385,8 +1450,22 @@ def _submit_nzb_to_sabnzbd(
         raise SABSubmissionError(detail) from None
     except (urllib.error.URLError, TimeoutError):
         raise SABSubmissionError("Flipparr could not reach SABnzbd") from None
+    except UploadRedirected as exc:
+        raise SABSubmissionError(
+            f"SABnzbd's address redirects and {exc}. A redirected upload arrives "
+            "empty. Point the SABnzbd URL at the address it redirects to, or at "
+            "SABnzbd directly."
+        ) from None
     if not isinstance(response, dict) or not response.get("status"):
-        raise SABSubmissionError("SABnzbd did not accept the uploaded NZB")
+        # SABnzbd says why in the same object. Reporting only that it "did not
+        # accept" the file threw that away and left nothing to act on.
+        reason = ""
+        if isinstance(response, dict):
+            reason = str(response.get("error") or "").strip()
+        raise SABSubmissionError(
+            f"SABnzbd did not accept the uploaded NZB: {reason}" if reason
+            else "SABnzbd did not accept the uploaded NZB"
+        )
     return response
 
 
