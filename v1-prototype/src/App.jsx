@@ -1907,6 +1907,9 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
 }
 
 function GroupedIssueInventory({ issues, onEditIssue }) {
+  // Covers are why the tab exists, so posters lead. A long run is also less
+  // scrolling this way than as tall rows: four across beats one down.
+  const [view, setView] = useState("grid");
   if (!issues?.length) return <div className="drawer-empty"><BookOpen size={26} weight="duotone" /><strong>No issue list linked yet</strong><span>Flipparr will add series runs and their issues automatically when a match is found.</span></div>;
   const groups = [];
   const byRun = new Map();
@@ -1926,11 +1929,16 @@ function GroupedIssueInventory({ issues, onEditIssue }) {
     }
     byRun.get(key).issues.push(issue);
   }
-  return <div className="grouped-issue-inventory">{groups.map((group) => {
+  return <div className={`grouped-issue-inventory ${view}`}>
+    <div className="issue-view-tools"><div className="view-toggle" aria-label="Choose issue view">
+      <button type="button" className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Cover view" aria-pressed={view === "grid"}><SquaresFour size={17} /></button>
+      <button type="button" className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view" aria-pressed={view === "list"}><ListBullets size={17} /></button>
+    </div></div>
+    {groups.map((group) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
     return <section className="issue-run-group" key={group.key}>
       <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><strong>{owned} of {group.issues.length} owned</strong></header>
-      <div>{group.issues.map((issue) => {
+      <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
         const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`);
         const releaseLabel = issue.publicationDate
           ? new Date(`${issue.publicationDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
@@ -1940,6 +1948,18 @@ function GroupedIssueInventory({ issues, onEditIssue }) {
           : issue.ownership === "collection" ? "In volume"
           : issue.releaseState === "upcoming" ? "Upcoming"
           : issue.releaseState === "unknown" ? "Date needed" : "Missing";
+        const owned = issue.ownership !== "unowned";
+        if (view === "grid") {
+          // A missing issue keeps its tile, dimmed, so a gap in a run is
+          // visible rather than silently absent from the grid.
+          return <article className={`issue-tile ${owned ? "" : "unowned"}`} key={issue.id}>
+            <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
+            {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
+            <strong>#{issue.number}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong>
+            {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
+            <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
+          </article>;
+        }
         return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">#{issue.number}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}</small></div><div className="issue-row-actions"><span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>{onEditIssue ? <button type="button" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}</div></article>;
       })}</div>
     </section>;
