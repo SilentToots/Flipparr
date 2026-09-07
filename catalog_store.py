@@ -69,6 +69,21 @@ def _slug(value: str) -> str:
     return cleaned or hashlib.sha1(value.encode()).hexdigest()[:12]
 
 
+def _run_id(value: Any) -> int | None:
+    """The series run's row id, or None when the group has no run yet.
+
+    A group of files that has not been matched to a series run is keyed by a
+    slug of its title rather than a row id -- the state every file is in while a
+    scan is still running. Families are keyed by run id, so such a group simply
+    has no membership; calling int() on the slug took the whole catalog
+    response down with a 500 instead.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _canonical_series_title(title: Any, is_issue: bool) -> str:
     """Return a conservative series hint while retaining the raw title as an alias."""
     value = re.sub(r"\s+", " ", str(title or "")).strip(" -_:;")
@@ -6173,11 +6188,14 @@ class CatalogStore:
                         "ongoing" if (group["issueCatalog"] or {}).get("status") == "complete_to_date" else
                         "unknown"
                     ),
-                    "family": family_membership_map.get(int(group["id"])),
+                    "family": family_membership_map.get(_run_id(group["id"])),
                 }
             )
         series.sort(key=lambda item: item["title"].casefold())
-        series_by_id = {int(item["id"]): item for item in series}
+        series_by_id = {
+            run_id: item for item in series
+            if (run_id := _run_id(item["id"])) is not None
+        }
         families = []
         for family_row in family_rows:
             family_id = int(family_row["id"])

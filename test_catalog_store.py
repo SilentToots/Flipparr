@@ -1981,3 +1981,41 @@ class CatalogStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatalogSlugGroupTests(unittest.TestCase):
+    def test_catalog_survives_a_group_that_has_no_series_run_yet(self):
+        """A file not yet matched to a run must not take the catalog down.
+
+        Such a group is keyed by a slug of its title rather than a row id --
+        the state every file is in while a scan is still running. Calling
+        int() on that slug raised ValueError out of catalog(), so the endpoint
+        the whole dashboard depends on answered 500 mid-scan.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            root = base / "comics"
+            root.mkdir()
+            comic = root / "Ice Cream Man 001.cbz"
+            comic.write_bytes(b"comic")
+            store = CatalogStore(base / "catalog.db")
+
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [
+                ParsedFile(str(comic), comic.name, ".cbz", "Ice Cream Man", issue="1")
+            ], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": None, "file_cover": None,
+            })
+
+            # Drop the identity row, which is how a file looks between being
+            # seen by a scan and being matched to a series run.
+            with store._connect() as connection:
+                connection.execute("DELETE FROM file_identities")
+
+            catalog = store.catalog()
+
+            entry = next(item for item in catalog["series"] if item["title"] == "Ice Cream Man")
+            self.assertEqual(entry["id"], "ice-cream-man")
+            self.assertIsNone(entry["family"])

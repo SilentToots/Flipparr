@@ -732,11 +732,36 @@ function DiscoveryResults({ query, results, state, error, provider, yearHint, bu
   </section>;
 }
 
-function LibraryLoadingSkeleton() {
+// A scan in progress and a first page load look identical to someone arriving:
+// nothing is on screen yet. The difference worth telling them is why, and how
+// far along it is -- so the skeleton carries the scan's own count when there is
+// one, rather than a generic "loading".
+function scanCounts(scan) {
+  const total = Number(scan?.total_files || 0);
+  const processed = Number(scan?.processed_files || 0);
+  return { total, processed, percent: total ? Math.min(99, Math.round((processed / total) * 100)) : 0 };
+}
+
+function LibraryScanNotice({ scan }) {
+  const { total, processed, percent } = scanCounts(scan);
+  return <div className={`scan-progress ${total ? "determinate" : ""}`} aria-live="polite">
+    <span>
+      <strong>{total ? `Reading comic ${Math.min(processed + 1, total)} of ${total}` : "Finding your comic files…"}</strong>
+      <small>{total ? `${processed} read · titles, cover art and file health` : "Counting files before the scan begins"}</small>
+    </span>
+    <b>{total ? `${percent}%` : "Starting"}</b>
+    <i style={total ? { width: `${percent}%` } : undefined} />
+  </div>;
+}
+
+function LibraryLoadingSkeleton({ scan = null }) {
+  const { total, processed } = scanCounts(scan);
   return <div className="library-loading" role="status" aria-live="polite" aria-busy="true">
     <section className="library-loading-message">
       <span className="library-loading-icon"><LoadingSpinner size={21} /></span>
-      <span><strong>Loading your library…</strong><small>Bringing in your comic runs, covers, and collection status.</small></span>
+      {scan
+        ? <span><strong>Scanning your library…</strong><small>{total ? `Comic ${Math.min(processed + 1, total)} of ${total} · your runs appear as they are found.` : "Counting your comic files. Nothing is renamed or moved."}</small></span>
+        : <span><strong>Loading your library…</strong><small>Bringing in your comic runs, covers, and collection status.</small></span>}
     </section>
     <section className="library-loading-stats" aria-hidden="true">
       {[0, 1, 2, 3].map((item) => <span key={item}><i /><b /></span>)}
@@ -758,6 +783,9 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
   const initialLoading = backendStatus === "loading" && !catalog;
+  // The server has always reported this; nothing read it, so arriving during a
+  // scan showed the "no comics yet" empty state on a library that was filling.
+  const activeScan = catalog?.activeScan || null;
   const editionsOn = Boolean(catalog?.collectedEditionsEnabled);
   const effectiveScope = editionsOn ? scope : "runs";
   const scopedSeries = editionsOn ? series : series.filter((item) => !item.isCollectionSeries);
@@ -767,7 +795,9 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       <div className="topbar"><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
       <PageHeader title="Your library" description="See what you own, what’s missing, and what needs your attention." />
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
-      {!initialLoading ? <>
+      {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} /> : null}
+      {!initialLoading && !(activeScan && !series.length) ? <>
+      {activeScan ? <LibraryScanNotice scan={activeScan} /> : null}
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
       <StatStrip stats={{ ...(catalog?.stats ?? { files: series.reduce((count, item) => count + item.owned, 0), needAttention: 0, damaged: 0 }), series: series.length }} />
@@ -2908,10 +2938,13 @@ export function App() {
     const activeDownload = acquisitionEntries.some((request) =>
       (request.jobs || []).some((job) => ["queued", "downloading", "completed", "importing", "waiting_for_files"].includes(job.downloadStatus))
     );
-    if (!(catalog?.enrichment?.active > 0) && !activeDownload) return undefined;
-    const timer = window.setInterval(() => loadCatalog(), 5000);
+    // A scan counts too. Polling was tied to enrichment and downloads only, so
+    // a page opened during a scan sat still until something else woke it.
+    const scanning = Boolean(catalog?.activeScan);
+    if (!(catalog?.enrichment?.active > 0) && !activeDownload && !scanning) return undefined;
+    const timer = window.setInterval(() => loadCatalog(), scanning ? 2000 : 5000);
     return () => window.clearInterval(timer);
-  }, [catalog?.enrichment?.active, catalog?.requests, catalog?.replacementRequests]);
+  }, [catalog?.enrichment?.active, catalog?.requests, catalog?.replacementRequests, catalog?.activeScan]);
   const visibleSeries = catalog?.series ?? (backendStatus === "offline" ? DEMO_SERIES : []);
   const logicalSeriesCount = logicalCatalogSeries(catalog, visibleSeries).length;
   const navActive = active === "search" || active === "discover" ? "discover" : active === "import" ? "settings" : active;
