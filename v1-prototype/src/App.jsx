@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   ArrowLeft,
   ArrowRight,
+  Bell,
   BookmarkSimple,
   BookOpen,
   Books,
@@ -467,8 +468,42 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
 // screen: the mark, one search, and the way into settings. A phone keeps the
 // bottom bar and the search inside the page -- 375px cannot hold this row, and
 // the layout it belongs to is not the one a phone uses.
-function AppBar({ query, collapsed, settingsActive, onToggleNav, onSearch, onNavigate }) {
+// The app's first popover. It borrows useDialog for Escape and the focus
+// trap, and adds the outside-click that a menu needs and a modal gets from
+// its backdrop. It must be mounted and unmounted rather than hidden: the
+// hook's effect runs once, on mount.
+function NotificationsMenu({ items, onClose, onReview }) {
+  const dialogRef = useDialog(onClose);
+  useEffect(() => {
+    function handlePointerDown(event) {
+      const node = dialogRef.current;
+      // The button that opened the menu toggles it itself; closing here too
+      // would reopen it on the same click.
+      if (!node || node.contains(event.target) || event.target.closest?.(".appbar-notifications")) return;
+      onClose();
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [onClose]);
+  const shown = items.slice(0, 5);
+  return <div className="notifications-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
+    <header><strong id="notifications-title">Needs attention</strong>{items.length ? <b>{items.length}</b> : null}</header>
+    {shown.length ? <div className="notifications-list">{shown.map((item) =>
+      <button type="button" key={item.id} onClick={() => { onClose(); onReview(item); }}>
+        <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />
+        <span><strong>{item.issue}</strong><small>{item.file}</small></span>
+      </button>)}
+    </div> : <p className="notifications-empty"><CheckCircle size={19} weight="fill" /> Nothing needs attention.</p>}
+    {items.length ? <button type="button" className="notifications-all" onClick={() => { onClose(); onReview(); }}>
+      {items.length > shown.length ? `Review all ${items.length}` : "Review all"} <ArrowRight size={15} />
+    </button> : null}
+  </div>;
+}
+
+function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch, onNavigate }) {
   const [draft, setDraft] = useState(query || "");
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const items = inbox || [];
   // Reloading /search?q=… must not leave the field empty under its own results.
   useEffect(() => { setDraft(query || ""); }, [query]);
   return <header className="appbar">
@@ -489,6 +524,22 @@ function AppBar({ query, collapsed, settingsActive, onToggleNav, onSearch, onNav
       />
     </div>
     <div className="appbar-actions">
+      <div className="appbar-notifications">
+        <button
+          type="button" className={`appbar-action ${notificationsOpen ? "active" : ""}`}
+          onClick={() => setNotificationsOpen((open) => !open)}
+          aria-label={items.length ? `Needs attention: ${items.length}` : "Needs attention"}
+          aria-expanded={notificationsOpen}
+        >
+          <Bell size={21} weight={notificationsOpen ? "fill" : "regular"} />
+          {items.length ? <b className="appbar-badge">{items.length > 99 ? "99+" : items.length}</b> : null}
+        </button>
+        {notificationsOpen ? <NotificationsMenu
+          items={items}
+          onClose={() => setNotificationsOpen(false)}
+          onReview={() => onNavigate("metadata")}
+        /> : null}
+      </div>
       <button
         type="button" className={`appbar-action ${settingsActive ? "active" : ""}`}
         onClick={() => onNavigate("settings")}
@@ -3207,5 +3258,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={active === "search" ? searchQuery : ""} collapsed={navCollapsed} settingsActive={navActive === "settings"} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" ? <DiscoverView onSearch={openSearch} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={active === "search" ? searchQuery : ""} collapsed={navCollapsed} settingsActive={navActive === "settings"} inbox={catalog?.inbox ?? []} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" ? <DiscoverView onSearch={openSearch} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
 }
