@@ -524,13 +524,21 @@ function PageHeader({ eyebrow, title, description, children }) {
 }
 
 function StatStrip({ stats }) {
+  // An issue that is not out yet is not missing from the library. It is
+  // counted separately and named for what it is, rather than adding to a
+  // number that reads as a gap someone has to close.
+  const upcoming = stats?.unpublishedIssues ?? 0;
   const cards = [
     { icon: Books, value: stats?.series ?? 0, label: "Series", tone: "green" },
     { icon: BookOpen, value: stats?.files ?? 0, label: "Comic files", tone: "green" },
-    { icon: ClockCounterClockwise, value: stats?.unownedIssues ?? 0, label: "Issues missing", tone: "muted" },
+    {
+      icon: ClockCounterClockwise, value: stats?.unownedIssues ?? 0,
+      label: "Issues missing", tone: "muted",
+      note: upcoming ? `${upcoming} not published yet` : "",
+    },
     { icon: WarningCircle, value: stats?.damaged ?? 0, label: "Comic file problems", tone: "danger" },
   ];
-  return <section className="stat-strip" aria-label="Library summary">{cards.map(({ icon: Icon, value, label, tone }) => <div className={`stat ${tone}`} key={label}><Icon size={27} weight="duotone" /><div><strong>{value}</strong><span>{label}</span></div></div>)}</section>;
+  return <section className="stat-strip" aria-label="Library summary">{cards.map(({ icon: Icon, value, label, tone, note }) => <div className={`stat ${tone}`} key={label}><Icon size={27} weight="duotone" /><div><strong>{value}</strong><span>{label}</span>{note ? <small className="stat-note">{note}</small> : null}</div></div>)}</section>;
 }
 
 function MetadataSetupStatus({ enrichment, lastScanAt, onNavigate }) {
@@ -622,14 +630,26 @@ function Ownership({ series, compact = false }) {
   const label = series.status === "warning" ? seriesAttentionLabel(series) : catalogUnknown ? ownedLabel : compact ? `${series.owned} of ${series.total} owned` : `${series.owned} of ${series.total}`;
   const coverageDetail = arcCoverageKnown ? `${coveredIssues} issue${coveredIssues === 1 ? "" : "s"} collected in ${volumeCount} volume${volumeCount === 1 ? "" : "s"}${series.family ? " · complete-series progress is tracked separately" : ""}` : "";
   const detail = series.status === "warning" ? [coverageDetail, seriesAttentionDetail(series)].filter(Boolean).join(" · ") : series.isCollectionSeries ? series.ownership : coverageDetail || series.ownership;
-  const missing = Math.max(0, series.total - series.owned);
+  // An issue that is not out yet is not missing. Counting the two together
+  // read as a gap to close on a run that is simply still being published.
+  const summary = series.releaseSummary || {};
+  const shortfall = Math.max(0, series.total - series.owned);
+  const upcoming = Math.max(0, Number(summary.upcoming ?? 0));
+  const missing = summary.releasedMissing == null
+    ? Math.max(0, shortfall - upcoming)
+    : Math.max(0, Number(summary.releasedMissing));
+  const plural = (count) => (count === 1 ? "" : "s");
   const compactDetail = series.status === "warning"
     ? "Review required"
     : catalogUnknown
       ? "Series total unknown"
-      : missing
-        ? `${missing} issue${missing === 1 ? "" : "s"} missing`
-        : "Complete";
+      : missing && upcoming
+        ? `${missing} missing · ${upcoming} not published yet`
+        : missing
+          ? `${missing} issue${plural(missing)} missing`
+          : upcoming
+            ? `${upcoming} issue${plural(upcoming)} not published yet`
+            : "Complete";
   // With the total unknown, the backing sentence restates the count already in
   // the label -- "23 owned" above "23 issues owned · complete-run progress
   // unknown". Use the concise form at every width, not just on mobile. Warning

@@ -6493,7 +6493,20 @@ class CatalogStore:
             "stats": {
                 "series": len(series), "families": len(families), "files": len(rows), "needAttention": len(inbox),
                 "damaged": sum(1 for item in inbox if item["severity"] == "error"),
-                "unownedIssues": sum(item["unowned"] or 0 for item in series),
+                # An issue that has not been published yet is not missing from
+                # the library, and counting it as such overstated every gap.
+                # `unownedIssues` is what is released and not owned;
+                # `unpublishedIssues` is what has yet to come out. (The
+                # `upcomingIssues` further down is a different figure: the
+                # upcoming issues on open requests.)
+                "unownedIssues": sum(
+                    (item["releaseSummary"] or {}).get("releasedMissing") or 0
+                    for item in series
+                ),
+                "unpublishedIssues": sum(
+                    (item["releaseSummary"] or {}).get("upcoming") or 0
+                    for item in series
+                ),
                 "missingIssues": 0,
                 "directIssueFiles": sum(item["inventory"]["directIssueFiles"] for item in series),
                 "editions": sum(item["inventory"]["editionCount"] for item in series),

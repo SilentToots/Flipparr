@@ -1845,3 +1845,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm strong { display: block; color: #d6cdff; font-size: var(--text-md); }
 .request-search-confirm small { display: block; margin-top: 3px; color: var(--muted-strong); font-size: var(--text-sm); }
 .request-search-confirm > span { display: flex; gap: 9px; flex: none; }
+
+/* The upcoming count sits under the missing one: same card, different fact. */
+.stat-note { display: block; margin-top: 3px; color: var(--muted); font-size: var(--text-xs); }
