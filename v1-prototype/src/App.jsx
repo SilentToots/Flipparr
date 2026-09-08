@@ -38,13 +38,19 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
+import {
+  MenuIcon, SearchIcon, NotificationsIcon, SettingsIcon,
+  ComicsIcon, DiscoverIcon, PullListIcon, LibraryHealthIcon,
+  SyncIcon, GridViewIcon, ListViewIcon, FollowingIcon,
+  ActiveRunIcon, FollowedIcon,
+} from "./design-icons.jsx";
 
 const NAV_ITEMS = [
-  { id: "library", label: "Comics", icon: BookOpen },
-  { id: "discover", label: "Discover", icon: MagnifyingGlass },
-  { id: "requests", label: "Pull List", icon: BookmarkSimple },
-  { id: "metadata", label: "Library Health", icon: Database, count: 3 },
-  { id: "settings", label: "Settings", icon: Gear },
+  { id: "library", label: "Comics", icon: ComicsIcon },
+  { id: "discover", label: "Discover", icon: DiscoverIcon },
+  { id: "requests", label: "Pull List", icon: PullListIcon },
+  { id: "metadata", label: "Library Health", icon: LibraryHealthIcon, count: 3 },
+  { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
 const DEMO_SERIES = [
@@ -320,14 +326,14 @@ function PublicationStatus({ series }) {
   // something to say, so a real Active run or Run complete stands out.
   if (!state.known) return null;
   return <span className={`publication-status ${state.tone}`}>
-    <Lightning size={12} weight="fill" />
+    <ActiveRunIcon />
     {state.label}
   </span>;
 }
 
 function MonitoringStatus({ series }) {
   if (series.monitoringStatus !== "monitored") return null;
-  return <span className="monitoring-status"><BookmarkSimple size={12} weight="fill" /> Following</span>;
+  return <span className="monitoring-status"><FollowedIcon /> Following</span>;
 }
 
 function seriesAttentionLabel(series) {
@@ -448,13 +454,13 @@ async function apiRequest(path, options) {
 }
 
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut }) {
-  const counts = { requests: catalog?.stats?.openRequests ?? 0, metadata: catalog?.stats?.needAttention ?? 0 };
+  const counts = { library: logicalSeriesCount ?? 0, requests: catalog?.stats?.openRequests ?? 0, metadata: catalog?.stats?.needAttention ?? 0 };
   return (
     <aside className="sidebar">
       <nav aria-label="Primary navigation">
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
           <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={label} aria-current={active === id ? "page" : undefined}>
-            <Icon size={21} weight={active === id ? "fill" : "regular"} /><span>{label}</span>{(counts[id] ?? count) ? <b>{counts[id] ?? count}</b> : null}
+            <Icon /><span>{label}</span>{(counts[id] ?? count) ? <b>{counts[id] ?? count}</b> : null}
           </button>
         ))}
       </nav>
@@ -526,7 +532,7 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
         type="button" className="appbar-menu" onClick={onToggleNav}
         aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
         aria-expanded={!collapsed}
-      ><List size={20} /></button>
+      ><MenuIcon /></button>
       <button
         type="button" className="appbar-brand" onClick={() => onNavigate("library")}
         aria-label="Flipparr — go to your library"
@@ -547,7 +553,7 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
           aria-label={items.length ? `Needs attention: ${items.length}` : "Needs attention"}
           aria-expanded={notificationsOpen}
         >
-          <Bell size={24} weight={notificationsOpen ? "fill" : "regular"} />
+          <NotificationsIcon />
           {items.length ? <b className="appbar-badge">{items.length > 99 ? "99+" : items.length}</b> : null}
         </button>
         {notificationsOpen ? <NotificationsMenu
@@ -560,7 +566,7 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
         type="button" className={`appbar-action ${settingsActive ? "active" : ""}`}
         onClick={() => onNavigate("settings")}
         aria-label="Settings" aria-current={settingsActive ? "page" : undefined}
-      ><Gear size={24} weight={settingsActive ? "fill" : "regular"} /></button>
+      ><SettingsIcon /></button>
     </div>
   </header>;
 }
@@ -574,7 +580,7 @@ function SearchBar({ value, onChange, onSubmit, actionLabel = "Search online", b
   // field as a label rather than a control, and Enter is the only way to
   // submit. A bar that is always on screen should not carry a button that is
   // only occasionally the thing you want.
-  const field = <div className="search-field">{embedded ? <MagnifyingGlass size={17} weight="bold" aria-hidden="true" /> : null}<input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => {
+  const field = <div className="search-field">{embedded ? <SearchIcon /> : null}<input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => {
     if (event.key === "Enter" && onSubmit) {
       event.preventDefault();
       onSubmit();
@@ -939,7 +945,9 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
           <span><strong>{catalog?.stats?.files ?? 0}</strong>Files</span>
           <i aria-hidden="true">|</i>
           <span><strong>{series.length}</strong>Series</span>
-          {activeScan ? <LoadingSpinner size={20} label="Scanning your library" /> : null}
+          <span className="sync-indicator" title={activeScan ? "Scanning your library" : "Library up to date"}>
+            {activeScan ? <LoadingSpinner size={20} label="Scanning your library" /> : <SyncIcon />}
+          </span>
         </p>
       </PageHeader>
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
@@ -948,7 +956,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {activeScan ? <LibraryScanNotice scan={activeScan} /> : null}
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Sort: Title A-Z</option><option value="added">Sort: Recently added</option><option value="attention">Sort: Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><CheckCircle size={18} weight={followingOnly ? "fill" : "regular"} /> Following</button> : null}</div>
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Sort: Title A-Z</option><option value="added">Sort: Recently added</option><option value="attention">Sort: Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       <AttentionPanel items={catalog?.inbox ?? []} onReview={() => onNavigate("metadata")} />
       </> : null}

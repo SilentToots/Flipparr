@@ -11,9 +11,11 @@
     "dev:qa": "SONICBOOM_API_ORIGIN=http://127.0.0.1:8791 vite",
     "dev:uiqa": "SONICBOOM_API_ORIGIN=http://127.0.0.1:8795 vite",
     "visual:capture": "node tests/visual/capture.mjs",
-    "visual:compare": "node tests/visual/compare.mjs"
+    "visual:compare": "node tests/visual/compare.mjs",
+    "figma:check": "node tests/visual/figma-check.mjs"
   },
   "dependencies": {
+    "@heroicons/react": "^2.2.0",
     "@phosphor-icons/react": "^2.1.10",
     "@vitejs/plugin-react": "5.0.4",
     "react": "19.2.0",

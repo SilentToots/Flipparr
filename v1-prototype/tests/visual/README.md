@@ -63,3 +63,28 @@ it has real content, and the run fails if they are missing.
 
 `intake` is captured on the backend origin, not through Vite — the dev server
 only proxies `/api`, and that surface consumes the same tokens.
+
+## Checking against the Figma file
+
+`figma-spec.mjs` holds what `node-id=1-86` says — 37 assertions, each tagged
+with the node it came from — and `figma-check.mjs` asserts the running app
+against it:
+
+```
+npm run figma:check
+```
+
+It fails on *any* difference, unlike `compare.mjs`. A palette migration is meant
+to move things; a specification is not, so there is no drift to tolerate.
+
+Two rules this file exists to enforce, both learned the hard way:
+
+- **Values come from `get_design_context`, never a screenshot.** A picture
+  cannot tell you a 40% fill from a solid one, or 8px radius from 11px.
+- **Icons are part of the spec.** Each icon node's `data-name` gives the set and
+  variant (`heroicons-mini/bars-3`, `heroicons-micro/bolt`). The app shipped
+  Phosphor against a heroicons design, which was wrong on every screen at once.
+
+A badge that only appears for a followed series is synthesised from its own
+classes rather than skipped, so the rule is still checked on a library where no
+data reaches it.

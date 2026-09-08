@@ -18,10 +18,11 @@
   --color-neutral-50: #fafafa;
   --color-neutral-300: #d4d4d8;
   --color-neutral-400: #a1a1aa;
-  /* The design says #71717a here, which is 4.12:1 on a card and fails AA.
-     This is the secondary-copy step, used for real prose in some 37 places,
-     so it is lifted to the nearest value that clears 4.5. */
-  --color-neutral-500: #7a7a85;
+  --color-neutral-500: #71717a;
+  /* #71717a is 4.12:1 on a card and fails AA, and this app uses that step for
+     real prose in some 37 places. So the ramp carries both: the design's value
+     for the chrome it specifies, and a lifted one for anything that is read. */
+  --color-neutral-450: #7a7a85;
   --color-neutral-600: #52525b;   /* decoration only: 2.6:1, never text */
   --color-neutral-700: #3f3f46;
   --color-neutral-800: #27272a;
@@ -102,7 +103,11 @@
   --nav-active-bg: rgb(109 40 217 / .2);
 
   /* The text step below --muted, for secondary copy in about 67 places. */
-  --muted-weak: var(--color-neutral-500);
+  --muted-weak: var(--color-neutral-450);
+  /* The design's own label colour, for the page title and the toolbar
+     controls it specifies at #71717a. Named apart from --muted-weak because
+     it is deliberately the value that does not clear AA at 14px. */
+  --chrome-label: var(--color-neutral-500);
   /* Behind a progress bar or a meter -- the one surface that sits below the
      card it is drawn on rather than above it. */
   --surface-sunken: var(--color-neutral-850);
@@ -135,7 +140,7 @@
   --radius-sm: 4px;
   --radius: 8px;
   --radius-lg: 15px;
-  --radius-pill: 999px;
+  --radius-pill: 100px;
   /* Type scale. The stylesheet previously carried 54 distinct font sizes, a
      dozen of them inside a 0.11rem band -- differences too small to read as
      deliberate, but plainly untidy when two land side by side. These eight
