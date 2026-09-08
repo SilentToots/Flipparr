@@ -45,6 +45,39 @@
   --red: var(--color-red-500);
   --red-soft: #3d2023;
 
+  /* Every accent gets the same four steps: the colour itself, a tint to sit
+     on, a border for that tint, and a text colour that reads on it. Only the
+     first two existed, so 181 hand-mixed values had nowhere to go and were
+     written inline -- 30 violet borders, 25 green ones, and a whole tier of
+     secondary text. The tints are the accent over --surface at the opacities
+     the stylesheet was already mixing by eye: about 14% for a fill, 34% for
+     a border.
+
+     These carry the old palette's fitted values so adding them changes
+     nothing; the colours move later, in one file, on their own. */
+  --violet-border: #57478b;
+  --violet-text: var(--status-violet-text);
+  --green-border: #31543c;
+  --green-text: var(--status-green-text);
+  --amber-border: #6e5629;
+  --amber-text: var(--status-amber-text);
+  --red-border: #4c3032;
+  --red-text: var(--status-red-text);
+
+  /* The text step below --muted: a plateau of blue-greys used for secondary
+     copy in about 67 places, none of which had a token. */
+  --muted-weak: #788496;
+  /* Behind a progress bar or a meter -- the one surface that sits below the
+     card it is drawn on rather than above it. */
+  --surface-sunken: #272f3b;
+
+  /* The alpha layers. Twenty-nine rgba() literals across the stylesheet came
+     to three intents: darken what is behind a modal, darken it more, or lift
+     a panel a little off its background. */
+  --scrim: rgb(0 0 0 / .45);
+  --scrim-strong: rgb(5 7 11 / .74);
+  --wash-subtle: rgb(255 255 255 / .02);
+
   /* Spacing scale */
   --space-1: 4px;
   --space-2: 8px;
