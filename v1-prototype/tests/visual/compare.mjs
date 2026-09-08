@@ -12,7 +12,13 @@ import path from "node:path";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
 
-const [beforeName = "baseline", afterName = "current"] = process.argv.slice(2);
+// A commit that removes or adds a component reflows on purpose, and would
+// otherwise fail every time and teach everyone to ignore the run. Declaring it
+// downgrades reflow, appear and vanish to warnings; contrast and borders stay
+// a hard gate, because no structural change licenses unreadable text.
+const args = process.argv.slice(2);
+const allowStructural = args.includes("--allow-structural");
+const [beforeName = "baseline", afterName = "current"] = args.filter((a) => !a.startsWith("--"));
 const here = import.meta.dirname;
 const beforeDir = path.join(here, beforeName);
 const afterDir = path.join(here, afterName);
@@ -114,9 +120,15 @@ await writeFile(path.join(diffDir, "report.json"),
   JSON.stringify({ pixelReport, styleChanges, contrastDelta, borderDelta }, null, 2));
 
 const problems = [];
-if (reflowed.length) problems.push(`${reflowed.length} state(s) reflowed — a colour change must not move the layout`);
-if (vanished.length) problems.push(`${vanished.length} element(s) disappeared`);
-if (appeared.length) problems.push(`${appeared.length} element(s) appeared`);
+const structural = [];
+if (reflowed.length) structural.push(`${reflowed.length} state(s) reflowed — a colour change must not move the layout`);
+if (vanished.length) structural.push(`${vanished.length} element(s) disappeared`);
+if (appeared.length) structural.push(`${appeared.length} element(s) appeared`);
+if (allowStructural) {
+  if (structural.length) console.log(`\n  structural changes, declared with --allow-structural:\n    ${structural.join("\n    ")}`);
+} else {
+  problems.push(...structural);
+}
 if (contrastDelta > 0) problems.push(`${contrastDelta} new text(s) below AA contrast`);
 if (borderDelta > 0) problems.push(`${borderDelta} new invisible border(s)`);
 

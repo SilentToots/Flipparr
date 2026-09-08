@@ -46,6 +46,14 @@ never cause**, rather than on change itself:
 Drift in colour is expected while the palette migrates and is reported, not
 failed. The diff images in `diff/` are there to be looked at once per screen.
 
+A commit that removes or adds a component reflows on purpose. Declare it with
+`--allow-structural` and the first three become warnings; contrast and borders
+stay a hard gate, because no structural change licenses unreadable text.
+
+To diff one commit rather than the whole migration, stash the change, capture
+under any name, restore it, capture again — `*/` under `tests/visual/` is
+ignored, so a capture can be called whatever the comparison needs.
+
 ## The guard that matters
 
 `dev:uiqa` proxies to a tunnelled backend. If that tunnel is down, every screen

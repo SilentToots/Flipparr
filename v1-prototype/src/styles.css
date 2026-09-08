@@ -158,6 +158,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header p { margin: 0; color: var(--muted); font-size: var(--text-base); }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: 750; margin-bottom: 10px; }
 .page-actions { display: flex; gap: 9px; }
+/* The four-card stat strip was 98px of chrome to say two numbers. It says
+   them here instead, on the line the eye already visits for the page title. */
+.library-summary { margin: 0; display: flex; align-items: center; gap: 11px; color: var(--muted); font-size: var(--text-md); white-space: nowrap; }
+.library-summary strong { margin-right: 4px; color: var(--text); font-size: var(--text-lg); font-weight: 640; letter-spacing: -.01em; }
+.library-summary > span + span { padding-left: 11px; border-left: 1px solid var(--line-strong); }
 .scan-progress, .success-banner, .backend-banner { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: var(--text-md); display: flex; align-items: center; gap: 9px; overflow: hidden; position: relative; }
 .scan-progress { background: var(--violet-soft); color: var(--violet-text); }
 .scan-progress > span { display: grid; gap: 2px; }
@@ -171,7 +176,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .collected-editions-notice { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: var(--text-md); display: flex; align-items: center; gap: 9px; background: var(--amber-soft); color: var(--amber-text); }
 @keyframes scanning { from { transform: translateX(-20%); } to { transform: translateX(190%); } }
 
-.stat-strip { min-height: 98px; border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); }
 .metadata-setup-status { margin-bottom: 14px; min-height: 66px; padding: 13px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); display: grid; grid-template-columns: auto 1fr minmax(120px, 22%); align-items: center; gap: 12px; }
 .metadata-setup-status.active { border-color: var(--violet-border); background: var(--violet-soft); }
 /* Paused is still progress, not a fault, so it keeps the calm active
@@ -206,12 +210,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-loading-message > span:last-child { display: grid; gap: 4px; }
 .library-loading-message strong { color: var(--text); font-size: var(--text-base); }
 .library-loading-message small { color: var(--muted); font-size: var(--text-sm); line-height: 1.4; }
-.library-loading-stats { min-height: 98px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); display: grid; grid-template-columns: repeat(4, 1fr); }
-.library-loading-stats > span { padding: 20px 24px; display: grid; align-content: center; gap: 9px; position: relative; }
-.library-loading-stats > span + span::before { content: ""; position: absolute; left: 0; top: 22px; bottom: 22px; width: 1px; background: var(--line); }
-.library-loading-stats i, .library-loading-stats b, .library-loading-tools i, .library-loading-table i, .library-loading-cover, .library-loading-cell { display: block; border-radius: 5px; background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite; }
-.library-loading-stats i { width: 44px; height: 22px; }
-.library-loading-stats b { width: 72px; height: 11px; }
+.library-loading-tools i, .library-loading-table i, .library-loading-cover, .library-loading-cell { display: block; border-radius: 5px; background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite; }
 .library-loading-tools { min-height: 71px; display: flex; align-items: center; gap: 13px; }
 .library-loading-tools i { width: 108px; height: 38px; }
 .library-loading-tools i:nth-child(2) { width: 76px; }
@@ -232,14 +231,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-loading-cell { width: 84px; height: 11px; }
 .library-loading-cell.short { width: 68px; }
 @keyframes library-skeleton { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
-.stat { display: flex; align-items: center; gap: 14px; padding: 20px 24px; position: relative; }
-.stat + .stat::before { content: ""; position: absolute; left: 0; top: 22px; bottom: 22px; width: 1px; background: var(--line); }
-.stat > div { display: grid; gap: 3px; }
-.stat strong { font-size: var(--text-2xl); letter-spacing: -.02em; }
-.stat span { color: var(--muted); font-size: var(--text-md); }
-.stat.green svg { color: var(--green); }
-.stat.danger svg, .stat.danger strong { color: var(--red); }
-.stat.muted svg { color: var(--muted-weak); }
 
 .library-tools { min-height: 71px; display: flex; align-items: center; gap: 13px; }
 .scope-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 3px; background: var(--bg); }
@@ -1179,10 +1170,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .nav-item { grid-template-columns: 1fr; place-items: center; padding: 13px 0; }
   .main-content { margin-left: 76px; padding: 24px; }
   .topbar { grid-template-columns: 1fr; }
-  .stat-strip { grid-template-columns: repeat(2, 1fr); }
-  .stat:nth-child(3)::before { display: none; }
-  .library-loading-stats { grid-template-columns: repeat(2, 1fr); }
-  .library-loading-stats > span:nth-child(3)::before { display: none; }
   .series-table-head { display: none; }
   .library-loading-table header { display: none; }
   .library-loading-table article { grid-template-columns: 78px minmax(182px, 1fr) 150px; padding: 12px 0; }
@@ -1223,17 +1210,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .page-header { align-items: flex-start; flex-direction: column; padding-top: 26px; min-height: 100px; }
   .metadata-setup-status { grid-template-columns: auto 1fr; }
   .metadata-setup-meter { grid-column: 1 / -1; width: 100%; }
-  .stat-strip { min-height: 72px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .stat { min-width: 0; padding: 10px 5px; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-content: center; gap: 4px 5px; }
-  .stat + .stat::before { display: block; top: 12px; bottom: 12px; }
-  .stat svg { grid-column: 1; grid-row: 1; width: 17px; height: 17px; align-self: center; }
-  .stat > div { min-width: 0; display: contents; }
-  .stat strong { grid-column: 2; grid-row: 1; min-width: 0; font-size: var(--text-lg); line-height: 1; }
-  /* Labels wrap rather than force the strip wider than the screen. They were
-     nowrap at 8.6px; on the type scale they no longer fit 320px on one line. */
-    .stat span { grid-column: 1 / -1; grid-row: 2; min-width: 0; font-size: var(--text-2xs); line-height: 1.2; text-align: center; white-space: normal; overflow-wrap: anywhere; }
-  .library-loading-stats > span { padding: 16px; }
-  .library-loading-stats > span::before { display: none; }
   .library-loading-tools { flex-wrap: wrap; }
   .library-loading-tools i:last-child { margin-left: 0; }
   .library-loading-table article { grid-template-columns: 58px minmax(0, 1fr); min-height: 102px; }
@@ -1404,8 +1380,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     width: 100%;
     opacity: .55;
   }
-  .library-loading-stats i,
-  .library-loading-stats b,
   .library-loading-tools i,
   .library-loading-table i,
   .library-loading-cover,
@@ -1494,7 +1468,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      the layout, rather than blanket-applied. */
   .metadata-setup-action { min-height: 44px; padding: 0 14px; }
   .metadata-setup-copy summary { min-height: 44px; display: inline-flex; align-items: center; }
-  .metadata-setup-copy > button, .stat-strip button,
+  .metadata-setup-copy > button,
   .attention-panel header button, .attention-details > button { min-height: 44px; }
   .search-field { min-height: 48px; }
   .search-field input { min-height: 44px; }
@@ -1838,10 +1812,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .appbar-notifications { position: relative; display: flex; }
   .appbar-action { position: relative; }
   .appbar-badge { position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--red); color: var(--color-neutral-0); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; pointer-events: none; }
-  .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px rgba(0,0,0,.45); }
+  .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
   .notifications-menu header { min-height: 34px; padding: 0 8px; display: flex; align-items: center; gap: 8px; }
   .notifications-menu header strong { flex: 1; color: var(--text); font-size: var(--text-md); }
   .notifications-menu header b { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--violet-soft); color: var(--red-text); font-size: var(--text-2xs); display: grid; place-items: center; }
+  .notifications-summary { margin: 0 0 4px; padding: 7px 8px; border-radius: 7px; background: var(--red-soft); color: var(--red-text); font-size: var(--text-xs); display: flex; align-items: center; gap: 7px; }
+  .notifications-summary svg { flex: none; }
   .notifications-list { display: grid; gap: 2px; max-height: 320px; overflow-y: auto; }
   .notifications-list > button { min-height: 52px; width: 100%; padding: 8px; border: 0; border-radius: 7px; background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: center; text-align: left; cursor: pointer; }
   .notifications-list > button:hover { background: var(--status-muted-bg); }
@@ -1929,9 +1905,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm strong { display: block; color: var(--muted-strong); font-size: var(--text-md); }
 .request-search-confirm small { display: block; margin-top: 3px; color: var(--muted-strong); font-size: var(--text-sm); }
 .request-search-confirm > span { display: flex; gap: 9px; flex: none; }
-
-/* The upcoming count sits under the missing one: same card, different fact. */
-.stat-note { display: block; margin-top: 3px; color: var(--muted); font-size: var(--text-xs); }
 
 /* The language preference sits above the services it governs. */
 .settings-language { max-width: 460px; margin: 0 0 22px; }
