@@ -38,6 +38,7 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
+import { jobsNeedingAttention } from "./nav-counts.js";
 import {
   MenuIcon, SearchIcon, NotificationsIcon, SettingsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon, LibraryHealthIcon,
@@ -49,9 +50,15 @@ const NAV_ITEMS = [
   { id: "library", label: "Comics", icon: ComicsIcon },
   { id: "discover", label: "Discover", icon: DiscoverIcon },
   { id: "requests", label: "Pull List", icon: PullListIcon },
-  { id: "metadata", label: "Library Health", icon: LibraryHealthIcon, count: 3 },
+  { id: "metadata", label: "Library Health", icon: LibraryHealthIcon },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
+
+// What a rail badge counts, said in words for the tooltip and screen readers.
+const NAV_COUNT_LABELS = {
+  requests: (n) => `${n} download${n === 1 ? "" : "s"} stopped and waiting for you`,
+  metadata: (n) => `${n} item${n === 1 ? "" : "s"} in Library health need${n === 1 ? "s" : ""} a decision`,
+};
 
 const DEMO_SERIES = [
   {
@@ -454,13 +461,16 @@ async function apiRequest(path, options) {
 }
 
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut }) {
-  const counts = { library: logicalSeriesCount ?? 0, requests: catalog?.stats?.openRequests ?? 0, metadata: catalog?.stats?.needAttention ?? 0 };
+  const counts = {
+    requests: jobsNeedingAttention(catalog),
+    metadata: catalog?.stats?.needAttention ?? 0,
+  };
   return (
     <aside className="sidebar">
       <nav aria-label="Primary navigation">
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
-          <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={label} aria-current={active === id ? "page" : undefined}>
-            <Icon /><span>{label}</span>{(counts[id] ?? count) ? <b>{counts[id] ?? count}</b> : null}
+          <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
+            <Icon /><span>{label}</span>{(counts[id] ?? count) ? <b title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
           </button>
         ))}
       </nav>

@@ -105,6 +105,11 @@ export const spec = [
       "paddingLeft": "12px",
       "paddingBottom": "4px",
       "paddingTop": "4px"
+    },
+    "synth": {
+      "parent": ".nav-item.active",
+      "tag": "b",
+      "className": ""
     }
   },
   {
