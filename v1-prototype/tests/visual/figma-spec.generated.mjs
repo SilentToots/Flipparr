@@ -6,7 +6,7 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 150 nodes
-// accounted for, 41 style assertions, 13 frame assertions, 14 icons.
+// accounted for, 42 style assertions, 13 frame assertions, 14 icons.
 
 export const spec = [
   {
@@ -68,11 +68,10 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(185, 28, 28)",
       "borderRadius": "100px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
       "paddingBottom": "2px",
       "paddingTop": "2px"
     },
+    "centred": true,
     "synth": {
       "parent": ".appbar-bell",
       "tag": "b",
@@ -118,8 +117,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(0, 0, 0)",
       "borderRadius": "100px",
-      "paddingRight": "12px",
-      "paddingLeft": "12px",
       "paddingBottom": "4px",
       "paddingTop": "4px"
     },
@@ -128,6 +125,17 @@ export const spec = [
       "tag": "b",
       "className": ""
     }
+  },
+  {
+    "sel": "[data-nav=\"metadata\"] b",
+    "node": "I1:174;1:392",
+    "props": {
+      "fontSize": "12px",
+      "color": "rgb(161, 161, 170)",
+      "fontWeight": "700",
+      "whiteSpace": "nowrap"
+    },
+    "centred": true
   },
   {
     "sel": "[data-nav=\"discover\"]",
@@ -168,8 +176,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(0, 0, 0)",
       "borderRadius": "100px",
-      "paddingRight": "12px",
-      "paddingLeft": "12px",
       "paddingBottom": "4px",
       "paddingTop": "4px"
     },

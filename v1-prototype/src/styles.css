@@ -31,7 +31,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .nav-item { width: 100%; max-height: 44px; box-sizing: border-box; border: 0; background: transparent; color: var(--text); padding: 12px 8px; border-radius: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px; align-items: center; text-align: left; font-size: var(--text-md); font-weight: 400; cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
 .nav-item:hover { background: var(--surface-raised); color: var(--text); }
 .nav-item.active { height: 44px; color: var(--text); background: var(--nav-active-bg); border-left: 4px solid var(--violet); border-radius: 0 var(--radius) var(--radius) 0; }
-.nav-item b { min-width: 24px; box-sizing: border-box; padding: 4px 12px; border-radius: var(--radius-pill); background: var(--color-black); display: grid; place-items: center; font-size: var(--text-xs); font-weight: 700; line-height: 1; color: var(--muted); }
+.nav-item b { width: 24px; box-sizing: border-box; padding: 4px 0; white-space: nowrap; border-radius: var(--radius-pill); background: var(--color-black); display: grid; place-items: center; font-size: var(--text-xs); font-weight: 700; line-height: 1; color: var(--muted); }
+.nav-item b.wide { width: auto; min-width: 24px; padding: 4px 7px; }
 .sidebar-footer { margin-top: auto; padding: 18px 10px 0; display: grid; gap: 8px; color: var(--muted); font-size: var(--text-md); }
 .sidebar-footer strong { color: var(--muted-strong); font-weight: 500; }
 .health-line { color: var(--muted-strong); display: flex; gap: 8px; align-items: center; }
@@ -1856,7 +1857,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      what stops the count hiding the icon it belongs to. The button grows to
      40px when there is a count and is 24px when there is not. */
   .appbar-bell { width: auto; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
-  .appbar-badge { flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 2px 8px; overflow: visible; display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--badge-alert-bg); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; line-height: 1; pointer-events: none; }
+  .appbar-badge { flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 2px 0; overflow: visible; display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--badge-alert-bg); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; line-height: 1; pointer-events: none; }
   /* Two digits do not fit a 16px circle; the file only ever shows one. */
   .appbar-badge.wide { width: auto; min-width: 16px; padding: 2px 5px; }
   .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }

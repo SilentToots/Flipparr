@@ -471,7 +471,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
       <nav aria-label="Primary navigation">
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
           <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
-            <Icon /><span>{label}</span>{(counts[id] ?? count) ? <b title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
+            <Icon /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
           </button>
         ))}
       </nav>

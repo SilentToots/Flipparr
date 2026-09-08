@@ -57,6 +57,22 @@ const failures = await page.evaluate(({ spec, icons, frames }) => {
     if (probe) probe.remove();
     if (bad.length) out.push({ sel: c.sel, node: c.node, bad });
   }
+  for (const c of spec) {
+    if (!c.centred) continue;
+    const el = document.querySelector(c.sel);
+    if (!el) continue;   // synthesised probes carry no text to measure
+    const box = el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const glyph = range.getBoundingClientRect();
+    if (!glyph.width) continue;
+    const dx = (glyph.x + glyph.width / 2) - (box.x + box.width / 2);
+    const dy = (glyph.y + glyph.height / 2) - (box.y + box.height / 2);
+    const bad = [];
+    if (Math.abs(dx) > 1) bad.push(`text is ${dx.toFixed(2)}px off centre horizontally`);
+    if (Math.abs(dy) > 1) bad.push(`text is ${dy.toFixed(2)}px off centre vertically`);
+    if (bad.length) out.push({ sel: c.sel, node: c.node, bad });
+  }
   for (const i of icons) {
     const el = document.querySelector(i.where);
     if (!el) { out.push({ sel: i.where, node: i.node, bad: [`icon missing (${i.name})`] }); continue; }
