@@ -313,9 +313,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .family-run-list > button > span:nth-child(2) small { color: var(--muted); font-size: var(--text-sm); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .family-run-list > button > svg { color: #6e7a8c; }
 .series-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 14px; }
-.series-card { padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; text-align: left; cursor: pointer; display: grid; grid-template-rows: auto 1fr; }
+/* minmax(0, 1fr) is load-bearing. The implicit column was auto-sized, so it
+   grew to the cover's own contribution instead of the card: with only a
+   width of 100% and an aspect ratio to go on, the image took its height from
+   the row and its width back from that height. Covers came out 186 and 200
+   wide inside a 179 card, each a different height, overflowing into the
+   card's hidden overflow and taking the badges and progress bar with them. */
+.series-card { padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; text-align: left; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
 .series-card:hover { border-color: #4d426e; transform: translateY(-2px); }
-.series-card > img { width: 100%; aspect-ratio: 2 / 3; object-fit: contain; object-position: top center; display: block; background: #1c2430; }
+/* Covers come from the comics themselves now, so they are not all exactly
+   2:3. Filling the box keeps the shelf even; the crop is off the bottom. */
+.series-card > img { width: 100%; height: auto; aspect-ratio: 2 / 3; object-fit: cover; object-position: top center; display: block; background: #1c2430; }
 .series-card > .cover-placeholder { width: 100%; aspect-ratio: 2 / 3; }
 .series-card > div { min-height: 150px; padding: 12px; display: flex; flex-direction: column; gap: 5px; }
 .series-card > div > strong { min-height: 2.3em; font-size: var(--text-base); line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
