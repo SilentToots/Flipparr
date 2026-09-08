@@ -7451,11 +7451,18 @@ class Handler(BaseHTTPRequestHandler):
         )
         if collection_monitoring:
             try:
-                result = catalog_store().set_collection_monitoring(
-                    int(collection_monitoring.group(1)),
-                    str(payload.get("acquisitionPreference") or "either"),
-                    bool(payload.get("includeSpecials", True)),
-                )
+                # As with a run, only a literal false stops following, so a
+                # stray value cannot quietly cancel a collection's searches.
+                if payload.get("monitored") is False:
+                    result = catalog_store().stop_collection_monitoring(
+                        int(collection_monitoring.group(1))
+                    )
+                else:
+                    result = catalog_store().set_collection_monitoring(
+                        int(collection_monitoring.group(1)),
+                        str(payload.get("acquisitionPreference") or "either"),
+                        bool(payload.get("includeSpecials", True)),
+                    )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

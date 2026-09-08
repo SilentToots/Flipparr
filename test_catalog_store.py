@@ -3151,3 +3151,95 @@ class UnfollowSeriesTests(unittest.TestCase):
             store, _ = self._followed_run(Path(folder))
             with self.assertRaises(ValueError):
                 store.stop_series_monitoring(999999)
+
+
+class UnfollowCollectionTests(unittest.TestCase):
+    """Collections had the same one-way follow that runs did."""
+
+    def _collection(self, root, titles=("Alpha", "Beta")):
+        items = []
+        for title in titles:
+            path = root / f"{title} 001.cbz"
+            path.write_bytes(b"comic")
+            items.append(ParsedFile(str(path), path.name, ".cbz", title, issue="1"))
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: items, lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": parsed.series, "issue": "1",
+                    "record_type": "single_issue", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        run_ids = [int(item["id"]) for item in store.catalog()["series"]]
+        family = store.create_series_family("Everything", run_ids)
+        family_id = int(family["id"])
+        store.create_acquisition_request("collection", family_id, "issues")
+        store.set_collection_monitoring(family_id, "issues", True)
+        return store, family_id, run_ids
+
+    def _family_status(self, store, family_id):
+        return next(
+            item["monitoringStatus"] for item in store.catalog()["families"]
+            if int(item["id"]) == family_id
+        )
+
+    def _refreshes(self, store, run_id):
+        with sqlite3.connect(store.database_path) as connection:
+            return connection.execute(
+                "SELECT COUNT(*) FROM series_monitor_refreshes WHERE series_run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+
+    def test_a_followed_collection_can_be_unfollowed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, family_id, _ = self._collection(Path(folder))
+            self.assertEqual(self._family_status(store, family_id), "monitored")
+            store.stop_collection_monitoring(family_id)
+            self.assertEqual(self._family_status(store, family_id), "cataloged")
+
+    def test_unfollowing_stops_the_searching(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, family_id, _ = self._collection(Path(folder))
+            store.stop_collection_monitoring(family_id)
+            with sqlite3.connect(store.database_path) as connection:
+                still_open = connection.execute(
+                    "SELECT COUNT(*) FROM acquisition_requests WHERE status='open'"
+                ).fetchone()[0]
+            self.assertEqual(still_open, 0)
+
+    def test_a_run_followed_in_its_own_right_keeps_being_checked(self):
+        """The difference from unfollowing a single run.
+
+        A member run can be followed on its own. Dropping every member's
+        scheduled check would silently stop that run being watched too.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store, family_id, run_ids = self._collection(Path(folder))
+            kept, dropped = run_ids[0], run_ids[1]
+            store.set_series_monitoring(kept, "issues")
+            store.stop_collection_monitoring(family_id)
+            self.assertEqual(
+                self._refreshes(store, kept), 1,
+                "a run followed on its own must still be checked",
+            )
+            self.assertEqual(
+                self._refreshes(store, dropped), 0,
+                "a run only the collection was watching must not be",
+            )
+
+    def test_the_comics_are_left_alone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, family_id, _ = self._collection(root)
+            store.stop_collection_monitoring(family_id)
+            self.assertEqual(len(store.catalog()["series"]), 2)
+            self.assertTrue((root / "Alpha 001.cbz").is_file())
+
+    def test_an_unknown_collection_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, _, _ = self._collection(Path(folder))
+            with self.assertRaises(ValueError):
+                store.stop_collection_monitoring(999999)

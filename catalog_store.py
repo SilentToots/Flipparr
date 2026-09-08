@@ -3956,6 +3956,48 @@ class CatalogStore:
             "family": {"id": str(series_family_id), "name": family["name"]},
         }
 
+    def stop_collection_monitoring(self, series_family_id: int) -> dict[str, Any]:
+        """Stop following a collection, and stop looking for its missing issues."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            family = connection.execute(
+                "SELECT id, name, acquisition_preference, include_specials"
+                " FROM series_families WHERE id=?", (series_family_id,)
+            ).fetchone()
+            if not family:
+                raise ValueError("Collection was not found")
+            connection.execute(
+                """UPDATE series_families SET monitoring_status='cataloged', updated_at=?
+                   WHERE id=?""",
+                (now, series_family_id),
+            )
+            cancelled = connection.execute(
+                """UPDATE acquisition_requests SET status='cancelled', updated_at=?
+                   WHERE scope_type='collection' AND series_family_id=? AND status='open'""",
+                (now, series_family_id),
+            ).rowcount
+            # A member run may be followed in its own right. Only the runs this
+            # collection was checking on its behalf stop being checked.
+            connection.execute(
+                """DELETE FROM series_monitor_refreshes
+                   WHERE series_run_id IN (
+                       SELECT series_family_memberships.series_run_id
+                       FROM series_family_memberships
+                       JOIN series_runs
+                         ON series_runs.id=series_family_memberships.series_run_id
+                       WHERE series_family_memberships.series_family_id=?
+                         AND series_runs.monitoring_status!='monitored'
+                   )""",
+                (series_family_id,),
+            )
+        self.reconcile_acquisition_jobs()
+        return {
+            "id": str(series_family_id), "name": family["name"],
+            "acquisitionPreference": family["acquisition_preference"],
+            "includeSpecials": bool(family["include_specials"]),
+            "monitoringStatus": "cataloged", "cancelledRequests": int(cancelled),
+        }
+
     def set_collection_monitoring(
         self, series_family_id: int, acquisition_preference: str, include_specials: bool
     ) -> dict[str, Any]:

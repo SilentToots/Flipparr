@@ -737,6 +737,22 @@ class HttpContractTests(unittest.TestCase):
             store.return_value.stop_series_monitoring.assert_called_once_with(1)
             store.return_value.set_series_monitoring.assert_not_called()
 
+    def test_a_collection_unfollows_the_same_way(self):
+        with patch("app.catalog_store") as store:
+            store.return_value.stop_collection_monitoring.return_value = {"ok": True}
+            self.post("/api/v1/collections/1/monitoring", {"monitored": False})
+            store.return_value.stop_collection_monitoring.assert_called_once_with(1)
+            store.return_value.set_collection_monitoring.assert_not_called()
+
+    def test_a_collection_needs_a_literal_false_too(self):
+        for value in ("false", 0, None, ""):
+            with self.subTest(value=value):
+                with patch("app.catalog_store") as store:
+                    store.return_value.set_collection_monitoring.return_value = {"ok": True}
+                    self.post("/api/v1/collections/1/monitoring", {"monitored": value})
+                    store.return_value.stop_collection_monitoring.assert_not_called()
+                    store.return_value.set_collection_monitoring.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
