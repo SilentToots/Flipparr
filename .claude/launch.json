@@ -4,7 +4,23 @@
     {
       "name": "v1-prototype",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "v1-prototype", "run", "dev:qa"],
+      "runtimeArgs": [
+        "--prefix",
+        "v1-prototype",
+        "run",
+        "dev:qa"
+      ],
+      "port": 4173
+    },
+    {
+      "name": "flipparr-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "v1-prototype",
+        "run",
+        "dev:uiqa"
+      ],
       "port": 4173
     }
   ]
