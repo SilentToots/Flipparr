@@ -3614,3 +3614,44 @@ class ReleaseScoringTests(unittest.TestCase):
                        "The Department of Truth", "4", "2020"),
             0,
         )
+
+
+class DownloadedFileMatchTests(unittest.TestCase):
+    """A file grabbed as the right issue was refused once it landed.
+
+    The release scorer had learned that scene names lead with the
+    publisher and mark the number with "No"; the import matcher had not,
+    so it downloaded the right comic and then could not recognise it.
+    """
+
+    def test_a_scene_named_file_is_recognised_as_its_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / (
+                "Image.Comics.If.Destruction.Be.Our.Lot.No.04.2026."
+                "HYBRID.COMIC.eBook-21A1-FTP.pdf"
+            )
+            path.write_bytes(b"%PDF-1.4\n%stub\n")
+            score, detail = app._download_candidate_score(path, {
+                "seriesTitle": "If Destruction Be Our Lot", "issueNumber": "4",
+                "publisher": "Image",
+            })
+            self.assertTrue(detail["issueMatch"], "the issue number is in the name")
+            self.assertGreaterEqual(
+                detail["titleRatio"], 0.55,
+                "the publisher prefix must not make the series unrecognisable",
+            )
+
+    def test_a_different_series_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "Thor The Deviants Saga 004 (2012).cbz"
+            # A real archive, so the score comes from the name and not from
+            # the file failing its structural check before it is compared.
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("001.png", ArchiveReadingTests()._png())
+            _, detail = app._download_candidate_score(path, {
+                "seriesTitle": "Saga", "issueNumber": "4", "publisher": "Image",
+            })
+            self.assertLess(
+                detail["titleRatio"], 0.55,
+                "a longer name that merely ends in the wanted one is not it",
+            )

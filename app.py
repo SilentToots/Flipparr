@@ -1973,9 +1973,20 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
     issue_match = bool(candidate_issue) and _issue_key(candidate_issue) == _issue_key(expected_issue)
     candidate_title = lookup.get("title") or embedded.get("series") or parsed.title
     expected_title = context.get("seriesTitle") or ""
-    title_ratio = difflib.SequenceMatcher(
-        None, normalized_title(candidate_title), normalized_title(expected_title)
-    ).ratio()
+    # A scene name leads with the publisher and marks the number with "No",
+    # so the same trimming the release scorer does is needed again here --
+    # otherwise a file that was grabbed as the right issue is refused as
+    # unrecognisable the moment it finishes downloading.
+    wanted = normalized_title(expected_title)
+    bare_wanted = normalized_title(_without_leading_article(expected_title))
+    title_ratio = max(
+        difflib.SequenceMatcher(None, normalized_title(form), compare).ratio()
+        for form, compare in (
+            (candidate_title, wanted),
+            (_without_leading_article(candidate_title), bare_wanted),
+            (_release_series_trim(candidate_title, context.get("publisher")), bare_wanted),
+        )
+    )
     score = (140 if issue_match else 0) + round(title_ratio * 70)
     return score, {
         "path": path, "result": result, "issueMatch": issue_match,
