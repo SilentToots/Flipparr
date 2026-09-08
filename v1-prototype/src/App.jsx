@@ -464,9 +464,11 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
           </button>
         ))}
       </nav>
+      {/* The design's sidebar is the four nav items and nothing else. Scan
+          state is the header's sync indicator, which is where the file puts
+          it. Sign-out stays: the file does not depict authentication, and
+          dropping it would leave a forms session with no way out. */}
       <div className="sidebar-footer">
-        <div className={`health-line ${backendStatus === "offline" ? "offline" : ""}`}><i /> {backendStatus === "offline" ? "Library unavailable" : "Library ready"}</div><span>Last scan: {catalog?.lastScan?.iso ? `${catalog.lastScan.date} ${catalog.lastScan.time}` : "Not run yet"}</span>
-        <div className="storage-title">Library</div><strong>{catalog?.stats?.files ?? 0} comics across {logicalSeriesCount} series</strong><div className="storage-track"><i style={{ width: catalog?.stats?.files ? "100%" : "0%" }} /></div>
         {authStatus?.method === "forms" && authStatus?.authenticated
           ? <button type="button" className="sign-out-button" onClick={onSignOut}><SignOut size={16} /> Sign out</button>
           : null}
@@ -939,6 +941,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const sortedFamilies = useMemo(() => sortLibrary(families, sort), [families, sort]);
   return (
     <>
+      <div className="dashboard-header">
       <div className="topbar"><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
       <PageHeader title="Comics">
         <p className="library-summary">
@@ -950,16 +953,19 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
           </span>
         </p>
       </PageHeader>
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Sort: Title A-Z</option><option value="added">Sort: Recently added</option><option value="attention">Sort: Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
+      </div>
+      <div className="dashboard-body">
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
       {activeScan ? <LibraryScanNotice scan={activeScan} /> : null}
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Sort: Title A-Z</option><option value="added">Sort: Recently added</option><option value="attention">Sort: Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       <AttentionPanel items={catalog?.inbox ?? []} onReview={() => onNavigate("metadata")} />
       </> : null}
+      </div>
     </>
   );
 }

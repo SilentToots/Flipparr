@@ -155,7 +155,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   50%, 100% { opacity: var(--loader-muted-opacity); }
 }
 
-.page-header { padding: 20px 0; border-bottom: 2px solid var(--surface); display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.dashboard-header { padding: 20px; border-bottom: 2px solid var(--surface); display: flex; flex-direction: column; gap: 20px; }
+.dashboard-header > .page-header, .dashboard-header > .library-tools { padding: 0; }
+.dashboard-body { padding: 32px; }
+.page-header { padding: 20px 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .page-header h1 { margin: 0; color: var(--chrome-label); font-size: var(--text-xl); font-weight: 800; letter-spacing: normal; line-height: normal; }
 .page-header p:empty { display: none; }
 .page-header p { margin: 0; color: var(--muted); font-size: var(--text-base); }
@@ -238,7 +241,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-loading-cell.short { width: 68px; }
 @keyframes library-skeleton { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
-.library-tools { min-height: 71px; display: flex; align-items: center; gap: 13px; }
+.library-tools { min-height: 38px; display: flex; align-items: center; gap: 13px; }
 .scope-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 3px; background: var(--bg); }
 .scope-toggle button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-weak); display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: var(--control-font-md); }
 .scope-toggle button.active { background: var(--violet-soft); color: var(--violet-text); }
@@ -1814,7 +1817,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .appbar-menu:focus-visible, .appbar-action:focus-visible,
   .appbar-brand:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .appbar-brand {
-    display: grid; place-items: center; width: 38px; height: 38px; padding: 0;
+    display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
     border: 0; border-radius: var(--radius-sm); background: transparent;
     color: var(--text); cursor: pointer;
   }
@@ -1850,8 +1853,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .attention-panel { display: none; }
 
   /* Both columns start below the bar. */
-  .sidebar { top: 56px; }
-  .main-content { padding-top: 84px; }
+  .sidebar { top: 51px; }
+  /* The content area is the file's Frame 33: flush against the rail, with its
+     own blocks carrying the 20px and 32px insets. */
+  .main-content { margin-left: 228px; padding: 0; max-width: none; }
+  .app-shell { padding-top: 51px; }
   /* Search lives in the bar now, so the copy of it inside the page is the
      phone's alone. */
   .topbar, .search-results-topbar { display: none; }
@@ -1881,7 +1887,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    accent button competes with whatever you are actually doing. */
 @media (min-width: 641px) {
   .appbar .search-field {
-    height: auto; min-height: 0; gap: 4px; padding: 4px 12px 4px 8px;
+    height: 34px; min-height: 34px; box-sizing: border-box; gap: 4px; padding: 4px 12px 4px 8px;
     border-radius: var(--radius-pill); border: 1px solid var(--color-neutral-500);
     background: var(--line); color: var(--muted-strong);
   }

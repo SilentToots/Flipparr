@@ -8,7 +8,7 @@
 // one. It exists because "looks close in a screenshot" shipped twice.
 
 import { chromium } from "playwright";
-import { spec, icons, iconModules } from "./figma-spec.mjs";
+import { spec, icons, iconModules, frames } from "./figma-spec.mjs";
 
 const origin = process.env.FLIPPARR_UI_ORIGIN || "http://localhost:4173";
 const width = 1440;
@@ -20,7 +20,7 @@ await page.goto(`${origin}/library`, { waitUntil: "networkidle", timeout: 45000 
 await page.waitForSelector(".series-card", { timeout: 20000 });
 await page.waitForTimeout(400);
 
-const failures = await page.evaluate(({ spec, icons }) => {
+const failures = await page.evaluate(({ spec, icons, frames }) => {
   const out = [];
   for (const c of spec) {
     let el = document.querySelector(c.sel);
@@ -65,8 +65,28 @@ const failures = await page.evaluate(({ spec, icons }) => {
       out.push({ sel: i.where, node: i.node, bad: [`${i.name}: want ${i.size}px, got ${r.width.toFixed(1)}px`] });
     }
   }
+  for (const f of frames) {
+    const el = document.querySelector(f.sel);
+    if (!el) { out.push({ sel: f.sel, node: f.node, bad: ["frame not found"] }); continue; }
+    const r = el.getBoundingClientRect();
+    let p = { x: 0, y: 0 };
+    if (f.within) {
+      const pe = document.querySelector(f.within);
+      if (!pe) { out.push({ sel: f.sel, node: f.node, bad: [`parent ${f.within} not found`] }); continue; }
+      p = pe.getBoundingClientRect();
+    }
+    const bad = [];
+    const near = (got, want) => Math.abs(got - want) > 1;
+    if (f.w != null && near(r.width, f.w)) bad.push(`width: want ${f.w}, got ${r.width.toFixed(1)}`);
+    if (f.h != null && near(r.height, f.h)) bad.push(`height: want ${f.h}, got ${r.height.toFixed(1)}`);
+    if (p) {
+      if (f.x != null && near(r.x - p.x, f.x)) bad.push(`x within ${f.within || "viewport"}: want ${f.x}, got ${(r.x - p.x).toFixed(1)}`);
+      if (f.y != null && near(r.y - p.y, f.y)) bad.push(`y within ${f.within || "viewport"}: want ${f.y}, got ${(r.y - p.y).toFixed(1)}`);
+    }
+    if (bad.length) out.push({ sel: f.sel, node: f.node, bad });
+  }
   return out;
-}, { spec, icons });
+}, { spec, icons, frames });
 
 await browser.close();
 
@@ -79,7 +99,7 @@ for (const m of iconModules) {
   }
 }
 
-const total = spec.length + icons.length + iconModules.length;
+const total = spec.length + icons.length + iconModules.length + frames.length;
 if (!failures.length) {
   console.log(`\nFigma spec: ${total} checks, all match.\n`);
   process.exit(0);

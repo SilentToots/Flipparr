@@ -53,6 +53,10 @@ export const spec = [
     fontSize: "14px", fontWeight: "700", color: "rgb(113, 113, 122)" } },
 
   // --- comic card, node 1:495 (and 1:523 for the complete variant) --------
+  { sel: ".dashboard-body", node: "1:522", props: { padding: "32px" } },
+  { sel: ".dashboard-header", node: "1:269", props: {
+    padding: "20px", rowGap: "20px",
+    borderBottomWidth: "2px", borderBottomColor: "rgb(9, 9, 11)" } },
   { sel: ".series-card", node: "1:495", props: {
     backgroundColor: "rgb(9, 9, 11)", borderTopColor: "rgb(39, 39, 42)",
     borderRadius: "8px", rowGap: "12px", paddingBottom: "20px" } },
@@ -101,4 +105,25 @@ export const icons = [
 
 export const iconModules = [
   { name: "heroicons-micro/bookmark", node: "I1:495;1:458", from: "@heroicons/react/16/solid", export: "BookmarkIcon" },
+];
+
+// Frame geometry, straight from `get_metadata` on 1:86 -- every box's size and
+// its offset inside its parent. This is the half that was missing: the checks
+// above pin colour and type, and every round of "the spacing is wrong" was
+// something only this catches. Offsets are parent-relative so the assertions
+// hold at any viewport where the design's fixed widths still apply.
+//
+// Frames whose height grows with content (the content column, the grid area)
+// pin only what the file fixes.
+export const frames = [
+  { sel: ".appbar", node: "1:87", h: 51 },
+  { sel: ".sidebar", node: "1:122", w: 228, within: null, x: 0, y: 51 },
+  // Frame 33 sits at (228, 0) inside Frame 1:2, and 1:2 itself starts at
+  // y=51 under the bar -- so 51 in the viewport is the file's 0.
+  { sel: ".main-content", node: "1:492", within: null, x: 228, y: 51 },
+  { sel: ".dashboard-header", node: "1:269", within: ".main-content", x: 0, y: 0, h: 128 },
+  { sel: ".dashboard-header .page-header", node: "1:271", within: ".dashboard-header", x: 20, y: 20 },
+  { sel: ".dashboard-header .library-tools", node: "1:330", within: ".dashboard-header", x: 20, y: 68, h: 38 },
+  { sel: ".dashboard-body", node: "1:522", within: ".main-content", x: 0, y: 128 },
+  { sel: ".series-grid", node: "1:522", within: ".dashboard-body", x: 32 },
 ];
