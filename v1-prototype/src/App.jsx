@@ -22,6 +22,7 @@ import {
   Funnel,
   Gear,
   HardDrive,
+  Lightning,
   List,
   ListBullets,
   MagnifyingGlass,
@@ -304,9 +305,9 @@ function publicationState(series) {
     || (series?.issueCatalog?.status === "complete" ? "completed"
       : series?.issueCatalog?.status === "complete_to_date" ? "ongoing" : "unknown");
   return state === "completed"
-    ? { label: "Completed", tone: "completed", known: true }
+    ? { label: "Run complete", tone: "completed", known: true }
     : state === "ongoing"
-      ? { label: "Ongoing", tone: "ongoing", known: true }
+      ? { label: "Active run", tone: "ongoing", known: true }
       // "Unknown" read as a fault on a freshly scanned library, where almost
       // every row is waiting on provider metadata that will arrive.
       : { label: "Status pending", tone: "pending", known: false };
@@ -316,14 +317,17 @@ function PublicationStatus({ series }) {
   const state = publicationState(series);
   // A badge on 94% of rows is not a status, it is background texture -- and it
   // buried the handful of rows that do carry one. Say nothing until there is
-  // something to say, so a real Ongoing or Completed stands out.
+  // something to say, so a real Active run or Run complete stands out.
   if (!state.known) return null;
-  return <span className={`publication-status ${state.tone}`}>{state.label}</span>;
+  return <span className={`publication-status ${state.tone}`}>
+    {state.tone === "ongoing" ? <Lightning size={12} weight="fill" /> : <CheckCircle size={12} weight="fill" />}
+    {state.label}
+  </span>;
 }
 
 function MonitoringStatus({ series }) {
   if (series.monitoringStatus !== "monitored") return null;
-  return <span className="monitoring-status"><CheckCircle size={13} weight="fill" /> Following</span>;
+  return <span className="monitoring-status"><BookmarkSimple size={12} weight="fill" /> Following</span>;
 }
 
 function seriesAttentionLabel(series) {

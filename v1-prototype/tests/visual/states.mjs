@@ -47,12 +47,16 @@ export const states = [
     },
   },
   {
+    // Requires the menu, not just the bar: a click that lands before the
+    // bell has items photographs the closed state, and the run reads clean
+    // having captured the same page as library-grid.
     name: "notifications-open",
     path: "/library",
-    require: [".appbar"],
+    require: [".appbar", ".notifications-menu"],
     async setup(page) {
       await page.waitForSelector(".appbar-notifications button", { timeout: 15000 });
       await page.locator(".appbar-notifications button").first().click();
+      await page.waitForSelector(".notifications-menu", { timeout: 15000 });
       await settle(page);
     },
   },
