@@ -82,7 +82,7 @@ export const states = [
     setup: (page) => drawerTab(page, "Collection"),
   },
   { name: "discover", path: "/discover", require: [".page-header"] },
-  { name: "requests", path: "/requests", require: [".page-header"] },
+  { name: "pull-list", path: "/pull-list", require: [".page-header"] },
   { name: "library-health", path: "/health", require: [".page-header"] },
   { name: "settings", path: "/settings", require: [".page-header"] },
   { name: "import", path: "/import", require: [".page-header"] },
