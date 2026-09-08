@@ -606,12 +606,22 @@ ISBN_13 = re.compile(r"(?<!\d)(97[89](?:[ -]?\d){10})(?!\d)")
 ISBN_10 = re.compile(r"(?<!\d)(\d(?:[ -]?\d){8}[ -]?[\dXx])(?!\d)")
 VOLUME = re.compile(r"\b(?:vol(?:ume)?\.?|book)\s*[-#:]?\s*(\d+)\b", re.I)
 ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*)(\d+(?:\.\w+)?)\b", re.I)
+# An unmarked issue number is only believable when a year follows it, which is
+# what keeps a number inside a title from being read as an issue. Releases
+# often put a variant tag in between -- "Terminal 007 (Blind Bag) (2026)" --
+# so a bounded run of bracketed groups is allowed to sit there. Anything that
+# is not a bracketed group still breaks the anchor, and the year itself is
+# still required, so this stays far narrower than matching a bare number.
+_NON_YEAR_GROUP = r"[\(\[](?!\s*(?:19|20)\d{2}\s*[\)\]])[^\)\]]*[\)\]]"
+# Some releases pad inside the brackets: "Terminal 10 (Ultra-Rare) ( 2026)".
+_YEAR_GROUP = r"\(\s*(?:19|20)\d{2}\s*\)"
+_TAGS = rf"(?:{_NON_YEAR_GROUP}\s*){{0,4}}"
 PADDED_ISSUE = re.compile(
-    r"\b(0{1,3}\d{1,3})\b(?=\s*(?:\((?:19|20)\d{2}\)|(?:19|20)\d{2}\b|$))",
+    rf"\b(0{{1,3}}\d{{1,3}})\b(?=\s*{_TAGS}(?:{_YEAR_GROUP}|(?:19|20)\d{{2}}\b|$))",
     re.I,
 )
 UNMARKED_ISSUE = re.compile(
-    r"(?:^|\s)(\d{1,3}(?:\.\w+)?)\b(?=\s*\((?:19|20)\d{2}\))",
+    rf"(?:^|\s)(\d{{1,3}}(?:\.\w+)?)\b(?=\s*{_TAGS}{_YEAR_GROUP})",
     re.I,
 )
 

@@ -3347,3 +3347,59 @@ class ArchiveReadingTests(unittest.TestCase):
             with patch("app.subprocess.run", return_value=Empty()):
                 with self.assertRaises(ValueError):
                     app.read_archive_member(path, "pages/001.png")
+
+
+class VariantTaggedReleaseTests(unittest.TestCase):
+    """A variant tag between the issue number and the year hid the number.
+
+    Terminal 7 and 10 downloaded correctly, twice each, and were refused at
+    import nine times: with no issue number parsed the file could not be
+    matched to the issue it was grabbed for. The releases were right; the
+    parser could not read them.
+    """
+
+    def parse(self, name):
+        return parse_filename(Path("/library") / name)
+
+    def test_a_variant_tag_before_the_year_does_not_hide_the_issue(self):
+        for name, expected in (
+            ("Terminal 007 (Blind Bag) (2026) (Image) (c2c) (Ignatz-DCP).cbz", "7"),
+            ("Terminal 10 (Ultra-Rare Advance Copy) ( 2026).cbz", "10"),
+            ("Example 012 (Foil) (Second Print) (2021).cbz", "12"),
+            ("Example 4 [Director's Cut] (2019).cbz", "4"),
+        ):
+            with self.subTest(name=name):
+                parsed = self.parse(name)
+                self.assertEqual(parsed.issue, expected)
+                self.assertEqual(parsed.title, "Terminal" if "Terminal" in name else "Example")
+
+    def test_padding_inside_the_year_brackets_is_tolerated(self):
+        self.assertEqual(self.parse("Example 003 ( 2012 ).cbz").issue, "3")
+
+    def test_an_unbracketed_word_still_breaks_the_anchor(self):
+        """Only bracketed groups may sit between the number and the year.
+
+        Without that the anchor would stop doing its job, and a number
+        inside a title would start reading as an issue number.
+        """
+        self.assertIsNone(self.parse("Example 12 of 30 published 2019.cbz").issue)
+
+    def test_a_number_with_no_year_after_it_is_not_an_issue(self):
+        self.assertIsNone(self.parse("Fantastic Four Omnibus (2020).cbz").issue)
+        self.assertIsNone(self.parse("Saga (2012).cbz").issue)
+
+    def test_a_volume_is_still_not_an_issue(self):
+        self.assertIsNone(self.parse("Saga vol 2 (2013).cbz").issue)
+        self.assertEqual(self.parse("Saga vol 2 (2013).cbz").volume, 2)
+
+    def test_the_releases_this_library_already_holds_still_parse(self):
+        for name, title, issue in (
+            ("Saga 003 (2012) (Digital) (Zone-Empire).cbz", "Saga", "3"),
+            ("Fables.095.(2010).(Digital).(NahgaEmpire).cbz", "Fables", "95"),
+            ("Chew 015 (2010) (D) (Kingpin-Empire.cbz", "Chew", "15"),
+            ("If Destruction Be Our Lot 002 (2026).cbz", "If Destruction Be Our Lot", "2"),
+            ("Absolute Batman 003 (2025).cbz", "Absolute Batman", "3"),
+        ):
+            with self.subTest(name=name):
+                parsed = self.parse(name)
+                self.assertEqual((parsed.title, parsed.issue), (title, issue))
