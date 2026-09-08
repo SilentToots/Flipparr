@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test:sites": "node --test tests/sites-worker.test.mjs",
     "dev:qa": "SONICBOOM_API_ORIGIN=http://127.0.0.1:8791 vite",
-    "dev:uiqa": "SONICBOOM_API_ORIGIN=http://127.0.0.1:8795 vite"
+    "dev:uiqa": "SONICBOOM_API_ORIGIN=http://127.0.0.1:8795 vite",
+    "visual:capture": "node tests/visual/capture.mjs",
+    "visual:compare": "node tests/visual/compare.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -17,5 +19,10 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "vite": "6.4.2"
+  },
+  "devDependencies": {
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.63.0",
+    "pngjs": "^7.0.0"
   }
 }
