@@ -372,6 +372,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .attention-panel header { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center; }
 .attention-panel header strong { color: var(--red-text); font-size: var(--text-base); }
 .attention-panel header button { border: 0; background: transparent; color: var(--violet-text); display: flex; align-items: center; gap: 6px; font-size: var(--text-md); cursor: pointer; }
+/* Same split as the bell: opening and clearing are separate targets. */
+.attention-detail { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; }
+.attention-detail > button:first-child { min-width: 0; }
+.attention-dismiss { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted-weak); cursor: pointer; }
+.attention-dismiss:hover { background: var(--surface-soft); color: var(--text); }
 .attention-details { display: grid; grid-template-columns: 1fr 1fr; margin: 13px 0 0 34px; }
 .attention-details > button { min-width: 0; border: 0; border-left: 1px solid var(--red-border); background: transparent; text-align: left; padding: 2px 18px; display: grid; gap: 5px; cursor: pointer; }
 .attention-details span { color: var(--muted-strong); font-size: var(--text-md); font-weight: 650; }
@@ -1501,7 +1506,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .metadata-setup-action { min-height: 44px; padding: 0 14px; }
   .metadata-setup-copy summary { min-height: 44px; display: inline-flex; align-items: center; }
   .metadata-setup-copy > button,
-  .attention-panel header button, .attention-details > button { min-height: 44px; }
+  .attention-panel header button, .attention-details button { min-height: 44px; }
   .search-field { min-height: 48px; }
   .search-field input { min-height: 44px; }
   .search-field button, .search-field .ui-button { min-height: 44px; }
@@ -1854,13 +1859,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notifications-summary { margin: 0 0 4px; padding: 7px 8px; border-radius: 7px; background: var(--red-soft); color: var(--red-text); font-size: var(--text-xs); display: flex; align-items: center; gap: 7px; }
   .notifications-summary svg { flex: none; }
   .notifications-list { display: grid; gap: 2px; max-height: 320px; overflow-y: auto; }
-  .notifications-list > button { min-height: 52px; width: 100%; padding: 8px; border: 0; border-radius: 7px; background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: center; text-align: left; cursor: pointer; }
-  .notifications-list > button:hover { background: var(--status-muted-bg); }
-  .notifications-list > button > span { min-width: 0; display: grid; gap: 2px; }
-  .notifications-list strong { color: var(--text); font-size: var(--text-sm); font-weight: 640; }
-  .notifications-list small { color: var(--muted); font-size: var(--text-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .notifications-list .severity-error { color: var(--red); }
-  .notifications-list .severity-warning { color: var(--amber); }
+  /* Open and dismiss are separate targets, so clearing a notification is
+     never a near-miss on opening it. */
+  .notifications-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: var(--radius-sm); }
+  .notifications-item:hover { background: var(--status-muted-bg); }
+  .notifications-open { min-height: 52px; width: 100%; padding: 8px; border: 0; border-radius: var(--radius-sm); background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: center; text-align: left; cursor: pointer; }
+  .notifications-open > span { min-width: 0; display: grid; gap: 2px; }
+  .notifications-dismiss { flex: none; width: 26px; height: 26px; margin-right: 6px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted-weak); cursor: pointer; }
+  .notifications-dismiss:hover { background: var(--surface-soft); color: var(--text); }
+  .notifications-open strong { color: var(--text); font-size: var(--text-sm); font-weight: 640; }
+  .notifications-open small { color: var(--muted); font-size: var(--text-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notifications-open .severity-error { color: var(--red); }
+  .notifications-open .severity-warning { color: var(--amber); }
   .notifications-empty { margin: 0; padding: 14px 8px 16px; color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: 8px; }
   .notifications-empty svg { color: var(--green); }
   .notifications-all { width: 100%; min-height: 36px; margin-top: 4px; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; background: transparent; color: var(--violet-text); font-size: var(--text-sm); display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
@@ -1942,6 +1952,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm strong { display: block; color: var(--muted-strong); font-size: var(--text-md); }
 .request-search-confirm small { display: block; margin-top: 3px; color: var(--muted-strong); font-size: var(--text-sm); }
 .request-search-confirm > span { display: flex; gap: 9px; flex: none; }
+/* Arriving from the bell, so the reader can see which of a dozen rows the
+   notification meant. Fades rather than sticks: it is an answer to "which
+   one", not a status. */
+.request-aimed { outline: 2px solid var(--violet); outline-offset: 2px; animation: request-aimed 2.2s ease-out; }
+@keyframes request-aimed { 0%, 60% { outline-color: var(--violet); } 100% { outline-color: transparent; } }
 
 /* The language preference sits above the services it governs. */
 .settings-language { max-width: 460px; margin: 0 0 22px; }

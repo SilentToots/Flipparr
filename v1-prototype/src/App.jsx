@@ -39,6 +39,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { jobsNeedingAttention } from "./nav-counts.js";
+import { buildNotifications, pruneDismissed, readDismissed, writeDismissed } from "./notifications.js";
 import {
   MenuIcon, SearchIcon, NotificationsIcon, SettingsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon, LibraryHealthIcon,
@@ -495,7 +496,9 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
 // trap, and adds the outside-click that a menu needs and a modal gets from
 // its backdrop. It must be mounted and unmounted rather than hidden: the
 // hook's effect runs once, on mount.
-function NotificationsMenu({ items, onClose, onReview }) {
+const NOTIFICATION_KINDS = { download: "Download", file: "Comic file", metadata: "Metadata" };
+
+function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
   const dialogRef = useDialog(onClose);
   useEffect(() => {
     function handlePointerDown(event) {
@@ -508,34 +511,38 @@ function NotificationsMenu({ items, onClose, onReview }) {
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [onClose]);
-  // A comic file problem is one the Replace action fixes; a metadata review
-  // is one Edit fixes. That is what `category` means, and it is the same test
-  // Library health and the mobile panel use. Grouping on severity instead
-  // would quietly drop a wrong-language file, which is a warning.
-  const fileProblems = items.filter((item) => item.category === "file");
-  const shown = [...fileProblems, ...items.filter((item) => item.category !== "file")].slice(0, 5);
+  const blocking = items.filter((item) => item.severity === "error").length;
+  const shown = items.slice(0, 5);
   return <div className="notifications-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
     <header><strong id="notifications-title">Needs attention</strong>{items.length ? <b>{items.length}</b> : null}</header>
-    {fileProblems.length ? <p className="notifications-summary">
+    {blocking ? <p className="notifications-summary">
       <WarningCircle size={15} weight="fill" className="severity-error" />
-      {fileProblems.length} comic file problem{fileProblems.length === 1 ? "" : "s"}
+      {blocking} {blocking === 1 ? "item is" : "items are"} blocked until you act
     </p> : null}
     {shown.length ? <div className="notifications-list">{shown.map((item) =>
-      <button type="button" key={item.id} onClick={() => { onClose(); onReview(item); }}>
-        <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />
-        <span><strong>{item.issue}</strong><small>{item.category === "file" ? "Comic file" : "Metadata"} · {item.file}</small></span>
-      </button>)}
+      // The row opens the thing; dismiss is its own control rather than a
+      // gesture on the row, so acting on a notification and clearing one are
+      // never the same click.
+      <div className="notifications-item" key={item.id}>
+        <button type="button" className="notifications-open" onClick={() => { onClose(); onOpen(item); }}>
+          <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />
+          <span><strong>{item.title}</strong><small>{NOTIFICATION_KINDS[item.kind]} · {item.detail}</small></span>
+        </button>
+        <button type="button" className="notifications-dismiss" onClick={() => onDismiss(item)} aria-label={`Dismiss: ${item.title}`} title="Dismiss">
+          <X size={14} />
+        </button>
+      </div>)}
     </div> : <p className="notifications-empty"><CheckCircle size={19} weight="fill" /> Nothing needs attention.</p>}
-    {items.length ? <button type="button" className="notifications-all" onClick={() => { onClose(); onReview(); }}>
+    {items.length ? <button type="button" className="notifications-all" onClick={() => { onClose(); onOpen(); }}>
       {items.length > shown.length ? `Review all ${items.length}` : "Review all"} <ArrowRight size={15} />
     </button> : null}
   </div>;
 }
 
-function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch, onNavigate, onReview }) {
+function AppBar({ query, collapsed, settingsActive, notifications, onToggleNav, onSearch, onNavigate, onOpenNotification, onDismissNotification }) {
   const [draft, setDraft] = useState(query || "");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const items = inbox || [];
+  const items = notifications || [];
   // Reloading /search?q=… must not leave the field empty under its own results.
   useEffect(() => { setDraft(query || ""); }, [query]);
   return <header className="appbar">
@@ -571,7 +578,8 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
         {notificationsOpen ? <NotificationsMenu
           items={items}
           onClose={() => setNotificationsOpen(false)}
-          onReview={onReview}
+          onOpen={onOpenNotification}
+          onDismiss={onDismissNotification}
         /> : null}
       </div>
       <button
@@ -801,9 +809,9 @@ function CollectionEmpty({ query }) {
   return <div className="empty-state"><Books size={35} weight="duotone" /><strong>{query ? `No collections match “${query}”` : "No collections created yet"}</strong><span>{query ? "Try another collection or run title." : "Open a run and use its Collection tab to group related publication runs."}</span></div>;
 }
 
-function AttentionPanel({ onReview, items }) {
+function AttentionPanel({ items, onOpen, onDismiss }) {
   if (!items.length) return null;
-  return <section className="attention-panel"><header><WarningCircle size={24} weight="fill" /><strong>Needs attention ({items.length})</strong><button onClick={onReview}>Review problems <ArrowRight size={16} /></button></header><div className="attention-details">{items.slice(0, 2).map((item) => <button onClick={onReview} key={item.id}><span>{item.issue}</span><small>{item.file}: {item.detail}</small><b>{item.category === "file" ? "Review comic file" : "Review metadata"}</b></button>)}</div></section>;
+  return <section className="attention-panel"><header><WarningCircle size={24} weight="fill" /><strong>Needs attention ({items.length})</strong><button onClick={() => onOpen()}>Review problems <ArrowRight size={16} /></button></header><div className="attention-details">{items.slice(0, 2).map((item) => <div className="attention-detail" key={item.id}><button onClick={() => onOpen(item)}><span>{item.title}</span><small>{NOTIFICATION_KINDS[item.kind]}: {item.detail}</small><b>{item.kind === "download" ? "Open Pull List" : item.kind === "file" ? "Review comic file" : "Review metadata"}</b></button><button type="button" className="attention-dismiss" onClick={() => onDismiss(item)} aria-label={`Dismiss: ${item.title}`} title="Dismiss"><X size={14} /></button></div>)}</div></section>;
 }
 
 function discoveryRunStatus(item) {
@@ -989,7 +997,7 @@ function SortMenu({ value, onChange }) {
   </div>;
 }
 
-function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus }) {
+function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus, notifications, onOpenNotification, onDismissNotification }) {
   const [query, setQuery] = useState("");
   // Covers are the point of a comic library, so the grid leads.
   const [view, setView] = useState("grid");
@@ -1033,7 +1041,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
-      <AttentionPanel items={catalog?.inbox ?? []} onReview={() => onNavigate("metadata")} />
+      <AttentionPanel items={notifications} onOpen={onOpenNotification} onDismiss={onDismissNotification} />
       </> : null}
       </div>
     </>
@@ -1143,7 +1151,7 @@ function ImportLibraryView({ onNavigate, onStartInventory, onScanLibrary, onUpda
     <section className="focused-panel add-panel"><div className="panel-icon"><FolderOpen size={30} weight="duotone" /></div><h2>Add another library folder</h2><p>We’ll inventory the issues and volumes already in this folder, use covers and metadata from the files, and check for damaged archives. Online details can be refreshed after the library is visible.</p><label className="form-field"><span>Library folder</span><div className="path-input"><input value={path} placeholder="/comics-archive" onChange={(event) => setPath(event.target.value)} /><button type="button" onClick={chooseFolder}>Choose folder</button></div>{pickerState ? <small>{pickerState}</small> : null}</label><label className="check-row"><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Useful when each series has its own folder</small></span></label><div className="safety-note"><ShieldCheck size={22} weight="fill" /><span><strong>Your files stay untouched</strong><small>No files will be renamed, moved, or modified during this scan.</small></span></div><div className="docker-path-note"><HardDrive size={20} /><span><strong>Using Docker?</strong><small>Mount each NAS share into the Flipparr container first, then enter its container path here. Avoid adding a folder inside an existing source.</small></span></div><div className="panel-actions"><button className={`primary-button ${busy ? "loading" : ""}`} disabled={busy || !path.trim()} onClick={() => onStartInventory(path, recursive)}>{busy ? <LoadingSpinner size={19} /> : <UploadSimple size={19} />} {busy ? "Scanning…" : "Import and scan folder"}</button><button className="ghost-button" onClick={() => onNavigate("settings")}>Cancel</button></div></section></>;
 }
 
-function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh }) {
+function RequestsView({ catalog, focus, onCreateRequest, onCancelReplacement, onRefresh }) {
   const [requestOpen, setRequestOpen] = useState(false);
   const [releaseJob, setReleaseJob] = useState(null);
   const [tab, setTab] = useState("wanted");
@@ -1222,6 +1230,26 @@ function RequestsView({ catalog, onCreateRequest, onCancelReplacement, onRefresh
     (request) => request.status === "fulfilled"
       || (request.status === "open" && !hasSomethingToFind(request))
   );
+  // A notification about a failed download lands here, so the screen has to
+  // put the reader in front of that request rather than on whichever tab they
+  // last used. A failure is always on a live request, which is Wanted.
+  const aimedAt = useRef(null);
+  useEffect(() => {
+    if (!focus || aimedAt.current === focus) return;
+    aimedAt.current = focus;
+    setTab("wanted");
+    // After the tab renders, not before: the row does not exist until then.
+    const key = `${focus.kind === "replacement" ? "replacement" : "series"}-${focus.requestId}`;
+    const timer = setTimeout(() => {
+      const row = document.querySelector(`[data-request="${key}"]`);
+      if (!row) return;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.querySelector(".request-expand")?.click();
+      row.classList.add("request-aimed");
+      setTimeout(() => row.classList.remove("request-aimed"), 2200);
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [focus]);
   const seriesEntries = tab === "wanted" ? wantedRuns : tab === "following" ? followedRuns : [];
   const replacementEntries = tab === "wanted" ? activeReplacements : tab === "acquired" ? completedReplacements : [];
   const wantedCount = wantedRuns.length + activeReplacements.length;
@@ -1319,7 +1347,7 @@ function ReplacementRequestRow({ request, progress = {}, onCancel, onFindRelease
       setRetryError({ jobId: job.id, message: error.message || "This replacement could not be retried" });
     } finally { setRetryingJobId(null); }
   }
-  return <article className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><div className="request-row"><span className="request-cover"><SeriesCover series={display} decorative /></span><div><h3>{title}</h3><p>{scope}</p><span>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</span></div><StatusBadge tone={tone}>{statusLabel}</StatusBadge><button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button></div>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>#{job.issueNumber}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong><span>{job.reason}</span>{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
+  return <article data-request={`replacement-${request.id}`} className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><div className="request-row"><span className="request-cover"><SeriesCover series={display} decorative /></span><div><h3>{title}</h3><p>{scope}</p><span>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</span></div><StatusBadge tone={tone}>{statusLabel}</StatusBadge><button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button></div>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>#{job.issueNumber}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong><span>{job.reason}</span>{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
 }
 
 function RequestRow({ request, progress = {}, onFindRelease, onRefresh }) {
@@ -1371,7 +1399,7 @@ function RequestRow({ request, progress = {}, onFindRelease, onRefresh }) {
       setRetryingJobId(null);
     }
   }
-  return <article className={`request-card ${expanded ? "expanded" : ""}`}>
+  return <article data-request={`series-${request.id}`} className={`request-card ${expanded ? "expanded" : ""}`}>
     <div className="request-row">
       <span className="request-cover"><SeriesCover series={display} decorative /></span>
       <div><h3>{request.title}</h3><p>{scope}</p><span>Following · {request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : "completed run"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
@@ -2664,6 +2692,9 @@ export function App() {
   const [scanProgress, setScanProgress] = useState(null);
   const [toast, setToast] = useState("");
   const [reviewFocus, setReviewFocus] = useState(null);
+  const [requestFocus, setRequestFocus] = useState(null);
+  const [dismissedNotifications, setDismissedNotifications] = useState(
+    () => readDismissed(typeof window === "undefined" ? null : window.localStorage));
   const [catalog, setCatalog] = useState(null);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
@@ -2742,6 +2773,38 @@ export function App() {
     setReviewFocus(item?.id ? { id: item.id } : null);
     navigate("metadata");
   }
+
+  // The bell's rows each carry their destination, so this is the one place
+  // that has to know how to land on each screen. Called with no argument by
+  // "Review all", which opens the screen without aiming at anything.
+  function openNotification(item) {
+    if (!item) { navigate("metadata"); return; }
+    if (item.view === "requests") {
+      setRequestFocus({ ...item.focus });
+      navigate("requests");
+      return;
+    }
+    reviewProblem(item.focus);
+  }
+
+  function dismissNotification(item) {
+    setDismissedNotifications((current) => {
+      const next = current.includes(item.id) ? current : [...current, item.id];
+      writeDismissed(window.localStorage, next);
+      return next;
+    });
+  }
+
+  const notifications = useMemo(
+    () => buildNotifications(catalog, dismissedNotifications),
+    [catalog, dismissedNotifications]);
+  useEffect(() => {
+    if (!catalog || !dismissedNotifications.length) return;
+    const pruned = pruneDismissed(catalog, dismissedNotifications);
+    if (pruned.length === dismissedNotifications.length) return;
+    setDismissedNotifications(pruned);
+    writeDismissed(window.localStorage, pruned);
+  }, [catalog, dismissedNotifications]);
 
   function navigate(id, sectionId) {
     setActive(id); setSelectedSeries(null); setSelectedCollection(null); setSeriesParentCollection(null);
@@ -3548,5 +3611,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={active === "search" ? searchQuery : ""} collapsed={navCollapsed} settingsActive={navActive === "settings"} inbox={catalog?.inbox ?? []} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onReview={reviewProblem} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" ? <DiscoverView onSearch={openSearch} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} focus={reviewFocus} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={active === "search" ? searchQuery : ""} collapsed={navCollapsed} settingsActive={navActive === "settings"} notifications={notifications} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} notifications={notifications} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /> : null}{active === "discover" ? <DiscoverView onSearch={openSearch} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} focus={requestFocus} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} focus={reviewFocus} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
 }
