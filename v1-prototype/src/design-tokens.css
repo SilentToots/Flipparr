@@ -4,46 +4,71 @@
   color: var(--color-neutral-50);
   /* Was a hardcoded #0b0e14, which predates --bg and is a shade off it, so the
      canvas behind an overscroll never matched the page it framed. */
-  background: var(--color-neutral-950);
+  background: var(--bg);
   font-synthesis: none;
 
-  /* Primitive color tokens */
+  /* Primitive color tokens.
+
+     Zinc, from the design. The ramp this replaced was blue-tinted slate --
+     #0c1017 and #151c28 are noticeably cool -- so everything shifts a little
+     warmer and greyer, which is the point of the change rather than a side
+     effect of it. */
+  --color-black: #000000;
   --color-neutral-0: #ffffff;
-  --color-neutral-50: #f1f3f7;
-  --color-neutral-300: #b8c0cc;
-  --color-neutral-400: #8e9aab;
-  --color-neutral-700: #333e50;
-  --color-neutral-800: #252e3c;
-  --color-neutral-900: #151c28;
-  --color-neutral-925: #111722;
-  --color-neutral-950: #0c1017;
-  --color-violet-400: #9e87ff;
-  --color-violet-500: #8064e4;
-  --color-violet-600: #7454df;
+  --color-neutral-50: #fafafa;
+  --color-neutral-300: #d4d4d8;
+  --color-neutral-400: #a1a1aa;
+  /* The design says #71717a here, which is 4.12:1 on a card and fails AA.
+     This is the secondary-copy step, used for real prose in some 37 places,
+     so it is lifted to the nearest value that clears 4.5. */
+  --color-neutral-500: #7a7a85;
+  --color-neutral-600: #52525b;   /* decoration only: 2.6:1, never text */
+  --color-neutral-700: #3f3f46;
+  --color-neutral-800: #27272a;
+  --color-neutral-850: #202023;
+  --color-neutral-900: #18181b;
+  --color-neutral-925: #131316;
+  --color-neutral-950: #09090b;
+
+  /* Two accent families, not one: the design's #7e22ce and #a78bfa are
+     purple and violet, and it uses them for different jobs -- purple for a
+     primary action and the nav marker, violet for focus and an active
+     toggle. Keeping them apart keeps that distinction. */
+  --color-purple-300: #d8b4fe;
+  --color-purple-600: #9333ea;
+  --color-purple-700: #7e22ce;
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
+  --color-violet-700: #6d28d9;
+
   --color-green-500: #4ed377;
   --color-amber-500: #f4b740;
   --color-red-500: #f06b62;
 
-  /* Semantic color tokens */
-  --bg: var(--color-neutral-950);
-  --sidebar: #0d1119;
-  --surface: var(--color-neutral-925);
-  --surface-raised: var(--color-neutral-900);
-  --surface-soft: #192130;
+  /* Semantic color tokens.
+
+     The page is black and a card sits just above it, which is the design's
+     arrangement and the reverse of the old one. The ladder from there is
+     950 -> 925 -> 900 -> 850, so an elevation is always one rung. */
+  --bg: var(--color-black);
+  --sidebar: var(--color-neutral-950);
+  --surface: var(--color-neutral-950);
+  --surface-raised: var(--color-neutral-925);
+  --surface-soft: var(--color-neutral-900);
   --line: var(--color-neutral-800);
   --line-strong: var(--color-neutral-700);
   --text: var(--color-neutral-50);
   --muted: var(--color-neutral-400);
   --muted-strong: var(--color-neutral-300);
   --focus-ring: var(--color-violet-400);
-  --violet: var(--color-violet-600);
-  --violet-soft: #282043;
+  --violet: var(--color-purple-700);
+  --violet-soft: #1d0f34;
   --green: var(--color-green-500);
-  --green-soft: #173224;
+  --green-soft: #13251a;
   --amber: var(--color-amber-500);
-  --amber-soft: #3a2b16;
+  --amber-soft: #2a2112;
   --red: var(--color-red-500);
-  --red-soft: #3d2023;
+  --red-soft: #291717;
 
   /* Every accent gets the same four steps: the colour itself, a tint to sit
      on, a border for that tint, and a text colour that reads on it. Only the
@@ -53,29 +78,28 @@
      the stylesheet was already mixing by eye: about 14% for a fill, 34% for
      a border.
 
-     These carry the old palette's fitted values so adding them changes
-     nothing; the colours move later, in one file, on their own. */
-  --violet-border: #57478b;
-  --violet-text: var(--status-violet-text);
-  --green-border: #31543c;
+     The borders come from violet-400 rather than the purple, which would
+     shout on a neutral page. */
+  --violet-border: #3f355c;
+  --violet-text: var(--color-purple-300);
+  --green-border: #204e30;
   --green-text: var(--status-green-text);
-  --amber-border: #6e5629;
+  --amber-border: #59441d;
   --amber-text: var(--status-amber-text);
-  --red-border: #4c3032;
+  --red-border: #582a29;
   --red-text: var(--status-red-text);
 
-  /* The text step below --muted: a plateau of blue-greys used for secondary
-     copy in about 67 places, none of which had a token. */
-  --muted-weak: #788496;
+  /* The text step below --muted, for secondary copy in about 67 places. */
+  --muted-weak: var(--color-neutral-500);
   /* Behind a progress bar or a meter -- the one surface that sits below the
      card it is drawn on rather than above it. */
-  --surface-sunken: #272f3b;
+  --surface-sunken: var(--color-neutral-850);
 
   /* The alpha layers. Twenty-nine rgba() literals across the stylesheet came
      to three intents: darken what is behind a modal, darken it more, or lift
      a panel a little off its background. */
   --scrim: rgb(0 0 0 / .45);
-  --scrim-strong: rgb(5 7 11 / .74);
+  --scrim-strong: rgb(0 0 0 / .74);
   --wash-subtle: rgb(255 255 255 / .02);
 
   /* Spacing scale */
@@ -118,18 +142,18 @@
 
   /* Button component tokens */
   --button-primary-bg: var(--violet);
-  --button-primary-bg-hover: var(--color-violet-500);
+  --button-primary-bg-hover: var(--color-purple-600);
   --button-primary-text: var(--color-neutral-0);
-  --button-secondary-bg: #222a3b;
-  --button-secondary-bg-hover: #2a3448;
-  --button-secondary-border: #343e51;
-  --button-secondary-text: #d8dcf0;
+  --button-secondary-bg: var(--color-neutral-850);
+  --button-secondary-bg-hover: var(--color-neutral-800);
+  --button-secondary-border: var(--color-neutral-700);
+  --button-secondary-text: var(--color-neutral-300);
   --button-ghost-bg-hover: var(--surface-soft);
   --button-ghost-border: var(--line-strong);
   --button-ghost-text: var(--muted-strong);
-  --button-danger-bg: #2d191b;
-  --button-danger-border: #67393a;
-  --button-danger-text: #ffaaa5;
+  --button-danger-bg: var(--red-soft);
+  --button-danger-border: var(--red-border);
+  --button-danger-text: var(--red-text);
   --button-disabled-opacity: .64;
 
   /* Status component tokens */
@@ -138,15 +162,15 @@
   --status-font-size: var(--text-2xs);
   --status-gap: var(--space-1);
   --status-amber-bg: var(--amber-soft);
-  --status-amber-text: #ffd275;
+  --status-amber-text: #fcd34d;
   --status-violet-bg: var(--violet-soft);
-  --status-violet-text: #c0afff;
+  --status-violet-text: var(--color-purple-300);
   --status-red-bg: var(--red-soft);
-  --status-red-text: #ff9d96;
+  --status-red-text: #fca5a5;
   --status-green-bg: var(--green-soft);
-  --status-green-text: #8ee6a7;
-  --status-muted-bg: #222b39;
-  --status-muted-text: #aeb8c7;
+  --status-green-text: #86efac;
+  --status-muted-bg: var(--color-neutral-850);
+  --status-muted-text: var(--color-neutral-400);
 
   /* Motion tokens */
   --motion-duration-fast: 140ms;
