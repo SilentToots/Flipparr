@@ -20,6 +20,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -77,6 +78,23 @@ def request(
             return Response(response.status, dict(response.headers), response.read())
     except urllib.error.HTTPError as exc:
         return Response(exc.code, dict(exc.headers or {}), exc.read())
+
+
+def _png_bytes(size: int = 4) -> bytes:
+    """A real PNG, so a cover test fails on the route and not on the fixture."""
+    import struct, zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    raw = b"".join(b"\x00" + bytes([120, 90, 200]) * size for _ in range(size))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
 
 
 class HttpContractTests(unittest.TestCase):
@@ -658,6 +676,44 @@ class HttpContractTests(unittest.TestCase):
             headers={"Content-Type": "text/plain"},
         )
         self.assertIn(response.status, (404, 415))
+
+    # ---- serving a cover out of a comic ----------------------------------
+
+    def test_a_non_zip_comic_is_not_refused_before_it_is_opened(self):
+        """The endpoint gated on the extension after the rest had moved on.
+
+        Covers were found for every RAR comic and then refused on the way
+        out, so a whole library of them showed placeholders and the browser
+        console filled with 400s. Nothing in the suite asked this route
+        about a file that was not a zip.
+        """
+        import tarfile, io, tempfile as tf
+        with tf.TemporaryDirectory() as folder:
+            path = Path(folder) / "Example 001.cbt"
+            png = _png_bytes()
+            with tarfile.open(path, "w") as archive:
+                info = tarfile.TarInfo("001.png")
+                info.size = len(png)
+                archive.addfile(info, io.BytesIO(png))
+            response = self.get(
+                "/api/file-cover?" + urllib.parse.urlencode({"path": str(path)})
+            )
+            self.assertNotEqual(
+                response.status, 400,
+                "a readable archive must not be refused for its extension",
+            )
+            self.assertEqual(response.status, 200)
+            self.assertIn("image/jpeg", response.headers["Content-Type"])
+
+    def test_something_that_is_not_an_archive_is_still_refused(self):
+        import tempfile as tf
+        with tf.TemporaryDirectory() as folder:
+            path = Path(folder) / "Example 001.cbz"
+            path.write_bytes(b"not an archive at all")
+            response = self.get(
+                "/api/file-cover?" + urllib.parse.urlencode({"path": str(path)})
+            )
+            self.assertEqual(response.status, 400)
 
 
 if __name__ == "__main__":

@@ -86,7 +86,6 @@ LEGACY_MANAGED_LIBRARY_DIRS = (".sonicboom",)
 MANAGED_LIBRARY_DIRS = frozenset({MANAGED_LIBRARY_DIR, *LEGACY_MANAGED_LIBRARY_DIRS})
 
 SUPPORTED_EXTENSIONS = {".cbz", ".cbr", ".pdf", ".epub", ".cb7", ".cbt"}
-ZIP_COMIC_EXTENSIONS = {".cbz", ".epub"}
 ARCHIVE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"}
 COVER_THUMBNAIL_MAX_DIMENSION = 600
 COVER_THUMBNAIL_QUALITY = 82
@@ -7714,7 +7713,11 @@ class Handler(BaseHTTPRequestHandler):
     def handle_file_cover(self, parsed_url: urllib.parse.ParseResult) -> None:
         query = self.query(parsed_url)
         path = Path(query.get("path", ""))
-        if not path.is_file() or path.suffix.lower() not in ZIP_COMIC_EXTENSIONS:
+        # Whether a cover can be pulled is a question about the archive, which
+        # archive_kind answers by reading it. Gating on the extension here kept
+        # refusing every RAR comic after the rest of the app had learned to
+        # read them: the cover was found and then could not be served.
+        if not path.is_file() or archive_kind(path) is None:
             self.send_json({"error": "This comic format does not support local cover extraction yet"}, 400)
             return
         metadata = read_embedded_metadata(path)
