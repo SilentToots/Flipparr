@@ -41,7 +41,7 @@ import { StatusBadge } from "./components/StatusBadge";
 import {
   MenuIcon, SearchIcon, NotificationsIcon, SettingsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon, LibraryHealthIcon,
-  SyncIcon, GridViewIcon, ListViewIcon, FollowingIcon,
+  SyncIcon, GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
   ActiveRunIcon, FollowedIcon,
 } from "./design-icons.jsx";
 
@@ -919,6 +919,66 @@ function sortLibrary(items, sort) {
   return sorted.sort(byTitle);
 }
 
+const SORT_OPTIONS = [
+  { value: "title", label: "Sort: Title A-Z" },
+  { value: "added", label: "Sort: Recently added" },
+  { value: "attention", label: "Sort: Needs attention" },
+];
+
+function SortMenu({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const current = SORT_OPTIONS.find((option) => option.value === value) || SORT_OPTIONS[0];
+  useEffect(() => {
+    if (!open) return undefined;
+    function onPointerDown(event) {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    }
+    function onKeyDown(event) {
+      if (event.key === "Escape") { setOpen(false); rootRef.current?.querySelector("button")?.focus(); }
+    }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+  function choose(option) {
+    onChange(option.value);
+    setOpen(false);
+    rootRef.current?.querySelector("button")?.focus();
+  }
+  // Arrow keys move through the options once the list is open, which a native
+  // select gave for free and a button does not.
+  function onListKeyDown(event) {
+    const items = [...(rootRef.current?.querySelectorAll('[role="option"]') || [])];
+    const index = items.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+      items[(next + items.length) % items.length]?.focus();
+    }
+  }
+  return <div className="sort-field" ref={rootRef}>
+    <button
+      type="button" className="sort-trigger" aria-haspopup="listbox" aria-expanded={open}
+      aria-label={`Sort by. ${current.label}`} onClick={() => setOpen((value) => !value)}
+    >{current.label}<ChevronDown /></button>
+    {open ? <ul className="sort-menu" role="listbox" aria-label="Sort by" onKeyDown={onListKeyDown}>
+      {SORT_OPTIONS.map((option) => (
+        <li key={option.value}>
+          <button
+            type="button" role="option" aria-selected={option.value === value}
+            className={option.value === value ? "selected" : ""}
+            onClick={() => choose(option)}
+          >{option.label}</button>
+        </li>
+      ))}
+    </ul> : null}
+  </div>;
+}
+
 function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus }) {
   const [query, setQuery] = useState("");
   // Covers are the point of a comic library, so the grid leads.
@@ -953,7 +1013,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
           </span>
         </p>
       </PageHeader>
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Sort: Title A-Z</option><option value="added">Sort: Recently added</option><option value="attention">Sort: Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
       </div>
       <div className="dashboard-body">
       {initialLoading ? <LibraryLoadingSkeleton /> : null}

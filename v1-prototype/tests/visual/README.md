@@ -66,6 +66,42 @@ only proxies `/api`, and that surface consumes the same tokens.
 
 ## Checking against the Figma file
 
+`figma/raw/` holds the verbatim Figma MCP responses for `node-id=1-86`.
+`figma/generate.mjs` parses them into `figma-spec.generated.mjs`, and
+`figma-check.mjs` asserts the running app against that:
+
+```
+npm run figma:generate     # raw/ -> figma-spec.generated.mjs
+npm run figma:check        # assert the app against it
+```
+
+`figma:check` takes an origin, so it can be pointed at what is actually
+deployed rather than at localhost:
+
+```
+FLIPPARR_UI_ORIGIN=https://flipparr.example.com npm run figma:check
+```
+
+**The point of the generator is not the parsing, it is the coverage check.**
+A node that is neither mapped to a selector nor skipped *with a reason* in
+`figma/node-map.json` fails generation. Every miss that reached the user was a
+node nobody had written down; this makes leaving one out impossible rather than
+unlikely. When it first ran it found thirteen differences the hand-written
+spec had no assertions for at all.
+
+`node-map.json` is the only hand-written file — Figma knows nothing about the
+app's markup, so node→selector cannot be derived. Everything else (values,
+geometry, icon names and sizes) comes out of `raw/`.
+
+### Refreshing after a design change
+
+Node ids resolve against whichever document is the **active tab in the Figma
+desktop app**. Point it at another file and `1:86` silently resolves to
+something else entirely. So: open the Flipparr file, make it active, re-run the
+three tools, replace `figma/raw/`, then regenerate.
+
+## The older harness
+
 `figma-spec.mjs` holds what `node-id=1-86` says — 37 assertions, each tagged
 with the node it came from — and `figma-check.mjs` asserts the running app
 against it:

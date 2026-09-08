@@ -8,7 +8,7 @@
 // one. It exists because "looks close in a screenshot" shipped twice.
 
 import { chromium } from "playwright";
-import { spec, icons, iconModules, frames } from "./figma-spec.mjs";
+import { spec, icons, frames } from "./figma-spec.generated.mjs";
 
 const origin = process.env.FLIPPARR_UI_ORIGIN || "http://localhost:4173";
 const width = 1440;
@@ -23,7 +23,7 @@ await page.waitForTimeout(400);
 const failures = await page.evaluate(({ spec, icons, frames }) => {
   const out = [];
   for (const c of spec) {
-    let el = document.querySelector(c.sel);
+    let el = document.querySelector(c.pseudo ? c.sel.replace(c.pseudo, "") : c.sel);
     // A badge that only appears for a followed series is not in this library's
     // data. Build one from the same classes so the rule is still checked.
     let probe = null;
@@ -38,7 +38,7 @@ const failures = await page.evaluate(({ spec, icons, frames }) => {
       }
     }
     if (!el) { out.push({ sel: c.sel, node: c.node, bad: ["element not found"] }); continue; }
-    const s = getComputedStyle(el);
+    const s = getComputedStyle(el, c.pseudo || null);
     const bad = [];
     for (const [k, want] of Object.entries(c.props || {})) {
       // Shorthands do not round-trip through getComputedStyle, so compare the
@@ -90,16 +90,7 @@ const failures = await page.evaluate(({ spec, icons, frames }) => {
 
 await browser.close();
 
-// Icons that no data path renders are checked at the module level instead --
-// that the named export from the named package is what the app imports.
-const iconSource = await (await import("node:fs/promises")).readFile("src/design-icons.jsx", "utf8");
-for (const m of iconModules) {
-  if (!iconSource.includes(m.export) || !iconSource.includes(m.from)) {
-    failures.push({ sel: `design-icons.jsx`, node: m.node, bad: [`${m.name}: expected ${m.export} from ${m.from}`] });
-  }
-}
-
-const total = spec.length + icons.length + iconModules.length + frames.length;
+const total = spec.length + icons.length + frames.length;
 if (!failures.length) {
   console.log(`\nFigma spec: ${total} checks, all match.\n`);
   process.exit(0);

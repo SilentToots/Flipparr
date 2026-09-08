@@ -97,7 +97,7 @@
      .monitoring-status and .job-state. */
   --badge-violet-bg: rgb(109 40 217 / .4);
   --badge-green-bg: var(--color-green-700);
-  --badge-muted-bg: rgb(122 122 133 / .4);
+  --badge-muted-bg: rgb(113 113 122 / .4);
   --badge-text: rgb(255 255 255 / .8);
   /* The nav marker's fill, the same construction at half the strength. */
   --nav-active-bg: rgb(109 40 217 / .2);
