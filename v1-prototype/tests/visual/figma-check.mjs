@@ -82,6 +82,10 @@ const failures = await page.evaluate(({ spec, icons, frames }) => {
     if (p) {
       if (f.x != null && near(r.x - p.x, f.x)) bad.push(`x within ${f.within || "viewport"}: want ${f.x}, got ${(r.x - p.x).toFixed(1)}`);
       if (f.y != null && near(r.y - p.y, f.y)) bad.push(`y within ${f.within || "viewport"}: want ${f.y}, got ${(r.y - p.y).toFixed(1)}`);
+      if (f.right != null) {
+        const got = (p.x + p.width) - r.right;
+        if (near(got, f.right)) bad.push(`right edge within ${f.within}: want ${f.right}, got ${got.toFixed(1)}`);
+      }
     }
     if (bad.length) out.push({ sel: f.sel, node: f.node, bad });
   }

@@ -1834,6 +1834,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .appbar-menu::after, .appbar-action::after, .appbar-brand::after {
     content: ""; position: absolute; inset: -7px; border-radius: var(--radius-sm);
   }
+  .appbar-notifications { align-items: flex-start; }
   .appbar-menu:hover::after, .appbar-action:hover::after { background: var(--wash-subtle); }
   .appbar-menu:hover, .appbar-action:hover { color: var(--text); }
   .appbar-menu:focus-visible, .appbar-action:focus-visible,
@@ -1851,7 +1852,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      The panel it replaces stays mounted for the phone, which has no bar. */
   .appbar-notifications { position: relative; display: flex; }
   .appbar-action { position: relative; }
-  .appbar-badge { position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--red); color: var(--color-neutral-0); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; pointer-events: none; }
+  /* Beside the bell rather than over it, which is what the file draws and
+     what stops the count hiding the icon it belongs to. The button grows to
+     40px when there is a count and is 24px when there is not. */
+  .appbar-bell { width: auto; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
+  .appbar-badge { flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 2px 8px; overflow: visible; display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--badge-alert-bg); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; line-height: 1; pointer-events: none; }
+  /* Two digits do not fit a 16px circle; the file only ever shows one. */
+  .appbar-badge.wide { width: auto; min-width: 16px; padding: 2px 5px; }
   .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
   .notifications-menu header { min-height: 34px; padding: 0 8px; display: flex; align-items: center; gap: 8px; }
   .notifications-menu header strong { flex: 1; color: var(--text); font-size: var(--text-md); }

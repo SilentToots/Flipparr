@@ -567,13 +567,13 @@ function AppBar({ query, collapsed, settingsActive, notifications, onToggleNav, 
     <div className="appbar-actions">
       <div className="appbar-notifications">
         <button
-          type="button" className={`appbar-action ${notificationsOpen ? "active" : ""}`}
+          type="button" className={`appbar-action appbar-bell ${notificationsOpen ? "active" : ""}`}
           onClick={() => setNotificationsOpen((open) => !open)}
           aria-label={items.length ? `Needs attention: ${items.length}` : "Needs attention"}
           aria-expanded={notificationsOpen}
         >
+          {items.length ? <b className={`appbar-badge${items.length > 9 ? " wide" : ""}`}>{items.length > 99 ? "99+" : items.length}</b> : null}
           <NotificationsIcon />
-          {items.length ? <b className="appbar-badge">{items.length > 99 ? "99+" : items.length}</b> : null}
         </button>
         {notificationsOpen ? <NotificationsMenu
           items={items}

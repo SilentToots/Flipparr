@@ -5,8 +5,8 @@
 // `npm run figma:generate` after refreshing those files.
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
-// selector nor skipped with a reason in node-map.json fails the run. 144 nodes
-// accounted for, 40 style assertions, 12 frame assertions, 14 icons.
+// selector nor skipped with a reason in node-map.json fails the run. 150 nodes
+// accounted for, 41 style assertions, 13 frame assertions, 14 icons.
 
 export const spec = [
   {
@@ -60,6 +60,23 @@ export const spec = [
     "node": "1:95",
     "props": {
       "columnGap": "12px"
+    }
+  },
+  {
+    "sel": ".appbar-badge",
+    "node": "7:266",
+    "props": {
+      "backgroundColor": "rgb(185, 28, 28)",
+      "borderRadius": "100px",
+      "paddingRight": "8px",
+      "paddingLeft": "8px",
+      "paddingBottom": "2px",
+      "paddingTop": "2px"
+    },
+    "synth": {
+      "parent": ".appbar-bell",
+      "tag": "b",
+      "className": "appbar-badge"
     }
   },
   {
@@ -457,9 +474,17 @@ export const frames = [
   {
     "sel": ".appbar-actions",
     "node": "1:95",
-    "w": 60,
-    "x": 1360,
+    "right": 20,
     "within": ".appbar"
+  },
+  {
+    "sel": ".appbar-badge",
+    "node": "7:266",
+    "w": 16,
+    "h": 16,
+    "x": 0,
+    "within": ".appbar-bell",
+    "y": 0
   },
   {
     "sel": ".sidebar",
