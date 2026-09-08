@@ -3655,3 +3655,92 @@ class DownloadedFileMatchTests(unittest.TestCase):
                 detail["titleRatio"], 0.55,
                 "a longer name that merely ends in the wanted one is not it",
             )
+
+
+class FixSeriesMatchTests(unittest.TestCase):
+    """A run matched to the wrong publication run had no way back.
+
+    The only picker was GCD-only and reachable only from a collection with
+    no single issues, so on an ordinary series -- the case that actually
+    goes wrong -- it could not be opened at all.
+    """
+
+    def _series(self, title="Saga", run_id="13"):
+        return {"id": run_id, "title": title, "year": "2012", "publisher": "Image Comics"}
+
+    def test_candidates_come_from_every_configured_provider(self):
+        store = Mock()
+        store.catalog.return_value = {"series": [self._series()]}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.discover_series", return_value={
+                 "providerId": "metron", "provider": "Metron",
+                 "providersChecked": ["Metron", "Comic Vine"],
+                 "results": [{"title": "Saga", "providerSeriesId": "916"}],
+             }) as discover:
+            payload = app.series_match_candidates(13)
+        discover.assert_called_once_with("Saga")
+        self.assertEqual(payload["provider"], "metron")
+        self.assertEqual(payload["candidates"][0]["providerSeriesId"], "916")
+        self.assertEqual(payload["providersChecked"], ["Metron", "Comic Vine"])
+
+    def test_the_search_can_be_worded_by_hand(self):
+        store = Mock()
+        store.catalog.return_value = {"series": [self._series()]}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.discover_series", return_value={"results": []}) as discover:
+            app.series_match_candidates(13, "  Saga   Image  ")
+        discover.assert_called_once_with("Saga Image")
+
+    def test_an_unknown_run_is_not_found(self):
+        store = Mock()
+        store.catalog.return_value = {"series": []}
+        with patch("app.catalog_store", return_value=store):
+            with self.assertRaises(LookupError):
+                app.series_match_candidates(999)
+
+    def test_confirming_clears_the_old_match_before_applying_the_new(self):
+        """Order matters: apply_issue_list only fills blanks.
+
+        A title the wrong match wrote would otherwise survive the
+        correction that exists to remove it.
+        """
+        calls = []
+        store = Mock()
+        store.catalog.return_value = {"series": [self._series()]}
+        store.rebuild_series_run.side_effect = lambda *a: calls.append("rebuild") or {"cleared": 1}
+        store.apply_issue_list.side_effect = lambda *a, **k: calls.append("apply") or {"status": "ok"}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._provider_credential", return_value="key"), \
+             patch("app._provider_series_run_details", return_value={
+                 "providerId": "916", "sourceUrl": "https://metron/916",
+                 "entries": [{"number": "1"}], "title": "Saga",
+                 "publisher": "Image Comics", "endedYear": None,
+             }):
+            result = app.confirm_series_match(13, "metron", "916")
+        self.assertEqual(calls, ["rebuild", "apply"])
+        self.assertEqual(result["provider"], "metron")
+        self.assertEqual(result["matchedPublisher"], "Image Comics")
+
+    def test_a_run_the_provider_knows_nothing_about_is_refused(self):
+        store = Mock()
+        store.catalog.return_value = {"series": [self._series()]}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._provider_credential", return_value="key"), \
+             patch("app._provider_series_run_details", return_value={
+                 "providerId": "916", "sourceUrl": "", "entries": [],
+                 "title": "Saga", "publisher": None, "endedYear": None,
+             }):
+            with self.assertRaises(ValueError):
+                app.confirm_series_match(13, "metron", "916")
+        store.rebuild_series_run.assert_not_called()
+
+    def test_gcd_still_goes_through_its_own_confirmation(self):
+        with patch("app.confirm_gcd_series_run", return_value={"status": "ok"}) as gcd:
+            app.confirm_series_match(13, "gcd", "55")
+        gcd.assert_called_once_with(13, "55")
+
+    def test_a_nonsense_provider_is_refused(self):
+        for provider, series_id in (("nonsense", "1"), ("metron", "abc"), ("metron", "")):
+            with self.subTest(provider=provider, series_id=series_id):
+                with self.assertRaises(ValueError):
+                    app.confirm_series_match(13, provider, series_id)

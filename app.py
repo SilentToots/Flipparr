@@ -5296,6 +5296,60 @@ def _comic_vine_issue_entries(
     return volume_id, str(volume.get("site_detail_url") or ""), entries
 
 
+def _provider_credential(provider: str) -> str:
+    """The stored key for a provider, or a refusal naming it."""
+    config = load_provider_config().get(provider) or {}
+    field = "token" if provider == "metron" else "apiKey"
+    credential = str(config.get(field) or "").strip()
+    if not config.get("enabled") or not credential:
+        raise ValueError(f"{PROVIDER_DEFINITIONS[provider]['name']} is not configured")
+    return credential
+
+
+def _provider_series_run_details(
+    provider: str, provider_series_id: str, query: Any, credential: str
+) -> dict[str, Any]:
+    """One provider's account of a publication run: what it is and what is in it.
+
+    Shared by adding a run from discovery and by correcting the run a
+    library already has, because both need the same answer and had no
+    business asking for it in two different ways.
+    """
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    context: dict[str, Any] = {"title": cleaned}
+    if provider == "metron":
+        context["metronSeriesId"] = str(provider_series_id)
+        provider_id, source_url, entries, _ended = _metron_issue_entries(context, credential)
+        detail = fetch_provider_json(
+            provider, f"{METRON_API_BASE}/series/{provider_id}/", credential
+        )
+        raw_title = str(detail.get("name") or detail.get("series") or cleaned)
+        publisher_value = detail.get("publisher") or {}
+        return {
+            "providerId": provider_id, "sourceUrl": source_url, "entries": entries,
+            "title": re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip(),
+            "year": _provider_year(detail.get("year_began"), raw_title),
+            "publisher": (
+                publisher_value.get("name")
+                if isinstance(publisher_value, dict) else publisher_value
+            ),
+            "endedYear": _provider_year(detail.get("year_end")),
+        }
+    context["comicVineVolumeId"] = str(provider_series_id)
+    provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
+    detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
+        "api_key": credential, "format": "json", "field_list": "name,start_year,publisher",
+    })
+    detail = (fetch_provider_json(provider, detail_url, credential).get("results")) or {}
+    return {
+        "providerId": provider_id, "sourceUrl": source_url, "entries": entries,
+        "title": str(detail.get("name") or cleaned).strip(),
+        "year": _provider_year(detail.get("start_year")),
+        "publisher": (detail.get("publisher") or {}).get("name"),
+        "endedYear": None,
+    }
+
+
 def request_discovered_series(
     provider: str, query: str, provider_series_id: str,
     acquisition_preference: str = "either",
@@ -5306,39 +5360,13 @@ def request_discovered_series(
         return request_discovered_gcd_series(query, provider_series_id, acquisition_preference)
     if provider not in {"metron", "comic_vine"} or not re.fullmatch(r"\d+", str(provider_series_id or "")):
         raise ValueError("Choose a valid discovered publication run")
-    config = load_provider_config().get(provider) or {}
-    credential_field = "token" if provider == "metron" else "apiKey"
-    credential = str(config.get(credential_field) or "").strip()
-    if not config.get("enabled") or not credential:
-        raise ValueError(f"{PROVIDER_DEFINITIONS[provider]['name']} is not configured")
-    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
-    context = {"title": cleaned}
-    if provider == "metron":
-        context["metronSeriesId"] = str(provider_series_id)
-        provider_id, source_url, entries, _ended_year = _metron_issue_entries(context, credential)
-        detail = fetch_provider_json(
-            provider, f"{METRON_API_BASE}/series/{provider_id}/", credential
-        )
-        raw_title = str(detail.get("name") or detail.get("series") or cleaned)
-        title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip()
-        year = _provider_year(detail.get("year_began"), raw_title)
-        publisher_value = detail.get("publisher") or {}
-        publisher = publisher_value.get("name") if isinstance(publisher_value, dict) else publisher_value
-        ended = _provider_year(detail.get("year_end"))
-    else:
-        context["comicVineVolumeId"] = str(provider_series_id)
-        provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
-        detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
-            "api_key": credential, "format": "json", "field_list": "name,start_year,publisher",
-        })
-        payload = fetch_provider_json(provider, detail_url, credential)
-        detail = payload.get("results") or {}
-        title = str(detail.get("name") or cleaned).strip()
-        year = _provider_year(detail.get("start_year"))
-        publisher = (detail.get("publisher") or {}).get("name")
-        ended = None
+    credential = _provider_credential(provider)
+    fetched = _provider_series_run_details(provider, provider_series_id, query, credential)
+    provider_id = fetched["providerId"]
+    source_url, entries = fetched["sourceUrl"], fetched["entries"]
+    title, year, publisher = fetched["title"], fetched["year"], fetched["publisher"]
     run = catalog_store().ensure_provider_series_run(provider, provider_id, title, year, publisher)
-    status = "complete" if ended and ended <= time.gmtime().tm_year else "complete_to_date"
+    status = _run_status_for_end_year(fetched["endedYear"])
     catalog_store().apply_issue_list(
         int(run["id"]), provider, provider_id, source_url, entries, status=status,
         detail=f"Added from {PROVIDER_DEFINITIONS[provider]['name']} with {len(entries)} known issues.",
@@ -5353,6 +5381,78 @@ def request_discovered_series(
         "request": request, "issueCount": len(entries),
         "metadata": {"provider": provider, "status": status},
     }
+
+
+def series_match_candidates(series_run_id: int, query: Any = None) -> dict[str, Any]:
+    """Publication runs this series could be, from every configured provider.
+
+    The picker was GCD-only and reachable only from a collection with no
+    single issues, so a run matched to the wrong comic by any other
+    provider had no way to be corrected.
+    """
+    store = catalog_store()
+    series = next(
+        (item for item in store.catalog()["series"] if str(item["id"]) == str(series_run_id)),
+        None,
+    )
+    if not series:
+        raise LookupError("That series run is not in the catalog")
+    asked = re.sub(r"\s+", " ", str(query or "")).strip() or str(series.get("title") or "")
+    discovered = discover_series(asked)
+    return {
+        "series": {
+            "id": str(series_run_id), "title": series.get("title"),
+            "year": series.get("year"), "publisher": series.get("publisher"),
+        },
+        "query": asked,
+        "provider": discovered.get("providerId"),
+        "providerName": discovered.get("provider"),
+        "providersChecked": discovered.get("providersChecked") or [],
+        "candidates": discovered.get("results") or [],
+    }
+
+
+def confirm_series_match(
+    series_run_id: int, provider: str, provider_series_id: str, query: Any = None
+) -> dict[str, Any]:
+    """Point an existing run at the publication run it actually is."""
+    provider = str(provider or "").strip().lower()
+    if provider == "gcd":
+        return confirm_gcd_series_run(series_run_id, str(provider_series_id))
+    if provider not in {"metron", "comic_vine"} or not re.fullmatch(
+        r"\d+", str(provider_series_id or "")
+    ):
+        raise ValueError("Choose a valid publication run to match")
+    store = catalog_store()
+    series = next(
+        (item for item in store.catalog()["series"] if str(item["id"]) == str(series_run_id)),
+        None,
+    )
+    if not series:
+        raise LookupError("That series run is not in the catalog")
+    credential = _provider_credential(provider)
+    fetched = _provider_series_run_details(
+        provider, provider_series_id, query or series.get("title"), credential
+    )
+    entries = fetched["entries"]
+    if not entries:
+        raise ValueError("That publication run lists no issues to import")
+    name = PROVIDER_DEFINITIONS[provider]["name"]
+    # Correcting a match has to undo what the wrong one left behind:
+    # apply_issue_list only fills blanks, so a title a mismatched run wrote
+    # would otherwise survive the correction meant to remove it.
+    rebuilt = store.rebuild_series_run(series_run_id)
+    applied = store.apply_issue_list(
+        series_run_id, provider, fetched["providerId"], fetched["sourceUrl"], entries,
+        status=_run_status_for_end_year(fetched["endedYear"]),
+        detail=(
+            f"You matched this run to {name} series {fetched['providerId']}; "
+            f"{len(entries)} issues were imported."
+        ),
+        source="user-confirmed series match",
+    )
+    return {**applied, "rebuilt": rebuilt, "provider": provider,
+            "matchedTitle": fetched["title"], "matchedPublisher": fetched["publisher"]}
 
 
 def rebuild_series_run(series_run_id: int) -> dict[str, Any]:
@@ -7011,6 +7111,23 @@ class Handler(BaseHTTPRequestHandler):
         if series_cover_image_match:
             self.handle_uploaded_cover(int(series_cover_image_match.group(1)), "series")
             return
+        match_candidates = re.fullmatch(
+            r"/api/v1/series/(\d+)/match-candidates", parsed_url.path
+        )
+        if match_candidates:
+            try:
+                payload = series_match_candidates(
+                    int(match_candidates.group(1)),
+                    self.query(parsed_url).get("query"),
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(payload)
+            return
         series_cover_match = re.fullmatch(r"/api/v1/series/(\d+)/cover", parsed_url.path)
         if series_cover_match:
             try:
@@ -7455,6 +7572,23 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("note") or "").strip() or None,
                 )
             except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        series_match_post = re.fullmatch(r"/api/v1/series/(\d+)/match", parsed_url.path)
+        if series_match_post:
+            try:
+                result = confirm_series_match(
+                    int(series_match_post.group(1)),
+                    str(payload.get("provider") or ""),
+                    str(payload.get("providerSeriesId") or ""),
+                    payload.get("query"),
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
