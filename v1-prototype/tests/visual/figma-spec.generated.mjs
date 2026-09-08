@@ -135,7 +135,12 @@ export const spec = [
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
-    "centred": true
+    "centred": true,
+    "synth": {
+      "parent": "[data-nav=\"metadata\"]",
+      "tag": "b",
+      "className": ""
+    }
   },
   {
     "sel": "[data-nav=\"discover\"]",
