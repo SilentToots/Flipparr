@@ -17,18 +17,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 :is(.discovery-results, .request-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-thumb:hover { background: var(--violet); }
 
 .app-shell { min-height: 100vh; background: var(--bg); }
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; width: 248px; background: var(--sidebar); border-right: 1px solid var(--line); padding: 26px 16px 22px; display: flex; flex-direction: column; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; width: 228px; background: var(--sidebar); border-right: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 /* The mark alone, the way Plex sits its logo above the nav: the name is on the
    sign-in screen and in the tab, and repeating it over a list of the app's own
    sections earned no room. It also survives the collapse to the icon rail,
    which the wordmark had to be squeezed into. */
 .brand { display: flex; gap: 11px; align-items: center; min-height: 42px; padding: 0 10px 22px; color: var(--color-violet-400); }
-.sidebar nav { display: grid; gap: 4px; }
-.nav-item { width: 100%; border: 0; background: transparent; color: var(--status-muted-text); padding: 12px 12px; border-radius: var(--radius-sm); display: grid; grid-template-columns: 25px 1fr auto; gap: 11px; align-items: center; text-align: left; cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
+.sidebar nav { display: grid; gap: 8px; }
+.nav-item { width: 100%; height: 44px; max-height: 44px; box-sizing: border-box; border: 0; border-left: 4px solid transparent; background: transparent; color: var(--text); padding: 12px 8px; border-radius: 0 var(--radius) var(--radius) 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px; align-items: center; text-align: left; font-size: var(--text-md); font-weight: 400; cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
 .nav-item:hover { background: var(--surface-raised); color: var(--text); }
-.nav-item.active { color: var(--violet-text); background: var(--violet-soft); box-shadow: inset 3px 0 var(--violet); }
-.nav-item b { min-width: 21px; height: 21px; padding: 0 6px; border-radius: 12px; background: var(--surface-sunken); display: grid; place-items: center; font-size: var(--text-sm); color: var(--muted-strong); }
-.nav-item.active b { background: var(--violet); color: var(--color-neutral-0); }
+.nav-item.active { color: var(--text); background: var(--nav-active-bg); border-left-color: var(--violet); }
+.nav-item b { min-width: 24px; padding: 4px 12px; border-radius: var(--radius-pill); background: var(--color-black); display: grid; place-items: center; font-size: var(--text-xs); font-weight: 700; color: var(--muted); }
 .sidebar-footer { margin-top: auto; padding: 18px 10px 0; display: grid; gap: 8px; color: var(--muted); font-size: var(--text-md); }
 .sidebar-footer strong { color: var(--muted-strong); font-weight: 500; }
 .health-line { color: var(--muted-strong); display: flex; gap: 8px; align-items: center; }
@@ -153,16 +152,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   50%, 100% { opacity: var(--loader-muted-opacity); }
 }
 
-.page-header { min-height: 104px; padding: 33px 0 21px; display: flex; justify-content: space-between; align-items: flex-end; gap: 28px; }
-.page-header h1 { margin: 0 0 7px; font-size: clamp(1.8rem, 3vw, 2.35rem); letter-spacing: -.035em; line-height: 1; }
+.page-header { padding: 20px 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.page-header h1 { margin: 0; color: var(--muted-weak); font-size: var(--text-xl); font-weight: 800; letter-spacing: normal; line-height: normal; }
+.page-header p:empty { display: none; }
 .page-header p { margin: 0; color: var(--muted); font-size: var(--text-base); }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: 750; margin-bottom: 10px; }
 .page-actions { display: flex; gap: 9px; }
 /* The four-card stat strip was 98px of chrome to say two numbers. It says
    them here instead, on the line the eye already visits for the page title. */
-.library-summary { margin: 0; display: flex; align-items: center; gap: 11px; color: var(--muted); font-size: var(--text-md); white-space: nowrap; }
-.library-summary strong { margin-right: 4px; color: var(--text); font-size: var(--text-lg); font-weight: 640; letter-spacing: -.01em; }
-.library-summary > span + span { padding-left: 11px; border-left: 1px solid var(--line-strong); }
+/* The design writes the counts as one 16px line -- bold number, regular
+   label -- with a literal pipe between them, and the sync spinner after. */
+.page-header .library-summary { margin: 0; display: flex; align-items: center; gap: 4px; color: var(--text); font-size: var(--text-lg); white-space: nowrap; }
+.library-summary strong { margin-right: 4px; font-weight: 700; }
+.library-summary i { color: var(--muted-weak); font-style: normal; }
+.library-summary .loading-indicator { margin-left: 4px; }
 .scan-progress, .success-banner, .backend-banner { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: var(--text-md); display: flex; align-items: center; gap: 9px; overflow: hidden; position: relative; }
 .scan-progress { background: var(--violet-soft); color: var(--violet-text); }
 .scan-progress > span { display: grid; gap: 2px; }
@@ -236,13 +239,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .scope-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 3px; background: var(--bg); }
 .scope-toggle button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-weak); display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: var(--control-font-md); }
 .scope-toggle button.active { background: var(--violet-soft); color: var(--violet-text); }
-.view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 3px; background: var(--bg); }
-.view-toggle button { border: 0; width: 34px; height: 32px; display: grid; place-items: center; border-radius: 5px; background: transparent; color: var(--muted-weak); cursor: pointer; }
-.view-toggle button.active { background: var(--violet-soft); color: var(--violet-text); }
-.sort-field { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: var(--text-md); }
-.sort-field select { height: 40px; font-size: var(--control-font-md); color: var(--muted-strong); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 34px 0 12px; }
-.filter-button { margin-left: auto; height: 40px; min-height: 40px; font-size: var(--control-font-md); color: var(--status-muted-text); background: var(--bg); border: 1px solid var(--line); }
-.filter-button.active { border-color: var(--green-border); background: var(--surface-soft); color: var(--green-text); }
+/* One control shape across the row, per the design: a --line-strong hairline
+   at --radius, 4px of padding, and 14px bold --muted-weak copy. Only the
+   selected view is filled, and it is filled with the accent itself. */
+.view-toggle { display: inline-flex; gap: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 4px; background: transparent; }
+.view-toggle button { border: 0; width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--radius-sm); background: transparent; color: var(--muted-weak); cursor: pointer; }
+.view-toggle button.active { background: var(--color-violet-700); color: var(--color-neutral-0); }
+.sort-field { display: flex; align-items: center; }
+.sort-field > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sort-field select { width: 200px; height: 38px; font-size: var(--text-md); font-weight: 700; color: var(--muted-weak); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 4px 34px 4px 8px; }
+.filter-button { margin-left: auto; height: 38px; min-height: 38px; gap: 4px; padding: 4px 8px; font-size: var(--text-md); font-weight: 700; color: var(--muted-weak); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.filter-button.active { border-color: var(--violet); background: var(--nav-active-bg); color: var(--text); }
+.library-tools { gap: 8px; }
 
 .series-table { border-top: 1px solid var(--line); }
 .series-table-head, .series-row { display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(160px, .85fr) minmax(120px, .72fr) minmax(130px, .7fr) 24px; gap: 20px; align-items: center; }
@@ -260,14 +268,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .series-identity .tag-line { min-height: 20px; display: flex; align-items: center; gap: 7px; color: var(--muted-weak); }
 .series-identity .tag-line small { color: var(--muted-weak); }
 .mobile-list-ownership { display: none; }
-.publication-status, .monitoring-status { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: fit-content; height: 18px; min-height: 18px; box-sizing: border-box; padding: 0 8px; border-radius: var(--radius-pill); font-size: var(--text-3xs); font-weight: 750; line-height: normal; white-space: nowrap; }
+/* No border and no per-family text colour: the design fills the pill with
+   the accent at 40% and writes on it at 80% white. */
+.publication-status, .monitoring-status { display: inline-flex; align-items: center; justify-content: center; gap: 2px; width: fit-content; box-sizing: border-box; padding: 3px 8px; border: 0; border-radius: var(--radius-pill); color: var(--badge-text); font-size: var(--text-3xs); font-weight: 700; line-height: normal; white-space: nowrap; }
 .publication-status svg, .monitoring-status svg { flex: none; }
-.publication-status.ongoing { border: 1px solid var(--violet-border); background: var(--violet-soft); color: var(--violet-text); }
-.publication-status.completed { border: 1px solid var(--line-strong); background: var(--status-muted-bg); color: var(--muted-strong); }
+.publication-status.ongoing { background: var(--badge-violet-bg); }
+.publication-status.completed { background: var(--badge-muted-bg); }
 /* Pending, not a warning: most rows of a freshly scanned library sit here
    until enrichment runs, and amber made a normal library look broken. */
 .publication-status.pending { border: 1px solid var(--line-strong); background: var(--surface-soft); color: var(--muted); }
-.monitoring-status { border: 1px solid var(--green-border); background: var(--green-soft); color: var(--green-text); }
+.monitoring-status { background: var(--badge-green-bg); }
 .ownership { display: grid; gap: 6px; width: min(150px, 100%); color: var(--green); }
 .ownership.partial { color: var(--amber); }
 .ownership.unknown { color: var(--amber); }
@@ -277,7 +287,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .ownership.warning .ownership-label strong { color: var(--red); }
 .progress { height: 5px; border-radius: 4px; background: var(--surface-sunken); overflow: hidden; }
 .progress i { height: 100%; display: block; background: currentColor; border-radius: inherit; }
-.ownership > span { color: var(--muted-weak); font-size: var(--text-sm); }
+.ownership:not(.compact) > span { color: var(--muted-weak); font-size: var(--text-sm); }
 .table-copy { color: var(--muted); font-size: var(--text-md); display: grid; gap: 4px; }
 .table-copy small { color: var(--muted-weak); }
 .series-row > svg { color: var(--muted-weak); }
@@ -315,27 +325,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    the row and its width back from that height. Covers came out 186 and 200
    wide inside a 179 card, each a different height, overflowing into the
    card's hidden overflow and taking the badges and progress bar with them. */
-.series-card { padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; text-align: left; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+/* Five rows on a 12px rhythm, per the design: cover, name, badges, rule,
+   ownership -- and only the copy is inset, so the cover bleeds to the border.
+   The rule is a real <hr>, not a border on the block below it, because the
+   design puts it full-bleed while the ownership block stays inset. */
+.series-card { padding: 0 0 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; text-align: left; cursor: pointer; display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
 .series-card:hover { border-color: var(--violet-border); transform: translateY(-2px); }
 /* Covers come from the comics themselves now, so they are not all exactly
    2:3. Filling the box keeps the shelf even; the crop is off the bottom. */
 .series-card > img { width: 100%; height: auto; aspect-ratio: var(--cover-ratio); object-fit: cover; object-position: top center; display: block; background: var(--surface-soft); }
 .series-card > .cover-placeholder { width: 100%; aspect-ratio: var(--cover-ratio); }
-.series-card > div { min-height: 150px; padding: 12px; display: flex; flex-direction: column; gap: 5px; }
-.series-card > div > strong { min-height: 2.3em; font-size: var(--text-base); line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.series-card > div > span { color: var(--muted); font-size: var(--text-sm); }
-.series-card-byline { display: block; width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.series-card-identity { min-width: 0; padding: 0 12px; display: grid; gap: 2px; }
+.series-card-identity > strong { min-width: 0; font-size: var(--text-md); font-weight: 700; line-height: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.series-card-rule { display: block; width: 100%; height: 1px; background: var(--line); }
+.series-card-byline { display: block; width: 100%; min-width: 0; color: var(--muted); font-size: var(--text-xs); line-height: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Two badges are wider than a card, so nowrap cut "Following" in half.
    They wrap now: the content block has a min-height rather than a height,
    and the cover can no longer be squeezed, so a second line just makes the
    card a little taller instead of pushing anything out of it. */
-.series-card-statuses { min-height: 18px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; overflow: hidden; }
-.series-card .ownership.compact { margin-top: auto; width: 100%; padding-top: 10px; border-top: 1px solid var(--line); gap: 5px; }
-.series-card .ownership.compact .ownership-label { min-width: 0; }
-.series-card .ownership.compact .ownership-label svg { flex: 0 0 auto; }
-.series-card .ownership.compact .ownership-label strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-md); }
-.series-card .ownership.compact .progress { height: 4px; }
-.series-card .ownership.compact > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.series-card-statuses { min-height: 18px; padding: 0 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+/* Compact is the design's single line: bold count, regular remainder, no
+   icon, no caption. The track is black rather than --surface-sunken so the
+   unfilled part reads as a gap in the card, not a bar of its own. */
+.ownership.compact { display: grid; gap: 8px; width: 100%; padding: 0 12px; }
+.ownership.compact .ownership-label { min-width: 0; display: block; color: var(--text); font-size: var(--text-xs); line-height: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ownership.compact .ownership-label strong { font-weight: 700; }
+.ownership.compact .progress { display: block; height: 8px; border-radius: var(--radius-pill); background: var(--color-black); }
 
 .attention-panel { width: 100%; min-height: 136px; margin-top: 18px; border: 1px solid var(--red-border); border-radius: var(--radius); background: var(--bg); color: var(--red); padding: 14px 20px 17px; }
 .attention-panel header { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center; }
@@ -1786,13 +1801,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (min-width: 641px) {
   .appbar {
-    position: fixed; inset: 0 0 auto 0; z-index: 40; height: 56px;
-    display: grid; grid-template-columns: auto auto minmax(0, 520px) 1fr;
-    gap: 12px; align-items: center; padding: 0 16px;
-    background: var(--sidebar); border-bottom: 1px solid var(--line);
+    position: fixed; inset: 0 0 auto 0; z-index: 40; min-height: 51px;
+    display: grid; grid-template-columns: 1fr minmax(0, 600px) 1fr;
+    gap: 12px; align-items: center; padding: 8px 20px;
+    background: var(--sidebar); border-bottom: 1px solid var(--line-strong);
   }
   .appbar-menu, .appbar-action {
-    display: grid; place-items: center; width: 38px; height: 38px;
+    display: grid; place-items: center; width: 34px; height: 34px;
     border: 0; border-radius: var(--radius-sm); background: transparent;
     color: var(--status-muted-text); cursor: pointer;
     transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease;
@@ -1805,8 +1820,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     border: 0; border-radius: var(--radius-sm); background: transparent;
     color: var(--color-violet-400); cursor: pointer;
   }
+  .appbar-brand-group { display: flex; align-items: center; gap: 20px; }
   .appbar-search { min-width: 0; }
-  .appbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .appbar .search-field { padding: 4px 12px 4px 8px; border-radius: var(--radius-pill); border-color: var(--muted-weak); background: var(--surface-sunken); }
+  .appbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 
   /* Needs attention moved off the bottom of the library and into the bar.
      The panel it replaces stays mounted for the phone, which has no bar. */

@@ -110,9 +110,17 @@ async function capture(page, state, origin, dir) {
   if (state.setup) await state.setup(page);
   await page.waitForTimeout(500);
 
+  // Wait for the guard rather than asserting it: a setup step that clicks and
+  // re-renders can land just after the settle, and that is a slow render, not
+  // a dead backend. A dead backend renders empty forever and still fails here,
+  // ten seconds later.
   const missing = [];
   for (const selector of state.require) {
-    if ((await page.locator(selector).count()) === 0) missing.push(selector);
+    try {
+      await page.waitForSelector(selector, { timeout: 10000 });
+    } catch {
+      missing.push(selector);
+    }
   }
   if (missing.length) {
     throw new Error(
@@ -120,6 +128,7 @@ async function capture(page, state, origin, dir) {
       "The screen rendered but has no content — check the backend tunnel is up."
     );
   }
+  await page.waitForTimeout(200);
 
   await page.screenshot({ path: path.join(dir, `${state.name}.png`), fullPage: true });
   const data = await page.evaluate(SWEEP);

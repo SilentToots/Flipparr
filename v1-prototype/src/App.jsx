@@ -40,10 +40,10 @@ import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 
 const NAV_ITEMS = [
-  { id: "library", label: "Your library", icon: BookOpen },
+  { id: "library", label: "Comics", icon: BookOpen },
   { id: "discover", label: "Discover", icon: MagnifyingGlass },
   { id: "requests", label: "Pull List", icon: BookmarkSimple },
-  { id: "metadata", label: "Library health", icon: Database, count: 3 },
+  { id: "metadata", label: "Library Health", icon: Database, count: 3 },
   { id: "settings", label: "Settings", icon: Gear },
 ];
 
@@ -305,9 +305,9 @@ function publicationState(series) {
     || (series?.issueCatalog?.status === "complete" ? "completed"
       : series?.issueCatalog?.status === "complete_to_date" ? "ongoing" : "unknown");
   return state === "completed"
-    ? { label: "Run complete", tone: "completed", known: true }
+    ? { label: "Run Complete", tone: "completed", known: true }
     : state === "ongoing"
-      ? { label: "Active run", tone: "ongoing", known: true }
+      ? { label: "Active Run", tone: "ongoing", known: true }
       // "Unknown" read as a fault on a freshly scanned library, where almost
       // every row is waiting on provider metadata that will arrive.
       : { label: "Status pending", tone: "pending", known: false };
@@ -320,7 +320,7 @@ function PublicationStatus({ series }) {
   // something to say, so a real Active run or Run complete stands out.
   if (!state.known) return null;
   return <span className={`publication-status ${state.tone}`}>
-    {state.tone === "ongoing" ? <Lightning size={12} weight="fill" /> : <CheckCircle size={12} weight="fill" />}
+    <Lightning size={12} weight="fill" />
     {state.label}
   </span>;
 }
@@ -521,15 +521,17 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
   // Reloading /search?q=… must not leave the field empty under its own results.
   useEffect(() => { setDraft(query || ""); }, [query]);
   return <header className="appbar">
-    <button
-      type="button" className="appbar-menu" onClick={onToggleNav}
-      aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-      aria-expanded={!collapsed}
-    ><List size={22} /></button>
-    <button
-      type="button" className="appbar-brand" onClick={() => onNavigate("library")}
-      aria-label="Flipparr — go to your library"
-    ><FlipparrMark size={30} decorative /></button>
+    <div className="appbar-brand-group">
+      <button
+        type="button" className="appbar-menu" onClick={onToggleNav}
+        aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+        aria-expanded={!collapsed}
+      ><List size={20} /></button>
+      <button
+        type="button" className="appbar-brand" onClick={() => onNavigate("library")}
+        aria-label="Flipparr — go to your library"
+      ><FlipparrMark size={21} decorative /></button>
+    </div>
     <div className="appbar-search">
       <SearchBar
         embedded value={draft} onChange={setDraft} onSubmit={() => onSearch(draft)}
@@ -545,7 +547,7 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
           aria-label={items.length ? `Needs attention: ${items.length}` : "Needs attention"}
           aria-expanded={notificationsOpen}
         >
-          <Bell size={21} weight={notificationsOpen ? "fill" : "regular"} />
+          <Bell size={24} weight={notificationsOpen ? "fill" : "regular"} />
           {items.length ? <b className="appbar-badge">{items.length > 99 ? "99+" : items.length}</b> : null}
         </button>
         {notificationsOpen ? <NotificationsMenu
@@ -558,7 +560,7 @@ function AppBar({ query, collapsed, settingsActive, inbox, onToggleNav, onSearch
         type="button" className={`appbar-action ${settingsActive ? "active" : ""}`}
         onClick={() => onNavigate("settings")}
         aria-label="Settings" aria-current={settingsActive ? "page" : undefined}
-      ><Gear size={21} weight={settingsActive ? "fill" : "regular"} /></button>
+      ><Gear size={24} weight={settingsActive ? "fill" : "regular"} /></button>
     </div>
   </header>;
 }
@@ -585,7 +587,7 @@ function SearchBar({ value, onChange, onSubmit, actionLabel = "Search online", b
 const LoadingSpinner = LoadingIndicator;
 
 function PageHeader({ eyebrow, title, description, children }) {
-  return <header className="page-header"><div>{eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}<h1>{title}</h1><p>{description}</p></div>{children ? <div className="page-actions">{children}</div> : null}</header>;
+  return <header className="page-header"><div>{eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}<h1>{title}</h1>{description ? <p>{description}</p> : null}</div>{children ? <div className="page-actions">{children}</div> : null}</header>;
 }
 
 function MetadataSetupStatus({ enrichment, lastScanAt, onNavigate }) {
@@ -703,7 +705,15 @@ function Ownership({ series, compact = false }) {
   // rows keep the long form: theirs explains what needs attention.
   const showsConciseDetail = compact || (catalogUnknown && series.status !== "warning");
   const visibleDetail = showsConciseDetail ? compactDetail : detail;
-  return <div className={`ownership ${series.status}${compact ? " compact" : ""}`}><div className="ownership-label">{series.status === "warning" ? <WarningCircle size={19} weight="fill" /> : catalogUnknown ? <ClockCounterClockwise size={19} weight="fill" /> : <CheckCircle size={19} weight="fill" />}<strong>{label}</strong></div>{series.status !== "warning" && !catalogUnknown ? <div className="progress"><i style={{ width: `${percent}%` }} /></div> : null}{visibleDetail && visibleDetail !== label ? <span>{visibleDetail}</span> : null}</div>;
+  if (compact) {
+    return <span className={`ownership ${series.status} compact`}>
+      <span className="ownership-label">{catalogUnknown || series.status === "warning"
+        ? label
+        : <><strong>{series.owned}</strong> of {series.total} Owned</>}</span>
+      {series.status !== "warning" && !catalogUnknown ? <span className="progress"><i style={{ width: `${percent}%` }} /></span> : null}
+    </span>;
+  }
+  return <div className={`ownership ${series.status}`}><div className="ownership-label">{series.status === "warning" ? <WarningCircle size={19} weight="fill" /> : catalogUnknown ? <ClockCounterClockwise size={19} weight="fill" /> : <CheckCircle size={19} weight="fill" />}<strong>{label}</strong></div>{series.status !== "warning" && !catalogUnknown ? <div className="progress"><i style={{ width: `${percent}%` }} /></div> : null}{visibleDetail && visibleDetail !== label ? <span>{visibleDetail}</span> : null}</div>;
 }
 
 function CollectionCoverage({ series, editionsOn }) {
@@ -733,7 +743,13 @@ function SeriesCover({ series, decorative = false }) {
 }
 
 function SeriesList({ series, onOpen, view }) {
-  if (view === "grid") return <div className="series-grid">{series.map((item) => <button className="series-card" onClick={() => onOpen(item)} key={item.id}><SeriesCover series={item} /><div><strong>{item.title}</strong><span className="series-card-byline">{item.year} · {item.publisher}</span><span className="series-card-statuses"><PublicationStatus series={item} /><MonitoringStatus series={item} /></span><Ownership series={item} compact /></div></button>)}</div>;
+  if (view === "grid") return <div className="series-grid">{series.map((item) => <button className="series-card" onClick={() => onOpen(item)} key={item.id}>
+    <SeriesCover series={item} />
+    <span className="series-card-identity"><strong>{item.title}</strong><span className="series-card-byline">{item.publisher} • {item.year}</span></span>
+    <span className="series-card-statuses"><PublicationStatus series={item} /><MonitoringStatus series={item} /></span>
+    <span className="series-card-rule" />
+    <Ownership series={item} compact />
+  </button>)}</div>;
   return (
     <div className="series-table">
       <div className="series-table-head"><span>Series</span><span>Ownership</span><span>Format</span><span>Last updated</span><span /></div>
@@ -918,11 +934,12 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   return (
     <>
       <div className="topbar"><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
-      <PageHeader title="Your library" description="See what you own, what’s missing, and what needs your attention.">
+      <PageHeader title="Comics">
         <p className="library-summary">
-          <span><strong>{catalog?.stats?.files ?? 0}</strong> Files</span>
-          <span><strong>{series.length}</strong> Series</span>
-          {activeScan ? <LoadingSpinner size={17} label="Scanning your library" /> : null}
+          <span><strong>{catalog?.stats?.files ?? 0}</strong>Files</span>
+          <i aria-hidden="true">|</i>
+          <span><strong>{series.length}</strong>Series</span>
+          {activeScan ? <LoadingSpinner size={20} label="Scanning your library" /> : null}
         </p>
       </PageHeader>
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
@@ -931,7 +948,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {activeScan ? <LibraryScanNotice scan={activeScan} /> : null}
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Title (A–Z)</option><option value="added">Recently added</option><option value="attention">Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><CheckCircle size={18} weight={followingOnly ? "fill" : "regular"} /> Following</button> : null}</div>
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><SquaresFour size={18} /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListBullets size={18} /></button></div> : null}<label className="sort-field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="title">Sort: Title A-Z</option><option value="added">Sort: Recently added</option><option value="attention">Sort: Needs attention</option></select></label>{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><CheckCircle size={18} weight={followingOnly ? "fill" : "regular"} /> Following</button> : null}</div>
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       <AttentionPanel items={catalog?.inbox ?? []} onReview={() => onNavigate("metadata")} />
       </> : null}

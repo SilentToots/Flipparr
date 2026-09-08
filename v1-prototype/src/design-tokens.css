@@ -42,6 +42,7 @@
   --color-violet-700: #6d28d9;
 
   --color-green-500: #4ed377;
+  --color-green-700: #15803d;
   --color-amber-500: #f4b740;
   --color-red-500: #f06b62;
 
@@ -89,6 +90,17 @@
   --red-border: #582a29;
   --red-text: var(--status-red-text);
 
+  /* A badge in the design is its accent over the card at 40% -- no border,
+     no per-family text colour. The three fills and the one text colour are
+     what replaced eight hand-mixed values across .publication-status,
+     .monitoring-status and .job-state. */
+  --badge-violet-bg: rgb(109 40 217 / .4);
+  --badge-green-bg: var(--color-green-700);
+  --badge-muted-bg: rgb(122 122 133 / .4);
+  --badge-text: rgb(255 255 255 / .8);
+  /* The nav marker's fill, the same construction at half the strength. */
+  --nav-active-bg: rgb(109 40 217 / .2);
+
   /* The text step below --muted, for secondary copy in about 67 places. */
   --muted-weak: var(--color-neutral-500);
   /* Behind a progress bar or a meter -- the one surface that sits below the
@@ -120,8 +132,8 @@
   --cover-ratio: 5 / 7;
 
   /* Shape and control tokens */
-  --radius-sm: 7px;
-  --radius: 11px;
+  --radius-sm: 4px;
+  --radius: 8px;
   --radius-lg: 15px;
   --radius-pill: 999px;
   /* Type scale. The stylesheet previously carried 54 distinct font sizes, a
@@ -135,7 +147,7 @@
   --text-sm: .8125rem;    /* 13px */
   --text-md: .875rem;     /* 14px */
   --text-base: .9375rem;  /* 15px */
-  --text-lg: 1.0625rem;   /* 17px */
+  --text-lg: 1rem;        /* 16px */
   --text-xl: 1.25rem;     /* 20px */
   --text-2xl: 1.5rem;     /* 24px */
   --text-3xl: 1.75rem;    /* 28px */
