@@ -3403,3 +3403,131 @@ class VariantTaggedReleaseTests(unittest.TestCase):
             with self.subTest(name=name):
                 parsed = self.parse(name)
                 self.assertEqual((parsed.title, parsed.issue), (title, issue))
+
+
+class ReleaseSearchFormTests(unittest.TestCase):
+    """Two wanted issues sat unfound while the release was on the indexer.
+
+    The catalog keeps "The Department of Truth"; releases are named without
+    the article, so the first search returned nothing. The second returned
+    forty-seven of the series' other issues, and the loop stopped there --
+    it took any results as an answer -- so the form that had issue 4 was
+    never tried.
+    """
+
+    def forms(self, title, issue):
+        return app._prowlarr_query_forms({"seriesTitle": title, "issueNumber": issue})
+
+    def test_a_leading_article_is_also_tried_without_it(self):
+        forms = self.forms("The Department of Truth", "4")
+        self.assertEqual(forms[0], "The Department of Truth 004", "catalog title first")
+        self.assertIn("Department of Truth 004", forms)
+        self.assertIn("Department of Truth", forms)
+
+    def test_a_title_with_no_article_is_unchanged(self):
+        self.assertEqual(self.forms("Saga", "3"), ["Saga 003", "Saga 3", "Saga"])
+
+    def test_a_title_that_merely_starts_with_the_letters_is_left_alone(self):
+        forms = self.forms("Thanos", "1")
+        self.assertEqual(forms, ["Thanos 001", "Thanos 1", "Thanos"])
+
+    def _release(self, title):
+        """Shaped like a real Prowlarr row, so the filter cannot drop it."""
+        return {
+            "protocol": "usenet", "title": title,
+            "downloadUrl": "https://indexer.example/nzb/1", "guid": title,
+            "size": 1000, "indexer": "Test", "publishDate": "2026-01-01",
+        }
+
+    def _search_for(self, useful_form):
+        searched = []
+
+        def fake_search(_service, form):
+            searched.append(form)
+            return [self._release("Example 004 (2026)")] if form == useful_form else []
+
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "Example", "issueNumber": "4",
+        }
+        store.rejected_acquisition_releases.return_value = []
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._enabled_acquisition_service", return_value={"url": "x", "apiKey": "y"}), \
+             patch("app._prowlarr_search", side_effect=fake_search), \
+             patch("app._release_candidate_score", return_value=(100, ["match"])), \
+             patch("app._prowlarr_download_reference", return_value="ref"):
+            result = app.search_prowlarr_releases(1)
+        return searched, result
+
+    def test_searching_continues_until_a_form_yields_a_candidate(self):
+        """Results alone are not an answer; a usable candidate is."""
+        searched, result = self._search_for("Example")
+        self.assertEqual(
+            searched, ["Example 004", "Example 4", "Example"],
+            "every form must be tried until one produces a candidate",
+        )
+        self.assertEqual(result["candidateCount"], 1)
+        self.assertEqual(result["query"], "Example")
+
+    def test_searching_stops_at_the_form_that_works(self):
+        searched, result = self._search_for("Example 004")
+        self.assertEqual(searched, ["Example 004"], "no need to look further")
+        self.assertEqual(result["candidateCount"], 1)
+
+    def test_a_form_with_results_but_no_candidate_is_not_the_answer(self):
+        """The exact shape that stranded Department of Truth #4.
+
+        The middle form returned forty-seven releases and not one of them
+        was the issue, and that was taken as the search having succeeded.
+        """
+        searched = []
+
+        def fake_search(_service, form):
+            searched.append(form)
+            if form == "Example 4":
+                return [self._release(f"Example {n:03d} (2026)") for n in (1, 2, 3)]
+            if form == "Example":
+                return [self._release("Example 004 (2026)")]
+            return []
+
+        def score(release, _context):
+            # Only the wanted issue scores; siblings are below the bar.
+            return (100, ["match"]) if "004" in release["title"] else (10, [])
+
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesTitle": "Example", "issueNumber": "4",
+        }
+        store.rejected_acquisition_releases.return_value = []
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._enabled_acquisition_service", return_value={"url": "x", "apiKey": "y"}), \
+             patch("app._prowlarr_search", side_effect=fake_search), \
+             patch("app._release_candidate_score", side_effect=score), \
+             patch("app._prowlarr_download_reference", return_value="ref"):
+            result = app.search_prowlarr_releases(1)
+        self.assertEqual(searched, ["Example 004", "Example 4", "Example"])
+        self.assertEqual(result["candidateCount"], 1)
+        self.assertIn("004", result["candidates"][0]["title"])
+
+
+class IssueCountIsNotAnIssueNumberTests(unittest.TestCase):
+    """"of 04" says how long the run is, not which issue this is.
+
+    A release named with underscores has no brackets left by the time the
+    name is read, so "Lot 02 of 04 2026" put a bare 04 next to the year
+    looking exactly like an issue number -- and the search then believed
+    two copies of issue 2 were issue 4.
+    """
+
+    def issue(self, name):
+        return parse_filename(Path("/library") / f"{name}.cbz").issue
+
+    def test_the_issue_is_read_and_the_count_is_not(self):
+        self.assertEqual(self.issue("If_Destruction_Be_Our_Lot_02__of_04___2026_"), "2")
+        self.assertEqual(self.issue("If Destruction Be Our Lot 02 (of 04) (2026)"), "2")
+        self.assertEqual(self.issue("Some Comic 03 of 12 2024"), "3")
+
+    def test_a_count_with_no_issue_before_it_is_not_taken_as_one(self):
+        """Nothing here says which issue it is, so nothing should be claimed."""
+        self.assertIsNone(self.issue("Some Comic of 04 2024"))
+        self.assertIsNone(self.issue("Collected Edition of 06 (2024)"))

@@ -611,16 +611,24 @@ ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*)(\d+(?:\.\w+)?)\b", re.I)
 # so a bounded run of bracketed groups is allowed to sit there. Anything that
 # is not a bracketed group still breaks the anchor, and the year itself is
 # still required, so this stays far narrower than matching a bare number.
+# "Lot 02 of 04 2026" counts the run, not this issue. Brackets normally keep
+# that apart, but an underscored release name has none left by the time it is
+# read, and the 04 sat next to the year looking exactly like an issue number.
+_NOT_A_COUNT = r"(?<![Oo]f )"
 _NON_YEAR_GROUP = r"[\(\[](?!\s*(?:19|20)\d{2}\s*[\)\]])[^\)\]]*[\)\]]"
 # Some releases pad inside the brackets: "Terminal 10 (Ultra-Rare) ( 2026)".
 _YEAR_GROUP = r"\(\s*(?:19|20)\d{2}\s*\)"
-_TAGS = rf"(?:{_NON_YEAR_GROUP}\s*){{0,4}}"
+# "02 of 04" says which issue and how many there are. Once underscores have
+# become spaces there are no brackets left to strip, so the count is allowed
+# to sit between the issue number and the year like any other tag.
+_COUNT_OF = r"of\s+\d{1,3}"
+_TAGS = rf"(?:(?:{_NON_YEAR_GROUP}|{_COUNT_OF})\s*){{0,4}}"
 PADDED_ISSUE = re.compile(
-    rf"\b(0{{1,3}}\d{{1,3}})\b(?=\s*{_TAGS}(?:{_YEAR_GROUP}|(?:19|20)\d{{2}}\b|$))",
+    rf"{_NOT_A_COUNT}\b(0{{1,3}}\d{{1,3}})\b(?=\s*{_TAGS}(?:{_YEAR_GROUP}|(?:19|20)\d{{2}}\b|$))",
     re.I,
 )
 UNMARKED_ISSUE = re.compile(
-    rf"(?:^|\s)(\d{{1,3}}(?:\.\w+)?)\b(?=\s*{_TAGS}{_YEAR_GROUP})",
+    rf"(?:^|\s){_NOT_A_COUNT}(\d{{1,3}}(?:\.\w+)?)\b(?=\s*{_TAGS}{_YEAR_GROUP})",
     re.I,
 )
 
@@ -1657,15 +1665,23 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     series = str(context.get("seriesTitle") or "").strip()
     if not series:
         return []
+    # A release is usually named without the article the catalog keeps:
+    # "The Department of Truth 004" found nothing, "Department of Truth 004"
+    # found the issue twice over. The catalog title is still tried first.
+    titles = [series]
+    without_article = re.sub(r"^(?:the|a|an)\s+", "", series, flags=re.I).strip()
+    if without_article and without_article != series:
+        titles.append(without_article)
     issue = str(context.get("issueNumber") or "").strip()
     forms = []
-    if issue.isdigit():
-        forms.append(f"{series} {issue.zfill(3)}")
-        if issue.lstrip("0") != issue.zfill(3):
-            forms.append(f"{series} {issue.lstrip('0') or '0'}")
-    elif issue:
-        forms.append(f"{series} {issue}")
-    forms.append(series)
+    for title in titles:
+        if issue.isdigit():
+            forms.append(f"{title} {issue.zfill(3)}")
+            if issue.lstrip("0") != issue.zfill(3):
+                forms.append(f"{title} {issue.lstrip('0') or '0'}")
+        elif issue:
+            forms.append(f"{title} {issue}")
+    forms.extend(titles)
     seen: set[str] = set()
     return [form for form in forms if not (form in seen or seen.add(form))]
 
@@ -1699,12 +1715,6 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     query = forms[0]
     context.setdefault("preferredLanguage", preferred_language())
     store.update_acquisition_job(job_id, "searching", f"Searching Prowlarr for {query}")
-    releases: list[dict[str, Any]] = []
-    for form in forms:
-        query = form
-        releases = _prowlarr_search(prowlarr, form)
-        if releases:
-            break
     rejected_records = store.rejected_acquisition_releases(job_id)
     if not isinstance(rejected_records, (list, tuple)):
         rejected_records = []
@@ -1717,11 +1727,9 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         for item in rejected_records if isinstance(item, dict)
     }
     now = time.time()
-    candidates = []
-    with _RELEASE_CANDIDATE_LOCK:
-        for candidate_id, cached in list(_RELEASE_CANDIDATES.items()):
-            if float(cached.get("expiresAt") or 0) <= now:
-                _RELEASE_CANDIDATES.pop(candidate_id, None)
+
+    def candidates_for(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
         for release in releases:
             if not isinstance(release, dict):
                 continue
@@ -1759,6 +1767,22 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 "matchStrength": "Strong match" if score >= 85 else "Possible match",
                 "formatTags": _release_format_tags(title),
             })
+        return candidates
+
+    with _RELEASE_CANDIDATE_LOCK:
+        for candidate_id, cached in list(_RELEASE_CANDIDATES.items()):
+            if float(cached.get("expiresAt") or 0) <= now:
+                _RELEASE_CANDIDATES.pop(candidate_id, None)
+        # A form that returns results but none of this issue is not an answer.
+        # Stopping at the first non-empty search left one issue looking for a
+        # release among forty-seven of its siblings, when the next form down
+        # had the one it wanted.
+        candidates = []
+        for form in forms:
+            query = form
+            candidates = candidates_for(_prowlarr_search(prowlarr, form))
+            if candidates:
+                break
     candidates.sort(key=lambda item: (-item["matchScore"], -item["sizeBytes"], item["title"]))
     candidates = candidates[:24]
     detail = f"{len(candidates)} release candidate{'s' if len(candidates) != 1 else ''} found"
