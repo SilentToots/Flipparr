@@ -7471,10 +7471,17 @@ class Handler(BaseHTTPRequestHandler):
         series_monitoring = re.fullmatch(r"/api/v1/series/(\d+)/monitoring", parsed_url.path)
         if series_monitoring:
             try:
-                result = catalog_store().set_series_monitoring(
-                    int(series_monitoring.group(1)),
-                    str(payload.get("acquisitionPreference") or "either"),
-                )
+                # Only a literal false stops following, so a missing or
+                # malformed flag can never quietly cancel a run's searches.
+                if payload.get("monitored") is False:
+                    result = catalog_store().stop_series_monitoring(
+                        int(series_monitoring.group(1))
+                    )
+                else:
+                    result = catalog_store().set_series_monitoring(
+                        int(series_monitoring.group(1)),
+                        str(payload.get("acquisitionPreference") or "either"),
+                    )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

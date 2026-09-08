@@ -715,6 +715,29 @@ class HttpContractTests(unittest.TestCase):
             )
             self.assertEqual(response.status, 400)
 
+    # ---- unfollowing --------------------------------------------------
+
+    # Only a literal false stops a run being followed, so a stray value can
+    # never quietly cancel its searches -- the mistake a click event once
+    # made when it was passed as a confirm flag.
+
+    def test_only_a_literal_false_unfollows(self):
+        for value in ("false", 0, None, "", [], {}):
+            with self.subTest(value=value):
+                with patch("app.catalog_store") as store:
+                    store.return_value.set_series_monitoring.return_value = {"ok": True}
+                    self.post("/api/v1/series/1/monitoring", {"monitored": value})
+                    store.return_value.stop_series_monitoring.assert_not_called()
+                    store.return_value.set_series_monitoring.assert_called_once()
+
+    def test_a_literal_false_stops_following(self):
+        with patch("app.catalog_store") as store:
+            store.return_value.stop_series_monitoring.return_value = {"ok": True}
+            self.post("/api/v1/series/1/monitoring", {"monitored": False})
+            store.return_value.stop_series_monitoring.assert_called_once_with(1)
+            store.return_value.set_series_monitoring.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -4035,6 +4035,45 @@ class CatalogStore:
             "monitoringStatus": "monitored",
         }
 
+    def stop_series_monitoring(self, series_run_id: int) -> dict[str, Any]:
+        """Stop following a run, and stop looking for its missing issues.
+
+        Following was one-way: set_series_monitoring writes 'monitored' and
+        nothing wrote anything else, so a run followed by accident stayed
+        followed and kept searching.
+        """
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            run = connection.execute(
+                "SELECT id, canonical_title, acquisition_preference FROM series_runs WHERE id=?",
+                (series_run_id,),
+            ).fetchone()
+            if not run:
+                raise ValueError("Canonical series run was not found")
+            connection.execute(
+                """UPDATE series_runs SET monitoring_status='cataloged', updated_at=?
+                   WHERE id=?""",
+                (now, series_run_id),
+            )
+            # The run stays in the library with everything already owned; what
+            # stops is the looking. Cancelling the request cancels its jobs,
+            # which is what reconcile does with a cancelled request anyway.
+            cancelled = connection.execute(
+                """UPDATE acquisition_requests SET status='cancelled', updated_at=?
+                   WHERE scope_type='series' AND series_run_id=? AND status='open'""",
+                (now, series_run_id),
+            ).rowcount
+            connection.execute(
+                "DELETE FROM series_monitor_refreshes WHERE series_run_id=?",
+                (series_run_id,),
+            )
+        self.reconcile_acquisition_jobs()
+        return {
+            "id": str(series_run_id), "name": run["canonical_title"],
+            "acquisitionPreference": run["acquisition_preference"],
+            "monitoringStatus": "cataloged", "cancelledRequests": int(cancelled),
+        }
+
     def claim_monitored_series_refresh(self) -> dict[str, Any] | None:
         """Claim one due ongoing run without reopening the initial-import progress UI."""
         now_dt = dt.datetime.now(dt.timezone.utc)

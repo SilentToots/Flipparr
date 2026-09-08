@@ -3064,3 +3064,90 @@ class ReplacementStaysItsOwnRequestTests(unittest.TestCase):
                     (request_id,),
                 ).fetchone()
             self.assertEqual(row[1], "queued")
+
+
+class UnfollowSeriesTests(unittest.TestCase):
+    """Following a run was one-way.
+
+    set_series_monitoring wrote 'monitored' and nothing wrote anything
+    else, so a run followed by accident stayed followed and kept
+    searching for issues nobody had asked for.
+    """
+
+    def _followed_run(self, root):
+        path = root / "Example 001.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "1",
+                    "record_type": "single_issue", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        run_id = int(store.catalog()["series"][0]["id"])
+        # What following actually does: open a request and mark the run
+        # monitored. Marking it alone would not reproduce the searching.
+        store.create_acquisition_request("series", run_id, "issues")
+        store.set_series_monitoring(run_id, "issues")
+        return store, run_id
+
+    def _status(self, store, run_id):
+        return next(
+            item["monitoringStatus"] for item in store.catalog()["series"]
+            if int(item["id"]) == run_id
+        )
+
+    def test_a_followed_run_can_be_unfollowed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._followed_run(Path(folder))
+            self.assertEqual(self._status(store, run_id), "monitored")
+            store.stop_series_monitoring(run_id)
+            self.assertEqual(self._status(store, run_id), "cataloged")
+
+    def test_unfollowing_stops_the_searching(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._followed_run(Path(folder))
+            with sqlite3.connect(store.database_path) as connection:
+                open_before = connection.execute(
+                    "SELECT COUNT(*) FROM acquisition_requests WHERE status='open'"
+                ).fetchone()[0]
+            self.assertGreater(open_before, 0, "following should have opened a request")
+            store.stop_series_monitoring(run_id)
+            with sqlite3.connect(store.database_path) as connection:
+                still_open = connection.execute(
+                    "SELECT COUNT(*) FROM acquisition_requests WHERE status='open'"
+                ).fetchone()[0]
+                refreshes = connection.execute(
+                    "SELECT COUNT(*) FROM series_monitor_refreshes WHERE series_run_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+            self.assertEqual(still_open, 0, "the request must not keep searching")
+            self.assertEqual(refreshes, 0, "and the run must not be checked again")
+
+    def test_the_comics_are_left_alone(self):
+        """Unfollowing stops the looking; it does not touch the library."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, run_id = self._followed_run(root)
+            store.stop_series_monitoring(run_id)
+            series = store.catalog()["series"][0]
+            self.assertEqual(series["owned"], 1)
+            self.assertTrue((root / "Example 001.cbz").is_file())
+
+    def test_following_again_afterwards_works(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._followed_run(Path(folder))
+            store.stop_series_monitoring(run_id)
+            store.set_series_monitoring(run_id, "issues")
+            self.assertEqual(self._status(store, run_id), "monitored")
+
+    def test_an_unknown_run_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, _ = self._followed_run(Path(folder))
+            with self.assertRaises(ValueError):
+                store.stop_series_monitoring(999999)

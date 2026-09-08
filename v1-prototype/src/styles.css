@@ -312,7 +312,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .family-run-list > button > span:nth-child(2) strong em { color: #7e8999; font-style: normal; font-weight: 450; }
 .family-run-list > button > span:nth-child(2) small { color: var(--muted); font-size: var(--text-sm); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .family-run-list > button > svg { color: #6e7a8c; }
-.series-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 14px; }
+/* "Ongoing" and "Following" come to about 155px side by side, and a 165px
+   card left 153px to put them in -- two pixels short, so the second badge
+   was cut in half. There is plenty of room on a desktop, so the cards take
+   it: wider covers, and both badges on one line. */
+.series-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
 /* minmax(0, 1fr) is load-bearing. The implicit column was auto-sized, so it
    grew to the cover's own contribution instead of the card: with only a
    width of 100% and an aspect ratio to go on, the image took its height from
@@ -329,7 +333,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .series-card > div > strong { min-height: 2.3em; font-size: var(--text-base); line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .series-card > div > span { color: var(--muted); font-size: var(--text-sm); }
 .series-card-byline { display: block; width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.series-card-statuses { min-height: 20px; display: flex; align-items: center; flex-wrap: nowrap; gap: 5px; overflow: hidden; }
+/* Two badges are wider than a card, so nowrap cut "Following" in half.
+   They wrap now: the content block has a min-height rather than a height,
+   and the cover can no longer be squeezed, so a second line just makes the
+   card a little taller instead of pushing anything out of it. */
+.series-card-statuses { min-height: 20px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; overflow: hidden; }
 .series-card .ownership.compact { margin-top: auto; width: 100%; padding-top: 10px; border-top: 1px solid var(--line); gap: 5px; }
 .series-card .ownership.compact .ownership-label { min-width: 0; }
 .series-card .ownership.compact .ownership-label svg { flex: 0 0 auto; }
@@ -1158,7 +1166,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .library-loading-table header { grid-template-columns: minmax(280px, 1.5fr) minmax(140px, .8fr) minmax(120px, .7fr); }
   .library-loading-table header i:last-child, .library-loading-table article > .library-loading-cell.short { display: none; }
   .library-loading-table article { grid-template-columns: 78px minmax(202px, 1.5fr) minmax(140px, .8fr) minmax(110px, .7fr); }
-  .series-grid { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); }
+  .series-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   .discovery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .discovery-results-page .discovery-result:nth-child(3n) { border-right: 1px solid var(--line); }
   .discovery-results-page .discovery-result:nth-child(2n) { border-right: 0; }
