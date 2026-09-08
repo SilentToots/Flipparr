@@ -3531,3 +3531,86 @@ class IssueCountIsNotAnIssueNumberTests(unittest.TestCase):
         """Nothing here says which issue it is, so nothing should be claimed."""
         self.assertIsNone(self.issue("Some Comic of 04 2024"))
         self.assertIsNone(self.issue("Collected Edition of 06 (2024)"))
+
+
+class ReleaseScoringTests(unittest.TestCase):
+    """The right release could not score high enough to be grabbed.
+
+    "Department of Truth 004 (2020) (Digital) (Zone-Empire)" is exactly the
+    wanted issue and scored 50 against a bar of 85, because the catalog
+    keeps the article the release drops and the series match is an equality.
+    Nothing that release could have said would have got it downloaded.
+    """
+
+    def score(self, title, series, issue, year="2026", publisher="Image"):
+        return app._release_candidate_score(
+            {"title": title, "categories": [{"id": "7030"}]},
+            {"seriesTitle": series, "issueNumber": issue, "publicationYear": year,
+             "publisher": publisher, "preferredLanguage": "en"},
+        )[0]
+
+    GRABBED = 85
+
+    def test_the_release_that_could_never_be_grabbed_now_can(self):
+        self.assertGreaterEqual(
+            self.score("Department of Truth 004 (2020) (Digital) (Zone-Empire)",
+                       "The Department of Truth", "4", "2020"),
+            self.GRABBED,
+        )
+
+    def test_a_publisher_prefix_and_a_number_marker_do_not_hide_the_series(self):
+        self.assertGreaterEqual(
+            self.score("Image.Comics.If.Destruction.Be.Our.Lot.No.04.2026.HYBRID",
+                       "If Destruction Be Our Lot", "4"),
+            self.GRABBED,
+        )
+
+    def test_a_run_count_is_not_the_issue(self):
+        """Two copies of issue 2 were being offered as issue 4."""
+        for title in (
+            "If Destruction Be Our Lot 02 [of 04] [2026] [Limited Series]",
+            "If_Destruction_Be_Our_Lot_02__of_04___2026___Limited_Series",
+        ):
+            with self.subTest(title=title):
+                self.assertLess(
+                    self.score(title, "If Destruction Be Our Lot", "4"), self.GRABBED,
+                )
+
+    def test_the_issue_itself_is_still_matched_when_a_count_is_present(self):
+        self.assertGreaterEqual(
+            self.score("If Destruction Be Our Lot 02 (of 04) (2026)",
+                       "If Destruction Be Our Lot", "2"),
+            self.GRABBED,
+        )
+
+    def test_a_collected_volume_is_not_the_issue_of_the_same_number(self):
+        """Wanting issue 4 must not fetch the trade of the whole run."""
+        self.assertLess(
+            self.score("Image Comics The Department Of Truth Vol 04 2022 Hybrid",
+                       "The Department of Truth", "4", "2020"),
+            self.GRABBED,
+        )
+
+    def test_the_series_that_started_all_this_is_still_refused(self):
+        """The contamination the equality rule exists to prevent."""
+        for title in (
+            "Thor The Deviants Saga 004 (2012)",
+            "DC Saga 004 (2012)",
+            "Conan Saga 004 (2012)",
+            "The Saga of Swamp Thing 004 (2012)",
+        ):
+            with self.subTest(title=title):
+                self.assertLess(self.score(title, "Saga", "4", "2012"), self.GRABBED)
+
+    def test_the_series_that_started_all_this_is_still_found(self):
+        self.assertGreaterEqual(
+            self.score("Saga 004 (2012) (Digital) (Zone-Empire)", "Saga", "4", "2012"),
+            self.GRABBED,
+        )
+
+    def test_a_release_in_another_language_still_scores_nothing(self):
+        self.assertEqual(
+            self.score("The.Department.of.Truth.T04.Le.ministere.du.mensonge.2023.FR",
+                       "The Department of Truth", "4", "2020"),
+            0,
+        )

@@ -1381,12 +1381,23 @@ def _release_tokens(value: Any) -> list[str]:
     return re.findall(r"[a-z0-9]+", str(value or "").casefold())
 
 
+def _without_leading_article(value: Any) -> str:
+    """A catalog keeps the article a release drops, and they are one series."""
+    return re.sub(r"^(?:the|a|an)\s+", "", str(value or "").strip(), flags=re.I).strip()
+
+
 def _release_issue_matches(title: str, issue_number: Any) -> bool:
     number = str(issue_number or "").strip()
     if not number:
         return False
     escaped = re.escape(number.lstrip("0") or "0")
-    return bool(re.search(rf"(?:#|\b0*){escaped}(?!\d)", title, re.I))
+    # Numbers that belong to something other than this issue are taken out
+    # first: "02 of 04" counts the run, and "Vol 04" is a collected volume.
+    # Both read as issue four, so a wanted issue would have been answered
+    # with a different issue, or with a trade paperback of the whole run.
+    cleaned = re.sub(r"\b(?:vol|volume|v)\.?\s*\d{1,4}\b", " ", str(title or ""), flags=re.I)
+    cleaned = re.sub(r"\bof\s*\d{1,4}\b", " ", cleaned, flags=re.I)
+    return bool(re.search(rf"(?:#|\b0*){escaped}(?!\d)", cleaned, re.I))
 
 
 # Usenet subjects wrap the real name in quotes; posts are often prefixed with a
@@ -1449,7 +1460,31 @@ def _release_series_lead(title: str, issue_number: Any) -> str | None:
     return lead
 
 
-def _release_series_matches(title: str, series_title: Any, issue_number: Any) -> bool:
+def _release_series_trim(lead: str, publisher: Any) -> str:
+    """Take off what a release puts around the series name but is not it.
+
+    Scene names often lead with the publisher and mark the number with "No",
+    so the text before the number reads "Image Comics If Destruction Be Our
+    Lot No" -- the right series, unrecognisable by equality. Only this
+    series' own publisher is removed, never an arbitrary leading word, and
+    the wanted name is never matched at the end of a longer one: that is what
+    once let "Thor: The Deviants Saga" answer a request for "Saga".
+    """
+    value = str(lead or "").strip()
+    value = re.sub(
+        r"[\s.]*\b(?:no|nos|number|issue)\.?\s*$", "", value, flags=re.I
+    ).strip(" -.:")
+    known = str(publisher or "").strip()
+    if known:
+        value = re.sub(
+            rf"^{re.escape(known)}(?:\s+comics?)?\b[\s\-.:]*", "", value, flags=re.I
+        ).strip(" -.:")
+    return value
+
+
+def _release_series_matches(
+    title: str, series_title: Any, issue_number: Any, publisher: Any = None
+) -> bool:
     """Whether a release is this series, not just a name containing its words.
 
     Asking only that the wanted words appear somewhere made every release
@@ -1467,7 +1502,22 @@ def _release_series_matches(title: str, series_title: Any, issue_number: Any) ->
     if not wanted:
         return False
     lead = _release_series_lead(title, issue_number)
-    return lead is not None and normalized_title(lead) == wanted
+    if lead is None:
+        return False
+    if normalized_title(lead) == wanted:
+        return True
+    # "The Department of Truth" and "Department of Truth" are one series, and
+    # the correct release could not otherwise score high enough to be grabbed.
+    # This stays an equality, so it does not reopen the far worse mistake of
+    # letting "Thor: The Deviants Saga" answer a request for "Saga".
+    bare_wanted = normalized_title(_without_leading_article(series_title))
+    bare_lead = normalized_title(_without_leading_article(lead))
+    if bool(bare_wanted) and bare_lead == bare_wanted:
+        return True
+    trimmed = _release_series_trim(lead, publisher)
+    return bool(bare_wanted) and normalized_title(
+        _without_leading_article(trimmed)
+    ) == bare_wanted
 
 
 def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
@@ -1480,7 +1530,8 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
     score = 0
     reasons: list[str] = []
     if _release_series_matches(
-        title, context.get("seriesTitle"), context.get("issueNumber")
+        title, context.get("seriesTitle"), context.get("issueNumber"),
+        context.get("publisher"),
     ):
         score += 50
         reasons.append("Series title matches")
@@ -1669,7 +1720,7 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     # "The Department of Truth 004" found nothing, "Department of Truth 004"
     # found the issue twice over. The catalog title is still tried first.
     titles = [series]
-    without_article = re.sub(r"^(?:the|a|an)\s+", "", series, flags=re.I).strip()
+    without_article = _without_leading_article(series)
     if without_article and without_article != series:
         titles.append(without_article)
     issue = str(context.get("issueNumber") or "").strip()
