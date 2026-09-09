@@ -4624,6 +4624,171 @@ def discover_series(query: str) -> dict[str, Any]:
     raise RuntimeError("No comic discovery provider is currently available")
 
 
+# ---------------------------------------------------------------------------
+# The release calendar
+#
+# Discover's two shelves answer "what came out, and what is coming". Only
+# Metron can: comics.org's API is fetch-by-id and search, and Comic Vine has no
+# ship-date browse, so with Metron unconfigured the shelves say so rather than
+# pretending to be empty.
+# ---------------------------------------------------------------------------
+
+# Comics ship on Wednesday. The shelves are labelled by that date, and the
+# window runs to the following Tuesday so a title with an off-Wednesday store
+# date still lands on the week it belongs to.
+_SHIP_WEEKDAY = 2
+
+
+def _ship_week(anchor: dt.date, weeks_back: int = 0) -> tuple[dt.date, dt.date]:
+    """The Wednesday-to-Tuesday shipping week containing or preceding `anchor`."""
+    wednesday = anchor + dt.timedelta(days=(_SHIP_WEEKDAY - anchor.weekday()) % 7)
+    wednesday -= dt.timedelta(weeks=weeks_back)
+    return wednesday, wednesday + dt.timedelta(days=6)
+
+
+def _release_entry(row: dict[str, Any]) -> dict[str, Any] | None:
+    """One issue from Metron's issue list, as the shelf needs it.
+
+    The list rows carry no publisher -- that lives on the series record, and
+    asking for it per row would be an N+1 burst against a 20-per-minute limit.
+    The card does not show one, so nothing is lost on screen; it is only the
+    ranking that has to do without.
+    """
+    series = row.get("series") or {}
+    title = str(series.get("name") or "").strip()
+    number = str(row.get("number") or "").strip()
+    if not title or not number or not row.get("id"):
+        return None
+    return {
+        "providerIssueId": str(row["id"]),
+        "providerSeriesId": str(series.get("id") or "") or None,
+        "seriesTitle": title,
+        "seriesYear": _provider_year(series.get("year_began")),
+        "number": number,
+        # Metron pre-formats "Series (Year) #N"; the card wants the short form.
+        "title": f"{title} #{number}",
+        "cover": row.get("image"),
+        "storeDate": _provider_date(row.get("store_date")),
+        "coverDate": _provider_date(row.get("cover_date")),
+    }
+
+
+def fetch_release_calendar(start: dt.date, end: dt.date, token: str) -> list[dict[str, Any]]:
+    """Every issue shipping between two dates, in provider order.
+
+    A week is one request today -- 57 issues came back whole for 2026-09-02 --
+    but the endpoint is paginated and a heavy week could split, so this follows
+    `next` rather than assuming. Responses go through the provider cache, which
+    is what keeps a settled week from ever being fetched twice.
+    """
+    url = f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode({
+        "store_date_range_after": start.isoformat(),
+        "store_date_range_before": end.isoformat(),
+    })
+    entries: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    while url and url not in seen_urls and len(seen_urls) < 20:
+        seen_urls.add(url)
+        payload = fetch_provider_json("metron", url, token)
+        for row in payload.get("results") or []:
+            entry = _release_entry(row)
+            if entry:
+                entries.append(entry)
+        url = str(payload.get("next") or "")
+    return entries
+
+
+def _library_relevance() -> dict[str, dict[str, Any]]:
+    """What the library already says about a run, keyed for provider titles.
+
+    Keyed by title-and-year and by title alone, because a provider's start year
+    and the library's do not always agree and a title match is still worth more
+    than nothing.
+    """
+    relevance: dict[str, dict[str, Any]] = {}
+    for item in catalog_store().catalog().get("series") or []:
+        entry = {
+            "runId": str(item.get("id")),
+            "following": item.get("monitoringStatus") == "monitored",
+            "publisher": item.get("publisher"),
+        }
+        title = normalized_title(item.get("title"))
+        relevance.setdefault(title, entry)
+        relevance[f"{title}|{item.get('year') or ''}"] = entry
+    return relevance
+
+
+def _rank_releases(
+    entries: list[dict[str, Any]], relevance: dict[str, dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """Order a week so the issues worth seeing first are first.
+
+    Runs already followed, then runs owned, then first issues, then everything
+    else by title. A #1 stands in for the publisher weighting the shelves were
+    meant to have: Metron's list rows carry no publisher, and fetching one per
+    series would be dozens of throttled requests for a sort key. It is also the
+    better signal for a screen called Discover -- a first issue is the thing
+    someone browsing can actually start.
+    """
+    relevance = _library_relevance() if relevance is None else relevance
+    ranked = []
+    for entry in entries:
+        title = normalized_title(entry["seriesTitle"])
+        known = relevance.get(f"{title}|{entry.get('seriesYear') or ''}") or relevance.get(title)
+        item = dict(entry)
+        item["inLibrary"] = bool(known)
+        item["following"] = bool(known and known["following"])
+        item["runId"] = known["runId"] if known else None
+        item["publisher"] = known["publisher"] if known else None
+        first_issue = entry["number"] in {"1", "01", "001"}
+        item["_rank"] = (
+            0 if item["following"] else 1 if item["inLibrary"] else 2 if first_issue else 3,
+            normalized_title(entry["seriesTitle"]),
+            _issue_sort_key(entry["number"]),
+        )
+        ranked.append(item)
+    ranked.sort(key=lambda item: item["_rank"])
+    for item in ranked:
+        item.pop("_rank", None)
+    return ranked
+
+
+def _issue_sort_key(number: str) -> tuple[int, float, str]:
+    """Numeric where it can be, so #2 precedes #10 and #Annual sorts last."""
+    match = re.match(r"^(\d+(?:\.\d+)?)", str(number or "").strip())
+    return (0, float(match.group(1)), "") if match else (1, 0.0, str(number or ""))
+
+
+def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
+    """Both shelves: the week that shipped, and the week that is coming."""
+    config = load_provider_config()
+    metron = config.get("metron") or {}
+    if not (metron.get("enabled") and metron.get("token")):
+        return {
+            "available": False,
+            "reason": "Connect Metron in Settings to see what is shipping. "
+                      "It is the only source with comic shop release dates.",
+        }
+    anchor = today or dt.datetime.now().astimezone().date()
+    upcoming_start, upcoming_end = _ship_week(anchor)
+    latest_start, latest_end = _ship_week(anchor, weeks_back=1)
+    token = str(metron["token"])
+    # One projection for both shelves; building it is not free.
+    relevance = _library_relevance()
+    shelves = {}
+    for name, (start, end) in (
+        ("latest", (latest_start, latest_end)),
+        ("upcoming", (upcoming_start, upcoming_end)),
+    ):
+        try:
+            issues = _rank_releases(fetch_release_calendar(start, end, token), relevance)
+            shelves[name] = {"date": start.isoformat(), "issues": issues}
+        except Exception as exc:
+            # One shelf failing must not take the other with it.
+            shelves[name] = {"date": start.isoformat(), "issues": [], "error": str(exc)}
+    return {"available": True, **shelves}
+
+
 def request_discovered_gcd_series(
     query: str, provider_series_id: str, acquisition_preference: str = "either"
 ) -> dict[str, Any]:
@@ -7065,6 +7230,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/acquisition-services":
             self.send_json(public_acquisition_service_config())
+            return
+        if parsed_url.path == "/api/v1/discover/releases":
+            try:
+                self.send_json(release_calendar())
+            except Exception as exc:
+                self.send_json({"error": f"Release dates are temporarily unavailable: {exc}"}, 502)
             return
         if parsed_url.path == "/api/v1/discover":
             query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]

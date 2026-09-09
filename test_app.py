@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 import email.message
 import io
@@ -5,6 +6,7 @@ import pathlib
 import os
 import tempfile
 import threading
+import types
 import unittest
 import urllib.error
 import urllib.parse
@@ -3850,3 +3852,138 @@ class FixSeriesMatchTests(unittest.TestCase):
             with self.subTest(provider=provider, series_id=series_id):
                 with self.assertRaises(ValueError):
                     app.confirm_series_match(13, provider, series_id)
+
+
+class ReleaseCalendarTests(unittest.TestCase):
+    """Discover's two shelves: what shipped, and what is coming.
+
+    Comics ship on Wednesday, so the shelves are labelled by that date and the
+    window runs to the following Tuesday -- a title with an off-Wednesday store
+    date still belongs to its week.
+    """
+
+    def week(self, day, weeks_back=0):
+        return app._ship_week(dt.date.fromisoformat(day), weeks_back)
+
+    def test_the_week_is_named_by_its_wednesday(self):
+        self.assertEqual(self.week("2026-09-09")[0], dt.date(2026, 9, 9))
+        self.assertEqual(self.week("2026-09-09")[1], dt.date(2026, 9, 15))
+        self.assertEqual(self.week("2026-09-09", 1)[0], dt.date(2026, 9, 2))
+
+    def test_midweek_looks_forward_to_the_next_wednesday(self):
+        # Tuesday still belongs to the week that is landing tomorrow.
+        self.assertEqual(self.week("2026-09-08")[0], dt.date(2026, 9, 9))
+        # Thursday has had its books; the next shelf is the following week.
+        self.assertEqual(self.week("2026-09-10")[0], dt.date(2026, 9, 16))
+        self.assertEqual(self.week("2026-09-10", 1)[0], dt.date(2026, 9, 9))
+
+    def test_an_issue_number_sorts_numerically(self):
+        # "#2 before #10" is not what string order gives, and an annual has no
+        # number to sort on at all.
+        self.assertEqual(
+            sorted(["10", "2", "1", "Annual 1", "2.1"], key=app._issue_sort_key),
+            ["1", "2", "2.1", "10", "Annual 1"],
+        )
+
+    def row(self, name, number, series_id=1, year=2026):
+        return {
+            "id": f"{series_id}{number}", "number": number,
+            "series": {"id": series_id, "name": name, "year_began": year},
+            "store_date": "2026-09-02", "cover_date": "2026-11-01",
+            "image": "https://example.invalid/cover.jpg",
+        }
+
+    def test_a_row_without_a_series_or_number_is_dropped(self):
+        self.assertIsNone(app._release_entry({"id": 1, "series": {}, "number": "1"}))
+        self.assertIsNone(app._release_entry({"id": 1, "series": {"name": "X"}, "number": ""}))
+        entry = app._release_entry(self.row("Wolverine", "27"))
+        self.assertEqual(entry["title"], "Wolverine #27")
+        self.assertEqual(entry["seriesYear"], 2026)
+
+    def ranked(self, rows, series=()):
+        catalog = types.SimpleNamespace(catalog=lambda: {"series": list(series)})
+        with patch("app.catalog_store", return_value=catalog):
+            entries = [app._release_entry(row) for row in rows]
+            return app._rank_releases([entry for entry in entries if entry])
+
+    def test_runs_you_follow_lead_then_runs_you_own(self):
+        rows = [
+            self.row("Zzz Unknown", "4", series_id=3),
+            self.row("Owned Run", "12", series_id=2),
+            self.row("Followed Run", "7", series_id=1),
+        ]
+        order = self.ranked(rows, series=[
+            {"id": "10", "title": "Followed Run", "year": "2026",
+             "monitoringStatus": "monitored", "publisher": "Image"},
+            {"id": "11", "title": "Owned Run", "year": "2026",
+             "monitoringStatus": "cataloged", "publisher": "Boom!"},
+        ])
+        self.assertEqual([item["title"] for item in order],
+                         ["Followed Run #7", "Owned Run #12", "Zzz Unknown #4"])
+        self.assertTrue(order[0]["following"])
+        self.assertTrue(order[1]["inLibrary"])
+        self.assertFalse(order[1]["following"])
+        self.assertEqual(order[0]["runId"], "10", "the shelf can link to the run it knows")
+
+    def test_a_first_issue_leads_the_rest(self):
+        """Metron's rows carry no publisher, so a #1 carries the weighting.
+
+        It is also the better signal for Discover: a first issue is the thing
+        someone browsing can actually start.
+        """
+        rows = [self.row("Aaa Ongoing", "45", series_id=1),
+                self.row("Zzz Brand New", "1", series_id=2)]
+        self.assertEqual([item["title"] for item in self.ranked(rows)],
+                         ["Zzz Brand New #1", "Aaa Ongoing #45"])
+
+    def test_a_year_mismatch_still_matches_on_title(self):
+        # Providers and the library do not always agree on a start year, and a
+        # title match is worth more than treating a followed run as unknown.
+        order = self.ranked([self.row("Followed Run", "7", year=2025)], series=[
+            {"id": "10", "title": "Followed Run", "year": "2026",
+             "monitoringStatus": "monitored", "publisher": "Image"},
+        ])
+        self.assertTrue(order[0]["following"])
+
+    def test_metron_unconfigured_says_so_rather_than_showing_nothing(self):
+        for config in ({}, {"metron": {"enabled": False, "token": "x"}},
+                       {"metron": {"enabled": True}}):
+            with patch("app.load_provider_config", return_value=config):
+                result = app.release_calendar(dt.date(2026, 9, 9))
+            self.assertFalse(result["available"])
+            self.assertIn("Metron", result["reason"])
+
+    def test_one_shelf_failing_does_not_take_the_other_with_it(self):
+        calls = []
+
+        def flaky(start, end, token):
+            calls.append(start)
+            if len(calls) == 1:
+                raise RuntimeError("Metron is busy")
+            return [app._release_entry(self.row("Wolverine", "27"))]
+
+        catalog = types.SimpleNamespace(catalog=lambda: {"series": []})
+        with patch("app.load_provider_config",
+                   return_value={"metron": {"enabled": True, "token": "t"}}), \
+             patch("app.fetch_release_calendar", side_effect=flaky), \
+             patch("app.catalog_store", return_value=catalog):
+            result = app.release_calendar(dt.date(2026, 9, 9))
+        self.assertTrue(result["available"])
+        self.assertIn("busy", result["latest"]["error"])
+        self.assertEqual(result["latest"]["issues"], [])
+        self.assertEqual(len(result["upcoming"]["issues"]), 1)
+        self.assertEqual(result["upcoming"]["date"], "2026-09-09")
+
+    def test_every_page_is_followed_and_a_loop_cannot_hang_it(self):
+        pages = [
+            {"results": [self.row("A", "1")], "next": "https://metron.invalid/2"},
+            {"results": [self.row("B", "2")], "next": None},
+        ]
+        with patch("app.fetch_provider_json", side_effect=pages):
+            entries = app.fetch_release_calendar(dt.date(2026, 9, 2), dt.date(2026, 9, 8), "t")
+        self.assertEqual([entry["number"] for entry in entries], ["1", "2"])
+
+        looping = {"results": [self.row("A", "1")], "next": "same"}
+        with patch("app.fetch_provider_json", return_value=looping) as fetch:
+            app.fetch_release_calendar(dt.date(2026, 9, 2), dt.date(2026, 9, 8), "t")
+        self.assertLessEqual(fetch.call_count, 20, "a self-referential next must not spin")
