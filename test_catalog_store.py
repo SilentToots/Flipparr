@@ -1342,6 +1342,40 @@ class CatalogStoreTests(unittest.TestCase):
                 self.assertTrue(reopened_catalog["syncReady"])
                 self.assertEqual(reopened_catalog["anchorProviders"], [expected_provider])
 
+    def test_a_download_failure_left_behind_by_an_old_build_is_cleared_on_open(self):
+        # The latch is fixed going forward, but rows written before that fix
+        # are still on disk: three Saga jobs were fulfilled with a failed
+        # import download, so the bell, the rail badge and the Failed tab all
+        # reported work that had actually succeeded.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            download = store.record_acquisition_download(
+                job_id, "SAB-9", "Example.002.2026", "release-key-9"
+            )
+            store.update_acquisition_download(
+                int(download["id"]), "failed", error="Import rejected",
+                failure_stage="import",
+            )
+            # Reach past the store to leave exactly the shape an old build did:
+            # the job moved on, the download row did not.
+            with sqlite3.connect(root / "catalog.db") as raw:
+                raw.execute("UPDATE acquisition_jobs SET status='fulfilled' WHERE id=?", (job_id,))
+                # Read raw: opening a CatalogStore is what runs the backfill,
+                # so the helper cannot observe the state before it.
+                stale = raw.execute(
+                    "SELECT status FROM acquisition_downloads WHERE job_id=?", (job_id,)
+                ).fetchone()
+            self.assertEqual(stale[0], "failed")
+
+            reopened = CatalogStore(root / "catalog.db")
+            self.assertIsNone(
+                self._job_download_status(root, job_id),
+                "opening the store must clear a download failure its job has outlived",
+            )
+            self.assertEqual(reopened.catalog()["stats"]["files"], 1)
+
     def _run_with_issue_list(self, root):
         path = root / "Example 001.cbz"
         path.write_bytes(b"comic")

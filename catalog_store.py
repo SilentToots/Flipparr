@@ -1024,6 +1024,17 @@ class CatalogStore:
                 connection.execute("ALTER TABLE issue_catalog_status ADD COLUMN end_year INTEGER")
             if "end_year_provider" not in issue_catalog_columns:
                 connection.execute("ALTER TABLE issue_catalog_status ADD COLUMN end_year_provider TEXT")
+            # A download marked failed whose job has since moved on is dead
+            # state by definition: the latch that used to leave it there is
+            # fixed, but rows written before that fix are still on disk, and
+            # the bell, the rail badge and the Failed tab all read them as
+            # work outstanding. Idempotent, so it runs on every start rather
+            # than needing a version gate.
+            connection.execute(
+                """DELETE FROM acquisition_downloads
+                     WHERE status='failed'
+                       AND job_id IN (SELECT id FROM acquisition_jobs WHERE status <> 'failed')"""
+            )
             # Every 'complete' on record was written because some provider named
             # a year the run had ended. The year itself was never stored and
             # cannot be invented, but the conclusion is evidence enough to keep
