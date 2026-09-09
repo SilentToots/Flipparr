@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 # Bumped when local analysis starts producing something it did not before, so
 # the next scan re-reads files it would otherwise reuse on their fingerprint.
 # 3: comics that are not zip archives yield covers and embedded metadata.
@@ -1176,14 +1176,21 @@ class CatalogStore:
                 raise RuntimeError(f"Unsupported catalog schema version {row['version']}")
             elif row["version"] < SCHEMA_VERSION:
                 connection.execute("UPDATE schema_info SET version=?", (SCHEMA_VERSION,))
-            if stored_version is not None and stored_version < 29:
-                # One pass, then never again. End-year evidence was not stored
-                # before version 29, and the runs whose lifecycle could not be
+            if stored_version is not None and stored_version < 30:
+                # One pass per version, then never again. End-year evidence was
+                # not stored before 29, so the runs whose lifecycle could not be
                 # recovered from what is on record are asked once more rather
-                # than left showing nothing forever. attempt_count is reset or
-                # the three-attempt rule fails the job the moment it is picked
-                # up. This is the first version-gated step in this function --
-                # everything above it is idempotent by construction.
+                # than left showing nothing forever.
+                #
+                # 30 repeats it because two GCD write paths in the 29 build
+                # computed the coverage status but dropped the evidence behind
+                # it, so runs GCD had positively determined were finished still
+                # landed with none. Their answers are recoverable; asking again
+                # is cheaper than reasoning about which ones.
+                #
+                # attempt_count is reset or the three-attempt rule fails the job
+                # the moment it is picked up. This is the only version-gated
+                # step here -- everything above it is idempotent by construction.
                 unknown_now = _utc_now()
                 connection.execute(
                     """INSERT OR IGNORE INTO metadata_enrichment_jobs(

@@ -4920,7 +4920,7 @@ def sync_gcd_issue_catalog(series_run_id: int) -> dict[str, Any]:
         )
     result = store.apply_issue_list(
         series_run_id, "gcd", series_id, series.get("api_url") or "",
-        entries, status=status, detail=detail,
+        entries, status=status, detail=detail, end_evidence=evidence,
     )
     result["metadata"] = metadata
     return result
@@ -5685,11 +5685,10 @@ def _apply_gcd_series_enrichment(series_run_id: int, context: dict[str, Any]) ->
             "status": "review", "provider": "gcd", "candidateCount": 1,
             "detail": "The matching publication run did not contain a usable issue list.",
         }
-    ended = _provider_year(candidate.get("yearEnded"))
-    status = "complete" if ended and ended <= time.gmtime().tm_year else "complete_to_date"
+    evidence = _run_end_evidence(candidate.get("yearEnded"), modelled="yearEnded" in candidate)
     applied = catalog_store().apply_issue_list(
         series_run_id, "gcd", provider_series_id, candidate.get("apiUrl") or "", entries,
-        status=status,
+        status=_run_catalog_status(evidence), end_evidence=evidence,
         detail=f"Matched automatically during initial library enrichment with {len(entries)} known issues.",
         source="initial import: exact title, year, publisher, and owned issue evidence",
     )

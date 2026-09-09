@@ -2591,6 +2591,38 @@ class FinishedRunsAreMarkedFinishedTests(unittest.TestCase):
         )
 
 
+class EveryProviderWriteRecordsWhatItKnewTests(unittest.TestCase):
+    """A provider write that forgets its end-year evidence is invisible.
+
+    Two of eleven call sites were converted by grep and missed, because they
+    computed the coverage status inline in a third shape. Both were GCD paths,
+    so a run GCD had positively determined was finished still landed with no
+    evidence and showed no badge -- the reported symptom, with a new cause.
+    A structural check costs nothing and cannot be skipped by a future writer.
+    """
+
+    def test_every_apply_issue_list_call_passes_end_evidence(self):
+        source = (Path(__file__).parent / "app.py").read_text()
+        lines = source.split("\n")
+        missing = []
+        for index, line in enumerate(lines):
+            if "apply_issue_list(" not in line or line.lstrip().startswith("def "):
+                continue
+            block, depth = [], 0
+            for offset in range(index, min(index + 20, len(lines))):
+                block.append(lines[offset])
+                depth += lines[offset].count("(") - lines[offset].count(")")
+                if depth <= 0 and offset > index:
+                    break
+            if "end_evidence" not in "\n".join(block):
+                missing.append(f"app.py:{index + 1}")
+        self.assertEqual(
+            missing, [],
+            "these apply_issue_list calls record a coverage claim without the "
+            "end-year evidence behind it, so the run's badge silently vanishes",
+        )
+
+
 class AutomaticSearchOnCreationTests(unittest.TestCase):
     """A new request searches and grabs by itself, as the -arr tools do.
 
