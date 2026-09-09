@@ -687,6 +687,34 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(result["fallbacks"][0]["provider"], "Metron")
         gcd.assert_not_called()
 
+    def test_adding_a_discovered_run_returns_rather_than_raising_after_it_worked(self):
+        """Add & request did all of its work and then handed back a NameError.
+
+        The issue list was applied, the request created and the grab sent to
+        SABnzbd -- and the return statement read a `status` that had stopped
+        existing when the coverage claim moved inline. So the comic really was
+        on its way and the user was told it had failed, which is the worst
+        shape a bug can take: they retry work that already happened.
+        """
+        store = Mock()
+        store.ensure_provider_series_run.return_value = {"id": "7", "title": "Paper Girls"}
+        store.apply_issue_list.return_value = {"issues": 30}
+        store.create_acquisition_request.return_value = {"id": "3", "status": "open"}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._provider_credential", return_value="token"
+        ), patch("app._provider_series_run_details", return_value={
+            "providerId": "70", "sourceUrl": "https://metron.cloud/series/70/",
+            "entries": [{"number": "1"}, {"number": "2"}],
+            "title": "Paper Girls", "year": "2015", "publisher": "Image Comics",
+            "endEvidence": {"state": "ended", "year": 2016},
+        }), patch("app._start_automatic_release_grabs") as grabs:
+            result = request_discovered_series("metron", "Paper Girls", "70", "either")
+
+        grabs.assert_called_once()
+        self.assertEqual(result["series"]["id"], "7")
+        self.assertEqual(result["issueCount"], 2)
+        self.assertEqual(result["metadata"], {"provider": "metron", "status": "complete"})
+
     def test_discovered_request_routes_to_the_selected_provider(self):
         with patch("app.request_discovered_gcd_series", return_value={"series": {"id": "7"}}) as gcd:
             result = request_discovered_series("gcd", "Saga", "42", "either")

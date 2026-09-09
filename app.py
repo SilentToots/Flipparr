@@ -4768,12 +4768,9 @@ def confirm_gcd_series_collection(
             "gcd", candidate["providerSeriesId"], candidate["title"],
             candidate.get("yearBegan"), candidate.get("publisher") or context.get("publisher"),
         )
-        ended = candidate.get("yearEnded")
-        try:
-            ended_year = int(ended) if ended else None
-        except (TypeError, ValueError):
-            ended_year = None
-        evidence = _run_end_evidence(series.get("year_ended"), modelled="year_ended" in series)
+        evidence = _run_end_evidence(
+            candidate.get("yearEnded"), modelled="yearEnded" in candidate
+        )
         store.apply_issue_list(
             int(run["id"]), "gcd", candidate["providerSeriesId"], series.get("api_url") or "", entries,
             status=_run_catalog_status(evidence), end_evidence=evidence,
@@ -5385,7 +5382,7 @@ def request_discovered_series(
     return {
         "series": {**run, "publisher": publisher, "year": year},
         "request": request, "issueCount": len(entries),
-        "metadata": {"provider": provider, "status": status},
+        "metadata": {"provider": provider, "status": _run_catalog_status(evidence)},
     }
 
 
