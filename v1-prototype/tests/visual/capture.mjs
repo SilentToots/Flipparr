@@ -20,7 +20,7 @@ const out = (() => {
   if (flag === -1 || !process.argv[flag + 1]) {
     throw new Error("usage: capture.mjs --out <baseline|current>");
   }
-  return path.join(import.meta.dirname, process.argv[flag + 1]);
+  return path.join(import.meta.dirname, "captures", process.argv[flag + 1]);
 })();
 
 // Everything about an element that a palette change can alter. Keyed by a
@@ -66,6 +66,12 @@ const SWEEP = `(() => {
   for (const el of document.querySelectorAll("*")) {
     const cs = getComputedStyle(el);
     if (cs.display === "none" || cs.visibility === "hidden") continue;
+    // A descendant of a display:none element reports its own display, so the
+    // check above misses whole hidden subtrees -- the mobile attention panel
+    // put 54 phantom contrast failures in the count that way. getClientRects
+    // is empty for anything that is not laid out, and non-empty for a fixed
+    // element, which offsetParent would have wrongly excluded.
+    if (!el.getClientRects().length) continue;
     const key = pathOf(el);
     const record = {};
     for (const p of PROPS) {

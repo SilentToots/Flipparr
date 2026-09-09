@@ -28,13 +28,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    no left border at all -- so its content sits 4px further in when selected.
    That shift is in the file, not an accident of this implementation. */
 .nav-item > span { color: var(--color-neutral-0); }
-.nav-item { width: 100%; max-height: 44px; box-sizing: border-box; border: 0; background: transparent; color: var(--text); padding: 12px 8px; border-radius: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px; align-items: center; text-align: left; font-size: var(--text-md); font-weight: 400; cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
+.nav-item { position: relative; width: 100%; max-height: 44px; box-sizing: border-box; border: 0; background: transparent; color: var(--text); padding: 12px 8px; border-radius: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px; align-items: center; text-align: left; font-size: var(--text-lg); font-weight: 400; cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
 .nav-item:hover { background: var(--surface-raised); color: var(--text); }
-.nav-item.active { height: 44px; color: var(--text); background: var(--nav-active-bg); border-left: 4px solid var(--violet); border-radius: 0 var(--radius) var(--radius) 0; }
+.nav-item.active { height: 44px; color: var(--text); background: var(--nav-active-bg); border-radius: 0 var(--radius) var(--radius) 0; }
+.nav-item.active::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--violet); }
 .nav-item b { width: 24px; box-sizing: border-box; padding: 4px 0; white-space: nowrap; border-radius: var(--radius-pill); background: var(--color-black); display: grid; place-items: center; font-size: var(--text-xs); font-weight: 700; line-height: 1; color: var(--muted); }
 .nav-item b.wide { width: auto; min-width: 24px; padding: 4px 7px; }
-.sidebar-footer { margin-top: auto; padding: 18px 10px 0; display: grid; gap: 8px; color: var(--muted); font-size: var(--text-md); }
-.sidebar-footer strong { color: var(--muted-strong); font-weight: 500; }
+/* Frame 8:284: a flexible row that pins its contents to the rail's foot and
+   centres them. The library's size lives here now rather than in the page
+   header, which no longer exists. */
+.sidebar-footer { flex: 1 0 0; min-height: 0; display: flex; align-items: flex-end; justify-content: center; }
+.sidebar-identity { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.sidebar-counts { display: flex; align-items: center; gap: 2px; color: var(--color-neutral-0); font-size: var(--text-md); white-space: nowrap; }
+.sidebar-counts strong { font-weight: 700; }
+.sidebar-counts i { color: var(--chrome-label); font-style: normal; font-size: var(--text-lg); }
+.sidebar-mark { display: block; flex: none; color: var(--color-neutral-0); }
+.sidebar-session { display: grid; gap: 8px; padding-top: 8px; }
 .health-line { color: var(--muted-strong); display: flex; gap: 8px; align-items: center; }
 .health-line i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
 .health-line.offline { color: var(--amber); }
@@ -157,12 +166,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   50%, 100% { opacity: var(--loader-muted-opacity); }
 }
 
-.dashboard-header { padding: 20px; border-bottom: 2px solid var(--surface); display: flex; flex-direction: column; gap: 20px; }
-.dashboard-header > .page-header, .dashboard-header > .library-tools { padding: 0; }
+.dashboard-header { padding: 20px; border-bottom: 2px solid var(--surface); display: flex; flex-direction: column; justify-content: center; }
+.dashboard-header > .library-tools { padding: 0; }
 .dashboard-body { padding: 32px; }
-.page-header { padding: 20px 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.page-header h1 { margin: 0; color: var(--chrome-label); font-size: var(--text-xl); font-weight: 800; letter-spacing: normal; line-height: normal; }
-.page-header p:empty { display: none; }
+.page-header { padding: 20px 0; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
 .page-header p { margin: 0; color: var(--muted); font-size: var(--text-base); }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: 750; margin-bottom: 10px; }
 .page-actions { display: flex; gap: 9px; }
@@ -170,10 +177,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    them here instead, on the line the eye already visits for the page title. */
 /* The design writes the counts as one 16px line -- bold number, regular
    label -- with a literal pipe between them, and the sync spinner after. */
-.page-header .library-summary { margin: 0; display: flex; align-items: center; gap: 4px; color: var(--text); font-size: var(--text-lg); white-space: nowrap; }
-.library-summary strong { margin-right: 4px; font-weight: 700; }
-.library-summary i { color: var(--muted-weak); font-style: normal; }
-.sync-indicator { display: grid; place-items: center; padding: 4px; border-radius: var(--radius-sm); color: var(--text); }
 .scan-progress, .success-banner, .backend-banner { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: var(--text-md); display: flex; align-items: center; gap: 9px; overflow: hidden; position: relative; }
 .scan-progress { background: var(--violet-soft); color: var(--violet-text); }
 .scan-progress > span { display: grid; gap: 2px; }
@@ -1817,15 +1820,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (min-width: 641px) {
   .appbar {
-    position: fixed; inset: 0 0 auto 0; z-index: 40; min-height: 51px;
+    position: fixed; inset: 0 0 auto 0; z-index: 40; min-height: 58px;
     display: flex; justify-content: space-between; gap: 12px;
-    align-items: center; padding: 8px 20px;
-    background: var(--sidebar); border-bottom: 1px solid var(--line-strong);
+    align-items: center; padding: 8px 20px 8px 24px;
+    background: var(--appbar-bg); border-bottom: 1px solid var(--line-strong);
   }
   .appbar-menu, .appbar-action {
     display: grid; place-items: center; padding: 0; position: relative;
     border: 0; border-radius: var(--radius-sm); background: transparent;
-    color: var(--muted-strong); cursor: pointer;
+    color: var(--color-neutral-0); cursor: pointer;
     transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease;
   }
   .appbar-menu { width: 20px; height: 20px; }
@@ -1857,7 +1860,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      what stops the count hiding the icon it belongs to. The button grows to
      40px when there is a count and is 24px when there is not. */
   .appbar-bell { width: auto; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
-  .appbar-badge { flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 2px 0; overflow: visible; display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--badge-alert-bg); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; line-height: 1; pointer-events: none; }
+  .appbar-badge { flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 2px 0; overflow: visible; box-shadow: 0 0 0 2px var(--appbar-bg), 0 0 0 3px var(--color-neutral-0); display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--badge-alert-bg); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; line-height: 1; pointer-events: none; }
   /* Two digits do not fit a 16px circle; the file only ever shows one. */
   .appbar-badge.wide { width: auto; min-width: 16px; padding: 2px 5px; }
   .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
@@ -1888,11 +1891,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .attention-panel { display: none; }
 
   /* Both columns start below the bar. */
-  .sidebar { top: 51px; }
+  .sidebar { top: 58px; }
   /* The content area is the file's Frame 33: flush against the rail, with its
      own blocks carrying the 20px and 32px insets. */
   .main-content { margin-left: 228px; padding: 0; max-width: none; }
-  .app-shell { padding-top: 51px; }
+  .app-shell { padding-top: 58px; }
   /* Search lives in the bar now, so the copy of it inside the page is the
      phone's alone. */
   .topbar, .search-results-topbar { display: none; }
@@ -1922,14 +1925,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    accent button competes with whatever you are actually doing. */
 @media (min-width: 641px) {
   .appbar .search-field {
-    height: 34px; min-height: 34px; box-sizing: border-box; gap: 4px; padding: 4px 12px 4px 8px;
-    border-radius: var(--radius-pill); border: 1px solid var(--color-neutral-500);
-    background: var(--line); color: var(--muted-strong);
+    height: 41px; min-height: 41px; box-sizing: border-box; gap: 4px; padding: 8px 12px 8px 8px;
+    border-radius: var(--radius-pill); border: 0;
+    background: var(--appbar-search-bg); color: var(--color-neutral-0);
   }
-  .appbar .search-field:focus-within { border-color: var(--focus-ring); }
-  .appbar .search-field > svg { flex: none; color: var(--muted-strong); }
-  .appbar .search-field input { padding: 4px 0; font-size: var(--text-xs); white-space: nowrap; }
-  .appbar .search-field input::placeholder { color: var(--muted); font-size: var(--text-xs); white-space: nowrap; }
+  .appbar .search-field:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .appbar .search-field > svg { flex: none; color: var(--color-neutral-0); }
+  .appbar .search-field input { padding: 4px 0; font-size: var(--text-md); white-space: nowrap; }
+  .appbar .search-field input::placeholder { color: rgb(255 255 255 / .6); font-size: var(--text-md); white-space: nowrap; }
 }
 
 /* Settings lives in the bar on desktop, so the left nav stops repeating it.

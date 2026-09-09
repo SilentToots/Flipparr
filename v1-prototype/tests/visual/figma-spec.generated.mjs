@@ -5,40 +5,31 @@
 // `npm run figma:generate` after refreshing those files.
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
-// selector nor skipped with a reason in node-map.json fails the run. 150 nodes
-// accounted for, 42 style assertions, 13 frame assertions, 14 icons.
+// selector nor skipped with a reason in node-map.json fails the run. 141 nodes
+// accounted for, 39 style assertions, 12 frame assertions, 13 icons.
 
 export const spec = [
   {
     "sel": ".appbar",
     "node": "1:87",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
+      "backgroundColor": "rgb(126, 34, 206)",
       "borderBottomWidth": "1px",
       "borderBottomColor": "rgb(63, 63, 70)",
-      "paddingRight": "20px",
-      "paddingLeft": "20px",
       "paddingBottom": "8px",
-      "paddingTop": "8px"
-    }
-  },
-  {
-    "sel": ".appbar-brand-group",
-    "node": "1:88",
-    "props": {
-      "columnGap": "20px"
+      "paddingTop": "8px",
+      "paddingLeft": "24px",
+      "paddingRight": "20px"
     }
   },
   {
     "sel": ".appbar .search-field",
     "node": "1:108",
     "props": {
-      "backgroundColor": "rgb(39, 39, 42)",
-      "borderTopWidth": "1px",
-      "borderTopColor": "rgb(113, 113, 122)",
+      "backgroundColor": "rgb(100, 27, 163)",
       "borderRadius": "100px",
-      "paddingBottom": "4px",
-      "paddingTop": "4px",
+      "paddingBottom": "8px",
+      "paddingTop": "8px",
       "paddingLeft": "8px",
       "paddingRight": "12px",
       "columnGap": "4px"
@@ -48,8 +39,8 @@ export const spec = [
     "sel": ".appbar .search-field input::placeholder",
     "node": "1:112",
     "props": {
-      "fontSize": "12px",
-      "color": "rgb(161, 161, 170)",
+      "fontSize": "14px",
+      "color": "rgba(255, 255, 255, 0.6)",
       "fontWeight": "400",
       "whiteSpace": "nowrap"
     },
@@ -88,58 +79,12 @@ export const spec = [
     }
   },
   {
-    "sel": ".nav-item.active",
-    "node": "1:152",
-    "props": {
-      "backgroundColor": "rgba(109, 40, 217, 0.2)",
-      "borderLeftWidth": "4px",
-      "borderLeftColor": "rgb(126, 34, 206)",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "12px",
-      "paddingTop": "12px",
-      "columnGap": "4px",
-      "height": "44px"
-    }
-  },
-  {
     "sel": ".nav-item.active > span",
-    "node": "I1:152;1:408",
+    "node": "1:144",
     "props": {
-      "fontSize": "14px",
+      "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
-    }
-  },
-  {
-    "sel": ".nav-item.active b",
-    "node": "I1:152;1:410",
-    "props": {
-      "backgroundColor": "rgb(0, 0, 0)",
-      "borderRadius": "100px",
-      "paddingBottom": "4px",
-      "paddingTop": "4px"
-    },
-    "synth": {
-      "parent": ".nav-item.active",
-      "tag": "b",
-      "className": ""
-    }
-  },
-  {
-    "sel": "[data-nav=\"metadata\"] b",
-    "node": "I1:174;1:392",
-    "props": {
-      "fontSize": "12px",
-      "color": "rgb(161, 161, 170)",
-      "fontWeight": "700",
-      "whiteSpace": "nowrap"
-    },
-    "centred": true,
-    "synth": {
-      "parent": "[data-nav=\"metadata\"]",
-      "tag": "b",
-      "className": ""
     }
   },
   {
@@ -191,10 +136,26 @@ export const spec = [
     }
   },
   {
+    "sel": "[data-nav=\"metadata\"] b",
+    "node": "I1:174;1:392",
+    "props": {
+      "fontSize": "12px",
+      "color": "rgb(161, 161, 170)",
+      "fontWeight": "700",
+      "whiteSpace": "nowrap"
+    },
+    "centred": true,
+    "synth": {
+      "parent": "[data-nav=\"metadata\"]",
+      "tag": "b",
+      "className": ""
+    }
+  },
+  {
     "sel": "[data-nav=\"discover\"] > span",
     "node": "I1:157;1:150",
     "props": {
-      "fontSize": "14px",
+      "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
     }
@@ -203,7 +164,7 @@ export const spec = [
     "sel": "[data-nav=\"requests\"] > span",
     "node": "I1:167;1:150",
     "props": {
-      "fontSize": "14px",
+      "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
     }
@@ -212,9 +173,33 @@ export const spec = [
     "sel": "[data-nav=\"metadata\"] > span",
     "node": "I1:174;1:384",
     "props": {
-      "fontSize": "14px",
+      "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
+    }
+  },
+  {
+    "sel": ".sidebar-identity",
+    "node": "8:292",
+    "props": {
+      "columnGap": "8px"
+    }
+  },
+  {
+    "sel": ".sidebar-counts",
+    "node": "8:298",
+    "props": {
+      "columnGap": "2px",
+      "fontWeight": "400",
+      "whiteSpace": "nowrap"
+    }
+  },
+  {
+    "sel": ".sidebar-counts i",
+    "node": "8:293",
+    "props": {
+      "fontSize": "16px",
+      "color": "rgb(113, 113, 122)"
     }
   },
   {
@@ -223,32 +208,7 @@ export const spec = [
     "props": {
       "borderBottomWidth": "2px",
       "borderBottomColor": "rgb(9, 9, 11)",
-      "padding": "20px",
-      "rowGap": "20px"
-    }
-  },
-  {
-    "sel": ".page-header h1",
-    "node": "1:268",
-    "props": {
-      "fontSize": "20px",
-      "color": "rgb(113, 113, 122)",
-      "fontWeight": "800"
-    }
-  },
-  {
-    "sel": ".library-summary",
-    "node": "1:363",
-    "props": {
-      "columnGap": "4px"
-    }
-  },
-  {
-    "sel": ".sync-indicator",
-    "node": "1:378",
-    "props": {
-      "borderRadius": "4px",
-      "padding": "4px"
+      "padding": "20px"
     }
   },
   {
@@ -468,19 +428,22 @@ export const frames = [
   {
     "sel": ".appbar",
     "node": "1:87",
-    "h": 51
+    "h": 58
   },
   {
     "sel": ".appbar-brand-group",
     "node": "1:88",
-    "w": 60.70588302612305,
-    "x": 20,
+    "w": 20,
+    "x": 24,
     "within": ".appbar"
   },
   {
     "sel": ".appbar .search-field",
     "node": "1:108",
-    "w": 600
+    "w": 600,
+    "h": 41,
+    "x": 394,
+    "within": ".appbar"
   },
   {
     "sel": ".appbar-actions",
@@ -503,7 +466,7 @@ export const frames = [
     "w": 228,
     "x": 0,
     "within": null,
-    "y": 51
+    "y": 58
   },
   {
     "sel": ".nav-item.active",
@@ -515,22 +478,15 @@ export const frames = [
     "node": "1:492",
     "x": 228,
     "within": null,
-    "y": 51
+    "y": 58
   },
   {
     "sel": ".dashboard-header",
     "node": "1:269",
-    "h": 128,
+    "h": 80,
     "x": 0,
     "within": ".main-content",
     "y": 0
-  },
-  {
-    "sel": ".dashboard-header .page-header",
-    "node": "1:271",
-    "x": 20,
-    "within": ".dashboard-header",
-    "y": 20
   },
   {
     "sel": ".library-tools",
@@ -538,7 +494,7 @@ export const frames = [
     "h": 38,
     "x": 20,
     "within": ".dashboard-header",
-    "y": 68
+    "y": 20
   },
   {
     "sel": ".sort-trigger",
@@ -550,16 +506,16 @@ export const frames = [
     "node": "1:522",
     "x": 0,
     "within": ".main-content",
-    "y": 128
+    "y": 80
   }
 ];
 
 export const icons = [
   {
-    "node": "I1:152;1:407",
+    "node": "1:143",
     "name": "heroicons-mini/book-open",
     "size": 20,
-    "where": ".nav-item.active svg"
+    "where": "[data-nav=\"library\"] svg"
   },
   {
     "node": "I1:157;1:149",
@@ -608,12 +564,6 @@ export const icons = [
     "name": "heroicons-micro/bolt",
     "size": 12,
     "where": ".series-card svg"
-  },
-  {
-    "node": "I1:523;1:637",
-    "name": "heroicons-micro/bolt",
-    "size": 12,
-    "where": ".publication-status.completed svg"
   },
   {
     "node": "1:89",

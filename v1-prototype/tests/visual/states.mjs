@@ -85,10 +85,10 @@ export const states = [
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Collection"),
   },
-  { name: "discover", path: "/discover", require: [".page-header"] },
-  { name: "pull-list", path: "/pull-list", require: [".page-header"] },
-  { name: "library-health", path: "/health", require: [".page-header"] },
-  { name: "settings", path: "/settings", require: [".page-header"] },
+  { name: "discover", path: "/discover", require: [".discover-panel"] },
+  { name: "pull-list", path: "/pull-list", require: [".request-tabs"] },
+  { name: "library-health", path: "/health", require: [".metadata-layout, .empty-state"] },
+  { name: "settings", path: "/settings", require: [".settings-layout"] },
   { name: "import", path: "/import", require: [".page-header"] },
 ];
 

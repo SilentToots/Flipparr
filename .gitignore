@@ -28,4 +28,7 @@ design/.thumbnail
 
 # Visual regression captures. Regenerated deterministically in ~40s from any
 # commit, and ~20MB a run, so the scripts are tracked and the output is not.
-v1-prototype/tests/visual/*/
+# Only this directory -- `tests/visual/*/` also swallowed tests/visual/figma/,
+# which is the generator, its node map and the raw Figma responses, and git
+# cannot re-include a path whose parent directory is excluded.
+v1-prototype/tests/visual/captures/

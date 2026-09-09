@@ -20,9 +20,9 @@ const args = process.argv.slice(2);
 const allowStructural = args.includes("--allow-structural");
 const [beforeName = "baseline", afterName = "current"] = args.filter((a) => !a.startsWith("--"));
 const here = import.meta.dirname;
-const beforeDir = path.join(here, beforeName);
-const afterDir = path.join(here, afterName);
-const diffDir = path.join(here, "diff");
+const beforeDir = path.join(here, "captures", beforeName);
+const afterDir = path.join(here, "captures", afterName);
+const diffDir = path.join(here, "captures", "diff");
 
 const readJson = async (p) => JSON.parse(await readFile(p, "utf8"));
 const before = await readJson(path.join(beforeDir, "sweep.json"));

@@ -102,6 +102,11 @@
   --badge-text: rgb(255 255 255 / .8);
   /* The nav marker's fill, the same construction at half the strength. */
   --nav-active-bg: rgb(109 40 217 / .2);
+  /* The app bar and the field inside it. The bar is --violet; the pill is the
+     one colour in the design file that is still a raw hex rather than a named
+     variable, so expect this name to change when it enters the palette. */
+  --appbar-bg: var(--violet);
+  --appbar-search-bg: #641ba3;
   /* The unread count beside the bell. Its own rung because it is the one red
      that sits under white text rather than on a dark tint. */
   --badge-alert-bg: var(--color-red-700);
