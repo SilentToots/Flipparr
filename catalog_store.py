@@ -15,10 +15,10 @@ import threading
 from catalog_core_v2.language import detect_language, language_name, normalize_language
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 # Bumped when local analysis starts producing something it did not before, so
 # the next scan re-reads files it would otherwise reuse on their fingerprint.
 # 3: comics that are not zip archives yield covers and embedded metadata.
@@ -791,6 +791,17 @@ class CatalogStore:
                     scope_type TEXT NOT NULL CHECK(scope_type IN ('series', 'collection')),
                     series_run_id INTEGER REFERENCES series_runs(id) ON DELETE CASCADE,
                     series_family_id INTEGER REFERENCES series_families(id) ON DELETE CASCADE,
+                    -- How much of the scope this request is for. 'run' follows
+                    -- everything the scope covers and grows as the run does;
+                    -- 'issues' covers exactly the issues enrolled in
+                    -- acquisition_request_issues and never grows. Asking for one
+                    -- new comic is not the same as following its run, and the
+                    -- difference has to be declared: inferred narrowness --
+                    -- "this request stands behind a replacement" -- is what let
+                    -- one damaged issue enrol a whole run once already.
+                    -- Validated in Python; no CHECK, so the alter path and the
+                    -- create path cannot drift.
+                    coverage TEXT NOT NULL DEFAULT 'run',
                     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'fulfilled', 'cancelled')),
                     acquisition_preference TEXT NOT NULL DEFAULT 'either',
                     include_specials INTEGER NOT NULL DEFAULT 1,
@@ -1046,6 +1057,13 @@ class CatalogStore:
                       SET run_end_status='ended', end_year_provider=provider
                     WHERE status='complete' AND run_end_status='unknown'"""
             )
+            acquisition_request_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(acquisition_requests)")
+            }
+            if "coverage" not in acquisition_request_columns:
+                connection.execute(
+                    "ALTER TABLE acquisition_requests ADD COLUMN coverage TEXT NOT NULL DEFAULT 'run'"
+                )
             coverage_claim_columns = {
                 row["name"] for row in connection.execute(
                     "PRAGMA table_info(edition_coverage_claims)"
@@ -1071,6 +1089,20 @@ class CatalogStore:
                 connection.execute(
                     "ALTER TABLE file_replacement_requests ADD COLUMN quarantine_path TEXT"
                 )
+            # Requests written before `coverage` existed carry its default, and
+            # a replacement's request must not read as a followed run now that
+            # the inferred guard it relied on is gone. After the ALTER above,
+            # because it reads a column that may itself have just been added.
+            # Idempotent, so it runs on every start rather than needing a gate.
+            connection.execute(
+                """UPDATE acquisition_requests SET coverage='issues'
+                    WHERE coverage='run'
+                      AND EXISTS(
+                          SELECT 1 FROM file_replacement_requests
+                          WHERE file_replacement_requests.acquisition_request_id=
+                                acquisition_requests.id
+                      )"""
+            )
             acquisition_download_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")
             }
@@ -1163,7 +1195,7 @@ class CatalogStore:
                    )
                    SELECT series_run_id, 'scheduled', ?, ?
                    FROM acquisition_requests
-                   WHERE scope_type='series' AND status='open'""",
+                   WHERE scope_type='series' AND status='open' AND coverage='run'""",
                 (monitor_next, monitor_now),
             )
             connection.execute(
@@ -1176,7 +1208,8 @@ class CatalogStore:
                      ON series_family_memberships.series_family_id=
                         acquisition_requests.series_family_id
                    WHERE acquisition_requests.scope_type='collection'
-                     AND acquisition_requests.status='open'""",
+                     AND acquisition_requests.status='open'
+                     AND acquisition_requests.coverage='run'""",
                 (monitor_next, monitor_now),
             )
             row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
@@ -2930,17 +2963,15 @@ class CatalogStore:
                     """SELECT acquisition_requests.id
                        FROM acquisition_requests
                        WHERE acquisition_requests.status='open'
-                         -- A request standing behind a replacement covers the
-                         -- issues of one comic, not the run it belongs to.
+                         -- A request that covers named issues -- one behind a
+                         -- replacement, or one comic pulled from Discover --
+                         -- covers those issues, not the run they belong to.
                          -- Enrolled like a followed run, replacing one issue
                          -- pulled every missing issue in the run, twice over
                          -- when two replacements were open, and left the
                          -- replacement unable to finish.
-                         AND NOT EXISTS(
-                             SELECT 1 FROM file_replacement_requests
-                             WHERE file_replacement_requests.acquisition_request_id=
-                                   acquisition_requests.id
-                         ) AND (
+                         AND acquisition_requests.coverage='run'
+                         AND (
                            (acquisition_requests.scope_type='series'
                             AND acquisition_requests.series_run_id=?)
                            OR
@@ -4068,7 +4099,8 @@ class CatalogStore:
             )
             cancelled = connection.execute(
                 """UPDATE acquisition_requests SET status='cancelled', updated_at=?
-                   WHERE scope_type='collection' AND series_family_id=? AND status='open'""",
+                   WHERE scope_type='collection' AND series_family_id=? AND status='open'
+                     AND coverage='run'""",
                 (now, series_family_id),
             ).rowcount
             # A member run may be followed in its own right. Only the runs this
@@ -4197,7 +4229,8 @@ class CatalogStore:
             # which is what reconcile does with a cancelled request anyway.
             cancelled = connection.execute(
                 """UPDATE acquisition_requests SET status='cancelled', updated_at=?
-                   WHERE scope_type='series' AND series_run_id=? AND status='open'""",
+                   WHERE scope_type='series' AND series_run_id=? AND status='open'
+                     AND coverage='run'""",
                 (now, series_run_id),
             ).rowcount
             connection.execute(
@@ -4866,11 +4899,22 @@ class CatalogStore:
         scope_id: int,
         acquisition_preference: str | None = None,
         include_specials: bool | None = None,
+        *,
+        issue_numbers: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        """Persist a monitored target and its current canonical issue set."""
+        """Persist a monitored target and its current canonical issue set.
+
+        With `issue_numbers`, the request covers those issues and nothing else:
+        it does not begin following the run, does not grow when the run does,
+        and is not withdrawn when the run is unfollowed. Asking for one new
+        comic is not the same as taking on its back catalogue.
+        """
         scope = str(scope_type or "").strip().casefold()
         if scope not in {"series", "collection"}:
             raise ValueError("Request scope must be a series or collection")
+        narrow = issue_numbers is not None
+        if narrow and scope != "series":
+            raise ValueError("Only a series run can be asked for by issue")
         snapshot = self.catalog()
         if scope == "collection":
             target = next(
@@ -4904,44 +4948,71 @@ class CatalogStore:
             raise ValueError("Acquisition preference must be volumes, issues, or either")
         if not issues:
             raise ValueError("Find and confirm the canonical issue list before acquiring missing comics")
+        if narrow:
+            wanted = {str(number).strip() for number in issue_numbers if str(number).strip()}
+            if not wanted:
+                raise ValueError("Name at least one issue to acquire")
+            issues = [issue for issue in issues if str(issue.get("number") or "").strip() in wanted]
+            if not issues:
+                raise ValueError("Those issues are not in this run's issue list")
 
-        if scope == "collection":
-            self.set_collection_monitoring(scope_id, preference, include)
-        else:
-            self.set_series_monitoring(scope_id, preference)
+        # Following is what makes a run keep being checked. A request for named
+        # issues asks for those comics once, so it does not turn monitoring on.
+        if not narrow:
+            if scope == "collection":
+                self.set_collection_monitoring(scope_id, preference, include)
+            else:
+                self.set_series_monitoring(scope_id, preference)
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
+            # Which open request this joins, if any. The two coverages are not
+            # interchangeable: following a run must never adopt a request for
+            # named issues -- it would look like following while still covering
+            # one comic -- and asking for an issue of a run already followed is
+            # already answered by that run's request.
             if scope == "collection":
                 existing = connection.execute(
-                    """SELECT id FROM acquisition_requests
+                    """SELECT id, coverage FROM acquisition_requests
                        WHERE scope_type='collection' AND series_family_id=? AND status='open'
+                         AND coverage='run'
                        ORDER BY id DESC LIMIT 1""",
+                    (scope_id,),
+                ).fetchone()
+            elif narrow:
+                existing = connection.execute(
+                    """SELECT id, coverage FROM acquisition_requests
+                       WHERE scope_type='series' AND series_run_id=? AND status='open'
+                       ORDER BY coverage='run' DESC, id DESC LIMIT 1""",
                     (scope_id,),
                 ).fetchone()
             else:
                 existing = connection.execute(
-                    """SELECT id FROM acquisition_requests
+                    """SELECT id, coverage FROM acquisition_requests
                        WHERE scope_type='series' AND series_run_id=? AND status='open'
+                         AND coverage='run'
                        ORDER BY id DESC LIMIT 1""",
                     (scope_id,),
                 ).fetchone()
             if existing:
                 request_id = int(existing["id"])
-                connection.execute(
-                    """UPDATE acquisition_requests
-                       SET acquisition_preference=?, include_specials=?, updated_at=? WHERE id=?""",
-                    (preference, int(include), now, request_id),
-                )
+                # Joining a followed run restates nothing about how it is followed.
+                if not (narrow and existing["coverage"] == "run"):
+                    connection.execute(
+                        """UPDATE acquisition_requests
+                           SET acquisition_preference=?, include_specials=?, updated_at=? WHERE id=?""",
+                        (preference, int(include), now, request_id),
+                    )
             else:
                 cursor = connection.execute(
                     """INSERT INTO acquisition_requests(
                            scope_type, series_run_id, series_family_id, status,
-                           acquisition_preference, include_specials, created_at, updated_at
-                       ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?)""",
+                           acquisition_preference, include_specials, coverage,
+                           created_at, updated_at
+                       ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?)""",
                     (
                         scope, scope_id if scope == "series" else None,
                         scope_id if scope == "collection" else None,
-                        preference, int(include), now, now,
+                        preference, int(include), "issues" if narrow else "run", now, now,
                     ),
                 )
                 request_id = int(cursor.lastrowid)
@@ -5035,8 +5106,9 @@ class CatalogStore:
                 cursor = connection.execute(
                     """INSERT INTO acquisition_requests(
                            scope_type, series_run_id, series_family_id, status,
-                           acquisition_preference, include_specials, created_at, updated_at
-                       ) VALUES ('series', ?, NULL, 'open', ?, 0, ?, ?)""",
+                           acquisition_preference, include_specials, coverage,
+                           created_at, updated_at
+                       ) VALUES ('series', ?, NULL, 'open', ?, 0, 'issues', ?, ?)""",
                     (int(targets[0]["series_run_id"]), preference, now, now),
                 )
                 acquisition_request_id = int(cursor.lastrowid)

@@ -3522,3 +3522,184 @@ class UnfollowCollectionTests(unittest.TestCase):
             store, _, _ = self._collection(Path(folder))
             with self.assertRaises(ValueError):
                 store.stop_collection_monitoring(999999)
+
+
+class PullOneIssueTests(unittest.TestCase):
+    """Asking for one comic is not the same as taking on its back catalogue.
+
+    Every request used to cover a whole scope, and three separate mechanisms
+    widened it back: applying an issue list enrolled every open request on the
+    run, the monitor enrolled it for daily checks, and unfollowing cancelled
+    it. A request that covers named issues has to survive all three.
+    """
+
+    ISSUES = [
+        {"number": "1", "provider_id": "101", "publication_date": "2020-01-01", "publication_year": 2020},
+        {"number": "2", "provider_id": "102", "publication_date": "2020-02-01", "publication_year": 2020},
+        {"number": "3", "provider_id": "103", "publication_date": "2020-03-01", "publication_year": 2020},
+    ]
+
+    def _run(self, root, issues=None):
+        """A library owning issue 1 of a three-issue run, following nothing."""
+        path = root / "Example 001.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(
+            store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "1", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+        run_id = int(store.catalog()["series"][0]["id"])
+        store.apply_issue_list(
+            run_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+            list(issues if issues is not None else self.ISSUES),
+        )
+        return store, run_id
+
+    def _request(self, store, request_id):
+        return next(
+            item for item in store.catalog()["requests"] if item["id"] == str(request_id)
+        )
+
+    def _numbers(self, request):
+        return sorted(job["issueNumber"] for job in request["jobs"])
+
+    def test_asking_for_one_issue_queues_only_that_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            request = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            self.assertEqual(request["targetIssueCount"], 1)
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._numbers(self._request(store, request["id"])), ["3"])
+
+    def test_it_does_not_start_following_the_run(self):
+        """The whole point: one comic, not a subscription."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            series = next(
+                item for item in store.catalog()["series"] if int(item["id"]) == run_id
+            )
+            self.assertEqual(series["monitoringStatus"], "cataloged")
+
+    def test_a_later_metadata_sync_does_not_widen_it(self):
+        # apply_issue_list enrols every open request on the run. Before the
+        # coverage column, one pulled issue quietly became the whole run the
+        # next time metadata refreshed.
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            request = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            store.apply_issue_list(
+                run_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                self.ISSUES + [
+                    {"number": "4", "provider_id": "104", "publication_date": "2020-04-01",
+                     "publication_year": 2020},
+                ],
+            )
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._request(store, request["id"])["targetIssueCount"], 1)
+            self.assertEqual(self._numbers(self._request(store, request["id"])), ["3"])
+
+    def test_unfollowing_the_run_leaves_it_alone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            followed = store.create_acquisition_request("series", run_id)
+            store.stop_series_monitoring(run_id)
+            self.assertEqual(self._request(store, pulled["id"])["status"], "open",
+                             "the comic you asked for by name was not part of the following")
+            self.assertEqual(self._request(store, followed["id"])["status"], "cancelled")
+
+    def test_the_daily_monitor_does_not_enrol_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, run_id = self._run(root)
+            store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            # The monitor is seeded on open, so a fresh store is the check.
+            reopened = CatalogStore(root / "catalog.db")
+            with sqlite3.connect(reopened.database_path) as connection:
+                rows = connection.execute(
+                    "SELECT COUNT(*) FROM series_monitor_refreshes WHERE series_run_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+            self.assertEqual(rows, 0)
+
+    def test_following_the_run_still_works_as_it_did(self):
+        """The guards must be about coverage, not about series requests."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, run_id = self._run(root)
+            request = store.create_acquisition_request("series", run_id)
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._numbers(self._request(store, request["id"])), ["2", "3"])
+            store.apply_issue_list(
+                run_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                self.ISSUES + [
+                    {"number": "4", "provider_id": "104", "publication_date": "2020-04-01",
+                     "publication_year": 2020},
+                ],
+            )
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._numbers(self._request(store, request["id"])), ["2", "3", "4"],
+                             "a followed run must still pick up newly listed issues")
+            reopened = CatalogStore(root / "catalog.db")
+            with sqlite3.connect(reopened.database_path) as connection:
+                rows = connection.execute(
+                    "SELECT COUNT(*) FROM series_monitor_refreshes WHERE series_run_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+            self.assertEqual(rows, 1, "and must still be checked daily")
+
+    def test_an_unknown_issue_number_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            with self.assertRaises(ValueError):
+                store.create_acquisition_request("series", run_id, issue_numbers=["99"])
+            with self.assertRaises(ValueError):
+                store.create_acquisition_request("series", run_id, issue_numbers=[])
+
+    def test_a_collection_cannot_be_asked_for_by_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, _run_id = self._run(Path(folder))
+            with self.assertRaises(ValueError):
+                store.create_acquisition_request("collection", 1, issue_numbers=["3"])
+
+    def test_following_a_run_you_already_pulled_an_issue_from_really_follows(self):
+        """Reuse is by coverage, not by run.
+
+        Joining the newest open request on the run adopted the pulled issue's
+        request instead: the button said Following, monitoring stayed off, and
+        the request still covered one comic.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            followed = store.create_acquisition_request("series", run_id)
+            self.assertNotEqual(followed["id"], pulled["id"])
+            series = next(
+                item for item in store.catalog()["series"] if int(item["id"]) == run_id
+            )
+            self.assertEqual(series["monitoringStatus"], "monitored")
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._numbers(self._request(store, followed["id"])), ["2", "3"])
+            self.assertEqual(self._numbers(self._request(store, pulled["id"])), ["3"])
+
+    def test_pulling_an_issue_of_a_run_you_follow_joins_that_request(self):
+        """It is already wanted; a second request would double-count it."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            followed = store.create_acquisition_request("series", run_id)
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            self.assertEqual(pulled["id"], followed["id"])
+            self.assertEqual(pulled["targetIssueCount"], 3, "the run request is left as it was")
+            series = next(
+                item for item in store.catalog()["series"] if int(item["id"]) == run_id
+            )
+            self.assertEqual(series["monitoringStatus"], "monitored",
+                             "and it is still followed afterwards")
