@@ -13,7 +13,8 @@
     "visual:capture": "node tests/visual/capture.mjs",
     "visual:compare": "node tests/visual/compare.mjs",
     "figma:check": "node tests/visual/figma-check.mjs",
-    "figma:generate": "node tests/visual/figma/generate.mjs"
+    "figma:generate": "node tests/visual/figma/generate.mjs",
+    "lint": "eslint src tests scripts"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -24,6 +25,8 @@
     "vite": "6.4.2"
   },
   "devDependencies": {
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.63.0",
     "pngjs": "^7.0.0"

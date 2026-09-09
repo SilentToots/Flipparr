@@ -1891,7 +1891,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sidebar { top: 58px; }
   /* The content area is the file's Frame 33: flush against the rail, with its
      own blocks carrying the 20px and 32px insets. */
-  .main-content { margin-left: 228px; padding: 0; max-width: none; }
+  .main-content { margin-left: 228px; padding: 20px 32px; max-width: none; }
+  /* Frame 33 has no padding of its own: the Comics dashboard's header block
+     and body carry the design's 20px and 32px themselves. */
+  .main-content-flush { padding: 0; }
   .app-shell { padding-top: 58px; }
   /* Search lives in the bar now, so the copy of it inside the page is the
      phone's alone. */
