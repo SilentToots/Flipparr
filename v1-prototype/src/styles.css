@@ -73,39 +73,127 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-search { position: relative; min-width: 0; width: 100%; z-index: 30; }
 .discovery-results { position: absolute; top: 51px; left: 0; width: min(690px, calc(100vw - 310px)); max-height: min(620px, calc(100vh - 105px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 22px 60px rgba(0,0,0,.55); }
 .discovery-results > header { min-height: 59px; padding: 11px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
-.discovery-results > header div, .discovery-message span, .discovery-copy { min-width: 0; display: grid; gap: 3px; }
+.discovery-results > header div, .discovery-copy { min-width: 0; display: grid; gap: 3px; }
 .discovery-results > header strong { font-size: var(--text-md); }
-.discovery-results > header span, .discovery-message small, .discovery-result span, .discovery-result small { color: var(--muted); font-size: var(--text-sm); }
+.discovery-results > header span, .discovery-result span, .discovery-result small { color: var(--muted); font-size: var(--text-sm); }
+.discovery-result .discover-cover { width: 42px; aspect-ratio: var(--cover-ratio); border-radius: 3px; }
 .discovery-result { min-height: 82px; padding: 10px 13px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); }
 .discovery-result:last-child { border-bottom: 0; }
-.discovery-cover { width: 42px; aspect-ratio: var(--cover-ratio); border-radius: 3px; display: grid; place-items: center; overflow: hidden; background: var(--status-muted-bg); color: var(--muted-weak); }
-.discovery-cover img { width: 100%; height: 100%; border-radius: inherit; object-fit: contain; }
 .discovery-title-row { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .discovery-title-row > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-md); }
 .discovery-title-row > b { flex: 0 0 auto; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--status-muted-bg); color: var(--text); font-size: var(--text-xs); line-height: 1.2; }
-.discovery-result .discovery-byline { color: var(--violet-text); font-size: var(--text-sm); line-height: 1.3; }
 .discovery-result > button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--violet); color: white; display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); font-weight: 700; cursor: pointer; white-space: nowrap; }
 .discovery-result > button:disabled { opacity: .65; }
-.discovery-message { min-height: 74px; padding: 14px; display: flex; align-items: center; gap: 10px; color: var(--muted); }
-.discovery-message.warning { color: var(--amber); }
-.discovery-message > button { margin-left: auto; min-height: 30px; padding: 0 10px; border: 1px solid var(--amber-border); border-radius: 6px; background: var(--status-muted-bg); color: var(--amber); font-size: var(--text-sm); font-weight: 700; cursor: pointer; white-space: nowrap; }
-.search-results-topbar { width: min(690px, 100%); margin-bottom: 28px; }
-.search-results-section { margin-top: 28px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
-.search-results-section > header { min-height: 74px; padding: 15px 18px; display: flex; align-items: center; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
-.search-results-section > header h2 { margin: 4px 0 0; font-size: var(--text-lg); }
-.search-results-section .series-table { border-top: 0; }
-.search-results-section .series-table-head { padding: 0 16px; }
-.search-results-section .series-row { padding: 0 16px; }
-.search-section-empty { min-height: 112px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: var(--text-md); }
-.discovery-results-page { position: static; width: 100%; max-height: none; margin-top: 28px; overflow: hidden; box-shadow: none; }
-.discovery-results-page > header { min-height: 74px; padding: 15px 18px; }
-.discovery-results-page > header strong { font-size: var(--text-lg); }
-.discovery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.discovery-results-page .discovery-result { min-height: 184px; padding: 15px; grid-template-columns: 72px minmax(0, 1fr); grid-template-rows: minmax(110px, auto) auto; align-items: start; border-right: 1px solid var(--line); }
-.discovery-results-page .discovery-result:nth-child(3n) { border-right: 0; }
-.discovery-results-page .discovery-cover { width: 72px; aspect-ratio: var(--cover-ratio); }
-.discovery-results-page .discovery-copy { align-content: start; gap: 5px; }
-.discovery-results-page .discovery-result > button { grid-column: 1 / -1; width: 100%; justify-content: center; }
+/* ---------------------------------------------------------------------------
+   Discover -- node-id=22-552, Discover Landing (22:556) and Search (37:684).
+   Every value here is measured from the file rather than matched by eye.
+   --------------------------------------------------------------------------- */
+
+/* The hero: one panel, two sizes. On the landing it carries the invitation and
+   the field; in search it holds the query alone, so it collapses to the height
+   of the field and the results start higher. */
+.discover-hero { background: var(--color-neutral-950); border: 2px solid var(--color-violet-700); border-radius: 8px; padding: 80px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.discover-hero.searching { padding: 12px 80px; }
+.discover-hero h2 { margin: 0; width: 100%; font-size: 20px; font-weight: 600; line-height: normal; color: var(--color-neutral-0); text-align: center; }
+.discover-search { width: 600px; max-width: 100%; display: flex; align-items: center; gap: 4px; padding: 8px 12px 8px 8px; border: 1px solid var(--color-neutral-500); border-radius: 100px; background: var(--color-black); }
+.discover-hero.searching .discover-search { background: var(--color-neutral-500); }
+.discover-search > svg { flex: none; margin: 4px; }
+.discover-search input { flex: 1; min-width: 0; padding: 4px; border: 0; background: transparent; color: var(--color-neutral-0); font: inherit; font-size: var(--text-md); text-align: center; }
+.discover-search input:focus { outline: none; }
+.discover-search input::placeholder { color: rgb(255 255 255 / .6); }
+.discover-hero.searching .discover-search input { text-align: left; font-weight: 700; }
+.discover-search-clear { flex: none; padding: 0; border: 0; background: transparent; color: var(--color-neutral-0); display: grid; place-items: center; cursor: pointer; }
+
+/* A shelf and a results block are the same container: the file gives both the
+   same fill, radius and 20px padding. */
+.release-shelf, .discover-results { margin-top: 20px; padding: 20px; border-radius: 8px; background: var(--color-neutral-950); display: flex; flex-direction: column; gap: 20px; }
+.release-shelf > header, .discover-results > header { display: flex; align-items: center; gap: 20px; }
+.release-shelf h2, .discover-results h2 { margin: 0; flex: 1; min-width: 0; font-size: var(--text-lg); font-weight: 600; color: var(--color-neutral-0); }
+/* "2 Library Matches": the count is Black, the label is Regular. */
+.discover-results h2 { font-weight: 400; }
+.discover-results h2 b { font-weight: 900; }
+
+.shelf-scroll { flex: none; display: flex; align-items: center; gap: 12px; }
+.shelf-scroll button { padding: 4px; border: 0; border-radius: 100px; background: var(--color-neutral-0); color: var(--color-neutral-950); display: grid; place-items: center; cursor: pointer; }
+.shelf-scroll button:disabled { background: var(--color-neutral-500); cursor: default; }
+
+/* One row, scrolled sideways. The cards keep their measured width rather than
+   flexing, so a wide window shows more of them instead of wider ones. */
+.shelf-row { display: flex; gap: 20px; overflow-x: auto; scroll-behavior: smooth; scrollbar-width: none; }
+.shelf-row::-webkit-scrollbar { display: none; }
+
+.discover-cover { display: grid; place-items: center; overflow: hidden; background: var(--status-muted-bg); color: var(--muted-weak); }
+.discover-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+.pull-card { flex: none; width: 120px; display: flex; flex-direction: column; }
+.pull-card .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
+.pull-card-body { padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+/* Two lines, then ellipsis -- a fixed box, so a long title cannot push the
+   button below the row and leave the shelf ragged. */
+.pull-card h3 { margin: 0; height: 32px; font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-neutral-0); text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pull-card-action { padding: 8px 0; }
+
+.pull-button { width: 100%; padding: 4px 8px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--pull-border); border-radius: var(--radius-sm); background: var(--pull-bg); box-shadow: inset 0 2px 0 0 rgb(255 255 255 / .15); color: var(--color-neutral-0); font-size: 12px; font-weight: 500; line-height: 16px; white-space: nowrap; cursor: pointer; }
+.pull-button-md { font-size: var(--text-md); line-height: 20px; }
+.pull-button:disabled { cursor: default; }
+.pull-button-pending { opacity: .75; }
+.pull-button-queued, .pull-button-owned { border-color: var(--line-strong); background: var(--status-muted-bg); box-shadow: none; color: var(--muted); }
+
+/* The skeletons occupy the loaded card's box exactly, so nothing moves when
+   the comics arrive -- which is the moment a reader is most likely to be
+   reaching for one. */
+.pull-card-skeleton .discover-cover, .pull-card-skeleton h3 i, .pull-card-skeleton .pull-card-action i,
+.new-run-skeleton .discover-cover, .new-run-skeleton h3 i, .new-run-skeleton p i,
+.new-run-skeleton .new-run-status i, .new-run-skeleton .new-run-action i {
+  display: block; border-radius: 5px; background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite;
+}
+.pull-card-skeleton h3 i { height: 12px; width: 80%; margin: 2px auto; }
+.pull-card-skeleton .pull-card-action i { height: 26px; }
+.new-run-skeleton h3 i { height: 16px; width: 85%; }
+.new-run-skeleton p i { height: 12px; width: 55%; }
+.new-run-skeleton .new-run-status i { height: 18px; width: 88px; border-radius: 100px; }
+.new-run-skeleton .new-run-action i { height: 30px; }
+
+.shelf-message { min-height: 74px; padding: 14px; display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.shelf-message span { min-width: 0; display: grid; gap: 3px; }
+.shelf-message strong { color: var(--text); font-size: var(--text-md); }
+.shelf-message small { color: var(--muted); font-size: var(--text-sm); }
+.shelf-message > button { margin-left: auto; min-height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
+
+/* Search results */
+.discover-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.provider-progress { margin: 0; flex: none; display: flex; gap: 12px; color: var(--muted); font-size: var(--text-sm); }
+.provider-progress .provider-answered { color: var(--green-text); }
+.provider-progress .provider-failed { color: var(--amber); }
+
+.library-match-row { display: flex; flex-wrap: wrap; gap: 20px; }
+.library-match { width: 120px; padding: 0; border: 0; background: transparent; text-align: center; cursor: pointer; display: flex; flex-direction: column; }
+.library-match-art { position: relative; display: block; }
+.library-match .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
+.library-match-art b { position: absolute; right: 4px; bottom: 4px; padding: 3px 8px; border-radius: 100px; background: var(--color-neutral-950); color: var(--color-neutral-0); font-size: 10px; font-weight: 700; }
+.library-match h3 { margin: 8px 0 0; height: 32px; font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-neutral-0); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.new-run-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; }
+.new-run-card { display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; border: 1px solid var(--color-neutral-800); border-radius: 8px; background: var(--color-neutral-950); overflow: hidden; }
+.new-run-card .new-run-art { width: 100%; aspect-ratio: 240 / 336; }
+.new-run-copy { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+.new-run-copy h3 { margin: 0; font-size: var(--text-md); font-weight: 700; color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-run-copy p { margin: 0; font-size: 12px; font-weight: 400; color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-run-status { padding: 0 12px; min-height: 18px; }
+.new-run-card hr { width: 100%; height: 0; margin: 0; border: 0; border-top: 1px solid var(--color-neutral-800); }
+.new-run-action { padding: 0 12px; }
+
+/* The design's own status chip, smaller and more translucent than the one on a
+   series card. */
+.run-status { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; color: rgb(255 255 255 / .8); }
+.run-status.active { background: rgb(109 40 217 / .4); }
+.run-status.complete { background: rgb(113 113 122 / .4); }
+
+@media (max-width: 900px) {
+  .discover-hero { padding: 32px 20px; }
+  .discover-hero.searching { padding: 12px 20px; }
+}
+
 .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button { border: 0; border-radius: var(--radius-sm); min-height: var(--control-height-md); padding: 0 var(--control-padding-md); display: inline-flex; justify-content: center; align-items: center; gap: var(--control-gap); font-weight: 650; font-size: var(--control-font-md); cursor: pointer; transition: transform var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard); }
 .primary-button { background: var(--violet); color: var(--color-neutral-0); }
 .primary-button:hover:not(:disabled) { background: var(--violet); transform: translateY(-1px); }
@@ -1196,9 +1284,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .library-loading-table header i:last-child, .library-loading-table article > .library-loading-cell.short { display: none; }
   .library-loading-table article { grid-template-columns: 78px minmax(202px, 1.5fr) minmax(140px, .8fr) minmax(110px, .7fr); }
   .series-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
-  .discovery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .discovery-results-page .discovery-result:nth-child(3n) { border-right: 1px solid var(--line); }
-  .discovery-results-page .discovery-result:nth-child(2n) { border-right: 0; }
 }
 
 @media (max-width: 880px) {
@@ -1243,8 +1328,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .settings-root-list > span { grid-template-columns: auto minmax(0, 1fr); }
   .settings-root-list small { grid-column: 2; }
   .discovery-results { width: calc(100vw - 32px); }
-  .discovery-grid { grid-template-columns: 1fr; }
-  .discovery-results-page .discovery-result { border-right: 0; }
   .page-header { align-items: flex-start; flex-direction: column; padding-top: 26px; min-height: 100px; }
   .metadata-setup-status { grid-template-columns: auto 1fr; }
   .metadata-setup-meter { grid-column: 1 / -1; width: 100%; }
@@ -1421,10 +1504,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .library-loading-tools i,
   .library-loading-table i,
   .library-loading-cover,
-  .library-loading-cell {
+  .library-loading-cell,
+  .pull-card-skeleton .discover-cover,
+  .pull-card-skeleton i,
+  .new-run-skeleton .discover-cover,
+  .new-run-skeleton i {
     animation: none;
     background: var(--surface-soft);
   }
+  /* A shelf scrolls itself when a chevron is pressed; jumping is the point of
+     the control, and the smoothing is the part that is motion. */
+  .shelf-row { scroll-behavior: auto; }
 }
 
 /* Sign-in gate */
@@ -1899,7 +1989,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .app-shell { padding-top: 58px; }
   /* Search lives in the bar now, so the copy of it inside the page is the
      phone's alone. */
-  .topbar, .search-results-topbar { display: none; }
+  .topbar { display: none; }
 }
 
 /* Collapsing is only meaningful where the nav is not already an icon rail. */

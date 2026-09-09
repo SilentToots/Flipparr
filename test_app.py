@@ -713,6 +713,35 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(result["providersAnswered"], ["Comic Vine"])
         self.assertEqual(len(result["results"]), 1)
 
+    def test_a_run_still_going_is_not_finished_by_another_provider(self):
+        """Absence of an end year is evidence when the provider models one.
+
+        Metron reporting year_end as null says the run is still shipping. GCD
+        naming a year for its own record of the same run must not overwrite
+        that, or a comic out this week reads Run Complete.
+        """
+        metron_result = {"results": [{
+            "provider": "metron", "providerName": "Metron", "providerSeriesId": "9",
+            "title": "Batman", "yearBegan": 2016, "yearEnded": None,
+            "yearLabel": "2016", "status": "Ongoing",
+        }]}
+        gcd_result = {"results": [{
+            "provider": "gcd", "providerName": "Grand Comics Database",
+            "providerSeriesId": "7", "title": "Batman", "yearBegan": 2016,
+            "yearEnded": 2026, "yearLabel": "2016–2026",
+        }]}
+        with patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"},
+        }), patch("app._discovery_library_view",
+                  return_value={"keys": set(), "providerIds": set()}), patch(
+            "app.discover_metron_series", return_value=metron_result
+        ), patch("app.discover_gcd_series", return_value=gcd_result):
+            result = discover_series("Batman")
+        run = result["results"][0]
+        self.assertIsNone(run["yearEnded"])
+        self.assertEqual(run["yearLabel"], "2016")
+        self.assertEqual(run["status"], "Ongoing")
+
     def test_every_provider_failing_still_raises(self):
         with patch("app.load_provider_config", return_value={
             "metron": {"enabled": True, "token": "token"},

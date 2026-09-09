@@ -46,7 +46,12 @@ import {
   ComicsIcon, DiscoverIcon, PullListIcon, LibraryHealthIcon,
   GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
   ActiveRunIcon, FollowedIcon,
+  PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon,
 } from "./design-icons.jsx";
+import {
+  pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
+  countLabel, providerProgress,
+} from "./discover.js";
 
 const NAV_ITEMS = [
   { id: "library", label: "Comics", icon: ComicsIcon },
@@ -830,25 +835,14 @@ function AttentionPanel({ items, onOpen, onDismiss }) {
   return <section className="attention-panel"><header><WarningCircle size={24} weight="fill" /><strong>Needs attention ({items.length})</strong><button onClick={() => onOpen()}>Review problems <ArrowRight size={16} /></button></header><div className="attention-details">{items.slice(0, 2).map((item) => <div className="attention-detail" key={item.id}><button onClick={() => onOpen(item)}><span>{item.title}</span><small>{NOTIFICATION_KINDS[item.kind]}: {item.detail}</small><b>{item.kind === "download" ? "Open Pull List" : item.kind === "file" ? "Review comic file" : "Review metadata"}</b></button><button type="button" className="attention-dismiss" onClick={() => onDismiss(item)} aria-label={`Dismiss: ${item.title}`} title="Dismiss"><X size={14} /></button></div>)}</div></section>;
 }
 
+// A token rather than prose: RunStatusChip renders the label, and a function
+// that returned "Completed run" while the chip tested for "completed" simply
+// drew nothing at all.
 function discoveryRunStatus(item) {
   const status = String(item?.status || "").toLowerCase();
-  if (item?.yearEnded || ["completed", "complete", "cancelled"].includes(status)) return "Completed run";
-  if (["ongoing", "continuing"].includes(status)) return "Ongoing run";
-  return "Status unknown";
-}
-
-function discoveryByline(item) {
-  const rolePriority = { writer: 0, artist: 1, penciller: 1, inker: 2, colorist: 3, letterer: 4 };
-  const creators = (item?.creators || []).filter((creator) => creator?.name && creator?.roles?.length).sort((a, b) => {
-    const priority = (creator) => Math.min(...creator.roles.map((role) => rolePriority[role.toLowerCase()] ?? 9));
-    return priority(a) - priority(b);
-  });
-  if (!creators.length) return "";
-  const visible = creators.slice(0, 3).map((creator) => (
-    `${creator.name} (${creator.roles.map((role) => role.toLowerCase()).join(", ")})`
-  ));
-  if (creators.length > visible.length) visible.push(`+${creators.length - visible.length} more`);
-  return `By ${visible.join(" · ")}`;
+  if (item?.yearEnded || ["completed", "complete", "cancelled"].includes(status)) return "completed";
+  if (["ongoing", "continuing"].includes(status)) return "ongoing";
+  return "unknown";
 }
 
 function searchQueryParts(value) {
@@ -857,44 +851,147 @@ function searchQueryParts(value) {
   return match ? { title: match[1].trim(), year: match[2] } : { title: cleaned, year: "" };
 }
 
-function DiscoveryCover({ item }) {
+// A cover that 404s must not leave a broken-image glyph in a row of art.
+function DiscoverCover({ src, alt, className = "", glyph = 22 }) {
   const [failed, setFailed] = useState(false);
-  return <span className="discovery-cover">{item.cover && !failed ? <img src={item.cover} alt={`${item.title} cover`} onError={() => setFailed(true)} /> : <BookOpen size={22} weight="duotone" />}</span>;
+  return <span className={`discover-cover ${className}`.trim()}>
+    {src && !failed
+      ? <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} />
+      : <BookOpen size={glyph} weight="duotone" aria-hidden="true" />}
+  </span>;
 }
 
-function DiscoveryCard({ item, provider, busyId, onAdd }) {
-  const byline = discoveryByline(item);
-  const itemId = `${item.provider}-${item.providerSeriesId}`;
-  return <article className="discovery-result">
-    <DiscoveryCover item={item} />
-    <div className="discovery-copy">
-      <div className="discovery-title-row"><strong>{item.title}</strong><b>{item.yearLabel}</b></div>
-      {byline ? <span className="discovery-byline" title={`${item.creatorCreditsSource || "Provider"} credits`}>{byline}</span> : null}
-      <span>{item.publisher || "Publisher unknown"} · {item.issueCount} known issue{item.issueCount === 1 ? "" : "s"}</span>
-      <small>{discoveryRunStatus(item)} · {item.providerName || provider}</small>
+// The design's own control, not one of the app's button variants: a filled
+// purple pill with a light border and an inner highlight.
+function PullButton({ state, idleLabel, onClick, size = "sm" }) {
+  const settled = state === PULL_STATES.queued || state === PULL_STATES.owned;
+  return <button type="button" className={`pull-button pull-button-${size} pull-button-${state}`}
+    onClick={onClick} disabled={state !== PULL_STATES.idle}
+    aria-busy={state === PULL_STATES.pending || undefined}>
+    <span>{state === PULL_STATES.idle ? idleLabel : PULL_LABELS[state]}</span>
+    {state === PULL_STATES.pending ? <LoadingIndicator size={16} />
+      : settled ? <FollowingIcon size={16} /> : <PullIcon />}
+  </button>;
+}
+
+function RunStatusChip({ status }) {
+  if (status === "completed") return <span className="run-status complete">Run Complete</span>;
+  if (status === "ongoing") return <span className="run-status active"><ActiveRunIcon /> Active Run</span>;
+  return null;
+}
+
+function PullCard({ issue, state, onPull }) {
+  return <article className="pull-card">
+    <DiscoverCover src={issue.cover} alt={`${issue.title} cover`} glyph={30} />
+    <div className="pull-card-body">
+      <h3 title={issue.title}>{issue.title}</h3>
+      <div className="pull-card-action">
+        <PullButton state={state} idleLabel="Pull Issue" onClick={() => onPull(issue)} />
+      </div>
     </div>
-    <Button
-      busy={busyId === itemId}
-      busyLabel="Adding…"
-      icon={<Plus size={16} />}
-      onClick={() => onAdd(item)}
-    >
-      Add &amp; request
-    </Button>
   </article>;
 }
 
-function DiscoveryResults({ query, results, state, error, provider, yearHint, busyId, onAdd, onRetry, page = false }) {
-  const available = results.filter((item) => !item.inLibrary);
-  const present = results.filter((item) => item.inLibrary);
-  const providerSummary = provider ? `${available.length || results.length} publication runs from ${provider}${yearHint ? ` · closest to ${yearHint} first` : ""}` : "Searching comic databases";
-  const cards = available.map((item) => <DiscoveryCard item={item} provider={provider} busyId={busyId} onAdd={onAdd} key={`${item.provider}-${item.providerSeriesId}`} />);
-  return <section className={`discovery-results${page ? " discovery-results-page" : ""}`} aria-label="Discover series results">
-    <header><div><strong>Discover new series</strong><span>{providerSummary}</span></div>{state === "loading" ? <LoadingSpinner size={18} label="Searching metadata services" /> : null}</header>
-    {error ? <div className="discovery-message warning"><WarningCircle size={18} /><span><strong>Online search needs another try</strong><small>The comics provider is busy. Your library results are still available above.</small></span><button type="button" onClick={onRetry}>Try again</button></div> : null}
-    {!error && state === "done" && !available.length ? <div className="discovery-message"><MagnifyingGlass size={18} /><span><strong>{present.length ? "All matching runs are already in your library" : `No new series found for “${query}”`}</strong><small>Try the exact publication title or add a four-digit publication year.</small></span></div> : null}
-    {page ? <div className="discovery-grid">{cards}</div> : cards}
+// The skeleton occupies the loaded card's box exactly. A shelf that grows when
+// its comics arrive moves everything under it, which is the moment the reader
+// is most likely to be reaching for something.
+function PullCardSkeleton() {
+  return <div className="pull-card pull-card-skeleton" aria-hidden="true">
+    <span className="discover-cover" />
+    <div className="pull-card-body"><h3><i /></h3><div className="pull-card-action"><i /></div></div>
+  </div>;
+}
+
+const SHELF_COPY = {
+  empty: { title: "Nothing listed for this week", detail: "Metron has no shipping dates for these days yet." },
+  unavailable: { title: "Release dates need Metron", detail: "Connect Metron in Settings. It is the only source with comic shop shipping dates." },
+};
+
+/**
+ * One week of comics, scrolled sideways.
+ *
+ * The chevrons page by the visible width rather than by a card, because a row
+ * that moves 120px on a click reads as a twitch rather than as navigation.
+ */
+function ReleaseShelf({ title, date, state, issues = [], error, pulled, onPull, onRetry }) {
+  const scroller = useRef(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
+  function measure() {
+    const node = scroller.current;
+    if (!node) return;
+    setAtStart(node.scrollLeft <= 1);
+    setAtEnd(node.scrollLeft + node.clientWidth >= node.scrollWidth - 1);
+  }
+  useEffect(measure, [issues.length, state]);
+  function page(direction) {
+    const node = scroller.current;
+    if (node) node.scrollBy({ left: direction * node.clientWidth, behavior: "smooth" });
+  }
+  const heading = date ? `${title} - ${date}` : title;
+  return <section className="release-shelf" aria-label={heading}>
+    <header>
+      <h2>{heading}</h2>
+      {state === "ready" ? <div className="shelf-scroll">
+        <button type="button" onClick={() => page(-1)} disabled={atStart} aria-label={`Scroll ${title} back`}><ShelfBackIcon /></button>
+        <button type="button" onClick={() => page(1)} disabled={atEnd} aria-label={`Scroll ${title} forward`}><ShelfNextIcon /></button>
+      </div> : null}
+    </header>
+    {state === "loading" ? <div className="shelf-row" role="status" aria-live="polite" aria-busy="true">
+      <span className="sr-only">Getting this week&rsquo;s releases from Metron</span>
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((item) => <PullCardSkeleton key={item} />)}
+    </div> : null}
+    {state === "ready" ? <div className="shelf-row" ref={scroller} onScroll={measure}>
+      {issues.map((issue) => <PullCard issue={issue} state={pullState(issue, pulled)}
+        onPull={onPull} key={issueKey(issue)} />)}
+    </div> : null}
+    {state === "error" ? <div className="shelf-message" role="status">
+      <WarningCircle size={18} />
+      <span><strong>This week could not be fetched</strong><small>{error}</small></span>
+      <button type="button" onClick={onRetry}>Try again</button>
+    </div> : null}
+    {state === "empty" || state === "unavailable" ? <div className="shelf-message">
+      <MagnifyingGlass size={18} />
+      <span><strong>{SHELF_COPY[state].title}</strong><small>{SHELF_COPY[state].detail}</small></span>
+    </div> : null}
   </section>;
+}
+
+function LibraryMatchCard({ series, onOpen }) {
+  return <button type="button" className="library-match" onClick={() => onOpen(series)}>
+    <span className="library-match-art">
+      <DiscoverCover src={series.cover} alt={`${series.title} cover`} />
+      {series.year ? <b>{series.year}</b> : null}
+    </span>
+    <h3 title={series.title}>{series.title}</h3>
+  </button>;
+}
+
+function NewRunCard({ item, state, onPull }) {
+  const byline = [item.publisher || "Publisher unknown", item.yearLabel || item.yearBegan]
+    .filter(Boolean).join(" • ");
+  return <article className="new-run-card">
+    <DiscoverCover src={item.cover} alt={`${item.title} cover`} className="new-run-art" glyph={44} />
+    <div className="new-run-copy">
+      <h3 title={item.title}>{item.title}</h3>
+      <p title={byline}>{byline}</p>
+    </div>
+    <div className="new-run-status"><RunStatusChip status={discoveryRunStatus(item)} /></div>
+    <hr />
+    <div className="new-run-action">
+      <PullButton state={state} idleLabel="Pull Run" size="md" onClick={() => onPull(item)} />
+    </div>
+  </article>;
+}
+
+function NewRunCardSkeleton() {
+  return <div className="new-run-card new-run-skeleton" aria-hidden="true">
+    <span className="discover-cover new-run-art" />
+    <div className="new-run-copy"><h3><i /></h3><p><i /></p></div>
+    <div className="new-run-status"><i /></div>
+    <hr />
+    <div className="new-run-action"><i /></div>
+  </div>;
 }
 
 // A scan in progress and a first page load look identical to someone arriving:
@@ -1087,63 +1184,172 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   );
 }
 
-function SearchResultsView({ query, catalog, backendStatus, onSearch, onOpenSeries, onOpenCollection, onDiscoverRequest }) {
-  const [draft, setDraft] = useState(query);
-  const [discovery, setDiscovery] = useState({ state: "loading", results: [], error: "", provider: "", yearHint: null });
-  const [discoverBusyId, setDiscoverBusyId] = useState(null);
-  const allSeries = useMemo(() => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []), [catalog, backendStatus]);
-  const localResults = useMemo(() => {
+/**
+ * Discover: browse this week, or search every catalog.
+ *
+ * One screen with two states rather than two routes. The old split put the
+ * search box on Discover and its results on a route of their own, so the
+ * screen a reader landed on could only be used by people who already knew what
+ * they wanted.
+ */
+function DiscoverView({
+  query, catalog, backendStatus, onSearch, onClearSearch,
+  onOpenSeries, onOpenCollection, onDiscoverRequest, onPullIssue,
+}) {
+  const [draft, setDraft] = useState(query || "");
+  const [releases, setReleases] = useState({ state: "loading", data: null });
+  const [discovery, setDiscovery] = useState(
+    { state: "idle", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
+  const [pulled, setPulled] = useState({});
+  const searching = Boolean(query);
+
+  const allSeries = useMemo(
+    () => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []),
+    [catalog, backendStatus]);
+  const libraryMatches = useMemo(() => {
+    if (!query) return [];
     const parts = searchQueryParts(query);
     const needle = parts.title.toLowerCase();
     return allSeries.filter((item) => {
-      const textMatches = `${item.searchText || item.title} ${item.publisher || ""}`.toLowerCase().includes(needle);
-      return textMatches && (!parts.year || `${item.year || ""} ${item.run || ""}`.includes(parts.year));
+      const text = `${item.searchText || item.title} ${item.publisher || ""}`.toLowerCase();
+      return text.includes(needle) && (!parts.year || `${item.year || ""} ${item.run || ""}`.includes(parts.year));
     });
   }, [allSeries, query]);
 
-  async function searchProviders(searchQuery = query) {
-    const cleaned = searchQuery.trim();
+  async function loadReleases() {
+    setReleases({ state: "loading", data: null });
+    try {
+      setReleases({ state: "done", data: await apiRequest("/api/v1/discover/releases") });
+    } catch (error) {
+      setReleases({ state: "done", data: { available: true, error: error.message } });
+    }
+  }
+  useEffect(() => {
+    if (searching || backendStatus === "offline") return;
+    loadReleases();
+  }, [searching, backendStatus]);
+
+  async function searchProviders(value = query) {
+    const cleaned = String(value || "").trim();
     if (cleaned.length < 2 || backendStatus === "offline") {
-      setDiscovery({ state: "done", results: [], error: backendStatus === "offline" ? "Library service is unavailable" : "", provider: "", yearHint: null });
+      setDiscovery({ state: "done", results: [], providersChecked: [], providersAnswered: [], fallbacks: [],
+        error: backendStatus === "offline" ? "Library service is unavailable" : "" });
       return;
     }
-    setDiscovery({ state: "loading", results: [], error: "", provider: "", yearHint: null });
+    setDiscovery({ state: "loading", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
     try {
       const result = await apiRequest(`/api/v1/discover?query=${encodeURIComponent(cleaned)}`);
-      setDiscovery({ state: "done", results: result.results || [], error: "", provider: result.provider || "", yearHint: result.yearHint || null });
+      setDiscovery({ state: "done", results: result.results || [], error: "",
+        providersChecked: result.providersChecked || [], providersAnswered: result.providersAnswered || [],
+        fallbacks: result.fallbacks || [] });
     } catch (error) {
-      setDiscovery({ state: "done", results: [], error: error.message, provider: "", yearHint: null });
+      setDiscovery({ state: "done", results: [], error: error.message,
+        providersChecked: [], providersAnswered: [], fallbacks: [] });
     }
   }
-  useEffect(() => { setDraft(query); searchProviders(query); }, [query, backendStatus]);
-  async function addDiscovered(item) {
-    setDiscoverBusyId(`${item.provider}-${item.providerSeriesId}`);
-    await onDiscoverRequest({ ...item, query });
-    setDiscoverBusyId(null);
+  useEffect(() => {
+    setDraft(query || "");
+    if (searching) searchProviders(query);
+  }, [query, backendStatus]);
+
+  function mark(key, state) { setPulled((current) => ({ ...current, [key]: state })); }
+  async function pullIssue(issue) {
+    const key = issueKey(issue);
+    mark(key, PULL_STATES.pending);
+    const result = await onPullIssue(issue);
+    mark(key, result?.ok ? PULL_STATES.queued : PULL_STATES.idle);
   }
-  return <>
-    <div className="search-results-topbar"><SearchBar value={draft} onChange={setDraft} onSubmit={() => onSearch(draft)} actionLabel="Search" label="Search comics" placeholder="Try a title and year, such as Wolverine 2026…" /></div>
-    <PageHeader title={`Results for “${query}”`} />
-    <section className="search-results-section owned-results"><header><div><span className="eyebrow">In your library</span><h2>{localResults.length ? `${localResults.length} match${localResults.length === 1 ? "" : "es"}` : "No matches"}</h2></div></header>{localResults.length ? <SeriesList series={localResults} onOpen={(item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item)} view="list" /> : <div className="search-section-empty"><BookOpen size={25} /><span>No comics in your library match this search.</span></div>}</section>
-    <DiscoveryResults page query={query} results={discovery.results} state={discovery.state} error={discovery.error} provider={discovery.provider} yearHint={discovery.yearHint} busyId={discoverBusyId} onAdd={addDiscovered} onRetry={() => searchProviders(query)} />
-  </>;
-}
+  async function pullRun(item) {
+    const key = `run:${item.provider}-${item.providerSeriesId}`;
+    mark(key, PULL_STATES.pending);
+    const result = await onDiscoverRequest({ ...item, query });
+    mark(key, result?.ok ? PULL_STATES.queued : PULL_STATES.idle);
+  }
 
-function DiscoverView({ onSearch }) {
-  const [query, setQuery] = useState("");
+  const data = releases.data || {};
+  const { fresh, ownedCount } = splitSearchResults(discovery.results);
+  const progress = providerProgress(discovery);
+  const outstanding = progress.filter((item) => item.status === "searching");
+
   return <>
-    <PageHeader title="Find a comic run" />
-    <section className="focused-panel discover-panel">
-      <div className="panel-icon"><MagnifyingGlass size={30} weight="duotone" /></div>
-      <h2>Search comic catalogs</h2>
-      <p>Your library matches appear first. New runs are separated by publisher, publication year, creators, and run status so similarly named comics are easier to tell apart.</p>
-      <SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Discover comic runs" placeholder="Try a title and year, such as Wolverine 2026…" />
+    <section className={`discover-hero${searching ? " searching" : ""}`}>
+      {searching ? null : <h2>Pull a new issue or search your library</h2>}
+      <form className="discover-search" onSubmit={(event) => { event.preventDefault(); onSearch(draft); }}>
+        <SearchIcon />
+        <input value={draft} onChange={(event) => setDraft(event.target.value)}
+          aria-label="Search comic catalogs"
+          placeholder="Try a title and year, such as Wolverine 2026…" />
+        {searching ? <button type="button" className="discover-search-clear" onClick={onClearSearch}
+          aria-label="Clear search"><ClearSearchIcon /></button> : null}
+        {/* The design draws no submit control. Implicit submission covers the
+            pointer path, but only reliably with a real submit button in the
+            form -- and a keyboard user gets something to land on. */}
+        <button type="submit" className="sr-only">Search</button>
+      </form>
     </section>
+
+    {searching ? <>
+      <section className="discover-results" aria-label="Library matches">
+        <header><h2><b>{libraryMatches.length}</b> {libraryMatches.length === 1 ? "Library Match" : "Library Matches"}</h2></header>
+        {libraryMatches.length ? <div className="library-match-row">
+          {libraryMatches.map((series) => <LibraryMatchCard series={series}
+            onOpen={(item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item)}
+            key={series.id} />)}
+        </div> : <p className="discover-note">Nothing in your library matches “{query}”.</p>}
+      </section>
+
+      <section className="discover-results" aria-label="New matches">
+        <header>
+          <h2><b>{fresh.length}</b> {fresh.length === 1 ? "New Match" : "New Matches"}</h2>
+          {discovery.state === "loading" || discovery.fallbacks?.length ? <p className="provider-progress" role="status" aria-live="polite">
+            {progress.map((item) => <span className={`provider-${item.status}`} key={item.name}
+              title={item.error || undefined}>
+              {item.name}{item.status === "searching" ? " searching…" : item.status === "failed" ? " unavailable" : ""}
+            </span>)}
+          </p> : null}
+        </header>
+        {discovery.state === "loading" ? <div className="new-run-grid" role="status" aria-busy="true">
+          <span className="sr-only">Searching comic catalogs</span>
+          {[0, 1, 2, 3, 4].map((item) => <NewRunCardSkeleton key={item} />)}
+        </div> : null}
+        {discovery.state === "done" && fresh.length ? <div className="new-run-grid">
+          {fresh.map((item) => <NewRunCard item={item}
+            state={pulled[`run:${item.provider}-${item.providerSeriesId}`] || PULL_STATES.idle}
+            onPull={pullRun} key={`${item.provider}-${item.providerSeriesId}`} />)}
+        </div> : null}
+        {discovery.state === "done" && !fresh.length ? <div className="shelf-message">
+          <MagnifyingGlass size={18} />
+          <span>
+            <strong>{discovery.error ? "Online search needs another try"
+              : ownedCount ? `All ${ownedCount} matching run${ownedCount === 1 ? "" : "s"} are already in your library`
+              : `No new runs match “${query}”`}</strong>
+            <small>{discovery.error || "Try the exact publication title, or add a four-digit publication year."}</small>
+          </span>
+          {discovery.error ? <button type="button" onClick={() => searchProviders(query)}>Try again</button> : null}
+        </div> : null}
+        {outstanding.length && fresh.length ? <p className="discover-note">
+          Still hearing from {outstanding.map((item) => item.name).join(" and ")}.
+        </p> : null}
+      </section>
+    </> : <>
+      <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
+        state={shelfState(data.latest, data.available, releases.state === "loading")}
+        issues={data.latest?.issues} error={data.latest?.error || data.error}
+        pulled={pulled} onPull={pullIssue} onRetry={loadReleases} />
+      <ReleaseShelf title="Upcoming Releases" date={formatShelfDate(data.upcoming?.date)}
+        state={shelfState(data.upcoming, data.available, releases.state === "loading")}
+        issues={data.upcoming?.issues} error={data.upcoming?.error || data.error}
+        pulled={pulled} onPull={pullIssue} onRetry={loadReleases} />
+    </>}
   </>;
 }
 
-function EmptySearch({ query }) {
-  return <div className="empty-state"><MagnifyingGlass size={32} /><strong>No series match “{query}”</strong><span>Try a title, creator, or publisher.</span></div>;
+// The design labels a shelf by its shipping Wednesday, in the reader's own
+// notation rather than the ISO date the endpoint speaks.
+function formatShelfDate(iso) {
+  if (!iso) return "";
+  const [year, month, day] = String(iso).split("-");
+  return year && month && day ? `${month}/${day}/${year}` : "";
 }
 
 function CatalogEmpty({ onAdd }) {
@@ -2476,7 +2682,7 @@ function SeriesMatchWorkbench({ data, loading, busy, error, onClose, onSearch, o
         : candidates.length ? <div className="discovery-results">{candidates.map((item) => {
             const itemId = `${item.provider || data.provider}-${item.providerSeriesId}`;
             return <article className="discovery-result" key={itemId}>
-              <DiscoveryCover item={item} />
+              <DiscoverCover src={item.cover} alt={`${item.title} cover`} />
               <div className="discovery-copy">
                 <div className="discovery-title-row"><strong>{item.title}</strong><b>{item.yearLabel}</b></div>
                 <span>{item.publisher || "Publisher unknown"} · {item.issueCount} known issue{item.issueCount === 1 ? "" : "s"}</span>
@@ -2657,11 +2863,11 @@ const ROUTE_BY_VIEW = {
   metadata: "/health",
   settings: "/settings",
   import: "/import",
-  search: "/search",
 };
 // Paths this app used to answer on. A bookmark to one lands where it meant
-// to rather than silently on the library.
-const RETIRED_ROUTES = { "/requests": "requests" };
+// to rather than silently on the library. /search was its own view until
+// Discover grew the results it was showing.
+const RETIRED_ROUTES = { "/requests": "requests", "/search": "discover" };
 const VIEW_BY_ROUTE = Object.fromEntries(
   Object.entries(ROUTE_BY_VIEW).map(([view, path]) => [path, view])
 );
@@ -2673,7 +2879,7 @@ function locationForState({ active, settingsSection, searchQuery, seriesId }) {
   let path = ROUTE_BY_VIEW[active] || ROUTE_BY_VIEW.library;
   if (active === "settings" && settingsSection) path += `/${settingsSection}`;
   const params = new URLSearchParams();
-  if (active === "search" && searchQuery) params.set("q", searchQuery);
+  if (active === "discover" && searchQuery) params.set("q", searchQuery);
   if (seriesId) params.set("series", String(seriesId));
   const query = params.toString();
   return query ? `${path}?${query}` : path;
@@ -2690,7 +2896,7 @@ function stateFromLocation(pathname, search) {
     settingsSection: active === "settings" && SETTINGS_SECTIONS.some((item) => item.id === requestedSection)
       ? requestedSection
       : "library",
-    searchQuery: active === "search" ? params.get("q") || "" : "",
+    searchQuery: active === "discover" ? params.get("q") || "" : "",
     seriesId: params.get("series") || "",
   };
 }
@@ -2847,9 +3053,11 @@ export function App() {
   }
   function openSearch(value) {
     const cleaned = String(value || "").trim();
-    if (cleaned.length < 2) return;
+    // An empty value is the clear button, not a rejected search.
+    if (cleaned && cleaned.length < 2) return;
     setSearchQuery(cleaned);
-    navigate("search");
+    navigate("discover");
+    if (!cleaned) return;
     // The two halves of this screen read different libraries otherwise. The
     // "in your library" list filters the catalog this client last fetched,
     // while Discover's "already in your library" is decided server-side
@@ -3351,6 +3559,30 @@ export function App() {
       setRequestBusyKey("");
     }
   }
+  async function pullDiscoveredIssue(issue) {
+    try {
+      const result = await apiRequest("/api/v1/discover/pull-issue", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "metron",
+          providerSeriesId: issue.providerSeriesId,
+          providerIssueId: issue.providerIssueId,
+          number: issue.number,
+          seriesTitle: issue.seriesTitle,
+        }),
+      });
+      // A pull starts real work, and the catalog poll only runs while
+      // something is active -- so without this the Pull List does not know
+      // about it until something else happens to refresh.
+      await loadCatalog();
+      showToast(`${issue.title} added to your Pull List`);
+      return { ok: true, result };
+    } catch (error) {
+      showToast(error.message);
+      return { ok: false, error: error.message };
+    }
+  }
+
   async function requestDiscoveredSeries(target) {
     try {
       const result = await apiRequest("/api/v1/discover", {
@@ -3363,7 +3595,8 @@ export function App() {
         }),
       });
       await loadCatalog();
-      navigate("requests");
+      // Staying put is the point: the card settles into "On your Pull List" so
+      // the reader can keep browsing the results they were reading.
       showToast(`${result.series.title} added · ${result.issueCount} issues followed`);
       return { ok: true, result };
     } catch (error) {
@@ -3632,7 +3865,7 @@ export function App() {
   }, [catalog?.enrichment?.active, catalog?.requests, catalog?.replacementRequests, catalog?.activeScan]);
   const visibleSeries = catalog?.series ?? (backendStatus === "offline" ? DEMO_SERIES : []);
   const logicalSeriesCount = logicalCatalogSeries(catalog, visibleSeries).length;
-  const navActive = active === "search" || active === "discover" ? "discover" : active === "import" ? "settings" : active;
+  const navActive = active === "discover" ? "discover" : active === "import" ? "settings" : active;
   useEffect(() => { loadAuthStatus(); }, []);
   if (authStatus && authStatus.method === "forms" && !authStatus.authenticated) {
     return <LoginView onSignedIn={async () => { await loadAuthStatus(); await loadCatalog(); }} />;
@@ -3651,5 +3884,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={active === "search" ? searchQuery : ""} collapsed={navCollapsed} settingsActive={navActive === "settings"} notifications={notifications} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className={`main-content${active === "library" ? " main-content-flush" : ""}`}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} notifications={notifications} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /> : null}{active === "discover" ? <DiscoverView onSearch={openSearch} /> : null}{active === "search" ? <SearchResultsView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} focus={requestFocus} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} focus={reviewFocus} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={searchQuery} collapsed={navCollapsed} settingsActive={navActive === "settings"} notifications={notifications} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} /><main className={`main-content${active === "library" ? " main-content-flush" : ""}`}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} notifications={notifications} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /> : null}{active === "discover" ? <DiscoverView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} focus={requestFocus} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onRefresh={loadCatalog} /> : null}{active === "metadata" ? <MetadataView items={catalog?.inbox ?? []} focus={reviewFocus} backendStatus={backendStatus} onResolve={resolveReview} onReplace={openReplacementRequest} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
 }

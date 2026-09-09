@@ -4566,8 +4566,15 @@ _DISCOVERY_PROVIDERS = {
 }
 
 # Fields worth taking from a lesser record when the preferred one lacks them.
+#
+# `yearEnded` is deliberately not among them. A provider that models an end
+# year and reports none is saying the run is still going -- that is the whole
+# distinction issue_catalog_status.run_end_status exists to keep -- so filling
+# it from a provider that happens to name a year turns "still running" into
+# "finished", and the card then reads Run Complete for a comic shipping this
+# week. `yearLabel` is derived from it and goes with it.
 _DISCOVERY_FILLABLE = (
-    "cover", "publisher", "yearEnded", "yearLabel", "status", "issueCount",
+    "cover", "publisher", "status", "issueCount",
     "creators", "creatorCreditsSource", "coverProvider",
 )
 
@@ -5578,6 +5585,60 @@ def _provider_series_run_details(
     }
 
 
+def _import_provider_run(
+    provider: str, provider_series_id: str, query: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bring one provider run into the library, with its issue list.
+
+    Shared by following a run and by pulling a single issue from it: both need
+    the run and its issues to exist before anything can be asked for, and
+    neither should decide on its own what the issue list looks like.
+    """
+    credential = _provider_credential(provider)
+    fetched = _provider_series_run_details(provider, provider_series_id, query, credential)
+    provider_id = fetched["providerId"]
+    run = catalog_store().ensure_provider_series_run(
+        provider, provider_id, fetched["title"], fetched["year"], fetched["publisher"]
+    )
+    evidence = fetched["endEvidence"]
+    catalog_store().apply_issue_list(
+        int(run["id"]), provider, provider_id, fetched["sourceUrl"], fetched["entries"],
+        status=_run_catalog_status(evidence), end_evidence=evidence,
+        detail=f"Added from {PROVIDER_DEFINITIONS[provider]['name']} with "
+               f"{len(fetched['entries'])} known issues.",
+        source="added from library discovery search",
+    )
+    return run, fetched
+
+
+def pull_discovered_issue(
+    provider: str, provider_series_id: str, number: str, query: str = "",
+) -> dict[str, Any]:
+    """Acquire one issue of a run, without taking on the rest of it.
+
+    The run has to exist in the library before a single issue of it can be
+    asked for -- there is nothing to hang the request on otherwise -- but
+    importing it is not the same as following it. The request covers this issue
+    and nothing else, so the run is not monitored, is not checked daily, and
+    picks up no back catalogue.
+    """
+    provider = str(provider or "").strip().lower()
+    number = str(number or "").strip()
+    if provider not in {"metron", "comic_vine"} or not re.fullmatch(r"\d+", str(provider_series_id or "")):
+        raise ValueError("Choose a valid publication run")
+    if not number:
+        raise ValueError("Choose an issue to pull")
+    run, fetched = _import_provider_run(provider, provider_series_id, query)
+    request = catalog_store().create_acquisition_request(
+        "series", int(run["id"]), "issues", True, issue_numbers=[number],
+    )
+    _start_automatic_release_grabs(request)
+    return {
+        "series": {**run, "publisher": fetched["publisher"], "year": fetched["year"]},
+        "request": request, "number": number,
+    }
+
+
 def request_discovered_series(
     provider: str, query: str, provider_series_id: str,
     acquisition_preference: str = "either",
@@ -5588,19 +5649,9 @@ def request_discovered_series(
         return request_discovered_gcd_series(query, provider_series_id, acquisition_preference)
     if provider not in {"metron", "comic_vine"} or not re.fullmatch(r"\d+", str(provider_series_id or "")):
         raise ValueError("Choose a valid discovered publication run")
-    credential = _provider_credential(provider)
-    fetched = _provider_series_run_details(provider, provider_series_id, query, credential)
-    provider_id = fetched["providerId"]
-    source_url, entries = fetched["sourceUrl"], fetched["entries"]
-    title, year, publisher = fetched["title"], fetched["year"], fetched["publisher"]
-    run = catalog_store().ensure_provider_series_run(provider, provider_id, title, year, publisher)
+    run, fetched = _import_provider_run(provider, provider_series_id, query)
+    entries, publisher, year = fetched["entries"], fetched["publisher"], fetched["year"]
     evidence = fetched["endEvidence"]
-    catalog_store().apply_issue_list(
-        int(run["id"]), provider, provider_id, source_url, entries,
-        status=_run_catalog_status(evidence), end_evidence=evidence,
-        detail=f"Added from {PROVIDER_DEFINITIONS[provider]['name']} with {len(entries)} known issues.",
-        source="added from library discovery search",
-    )
     request = catalog_store().create_acquisition_request(
         "series", int(run["id"]), acquisition_preference, True
     )
@@ -7562,6 +7613,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(request, 201)
             return
 
+        if parsed_url.path == "/api/v1/discover/pull-issue":
+            try:
+                result = pull_discovered_issue(
+                    str(payload.get("provider") or "metron"),
+                    str(payload.get("providerSeriesId") or ""),
+                    str(payload.get("number") or ""),
+                    str(payload.get("seriesTitle") or ""),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"That issue could not be pulled: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
         if parsed_url.path == "/api/v1/discover":
             try:
                 result = request_discovered_series(

@@ -25,7 +25,10 @@ import {
 import {
   Bars3Icon, BookOpenIcon, Squares2X2Icon, ChevronDownIcon,
 } from "@heroicons/react/20/solid";
-import { BoltIcon, BookmarkIcon } from "@heroicons/react/16/solid";
+import {
+  BoltIcon, BookmarkIcon, CloudArrowDownIcon, ChevronLeftIcon, ChevronRightIcon,
+} from "@heroicons/react/16/solid";
+import { XMarkIcon } from "@heroicons/react/20/solid";
 
 function sized(Icon, defaultSize) {
   return function DesignIcon({ size = defaultSize, className = "", ...rest }) {
@@ -58,3 +61,9 @@ export const FollowingIcon = sized(CheckCircleIcon, 20);        // heroicons-out
 // Card badges
 export const ActiveRunIcon = sized(BoltIcon, 12);   // heroicons-micro/bolt
 export const FollowedIcon = sized(BookmarkIcon, 12); // heroicons-micro/bookmark
+
+// Discover
+export const PullIcon = sized(CloudArrowDownIcon, 16);      // heroicons-micro/cloud-arrow-down
+export const ShelfBackIcon = sized(ChevronLeftIcon, 16);    // heroicons-micro/chevron-left
+export const ShelfNextIcon = sized(ChevronRightIcon, 16);   // heroicons-micro/chevron-right
+export const ClearSearchIcon = sized(XMarkIcon, 20);        // heroicons-mini/x-mark
