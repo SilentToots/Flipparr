@@ -83,7 +83,14 @@ const failures = await page.evaluate(({ spec, icons, frames }) => {
   }
   for (const f of frames) {
     const el = document.querySelector(f.sel);
-    if (!el) { out.push({ sel: f.sel, node: f.node, bad: ["frame not found"] }); continue; }
+    if (!el) {
+      // A node the app only renders when it has something to show -- the
+      // notification count, say -- has no geometry on a library that has
+      // nothing. Its styling is still asserted through its synth probe.
+      if (f.synth) continue;
+      out.push({ sel: f.sel, node: f.node, bad: ["frame not found"] });
+      continue;
+    }
     const r = el.getBoundingClientRect();
     let p = { x: 0, y: 0 };
     if (f.within) {

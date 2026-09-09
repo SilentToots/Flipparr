@@ -441,9 +441,7 @@ export const frames = [
     "sel": ".appbar .search-field",
     "node": "1:108",
     "w": 600,
-    "h": 41,
-    "x": 394,
-    "within": ".appbar"
+    "h": 41
   },
   {
     "sel": ".appbar-actions",
@@ -454,6 +452,7 @@ export const frames = [
   {
     "sel": ".appbar-badge",
     "node": "7:266",
+    "synth": true,
     "w": 16,
     "h": 16,
     "x": 0,

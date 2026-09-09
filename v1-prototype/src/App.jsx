@@ -2844,6 +2844,14 @@ export function App() {
     if (cleaned.length < 2) return;
     setSearchQuery(cleaned);
     navigate("search");
+    // The two halves of this screen read different libraries otherwise. The
+    // "in your library" list filters the catalog this client last fetched,
+    // while Discover's "already in your library" is decided server-side
+    // against the current one -- and the poll below only runs while a scan,
+    // a download or enrichment is active, so on an idle library the client's
+    // copy is whatever it loaded on mount and never changes. Add a series and
+    // search for it and the page contradicts itself, indefinitely.
+    loadCatalog();
   }
   function openSeries(series) { setSelectedCollection(null); setSeriesParentCollection(null); setSelectedSeries(series); }
   function openCollection(collection) { if (!catalog?.collectedEditionsEnabled) return; setSelectedSeries(null); setSeriesParentCollection(null); setCollectionTab("overview"); setSelectedCollection(collection); }
