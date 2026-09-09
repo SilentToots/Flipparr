@@ -688,7 +688,7 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(run["issueCount"], 72, "and GCD fills in what Metron left blank")
         self.assertEqual(run["providerIds"], {"metron": "9", "comic_vine": "8", "gcd": "7"},
                          "every id is kept, because importing goes back to the source")
-        metron.assert_called_once_with("Saga", "token", empty)
+        metron.assert_called_once_with("Saga", "token", empty, hydrate=False)
         comic_vine.assert_called_once_with("Saga", "key", empty)
         gcd.assert_called_once_with("Saga", empty)
 
@@ -712,6 +712,35 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(result["fallbacks"][0]["provider"], "Metron")
         self.assertEqual(result["providersAnswered"], ["Comic Vine"])
         self.assertEqual(len(result["results"]), 1)
+
+    def test_discover_does_not_pay_for_a_byline_it_never_shows(self):
+        """Metron paces callers at one request every 3.2s.
+
+        A cold search made four of them -- search, series, issue list, issue --
+        and the last three improved one row out of two dozen. Discover shows a
+        title, publisher, year, run status and cover, all of which are on the
+        search row already.
+        """
+        captured = {}
+
+        def metron(query, token, library, *, hydrate=True):
+            captured["hydrate"] = hydrate
+            return {"results": []}
+
+        with patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"},
+        }), patch("app._discovery_library_view",
+                  return_value={"keys": set(), "providerIds": set()}), patch(
+            "app.discover_metron_series", side_effect=metron
+        ), patch("app.discover_gcd_series", return_value={"results": []}):
+            discover_series("Saga")
+        self.assertIs(captured["hydrate"], False)
+
+    def test_the_match_workbench_still_asks_for_the_byline(self):
+        """It renders creator credits, so it keeps paying for them."""
+        import inspect
+        signature = inspect.signature(app.discover_metron_series)
+        self.assertIs(signature.parameters["hydrate"].default, True)
 
     def test_a_run_still_going_is_not_finished_by_another_provider(self):
         """Absence of an end year is evidence when the provider models one.

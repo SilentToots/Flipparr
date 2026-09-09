@@ -4416,9 +4416,22 @@ def _metron_discovery_creators(issue: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def discover_metron_series(
-    query: str, token: str, library: dict[str, Any] | None = None
+    query: str, token: str, library: dict[str, Any] | None = None, *, hydrate: bool = True,
 ) -> dict[str, Any]:
-    """Use Metron's purpose-built series list endpoint for primary discovery."""
+    """Use Metron's purpose-built series list endpoint for primary discovery.
+
+    `hydrate` fills in the best exact match from three further requests: the
+    series record, then an issue listed from it, then that issue, for a
+    contributor byline. Metron paces callers at one request every 3.2s, so
+    those three are almost all of a cold search's latency -- and they improve
+    exactly one row out of the two dozen returned.
+
+    The match workbench shows the byline and asks for them. Discover does not:
+    it shows a title, a publisher, a year, a run status and a cover, and the
+    search row already carries every one of those. Where a row is missing one,
+    merging Comic Vine and GCD fills it -- in parallel, for every row, at no
+    additional wait.
+    """
     cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
@@ -4459,7 +4472,7 @@ def discover_metron_series(
         (item for item in results if normalized_title(item["title"]) == normalized_title(title_query)),
         None,
     )
-    if exact is not None:
+    if exact is not None and hydrate:
         try:
             detail = fetch_provider_json(
                 "metron", f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/", token,
@@ -4647,7 +4660,7 @@ def discover_series(query: str) -> dict[str, Any]:
     metron = config.get("metron") or {}
     if metron.get("enabled") and metron.get("token"):
         searches.append(("metron", "Metron", functools.partial(
-            discover_metron_series, cleaned, str(metron["token"]), library)))
+            discover_metron_series, cleaned, str(metron["token"]), library, hydrate=False)))
     comic_vine = config.get("comic_vine") or {}
     if comic_vine.get("enabled") and comic_vine.get("apiKey"):
         searches.append(("comic_vine", "Comic Vine", functools.partial(
