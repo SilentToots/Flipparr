@@ -13,7 +13,11 @@ export const jobHasFailed = (job) =>
   job?.status === "failed" || job?.downloadStatus === "failed";
 
 export function jobsNeedingAttention(catalog) {
-  const jobsOf = (list) => (list || []).flatMap((request) => request?.jobs || []);
+  // A cancelled run is not waiting on anyone; unfollow is the ordinary route
+  // into that state and its jobs keep whatever status they last had.
+  const jobsOf = (list) => (list || [])
+    .filter((request) => request?.status !== "cancelled")
+    .flatMap((request) => request?.jobs || []);
   return [...jobsOf(catalog?.requests), ...jobsOf(catalog?.replacementRequests)]
     .filter(jobHasFailed).length;
 }

@@ -1342,6 +1342,108 @@ class CatalogStoreTests(unittest.TestCase):
                 self.assertTrue(reopened_catalog["syncReady"])
                 self.assertEqual(reopened_catalog["anchorProviders"], [expected_provider])
 
+    def _one_wanted_job(self, root):
+        """A library with a single wanted issue, and the job that wants it."""
+        path = root / "Example 001.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+        store = CatalogStore(root / "catalog.db")
+        scan = store.begin_scan(str(root), True)
+        store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+            "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+            "embedded_metadata": {}, "file_health": {"status": "ok"},
+            "recommendation": {
+                "title": "Example", "issue": "1", "record_type": "single_issue",
+                "publisher": "Example Press", "source": "Test",
+            },
+            "file_cover": None,
+        })
+        series_id = int(store.catalog()["series"][0]["id"])
+        today = dt.datetime.now().astimezone().date()
+        store.apply_issue_list(
+            series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+            [
+                {"number": "1", "provider_id": "101",
+                 "publication_date": str(today - dt.timedelta(days=30)), "publication_year": today.year},
+                {"number": "2", "provider_id": "102",
+                 "publication_date": str(today - dt.timedelta(days=1)), "publication_year": today.year},
+            ],
+        )
+        request = store.create_acquisition_request("series", series_id, "issues")
+        return store, series_id, int(request["jobs"][0]["id"])
+
+    def _job_download_status(self, root, job_id):
+        for request in CatalogStore(root / "catalog.db").catalog()["requests"]:
+            for job in request["jobs"]:
+                if job["id"] == str(job_id):
+                    return job["downloadStatus"]
+        return "request-not-in-catalog"
+
+    def test_retrying_into_a_new_search_forgets_the_download_that_failed(self):
+        # acquisition_downloads.status='failed' used to be a one-way latch: the
+        # job went back to 'queued' and the download row stayed failed, so the
+        # bell and the rail badge -- which read downloadStatus -- kept
+        # reporting a failure for work that had already been abandoned.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            download = store.record_acquisition_download(
+                job_id, "SAB-1", "Example.002.2026", "release-key-1"
+            )
+            store.update_acquisition_download(
+                int(download["id"]), "failed", error="Incomplete Usenet post",
+                failure_stage="download",
+            )
+            store.update_acquisition_job(job_id, "failed", "Download failed")
+            self.assertEqual(self._job_download_status(root, job_id), "failed")
+
+            result = store.retry_acquisition_job(job_id)
+            self.assertEqual(result["action"], "research")
+            self.assertIsNone(
+                self._job_download_status(root, job_id),
+                "a job sent back to search must not still carry a failed download",
+            )
+
+    def test_a_file_arriving_by_another_route_forgets_the_download_that_failed(self):
+        # reconcile marks the job fulfilled when the issue turns up, and never
+        # touched the downloads table -- so the job read fulfilled while its
+        # downloadStatus stayed failed, which put the row under Following while
+        # the notification sent the reader to Wanted.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            download = store.record_acquisition_download(
+                job_id, "SAB-2", "Example.002.2026", "release-key-2"
+            )
+            store.update_acquisition_download(
+                int(download["id"]), "failed", error="Import rejected",
+                failure_stage="import",
+            )
+            store.update_acquisition_job(job_id, "failed", "Import failed")
+            self.assertEqual(self._job_download_status(root, job_id), "failed")
+
+            # The issue appears in the library by some other means.
+            second = root / "Example 002.cbz"
+            second.write_bytes(b"comic")
+            found = ParsedFile(str(second), second.name, ".cbz", "Example", issue="2")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [found], lambda parsed: {
+                "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "title": "Example", "issue": "2", "record_type": "single_issue",
+                    "publisher": "Example Press", "source": "Test",
+                },
+                "file_cover": None,
+            })
+            store.reconcile_acquisition_jobs()
+            self.assertIsNone(
+                self._job_download_status(root, job_id),
+                "a fulfilled job must not still carry a failed download",
+            )
+
     def test_acquisition_request_persists_release_aware_wanted_issues_and_expands(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

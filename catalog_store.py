@@ -4366,6 +4366,11 @@ class CatalogStore:
                     continue
                 if current == desired and job["queue_reason"] == reason:
                     continue
+                # The file arrived by another route, or the request was
+                # cancelled. Either way the failure that is still on the
+                # download row is no longer the story.
+                if current == "failed":
+                    self._clear_download_failure(connection, int(job["id"]))
                 connection.execute(
                     """UPDATE acquisition_jobs
                        SET status=?, queue_reason=?, error=NULL, updated_at=? WHERE id=?""",
@@ -4695,6 +4700,24 @@ class CatalogStore:
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
+    @staticmethod
+    def _clear_download_failure(connection: sqlite3.Connection, job_id: int) -> None:
+        """Forget the download that failed, once its job has moved on.
+
+        `acquisition_downloads.status='failed'` was a one-way latch: retrying
+        into a fresh release search left it, reconcile marking the job
+        fulfilled left it, and unfollow cancelling the request left it. So the
+        bell and the rail badge -- which read `downloadStatus` -- went on
+        reporting a failure for work that had already succeeded or been
+        abandoned, and tapping it landed on a Pull List tab that no longer held
+        the row.
+
+        The row is deleted rather than rewritten: the attempt is preserved in
+        `acquisition_release_failures`, a new grab re-creates the row through
+        its own upsert, and a stale row also holds its UNIQUE sab_nzo_id.
+        """
+        connection.execute("DELETE FROM acquisition_downloads WHERE job_id=?", (job_id,))
+
     def retry_acquisition_job(self, job_id: int) -> dict[str, Any]:
         """Retry a failed import in place, or return a failed download to release search."""
         now = _utc_now()
@@ -4728,6 +4751,8 @@ class CatalogStore:
                 desired = "queued"
                 detail = "Ready to search for another release"
                 action = "research"
+                # The release is being abandoned, so its download is history.
+                self._clear_download_failure(connection, job_id)
             connection.execute(
                 """UPDATE acquisition_jobs
                    SET status=?, queue_reason=?, error=NULL, updated_at=? WHERE id=?""",

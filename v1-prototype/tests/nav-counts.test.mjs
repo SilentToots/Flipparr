@@ -38,3 +38,15 @@ test("a catalog that has not loaded badges nothing rather than throwing", () => 
   assert.equal(jobsNeedingAttention({}), 0);
   assert.equal(jobsNeedingAttention({ requests: [{}], replacementRequests: [null] }), 0);
 });
+
+test("an unfollowed run stops badging the rail", () => {
+  // openRequests was replaced because it counted inventory; this is the other
+  // half of the same mistake -- a cancelled run counting as work outstanding.
+  const catalog = { requests: [{ id: 1, status: "cancelled", jobs: [{ id: 3, status: "failed" }] }] };
+  assert.equal(jobsNeedingAttention(catalog), 0);
+});
+
+test("the same failure on a live run still counts", () => {
+  const catalog = { requests: [{ id: 1, status: "open", jobs: [{ id: 3, status: "failed" }] }] };
+  assert.equal(jobsNeedingAttention(catalog), 1);
+});

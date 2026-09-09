@@ -13,7 +13,9 @@ import { jobHasFailed } from "./nav-counts.js";
 export const DISMISSED_KEY = "flipparr.notifications.dismissed";
 
 function requestJobNotifications(requests, kind) {
-  return (requests || []).flatMap((request) =>
+  return (requests || [])
+    .filter((request) => request?.status !== "cancelled")
+    .flatMap((request) =>
     (request?.jobs || []).filter(jobHasFailed).map((job) => ({
       id: `job:${job.id}`,
       kind: "download",

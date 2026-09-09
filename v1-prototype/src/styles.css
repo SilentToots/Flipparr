@@ -1963,6 +1963,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm strong { display: block; color: var(--muted-strong); font-size: var(--text-md); }
 .request-search-confirm small { display: block; margin-top: 3px; color: var(--muted-strong); font-size: var(--text-sm); }
 .request-search-confirm > span { display: flex; gap: 9px; flex: none; }
+/* Failed is the only tab that appears because something is wrong, so its count
+   carries the weight rather than the tab reading like the other three. */
+.request-tabs .request-tab-failed b { background: var(--red-soft); color: var(--red-text); }
+.request-tabs .request-tab-failed.active { color: var(--red-text); }
 /* Arriving from the bell, so the reader can see which of a dozen rows the
    notification meant. Fades rather than sticks: it is an answer to "which
    one", not a status. */

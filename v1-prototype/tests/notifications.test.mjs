@@ -82,3 +82,19 @@ test("storage round-trips, and junk in it is ignored rather than trusted", () =>
   store.set(DISMISSED_KEY, "[1, 2, \"job:9\"]");
   assert.deepEqual(readDismissed(storage), ["job:9"]);
 });
+
+test("a cancelled run notifies nothing, however its jobs were left", () => {
+  // Unfollow cancels the request and its jobs; nothing is waiting on anyone,
+  // so a failure left on one of them is history rather than a task.
+  const catalog = {
+    requests: [{ id: 1, status: "cancelled", jobs: [failedJob(3)] }],
+    replacementRequests: [{ id: 2, status: "cancelled", jobs: [failedJob(4)] }],
+  };
+  assert.deepEqual(buildNotifications(catalog), []);
+});
+
+test("a live run with the same failure still notifies", () => {
+  // The guard above must be about cancellation, not about failures generally.
+  const catalog = { requests: [{ id: 1, status: "open", jobs: [failedJob(3)] }] };
+  assert.equal(buildNotifications(catalog).length, 1);
+});
