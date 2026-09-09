@@ -36,7 +36,10 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { jobHasFailed, jobsNeedingAttention } from "./nav-counts.js";
-import { buildNotifications, pruneDismissed, readDismissed, writeDismissed } from "./notifications.js";
+import {
+  buildNotifications, pruneDismissed, readDismissed, writeDismissed,
+  readSeenUntil, writeSeenUntil,
+} from "./notifications.js";
 import {
   MenuIcon, SearchIcon, NotificationsIcon, SettingsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon, LibraryHealthIcon,
@@ -503,7 +506,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
 // trap, and adds the outside-click that a menu needs and a modal gets from
 // its backdrop. It must be mounted and unmounted rather than hidden: the
 // hook's effect runs once, on mount.
-const NOTIFICATION_KINDS = { download: "Download", file: "Comic file", metadata: "Metadata" };
+const NOTIFICATION_KINDS = { download: "Download", file: "Comic file", metadata: "Metadata", acquired: "Added" };
 
 function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
   const dialogRef = useDialog(onClose);
@@ -519,9 +522,11 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [onClose]);
   const blocking = items.filter((item) => item.severity === "error").length;
+  const actionable = items.filter((item) => item.kind !== "acquired").length;
+  const heading = actionable ? "Needs attention" : "Recently added";
   const shown = items.slice(0, 5);
   return <div className="notifications-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
-    <header><strong id="notifications-title">Needs attention</strong>{items.length ? <b>{items.length}</b> : null}</header>
+    <header><strong id="notifications-title">{heading}</strong>{items.length ? <b>{items.length}</b> : null}</header>
     {blocking ? <p className="notifications-summary">
       <WarningCircle size={15} weight="fill" className="severity-error" />
       {blocking} {blocking === 1 ? "item is" : "items are"} blocked until you act
@@ -532,7 +537,9 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
       // never the same click.
       <div className="notifications-item" key={item.id}>
         <button type="button" className="notifications-open" onClick={() => { onClose(); onOpen(item); }}>
-          <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />
+          {item.kind === "acquired"
+            ? <CheckCircle size={17} weight="fill" className="severity-done" />
+            : <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />}
           <span><strong>{item.title}</strong><small>{NOTIFICATION_KINDS[item.kind]} · {item.detail}</small></span>
         </button>
         <button type="button" className="notifications-dismiss" onClick={() => onDismiss(item)} aria-label={`Dismiss: ${item.title}`} title="Dismiss">
@@ -572,7 +579,7 @@ function AppBar({ query, collapsed, settingsActive, notifications, onToggleNav, 
         <button
           type="button" className={`appbar-action appbar-bell ${notificationsOpen ? "active" : ""}`}
           onClick={() => setNotificationsOpen((open) => !open)}
-          aria-label={items.length ? `Needs attention: ${items.length}` : "Needs attention"}
+          aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
           aria-expanded={notificationsOpen}
         >
           {items.length ? <b className={`appbar-badge${items.length > 9 ? " wide" : ""}`}>{items.length > 99 ? "99+" : items.length}</b> : null}
@@ -2721,6 +2728,17 @@ export function App() {
   const [requestFocus, setRequestFocus] = useState(null);
   const [dismissedNotifications, setDismissedNotifications] = useState(
     () => readDismissed(typeof window === "undefined" ? null : window.localStorage));
+  // Where this client had got to last time it looked. Set on first run so a
+  // browser that has never seen the app does not open onto every comic ever
+  // imported; from then on it only moves when an arrival is acknowledged.
+  const [seenUntil] = useState(() => {
+    if (typeof window === "undefined") return null;
+    const stored = readSeenUntil(window.localStorage);
+    if (stored) return stored;
+    const now = new Date().toISOString();
+    writeSeenUntil(window.localStorage, now);
+    return now;
+  });
   const [catalog, setCatalog] = useState(null);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
@@ -2822,8 +2840,8 @@ export function App() {
   }
 
   const notifications = useMemo(
-    () => buildNotifications(catalog, dismissedNotifications),
-    [catalog, dismissedNotifications]);
+    () => buildNotifications(catalog, dismissedNotifications, seenUntil),
+    [catalog, dismissedNotifications, seenUntil]);
   useEffect(() => {
     if (!catalog || !dismissedNotifications.length) return;
     const pruned = pruneDismissed(catalog, dismissedNotifications);

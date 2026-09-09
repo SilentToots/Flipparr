@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildNotifications, pruneDismissed, readDismissed, writeDismissed, DISMISSED_KEY,
+  readSeenUntil, writeSeenUntil, SEEN_UNTIL_KEY,
 } from "../src/notifications.js";
 
 const failedJob = (id, extra = {}) => ({ id, status: "failed", issueNumber: id, ...extra });
@@ -97,4 +98,79 @@ test("a live run with the same failure still notifies", () => {
   // The guard above must be about cancellation, not about failures generally.
   const catalog = { requests: [{ id: 1, status: "open", jobs: [failedJob(3)] }] };
   assert.equal(buildNotifications(catalog).length, 1);
+});
+
+const imported = (id, issue, at) => ({
+  id, issueNumber: issue, issueTitle: `Issue ${issue}`,
+  status: "fulfilled", downloadStatus: "imported", updatedAt: at,
+});
+const SINCE = "2026-09-09T12:00:00Z";
+
+test("a batch arriving announces the run once, not thirty times", () => {
+  const catalog = { requests: [{ id: 20, title: "Paper Girls", publisher: "Image Comics", status: "fulfilled",
+    jobs: [imported(1, "1", "2026-09-09T12:05:00Z"), imported(2, "2", "2026-09-09T12:06:00Z"),
+           imported(3, "3", "2026-09-09T12:07:00Z")] }] };
+  const items = buildNotifications(catalog, [], SINCE);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "Paper Girls — 3 issues added");
+  assert.equal(items[0].kind, "acquired");
+  assert.equal(items[0].severity, "info");
+});
+
+test("a single arrival names the issue, because that is the news", () => {
+  const catalog = { requests: [{ id: 14, title: "Saga", status: "open",
+    jobs: [imported(9, "73", "2026-09-09T12:30:00Z"), imported(8, "72", "2026-09-08T09:00:00Z")] }] };
+  const [item] = buildNotifications(catalog, [], SINCE);
+  assert.equal(item.title, "Saga #73 added");
+  assert.deepEqual(item.focus, { kind: "series", requestId: 14, jobId: 9 });
+});
+
+test("nothing that arrived before this client started looking is announced", () => {
+  // Shipping this must not narrate the entire back catalogue on first load.
+  const catalog = { requests: [{ id: 20, title: "Paper Girls", status: "fulfilled",
+    jobs: [imported(1, "1", "2026-09-01T00:00:00Z"), imported(2, "2", "2026-09-02T00:00:00Z")] }] };
+  assert.deepEqual(buildNotifications(catalog, [], SINCE), []);
+  assert.deepEqual(buildNotifications(catalog, [], null), [],
+    "a client with no watermark yet starts from now rather than from the beginning");
+});
+
+test("an unfollowed run announces nothing, the way it badges nothing", () => {
+  const catalog = { requests: [{ id: 20, title: "Paper Girls", status: "cancelled",
+    jobs: [imported(1, "1", "2026-09-09T12:05:00Z"), imported(2, "2", "2026-09-09T12:06:00Z")] }] };
+  assert.deepEqual(buildNotifications(catalog, [], SINCE), []);
+});
+
+test("arrivals sort below anything that needs a decision", () => {
+  const catalog = {
+    requests: [{ id: 20, title: "Paper Girls", status: "fulfilled",
+      jobs: [imported(1, "1", "2026-09-09T12:05:00Z"), imported(2, "2", "2026-09-09T12:06:00Z"),
+             { id: 3, status: "failed", issueNumber: "3" }] }],
+    inbox: [{ id: "m", category: "metadata", severity: "warning", issue: "Uncertain", file: "a.cbz" }],
+  };
+  assert.deepEqual(buildNotifications(catalog, [], SINCE).map((n) => n.kind),
+    ["download", "metadata", "acquired"]);
+});
+
+test("dismissing an arrival keeps it dismissed once the watermark moves past it", () => {
+  // The prune drops ids the live set no longer contains, and an arrival stops
+  // being generated the moment the watermark advances -- so without the
+  // exception it would forget the dismissal and announce itself again.
+  const catalog = { requests: [{ id: 20, title: "Paper Girls", status: "fulfilled",
+    jobs: [imported(1, "1", "2026-09-09T12:05:00Z")] }] };
+  assert.deepEqual(
+    pruneDismissed(catalog, ["acquired:job:1:2026-09-09T12:05:00Z"]),
+    ["acquired:job:1:2026-09-09T12:05:00Z"],
+  );
+});
+
+test("the watermark round-trips and survives hostile storage", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  assert.equal(readSeenUntil(storage), null);
+  writeSeenUntil(storage, SINCE);
+  assert.equal(readSeenUntil(storage), SINCE);
+  assert.equal(store.get(SEEN_UNTIL_KEY), SINCE);
+  const hostile = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+  assert.equal(readSeenUntil(hostile), null);
+  assert.doesNotThrow(() => writeSeenUntil(hostile, SINCE));
 });

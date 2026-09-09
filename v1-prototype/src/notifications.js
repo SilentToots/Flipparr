@@ -11,6 +11,7 @@
 import { jobHasFailed } from "./nav-counts.js";
 
 export const DISMISSED_KEY = "flipparr.notifications.dismissed";
+export const SEEN_UNTIL_KEY = "flipparr.notifications.seenUntil";
 
 function requestJobNotifications(requests, kind) {
   return (requests || [])
@@ -41,16 +42,66 @@ function inboxNotifications(inbox) {
   }));
 }
 
-// Failures first: a stopped download and a damaged file are both blocking,
-// where an uncertain match is a judgement call that can wait.
-const RANK = { download: 0, file: 1, metadata: 2 };
+// Comics arriving. The bell reported only bad news, so the one thing a
+// downloader most wants to be told -- your comics are here -- was the one
+// thing it never said.
+//
+// At both levels, because a batch and a single arrival are different events:
+// adding a run brings thirty issues at once and wants one line about the run,
+// while a followed run picking up its next issue wants to name that issue. The
+// only test needed to tell them apart is whether more than one arrived.
+//
+// `since` is a high-water mark, not a filter on age: without it, shipping this
+// would announce every issue ever imported, all at once. A client that has
+// never stored one is starting from now and announces nothing historical.
+function acquisitionNotifications(catalog, since) {
+  if (!since) return [];
+  return (catalog?.requests || []).flatMap((request) => {
+    if (request?.status === "cancelled") return [];
+    const arrived = (request.jobs || []).filter(
+      (job) => job.downloadStatus === "imported" && job.updatedAt && job.updatedAt > since
+    );
+    if (!arrived.length) return [];
+    const at = arrived.map((job) => job.updatedAt).sort().at(-1);
+    const runTitle = request.title || arrived[0].seriesTitle || "A run";
+    if (arrived.length === 1) {
+      const job = arrived[0];
+      return [{
+        id: `acquired:job:${job.id}:${job.updatedAt}`,
+        kind: "acquired",
+        severity: "info",
+        title: `${runTitle} #${job.issueNumber} added`,
+        detail: job.issueTitle || "Downloaded and added to your library",
+        view: "requests",
+        focus: { kind: "series", requestId: request.id, jobId: job.id },
+      }];
+    }
+    return [{
+      // Keyed on the moment as well as the run, so a run added to again later
+      // announces that too rather than being deduped against an old dismissal.
+      id: `acquired:run:${request.id}:${at}`,
+      kind: "acquired",
+      severity: "info",
+      title: `${runTitle} — ${arrived.length} issues added`,
+      detail: request.publisher || "Downloaded and added to your library",
+      view: "requests",
+      focus: { kind: "series", requestId: request.id },
+    }];
+  });
+}
 
-export function buildNotifications(catalog, dismissed = []) {
+// Failures first: a stopped download and a damaged file are both blocking, an
+// uncertain match is a judgement call that can wait, and news that something
+// arrived needs nothing at all.
+const RANK = { download: 0, file: 1, metadata: 2, acquired: 3 };
+
+export function buildNotifications(catalog, dismissed = [], seenUntil = null) {
   const hidden = new Set(dismissed);
   return [
     ...requestJobNotifications(catalog?.requests, "series"),
     ...requestJobNotifications(catalog?.replacementRequests, "replacement"),
     ...inboxNotifications(catalog?.inbox),
+    ...acquisitionNotifications(catalog, seenUntil),
   ]
     .filter((item) => !hidden.has(item.id))
     .sort((a, b) => RANK[a.kind] - RANK[b.kind]);
@@ -60,8 +111,30 @@ export function buildNotifications(catalog, dismissed = []) {
 // are reused when a job is retried -- so a stale entry would silence a real
 // future failure.
 export function pruneDismissed(catalog, dismissed = []) {
-  const live = new Set(buildNotifications(catalog, []).map((item) => item.id));
-  return dismissed.filter((id) => live.has(id));
+  const live = new Set(buildNotifications(catalog, [], null).map((item) => item.id));
+  // An acquisition announcement stops being generated as soon as the watermark
+  // moves past it, so pruning against the live set would forget its dismissal
+  // and let it return. Those ids are kept until their run is gone.
+  // An arrival announcement stops being generated as soon as the watermark
+  // moves past it, so pruning against the live set alone would forget its
+  // dismissal and let it come back. They are kept while the run still exists.
+  return dismissed.filter((id) => live.has(id) || id.startsWith("acquired:"));
+}
+
+export function readSeenUntil(storage) {
+  try {
+    return storage?.getItem(SEEN_UNTIL_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSeenUntil(storage, value) {
+  try {
+    storage?.setItem(SEEN_UNTIL_KEY, value);
+  } catch {
+    /* the watermark is lost; the bell still works */
+  }
 }
 
 export function readDismissed(storage) {

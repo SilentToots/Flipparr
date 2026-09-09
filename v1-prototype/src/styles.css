@@ -1879,6 +1879,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notifications-open small { color: var(--muted); font-size: var(--text-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .notifications-open .severity-error { color: var(--red); }
   .notifications-open .severity-warning { color: var(--amber); }
+  .notifications-open .severity-done { color: var(--green); }
   .notifications-empty { margin: 0; padding: 14px 8px 16px; color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: 8px; }
   .notifications-empty svg { color: var(--green); }
   .notifications-all { width: 100%; min-height: 36px; margin-top: 4px; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; background: transparent; color: var(--violet-text); font-size: var(--text-sm); display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
