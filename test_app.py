@@ -648,46 +648,105 @@ class FilenameParserTests(unittest.TestCase):
         metron_result = {
             "query": "Saga", "provider": "Metron", "providerId": "metron",
             "results": [{
-                "provider": "metron", "providerSeriesId": "9", "title": "Saga",
+                "provider": "metron", "providerName": "Metron",
+                "providerSeriesId": "9", "title": "Saga",
                 "yearBegan": 2012, "publisher": "Image Comics", "cover": None,
             }],
         }
         comic_result = {
             "query": "Saga", "provider": "Comic Vine", "providerId": "comic_vine",
             "results": [{
-                "provider": "comic_vine", "providerSeriesId": "8", "title": "Saga",
+                "provider": "comic_vine", "providerName": "Comic Vine",
+                "providerSeriesId": "8", "title": "Saga",
                 "yearBegan": 2012, "publisher": "Image", "cover": "https://covers.test/saga.jpg",
             }],
         }
+        gcd_result = {
+            "query": "Saga", "provider": "Grand Comics Database", "providerId": "gcd",
+            "results": [{
+                "provider": "gcd", "providerName": "Grand Comics Database",
+                "providerSeriesId": "7", "title": "Saga", "yearBegan": 2012,
+                "issueCount": 72,
+            }],
+        }
+        empty = {"keys": set(), "providerIds": set()}
         with patch("app.load_provider_config", return_value={
             "metron": {"enabled": True, "token": "token"},
             "comic_vine": {"enabled": True, "apiKey": "key"},
-        }), patch("app.discover_metron_series", return_value=metron_result) as metron, patch(
+        }), patch("app._discovery_library_view", return_value=empty), patch(
+            "app.discover_metron_series", return_value=metron_result
+        ) as metron, patch(
             "app.discover_comic_vine_series", return_value=comic_result
-        ) as comic_vine, patch("app.discover_gcd_series") as gcd:
+        ) as comic_vine, patch("app.discover_gcd_series", return_value=gcd_result) as gcd:
             result = discover_series("Saga")
-        self.assertEqual(result["providerId"], "metron")
-        self.assertEqual(result["results"][0]["cover"], "https://covers.test/saga.jpg")
-        self.assertEqual(result["results"][0]["coverProvider"], "Comic Vine")
-        metron.assert_called_once_with("Saga", "token")
-        comic_vine.assert_called_once_with("Saga", "key")
-        gcd.assert_not_called()
+        # One run, not three rows: the providers describe the same publication.
+        self.assertEqual(len(result["results"]), 1)
+        run = result["results"][0]
+        self.assertEqual(result["providerId"], "metron", "Metron's record is the one shown")
+        self.assertEqual(run["cover"], "https://covers.test/saga.jpg")
+        self.assertEqual(run["coverProvider"], "Comic Vine")
+        self.assertEqual(run["issueCount"], 72, "and GCD fills in what Metron left blank")
+        self.assertEqual(run["providerIds"], {"metron": "9", "comic_vine": "8", "gcd": "7"},
+                         "every id is kept, because importing goes back to the source")
+        metron.assert_called_once_with("Saga", "token", empty)
+        comic_vine.assert_called_once_with("Saga", "key", empty)
+        gcd.assert_called_once_with("Saga", empty)
 
-    def test_discovery_falls_back_to_comic_vine_when_metron_is_busy(self):
+    def test_a_provider_that_fails_does_not_take_the_search_with_it(self):
         comic_result = {
             "query": "Saga", "provider": "Comic Vine", "providerId": "comic_vine",
-            "results": [{"provider": "comic_vine", "providerSeriesId": "8", "title": "Saga"}],
+            "results": [{"provider": "comic_vine", "providerName": "Comic Vine",
+                         "providerSeriesId": "8", "title": "Saga", "yearBegan": 2012}],
         }
         with patch("app.load_provider_config", return_value={
             "metron": {"enabled": True, "token": "token"},
             "comic_vine": {"enabled": True, "apiKey": "key"},
-        }), patch("app.discover_metron_series", side_effect=RuntimeError("rate limited")), patch(
+        }), patch("app._discovery_library_view",
+                  return_value={"keys": set(), "providerIds": set()}), patch(
+            "app.discover_metron_series", side_effect=RuntimeError("rate limited")
+        ), patch(
             "app.discover_comic_vine_series", return_value=comic_result
-        ), patch("app.discover_gcd_series") as gcd:
+        ), patch("app.discover_gcd_series", return_value={"results": []}):
             result = discover_series("Saga")
         self.assertEqual(result["providerId"], "comic_vine")
         self.assertEqual(result["fallbacks"][0]["provider"], "Metron")
-        gcd.assert_not_called()
+        self.assertEqual(result["providersAnswered"], ["Comic Vine"])
+        self.assertEqual(len(result["results"]), 1)
+
+    def test_every_provider_failing_still_raises(self):
+        with patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"},
+        }), patch("app._discovery_library_view",
+                  return_value={"keys": set(), "providerIds": set()}), patch(
+            "app.discover_metron_series", side_effect=RuntimeError("rate limited")
+        ), patch("app.discover_gcd_series", side_effect=RuntimeError("throttled")):
+            with self.assertRaises(RuntimeError):
+                discover_series("Saga")
+
+    def test_gcd_is_reached_even_when_metron_answers_weakly(self):
+        """The bug this replaced: two loose matches counted as success.
+
+        GCD is the deepest catalog of the three for older, indie and reprint
+        material, and while Metron was configured it was never asked at all.
+        """
+        metron_result = {"results": [{
+            "provider": "metron", "providerName": "Metron", "providerSeriesId": "9",
+            "title": "Saga of the Swamp Thing", "yearBegan": 1982,
+        }]}
+        gcd_result = {"results": [{
+            "provider": "gcd", "providerName": "Grand Comics Database",
+            "providerSeriesId": "7", "title": "Saga", "yearBegan": 2012,
+        }]}
+        with patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"},
+        }), patch("app._discovery_library_view",
+                  return_value={"keys": set(), "providerIds": set()}), patch(
+            "app.discover_metron_series", return_value=metron_result
+        ), patch("app.discover_gcd_series", return_value=gcd_result):
+            result = discover_series("Saga")
+        self.assertEqual([item["title"] for item in result["results"]],
+                         ["Saga", "Saga of the Swamp Thing"],
+                         "the exact match leads, whichever provider found it")
 
     def test_adding_a_discovered_run_returns_rather_than_raising_after_it_worked(self):
         """Add & request did all of its work and then handed back a NameError.
@@ -1274,7 +1333,8 @@ class FilenameParserTests(unittest.TestCase):
     def test_comic_vine_discovery_keeps_description_for_match_workbench(self):
         row = {"id": 88, "name": "Synthetic", "start_year": "2020", "description": "<p>A collected edition.</p>"}
         with patch("app.fetch_provider_json", return_value={"status_code": 1, "results": [row]}) as fetch, patch(
-            "app._discovery_library_keys", return_value=set()
+            "app._discovery_library_view",
+            return_value={"keys": set(), "providerIds": set()}
         ):
             found = app.discover_comic_vine_series("Synthetic", "key")["results"]
         self.assertEqual(found[0]["description"], row["description"])

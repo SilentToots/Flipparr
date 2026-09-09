@@ -4343,7 +4343,7 @@ def _discovery_query_parts(query: str) -> tuple[str, str, int | None]:
     return cleaned, cleaned, None
 
 
-def discover_gcd_series(query: str) -> dict[str, Any]:
+def discover_gcd_series(query: str, library: dict[str, Any] | None = None) -> dict[str, Any]:
     """Search publication runs that are not limited to the local library."""
     cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
@@ -4358,15 +4358,9 @@ def discover_gcd_series(query: str) -> dict[str, Any]:
             abs((item.get("yearBegan") or 0) - year_hint) if item.get("yearBegan") else 9999,
             -item.get("matchScore", 0),
         ))
-    library = catalog_store().catalog().get("series") or []
-    provider_ids = {
-        str((item.get("issueCatalog") or {}).get("providerSeriesId"))
-        for item in library if (item.get("issueCatalog") or {}).get("providerSeriesId")
-    }
-    library_keys = {
-        (normalized_title(item.get("title")), str(item.get("year") or ""))
-        for item in library
-    }
+    view = library or _discovery_library_view()
+    provider_ids = view["providerIds"]
+    library_keys = view["keys"]
     results = []
     for candidate in ranked[:24]:
         public = {key: value for key, value in candidate.items() if key != "_series"}
@@ -4385,10 +4379,23 @@ def discover_gcd_series(query: str) -> dict[str, Any]:
     }
 
 
-def _discovery_library_keys() -> set[tuple[str, str]]:
+def _discovery_library_view() -> dict[str, Any]:
+    """What the library already has, as discovery needs to ask it.
+
+    Built once and handed to every provider: the catalog projection is not
+    cheap, and searching three providers at once used to mean building it three
+    times in parallel.
+    """
+    items = catalog_store().catalog().get("series") or []
     return {
-        (normalized_title(item.get("title")), str(item.get("year") or ""))
-        for item in (catalog_store().catalog().get("series") or [])
+        "keys": {
+            (normalized_title(item.get("title")), str(item.get("year") or ""))
+            for item in items
+        },
+        "providerIds": {
+            str((item.get("issueCatalog") or {}).get("providerSeriesId"))
+            for item in items if (item.get("issueCatalog") or {}).get("providerSeriesId")
+        },
     }
 
 
@@ -4408,14 +4415,16 @@ def _metron_discovery_creators(issue: dict[str, Any]) -> list[dict[str, Any]]:
     return creators
 
 
-def discover_metron_series(query: str, token: str) -> dict[str, Any]:
+def discover_metron_series(
+    query: str, token: str, library: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Use Metron's purpose-built series list endpoint for primary discovery."""
     cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
     url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode({"q": title_query})
     payload = fetch_provider_json("metron", url, token)
-    library_keys = _discovery_library_keys()
+    library_keys = (library or _discovery_library_view())["keys"]
     results = []
     for search_rank, row in enumerate((payload.get("results") or [])[:100]):
         raw_title = str(row.get("series") or row.get("name") or "").strip()
@@ -4501,7 +4510,9 @@ def discover_metron_series(query: str, token: str) -> dict[str, Any]:
     }
 
 
-def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
+def discover_comic_vine_series(
+    query: str, api_key: str, library: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Use Comic Vine volume search as a secondary discovery catalog."""
     cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
@@ -4513,7 +4524,7 @@ def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
     payload = fetch_provider_json("comic_vine", url, api_key)
     if str(payload.get("status_code")) != "1":
         raise ValueError(str(payload.get("error") or "Comic Vine series search failed"))
-    library_keys = _discovery_library_keys()
+    library_keys = (library or _discovery_library_view())["keys"]
     results = []
     for row in (payload.get("results") or []):
         title = str(row.get("name") or "").strip()
@@ -4544,84 +4555,134 @@ def discover_comic_vine_series(query: str, api_key: str) -> dict[str, Any]:
     }
 
 
+# Which provider's record to show when several describe the same run. Metron
+# carries publisher, status, cover and credits; Comic Vine has art and
+# publisher; GCD is the deepest catalog but has no cover. This is the order the
+# search chain already preferred, kept now that everyone is asked.
+_DISCOVERY_PROVIDERS = {
+    "metron": "Metron",
+    "comic_vine": "Comic Vine",
+    "gcd": "Grand Comics Database",
+}
+
+# Fields worth taking from a lesser record when the preferred one lacks them.
+_DISCOVERY_FILLABLE = (
+    "cover", "publisher", "yearEnded", "yearLabel", "status", "issueCount",
+    "creators", "creatorCreditsSource", "coverProvider",
+)
+
+
+def _merge_discovered_runs(
+    by_provider: dict[str, list[dict[str, Any]]], title_query: str, year_hint: int | None
+) -> list[dict[str, Any]]:
+    """One row per publication run, however many providers know about it.
+
+    Providers disagree about which runs exist and about how to spell them, so a
+    run is identified by title and start year. Every provider's id for it is
+    kept: importing has to go back to the source that actually has the run, and
+    the source with the best record for the card is not always that one.
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for provider_id, provider_name in _DISCOVERY_PROVIDERS.items():
+        for row in by_provider.get(provider_id) or []:
+            key = (normalized_title(row.get("title")), str(row.get("yearBegan") or ""))
+            existing = merged.get(key)
+            if existing is None:
+                item = dict(row)
+                item["providerIds"] = {provider_id: row.get("providerSeriesId")}
+                item["providersKnowing"] = [provider_name]
+                merged[key] = item
+                continue
+            existing["providerIds"][provider_id] = row.get("providerSeriesId")
+            existing["providersKnowing"].append(provider_name)
+            existing["inLibrary"] = existing.get("inLibrary") or row.get("inLibrary")
+            for field in _DISCOVERY_FILLABLE:
+                if not existing.get(field) and row.get(field):
+                    existing[field] = row[field]
+                    # Say where a borrowed cover came from: GCD has none, and
+                    # Metron's series records often do not either, so the art on
+                    # a card is frequently not from the provider naming it.
+                    if field == "cover":
+                        existing["coverProvider"] = provider_name
+
+    wanted = normalized_title(title_query)
+    results = list(merged.values())
+    results.sort(key=lambda item: (
+        0 if normalized_title(item.get("title")) == wanted else 1,
+        abs((item.get("yearBegan") or 0) - year_hint)
+        if year_hint and item.get("yearBegan") else (9999 if year_hint else 0),
+        -difflib.SequenceMatcher(None, normalized_title(item.get("title")), wanted).ratio(),
+        # A run several providers agree on is more likely to be the real one.
+        -len(item["providerIds"]),
+        -(item.get("yearBegan") or 0),
+    ))
+    return results
+
+
 def discover_series(query: str) -> dict[str, Any]:
-    """Discover through the best configured search catalog, retaining GCD as fallback."""
-    cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
+    """Search every configured catalog and merge what they know.
+
+    This used to stop at the first provider that answered. With Metron
+    configured that meant Comic Vine and GCD were never asked for runs at all,
+    and a weak Metron answer -- two loose matches -- counted as success and
+    ended the search. GCD is the deepest catalog of the three for older, indie
+    and reprint material, and it was never reached.
+
+    The rate limits in _PROVIDER_MIN_INTERVAL_SECONDS are per provider, so
+    asking all of them costs the slowest one rather than the sum.
+    """
+    cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
     config = load_provider_config()
-    attempts: list[tuple[str, Any]] = []
+    library = _discovery_library_view()
+    searches: list[tuple[str, str, Any]] = []
     metron = config.get("metron") or {}
     if metron.get("enabled") and metron.get("token"):
-        attempts.append(("Metron", lambda: discover_metron_series(cleaned, str(metron["token"]))))
+        searches.append(("metron", "Metron", functools.partial(
+            discover_metron_series, cleaned, str(metron["token"]), library)))
     comic_vine = config.get("comic_vine") or {}
     if comic_vine.get("enabled") and comic_vine.get("apiKey"):
-        attempts.append(("Comic Vine", lambda: discover_comic_vine_series(cleaned, str(comic_vine["apiKey"]))))
-    attempts.append(("Grand Comics Database", lambda: discover_gcd_series(cleaned)))
-    errors = []
-    empty_result = None
-    for name, search in attempts:
-        try:
-            result = search()
-        except Exception as exc:
-            errors.append({"provider": name, "error": str(exc)})
-            continue
-        result["providersChecked"] = [item[0] for item in attempts[:len(errors) + 1]]
-        if result.get("results"):
-            if result.get("providerId") == "metron" and comic_vine.get("enabled") and comic_vine.get("apiKey"):
-                try:
-                    artwork_result = discover_comic_vine_series(cleaned, str(comic_vine["apiKey"]))
-                    artwork_rows = artwork_result.get("results") or []
-                    artwork_by_key = {
-                        (normalized_title(item.get("title")), str(item.get("yearBegan") or "")): item
-                        for item in artwork_rows
-                    }
-                    artwork_by_title = {
-                        normalized_title(item.get("title")): item for item in artwork_rows
-                    }
-                    for item in result["results"]:
-                        match = artwork_by_key.get((
-                            normalized_title(item.get("title")), str(item.get("yearBegan") or ""),
-                        )) or artwork_by_title.get(normalized_title(item.get("title")))
-                        if not match:
-                            continue
-                        item["cover"] = item.get("cover") or match.get("cover")
-                        item["publisher"] = item.get("publisher") or match.get("publisher")
-                        if item.get("cover"):
-                            item["coverProvider"] = "Comic Vine"
-                    result["artworkProvider"] = "Comic Vine"
-                    result["providersChecked"].append("Comic Vine artwork")
-                except Exception as exc:
-                    result.setdefault("enrichmentWarnings", []).append({
-                        "provider": "Comic Vine", "error": str(exc),
-                    })
-                exact = next((
-                    item for item in result["results"]
-                    if normalized_title(item.get("title")) == normalized_title(cleaned)
-                ), None)
-                if exact is not None and not exact.get("cover"):
-                    try:
-                        issue_page = fetch_provider_json(
-                            "metron",
-                            f"{METRON_API_BASE}/series/{exact['providerSeriesId']}/issue_list/?page=1",
-                            str(metron["token"]),
-                        )
-                        cover_issue = next((
-                            issue for issue in (issue_page.get("results") or []) if issue.get("image")
-                        ), None)
-                        if cover_issue:
-                            exact["cover"] = cover_issue["image"]
-                            exact["coverProvider"] = "Metron"
-                    except Exception:
-                        pass
-            if errors:
-                result["fallbacks"] = errors
-            return result
-        empty_result = result
-    if empty_result is not None:
-        empty_result["fallbacks"] = errors
-        return empty_result
-    raise RuntimeError("No comic discovery provider is currently available")
+        searches.append(("comic_vine", "Comic Vine", functools.partial(
+            discover_comic_vine_series, cleaned, str(comic_vine["apiKey"]), library)))
+    searches.append(("gcd", "Grand Comics Database", functools.partial(
+        discover_gcd_series, cleaned, library)))
+
+    by_provider: dict[str, list[dict[str, Any]]] = {}
+    errors: list[dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(searches)) as pool:
+        futures = {
+            pool.submit(search): (provider_id, name) for provider_id, name, search in searches
+        }
+        for future in concurrent.futures.as_completed(futures):
+            provider_id, name = futures[future]
+            try:
+                by_provider[provider_id] = (future.result() or {}).get("results") or []
+            except Exception as exc:
+                errors.append({"provider": name, "error": str(exc)})
+
+    results = _merge_discovered_runs(by_provider, title_query, year_hint)
+    if not results and len(errors) == len(searches):
+        raise RuntimeError(
+            errors[0]["error"] if len(errors) == 1
+            else "No comic discovery provider is currently available"
+        )
+    answered = [name for provider_id, name, _ in searches if by_provider.get(provider_id)]
+    primary = next(
+        (provider_id for provider_id in _DISCOVERY_PROVIDERS if by_provider.get(provider_id)),
+        None,
+    )
+    result: dict[str, Any] = {
+        "query": cleaned, "titleQuery": title_query, "yearHint": year_hint,
+        "provider": next((name for pid, name, _ in searches if pid == primary), None),
+        "providerId": primary,
+        "results": results[:48],
+        "providersChecked": [name for _, name, _ in searches],
+        "providersAnswered": answered,
+    }
+    if errors:
+        result["fallbacks"] = errors
+    return result
 
 
 # ---------------------------------------------------------------------------
