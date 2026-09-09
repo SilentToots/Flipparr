@@ -1342,6 +1342,109 @@ class CatalogStoreTests(unittest.TestCase):
                 self.assertTrue(reopened_catalog["syncReady"])
                 self.assertEqual(reopened_catalog["anchorProviders"], [expected_provider])
 
+    def _run_with_issue_list(self, root):
+        path = root / "Example 001.cbz"
+        path.write_bytes(b"comic")
+        item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+        store = CatalogStore(root / "catalog.db")
+        scan = store.begin_scan(str(root), True)
+        store.perform_scan(scan, lambda *_: [item], lambda parsed: {
+            "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+            "embedded_metadata": {}, "file_health": {"status": "ok"},
+            "recommendation": {
+                "title": "Example", "issue": "1", "record_type": "single_issue",
+                "publisher": "Example Press", "source": "Test",
+            },
+            "file_cover": None,
+        })
+        return store, int(store.catalog()["series"][0]["id"])
+
+    @staticmethod
+    def _badge(store):
+        return store.catalog()["series"][0]["publicationStatus"]
+
+    def test_a_provider_with_no_end_year_opinion_does_not_erase_a_finished_run(self):
+        # Every provider writes here in turn and Comic Vine has no end-year
+        # field at all. Taking its silence as "still publishing" is what made a
+        # finished run's badge depend on which provider happened to answer last.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id = self._run_with_issue_list(root)
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [{"number": "1", "provider_id": "101"}],
+                status="complete", end_evidence={"state": "ended", "year": 2016},
+            )
+            self.assertEqual(self._badge(store), "completed")
+
+            store.apply_issue_list(
+                series_id, "comic_vine", "99", "https://comicvine.example/volume/99/",
+                [{"number": "1", "provider_id": "101"}],
+                status="complete_to_date", end_evidence={"state": "unknown", "year": None},
+            )
+            self.assertEqual(
+                self._badge(store), "completed",
+                "a provider with no end-year field must not walk a finished run back",
+            )
+            self.assertEqual(
+                CatalogStore(root / "catalog.db").catalog()["series"][0]["issueCatalog"]["status"],
+                "complete",
+                "the coverage claim must survive the same way the badge does",
+            )
+
+    def test_a_run_with_no_end_year_evidence_shows_no_badge(self):
+        # Absence of evidence was recorded as evidence of ongoing, which is the
+        # whole bug. It now says nothing, and ownership counting is unaffected.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id = self._run_with_issue_list(root)
+            store.apply_issue_list(
+                series_id, "comic_vine", "99", "https://comicvine.example/volume/99/",
+                [{"number": "1", "provider_id": "101"}, {"number": "2", "provider_id": "102"}],
+                status="complete_to_date", end_evidence={"state": "unknown", "year": None},
+            )
+            series = store.catalog()["series"][0]
+            self.assertEqual(series["publicationStatus"], "unknown")
+            self.assertEqual(series["catalogKnown"], True)
+            self.assertIsNotNone(series["unowned"])
+
+    def test_a_provider_saying_the_run_continues_is_ongoing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id = self._run_with_issue_list(root)
+            store.apply_issue_list(
+                series_id, "metron", "12", "https://metron.example/series/12/",
+                [{"number": "1", "provider_id": "101"}],
+                status="complete_to_date", end_evidence={"state": "ongoing", "year": None},
+            )
+            self.assertEqual(self._badge(store), "ongoing")
+
+    def test_a_run_finished_before_end_years_were_stored_keeps_its_badge(self):
+        # The backfill. 'complete' was only ever written because some provider
+        # named a past end year, so the conclusion is evidence enough even
+        # though the year itself was thrown away.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id = self._run_with_issue_list(root)
+            store.apply_issue_list(
+                series_id, "gcd", "55", "https://www.comics.org/api/series/55/",
+                [{"number": "1", "provider_id": "101"}], status="complete",
+            )
+            with sqlite3.connect(root / "catalog.db") as raw:
+                raw.execute(
+                    "UPDATE issue_catalog_status SET run_end_status='unknown', end_year_provider=NULL"
+                )
+                raw.execute("UPDATE schema_info SET version=28")
+            reopened = CatalogStore(root / "catalog.db")
+            self.assertEqual(self._badge(reopened), "completed")
+            with sqlite3.connect(root / "catalog.db") as raw:
+                row = raw.execute(
+                    "SELECT run_end_status, end_year, end_year_provider FROM issue_catalog_status"
+                ).fetchone()
+            self.assertEqual(row[0], "ended")
+            self.assertIsNone(row[1], "the year was never stored and must not be invented")
+            self.assertEqual(row[2], "gcd")
+
     def _one_wanted_job(self, root):
         """A library with a single wanted issue, and the job that wants it."""
         path = root / "Example 001.cbz"

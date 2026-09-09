@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from app import SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import _run_end_evidence, SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -211,7 +211,8 @@ class FilenameParserTests(unittest.TestCase):
             return_value=[("metron", {"token": "saved"}), ("gcd", {})],
         ), patch(
             "app._metron_issue_entries",
-            return_value=("2025", "https://metron.example/series/2025/", entries, None),
+            return_value=("2025", "https://metron.example/series/2025/", entries,
+                          {"state": "unknown", "year": None}),
         ) as metron, patch("app._gcd_discovery_search_rows") as gcd:
             result = search_file_match_candidates(7, "Batman 2025")
 
@@ -379,7 +380,7 @@ class FilenameParserTests(unittest.TestCase):
             return_value=[("metron", {"token": "secret"}), ("gcd", {})],
         ), patch("app._metron_issue_entries", return_value=(
             "42", "https://metron.cloud/series/42/",
-            [{"number": "1"}, {"number": "2"}], None,
+            [{"number": "1"}, {"number": "2"}], {"state": "unknown", "year": None},
         )), patch("app._apply_gcd_series_enrichment") as gcd:
             result = enrich_catalog_series(7)
 
@@ -807,7 +808,8 @@ class FilenameParserTests(unittest.TestCase):
 
         def metron(*_args):
             calls.append("metron")
-            return "20", "https://metron/20", [{"number": "1"}, {"number": "2"}], None
+            return ("20", "https://metron/20", [{"number": "1"}, {"number": "2"}],
+                    {"state": "unknown", "year": None})
 
         def comic_vine(*_args):
             calls.append("comic_vine")
@@ -1350,7 +1352,8 @@ class FilenameParserTests(unittest.TestCase):
         ), patch("app.load_provider_config", return_value={
             "metron": {"enabled": True, "priority": 20, "token": "token"},
         }), patch("app._metron_issue_entries", return_value=(
-            "9", "https://metron/9", [{"number": "1"}, {"number": "2"}], None,
+            "9", "https://metron/9", [{"number": "1"}, {"number": "2"}],
+            {"state": "unknown", "year": None},
         )):
             result = sync_issue_catalog(7)
         self.assertEqual(result["metadata"]["titlePolicy"], "numbered_only")
@@ -2509,7 +2512,7 @@ class FinishedRunsAreMarkedFinishedTests(unittest.TestCase):
     until someone refreshed it by hand -- for every run in the library.
     """
 
-    def _enrich_with_end_year(self, ended_year):
+    def _enrich_with_evidence(self, evidence):
         store = Mock()
         store.get_series_enrichment_context.return_value = {
             "title": "Chew", "year": 2009, "publisher": "Image",
@@ -2521,10 +2524,15 @@ class FinishedRunsAreMarkedFinishedTests(unittest.TestCase):
             return_value=[("metron", {"token": "t"})],
         ), patch("app._metron_issue_entries", return_value=(
             "12", "https://metron.cloud/series/12/",
-            [{"number": "1"}, {"number": "2"}], ended_year,
+            [{"number": "1"}, {"number": "2"}], evidence,
         )):
             enrich_catalog_series(7)
-        return store.apply_issue_list.call_args.kwargs["status"]
+        return store.apply_issue_list.call_args.kwargs
+
+    def _enrich_with_end_year(self, ended_year):
+        return self._enrich_with_evidence(
+            _run_end_evidence(ended_year, modelled=True)
+        )["status"]
 
     def test_a_run_that_ended_is_complete(self):
         self.assertEqual(self._enrich_with_end_year(2016), "complete")
@@ -2542,6 +2550,44 @@ class FinishedRunsAreMarkedFinishedTests(unittest.TestCase):
         import time as _time
         self.assertEqual(
             self._enrich_with_end_year(_time.gmtime().tm_year + 1), "complete_to_date"
+        )
+
+    def test_metron_reporting_no_end_year_is_positively_ongoing(self):
+        # Metron's series record has the field, so a null in it is a statement
+        # that the run continues -- not the silence Comic Vine gives.
+        self.assertEqual(
+            _run_end_evidence(None, modelled=True), {"state": "ongoing", "year": None}
+        )
+
+    def test_a_provider_without_the_field_states_no_opinion(self):
+        self.assertEqual(
+            _run_end_evidence(None, modelled=False), {"state": "unknown", "year": None}
+        )
+
+    def test_a_year_given_as_a_string_still_finishes_the_run(self):
+        # sync_gcd_issue_catalog used isinstance(ended, int) where every sibling
+        # coerced, so a GCD year that arrived as text pinned the run to ongoing.
+        self.assertEqual(
+            _run_end_evidence("2016", modelled=True), {"state": "ended", "year": 2016}
+        )
+
+    def test_comic_vine_states_no_opinion_rather_than_still_publishing(self):
+        store = Mock()
+        store.get_series_enrichment_context.return_value = {
+            "title": "Chew", "year": 2009, "publisher": "Image",
+        }
+        store.metadata_provider_available.return_value = True
+        store.apply_issue_list.return_value = {"issues": 60}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order",
+            return_value=[("comic_vine", {"apiKey": "k"})],
+        ), patch("app._comic_vine_issue_entries", return_value=(
+            "12", "https://comicvine.example/volume/12/", [{"number": "1"}],
+        )):
+            enrich_catalog_series(7)
+        self.assertEqual(
+            store.apply_issue_list.call_args.kwargs["end_evidence"]["state"], "unknown",
+            "Comic Vine has no end-year field; its silence must not claim the run continues",
         )
 
 
@@ -3714,7 +3760,7 @@ class FixSeriesMatchTests(unittest.TestCase):
              patch("app._provider_series_run_details", return_value={
                  "providerId": "916", "sourceUrl": "https://metron/916",
                  "entries": [{"number": "1"}], "title": "Saga",
-                 "publisher": "Image Comics", "endedYear": None,
+                 "publisher": "Image Comics", "endEvidence": {"state": "unknown", "year": None},
              }):
             result = app.confirm_series_match(13, "metron", "916")
         self.assertEqual(calls, ["rebuild", "apply"])
@@ -3728,7 +3774,7 @@ class FixSeriesMatchTests(unittest.TestCase):
              patch("app._provider_credential", return_value="key"), \
              patch("app._provider_series_run_details", return_value={
                  "providerId": "916", "sourceUrl": "", "entries": [],
-                 "title": "Saga", "publisher": None, "endedYear": None,
+                 "title": "Saga", "publisher": None, "endEvidence": {"state": "unknown", "year": None},
              }):
             with self.assertRaises(ValueError):
                 app.confirm_series_match(13, "metron", "916")

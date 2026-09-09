@@ -315,9 +315,7 @@ function useDialog(onClose) {
 }
 
 function publicationState(series) {
-  const state = series?.publicationStatus
-    || (series?.issueCatalog?.status === "complete" ? "completed"
-      : series?.issueCatalog?.status === "complete_to_date" ? "ongoing" : "unknown");
+  const state = series?.publicationStatus || "unknown";
   return state === "completed"
     ? { label: "Run Complete", tone: "completed", known: true }
     : state === "ongoing"
@@ -1433,12 +1431,12 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
   return <article data-request={`series-${request.id}`} className={`request-card ${expanded ? "expanded" : ""}`}>
     <div className="request-row">
       <span className="request-cover"><SeriesCover series={display} decorative /></span>
-      <div><h3>{request.title}</h3><p>{scope}</p><span>Following · {request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : "completed run"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
+      <div><h3>{request.title}</h3><p>{scope}</p><span>Following · {request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : request.publicationStatus === "completed" ? "completed run" : "checks daily in case it continues"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
       <StatusBadge tone={tone}>{status}</StatusBadge>
       <button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button>
     </div>
     {expanded ? <div className="request-job-panel">
-      <header><div><strong>{request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{request.status === "fulfilled" ? (request.publicationStatus === "ongoing" ? "Flipparr will keep checking this run and add newly released issues to Wanted." : "Every issue in this completed run is in your library.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div><b>Following</b></header>
+      <header><div><strong>{request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{request.status === "fulfilled" ? (request.publicationStatus === "completed" ? "Every issue in this completed run is in your library." : "Flipparr will keep checking this run and add newly released issues to Wanted.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div><b>Following</b></header>
       {outstandingJobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
         {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>

@@ -294,9 +294,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .publication-status svg, .monitoring-status svg { flex: none; }
 .publication-status.ongoing { background: var(--badge-violet-bg); }
 .publication-status.completed { background: var(--badge-muted-bg); }
-/* Pending, not a warning: most rows of a freshly scanned library sit here
-   until enrichment runs, and amber made a normal library look broken. */
-.publication-status.pending { border: 1px solid var(--line-strong); background: var(--surface-soft); color: var(--muted); }
 .monitoring-status { background: var(--badge-green-bg); }
 .ownership { display: grid; gap: 6px; width: min(150px, 100%); color: var(--green); }
 .ownership.partial { color: var(--amber); }

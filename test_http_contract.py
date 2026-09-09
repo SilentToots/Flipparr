@@ -124,6 +124,15 @@ class HttpContractTests(unittest.TestCase):
         payload = response.json()
         for key in ("series", "stats", "collectedEditionsEnabled"):
             self.assertIn(key, payload)
+        # There is no JSX test harness, so the badge's contract is pinned here.
+        # It has three states and "no provider has recorded an end year" is a
+        # distinct one from "the run is still publishing"; collapsing them is
+        # what made a finished run wear an Active Run badge.
+        for item in payload["series"]:
+            self.assertIn(
+                item.get("publicationStatus"), {"completed", "ongoing", "unknown"},
+                f"{item.get('title')!r} reported an unexpected publication status",
+            )
 
     def test_settings_round_trips_over_http(self):
         self.assertEqual(self.get("/api/v1/settings").json()["collectedEditionsEnabled"], False)

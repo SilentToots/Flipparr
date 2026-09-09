@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 # Bumped when local analysis starts producing something it did not before, so
 # the next scan re-reads files it would otherwise reuse on their fingerprint.
 # 3: comics that are not zip archives yield covers and embedded metadata.
@@ -775,6 +775,14 @@ class CatalogStore:
                     issue_count INTEGER NOT NULL DEFAULT 0,
                     last_synced_at TEXT,
                     title_policy TEXT NOT NULL DEFAULT 'unknown',
+                    -- What a provider actually said about the year the run
+                    -- ended, kept apart from `status` because that column also
+                    -- decides whether the issue list is trustworthy enough to
+                    -- count ownership against. 'unknown' means no provider has
+                    -- an opinion, which is not the same as "still publishing".
+                    run_end_status TEXT NOT NULL DEFAULT 'unknown',
+                    end_year INTEGER,
+                    end_year_provider TEXT,
                     detail TEXT,
                     error TEXT
                 );
@@ -1008,6 +1016,25 @@ class CatalogStore:
                 connection.execute(
                     "ALTER TABLE issue_catalog_status ADD COLUMN title_policy TEXT NOT NULL DEFAULT 'unknown'"
                 )
+            if "run_end_status" not in issue_catalog_columns:
+                connection.execute(
+                    "ALTER TABLE issue_catalog_status ADD COLUMN run_end_status TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            if "end_year" not in issue_catalog_columns:
+                connection.execute("ALTER TABLE issue_catalog_status ADD COLUMN end_year INTEGER")
+            if "end_year_provider" not in issue_catalog_columns:
+                connection.execute("ALTER TABLE issue_catalog_status ADD COLUMN end_year_provider TEXT")
+            # Every 'complete' on record was written because some provider named
+            # a year the run had ended. The year itself was never stored and
+            # cannot be invented, but the conclusion is evidence enough to keep
+            # the badge. 'complete_to_date' is not recoverable -- it is the union
+            # of "still running", "that provider has no end-year field", and
+            # writes that discarded the year -- so those become 'unknown'.
+            connection.execute(
+                """UPDATE issue_catalog_status
+                      SET run_end_status='ended', end_year_provider=provider
+                    WHERE status='complete' AND run_end_status='unknown'"""
+            )
             coverage_claim_columns = {
                 row["name"] for row in connection.execute(
                     "PRAGMA table_info(edition_coverage_claims)"
@@ -1142,12 +1169,38 @@ class CatalogStore:
                 (monitor_next, monitor_now),
             )
             row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
+            stored_version = int(row["version"]) if row else None
             if row is None:
                 connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
             elif row["version"] > SCHEMA_VERSION:
                 raise RuntimeError(f"Unsupported catalog schema version {row['version']}")
             elif row["version"] < SCHEMA_VERSION:
                 connection.execute("UPDATE schema_info SET version=?", (SCHEMA_VERSION,))
+            if stored_version is not None and stored_version < 29:
+                # One pass, then never again. End-year evidence was not stored
+                # before version 29, and the runs whose lifecycle could not be
+                # recovered from what is on record are asked once more rather
+                # than left showing nothing forever. attempt_count is reset or
+                # the three-attempt rule fails the job the moment it is picked
+                # up. This is the first version-gated step in this function --
+                # everything above it is idempotent by construction.
+                unknown_now = _utc_now()
+                connection.execute(
+                    """INSERT OR IGNORE INTO metadata_enrichment_jobs(
+                           series_run_id, status, priority, created_at, updated_at)
+                       SELECT series_run_id, 'queued', 100, ?, ?
+                         FROM issue_catalog_status WHERE run_end_status='unknown'""",
+                    (unknown_now, unknown_now),
+                )
+                connection.execute(
+                    """UPDATE metadata_enrichment_jobs
+                          SET status='queued', attempt_count=0, next_attempt_at=NULL,
+                              last_error=NULL, completed_at=NULL, updated_at=?
+                        WHERE series_run_id IN (SELECT series_run_id
+                                                  FROM issue_catalog_status
+                                                 WHERE run_end_status='unknown')""",
+                    (unknown_now,),
+                )
 
     def _reconcile_all_identities(self) -> None:
         with self._connect() as connection:
@@ -2793,9 +2846,13 @@ class CatalogStore:
         status: str = "complete_to_date",
         detail: str | None = None,
         source: str = "verified through owned issue ids",
+        end_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if status not in {"partial", "complete", "complete_to_date"}:
             raise ValueError("Unsupported issue catalog status")
+        evidence = end_evidence or {"state": "unknown", "year": None}
+        if evidence.get("state") not in {"ongoing", "ended", "unknown"}:
+            raise ValueError("Unsupported publication run end evidence")
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
             series = connection.execute(
@@ -2900,14 +2957,34 @@ class CatalogStore:
             connection.execute(
                 """INSERT INTO issue_catalog_status(
                        series_run_id, status, provider, provider_series_id, issue_count,
-                       last_synced_at, detail, error
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+                       last_synced_at, detail, error,
+                       run_end_status, end_year, end_year_provider
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
                    ON CONFLICT(series_run_id) DO UPDATE SET
-                       status=excluded.status, provider=excluded.provider,
+                       -- Silence preserves. A provider that does not model an
+                       -- end year must not walk a finished run back to
+                       -- "complete up to today", which is what made a run's
+                       -- badge depend on which provider answered last.
+                       status=CASE WHEN excluded.run_end_status='unknown'
+                                    AND issue_catalog_status.run_end_status='ended'
+                                   THEN issue_catalog_status.status
+                                   ELSE excluded.status END,
+                       provider=excluded.provider,
                        provider_series_id=excluded.provider_series_id,
                        issue_count=excluded.issue_count, last_synced_at=excluded.last_synced_at,
-                       detail=excluded.detail, error=NULL""",
-                (series_run_id, status, provider, provider_series_id, len(entries), now, detail),
+                       detail=excluded.detail, error=NULL,
+                       run_end_status=CASE WHEN excluded.run_end_status='unknown'
+                                           THEN issue_catalog_status.run_end_status
+                                           ELSE excluded.run_end_status END,
+                       end_year=CASE WHEN excluded.run_end_status='unknown'
+                                     THEN issue_catalog_status.end_year
+                                     ELSE excluded.end_year END,
+                       end_year_provider=CASE WHEN excluded.run_end_status='unknown'
+                                              THEN issue_catalog_status.end_year_provider
+                                              ELSE excluded.end_year_provider END""",
+                (series_run_id, status, provider, provider_series_id, len(entries), now, detail,
+                 evidence.get("state") or "unknown", evidence.get("year"),
+                 provider if evidence.get("state") != "unknown" else None),
             )
             publication_years = [
                 int(entry["publication_year"])
@@ -5694,7 +5771,8 @@ class CatalogStore:
             )
             sql = """
                 SELECT series_runs.id,
-                       COALESCE(issue_catalog_status.status, 'unknown') AS catalog_status
+                       COALESCE(issue_catalog_status.status, 'unknown') AS catalog_status,
+                       COALESCE(issue_catalog_status.run_end_status, 'unknown') AS run_end_status
                 FROM series_runs
                 LEFT JOIN issue_catalog_status
                   ON issue_catalog_status.series_run_id=series_runs.id
@@ -5711,7 +5789,14 @@ class CatalogStore:
                 params = tuple(sorted(requested_ids))
             for row in connection.execute(sql, params):
                 series_run_id = int(row["id"])
-                catalog_complete = row["catalog_status"] in {"complete", "complete_to_date"}
+                # A run whose end year no provider has recorded is not done
+                # being enriched, whatever its coverage claim says. Without
+                # this the startup pass force-completes exactly the runs the
+                # version-29 migration queued, one second after queueing them.
+                catalog_complete = (
+                    row["catalog_status"] in {"complete", "complete_to_date"}
+                    and row["run_end_status"] != "unknown"
+                )
                 existing = connection.execute(
                     "SELECT status FROM metadata_enrichment_jobs WHERE series_run_id=?",
                     (series_run_id,),
@@ -6295,6 +6380,8 @@ class CatalogStore:
             issue_catalog_map = {
                 int(row["series_run_id"]): {
                     "status": row["status"], "provider": row["provider"],
+                    "runEndStatus": row["run_end_status"],
+                    "endYear": row["end_year"], "endYearProvider": row["end_year_provider"],
                     "providerSeriesId": row["provider_series_id"], "issueCount": row["issue_count"],
                     "lastSyncedAt": row["last_synced_at"], "titlePolicy": row["title_policy"],
                     "detail": row["detail"], "error": row["error"],
@@ -6318,7 +6405,7 @@ class CatalogStore:
                 title_policy = issue_catalog_map.get(series_run_id, {}).get("titlePolicy", "unknown")
                 missing_title_count = 0 if title_policy == "numbered_only" else provider_missing_title_count
                 missing_date_count = int(row["missing_date_count"] or 0)
-                issue_catalog_map.setdefault(series_run_id, {"status": "unknown"})
+                issue_catalog_map.setdefault(series_run_id, {"status": "unknown", "runEndStatus": "unknown"})
                 issue_catalog_map[series_run_id].update({
                     "metadataComplete": missing_title_count == 0 and missing_date_count == 0,
                     "missingTitleCount": missing_title_count,
@@ -6340,7 +6427,7 @@ class CatalogStore:
                 summary["count"] += int(row["anchor_count"] or 0)
                 summary["providers"].append(str(row["provider"]))
             for series_run_id, summary in issue_anchor_counts.items():
-                issue_catalog_map.setdefault(series_run_id, {"status": "unknown"})
+                issue_catalog_map.setdefault(series_run_id, {"status": "unknown", "runEndStatus": "unknown"})
                 issue_catalog_map[series_run_id]["anchorCount"] = summary["count"]
                 issue_catalog_map[series_run_id]["anchorProviders"] = summary["providers"]
                 issue_catalog_map[series_run_id]["syncReady"] = summary["count"] > 0
@@ -6794,9 +6881,14 @@ class CatalogStore:
                     },
                     "fileDetails": group["fileDetails"],
                     "issueCatalog": group["issueCatalog"],
+                    # Read from the evidence, not from the coverage claim.
+                    # `status` also decides whether the issue list is trusted
+                    # enough to count ownership against, and a run whose end
+                    # year nobody has recorded is not the same as one a
+                    # provider positively says is still publishing.
                     "publicationStatus": (
-                        "completed" if (group["issueCatalog"] or {}).get("status") == "complete" else
-                        "ongoing" if (group["issueCatalog"] or {}).get("status") == "complete_to_date" else
+                        "completed" if (group["issueCatalog"] or {}).get("runEndStatus") == "ended" else
+                        "ongoing" if (group["issueCatalog"] or {}).get("runEndStatus") == "ongoing" else
                         "unknown"
                     ),
                     "family": family_membership_map.get(_run_id(group["id"])),

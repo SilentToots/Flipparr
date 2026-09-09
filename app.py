@@ -4652,15 +4652,10 @@ def request_discovered_gcd_series(
         "gcd", provider_series_id, candidate["title"],
         candidate.get("yearBegan"), candidate.get("publisher"),
     )
-    ended = candidate.get("yearEnded")
-    try:
-        ended_year = int(ended) if ended else None
-    except (TypeError, ValueError):
-        ended_year = None
-    status = "complete" if ended_year and ended_year <= time.gmtime().tm_year else "complete_to_date"
+    evidence = _run_end_evidence(candidate.get("yearEnded"), modelled="yearEnded" in candidate)
     store.apply_issue_list(
         int(run["id"]), "gcd", provider_series_id, candidate.get("apiUrl") or "", entries,
-        status=status,
+        status=_run_catalog_status(evidence), end_evidence=evidence,
         detail=f"Added from Discover with {len(entries)} known issues.",
         source="added from library discovery search",
     )
@@ -4726,12 +4721,8 @@ def confirm_gcd_series_run(series_run_id: int, provider_series_id: str) -> dict[
     )
     if not entries:
         raise ValueError("The selected GCD series has no usable issue descriptors")
-    ended = series.get("year_ended")
-    try:
-        ended_year = int(ended) if ended else None
-    except (TypeError, ValueError):
-        ended_year = None
-    status = "complete" if ended_year and ended_year <= time.gmtime().tm_year else "complete_to_date"
+    evidence = _run_end_evidence(series.get("year_ended"), modelled="year_ended" in series)
+    status = _run_catalog_status(evidence)
     detail = (
         f"You confirmed GCD series {provider_series_id}; {len(entries)} canonical issues were imported "
         "and cover variants were collapsed by issue number."
@@ -4746,6 +4737,7 @@ def confirm_gcd_series_run(series_run_id: int, provider_series_id: str) -> dict[
     applied = store.apply_issue_list(
         series_run_id, "gcd", provider_series_id, series.get("api_url") or "", entries,
         status=status, detail=detail, source="user-confirmed series run",
+        end_evidence=evidence,
     )
     return {**applied, "rebuilt": rebuilt}
 
@@ -4781,10 +4773,10 @@ def confirm_gcd_series_collection(
             ended_year = int(ended) if ended else None
         except (TypeError, ValueError):
             ended_year = None
-        status = "complete" if ended_year and ended_year <= time.gmtime().tm_year else "complete_to_date"
+        evidence = _run_end_evidence(series.get("year_ended"), modelled="year_ended" in series)
         store.apply_issue_list(
             int(run["id"]), "gcd", candidate["providerSeriesId"], series.get("api_url") or "", entries,
-            status=status,
+            status=_run_catalog_status(evidence), end_evidence=evidence,
             detail=f"Imported as part of the reviewed {collection_name} Collection structure.",
             source="user-confirmed collection structure",
         )
@@ -4912,8 +4904,8 @@ def sync_gcd_issue_catalog(series_run_id: int) -> dict[str, Any]:
     entries, metadata = _hydrate_gcd_issue_entries_with_status(base_entries, series_id)
     if not entries:
         raise ValueError("The matched GCD series has no usable issue descriptors")
-    ended = series.get("year_ended")
-    status = "complete" if isinstance(ended, int) and ended <= time.gmtime().tm_year else "complete_to_date"
+    evidence = _run_end_evidence(series.get("year_ended"), modelled="year_ended" in series)
+    status = _run_catalog_status(evidence)
     detail = (
         f"Matched GCD series {series_id} using {len(known_issue_ids)} verified local issue ID"
         f"{'s' if len(known_issue_ids) != 1 else ''}; cover variants were collapsed by issue number."
@@ -4968,17 +4960,26 @@ def _fetch_provider_pages(
     return rows
 
 
-def _run_status_for_end_year(ended_year: int | None) -> str:
-    """Whether a publication run has finished, from the year it ended.
+def _run_end_evidence(ended_year: Any, *, modelled: bool) -> dict[str, Any]:
+    """What a provider actually said about the year a run ended.
 
-    A run with no end year on record is still publishing as far as anyone
-    knows, so it is complete only up to today.
+    `modelled` is whether the provider publishes an end year at all. Comic Vine
+    does not, and treating its silence as "still publishing" is how a run that
+    finished years ago kept its Active Run badge until someone opened its
+    drawer and a provider that does model it happened to run last. Silence is
+    recorded as silence, and silence never overwrites another provider's answer.
     """
-    return (
-        "complete"
-        if ended_year and ended_year <= time.gmtime().tm_year
-        else "complete_to_date"
-    )
+    year = _provider_year(ended_year)
+    if not modelled:
+        return {"state": "unknown", "year": None}
+    if year and year <= time.gmtime().tm_year:
+        return {"state": "ended", "year": year}
+    return {"state": "ongoing", "year": year}
+
+
+def _run_catalog_status(evidence: dict[str, Any]) -> str:
+    """The issue-list coverage claim that follows from the lifecycle evidence."""
+    return "complete" if evidence.get("state") == "ended" else "complete_to_date"
 
 
 def _metron_issue_entries(
@@ -5034,7 +5035,9 @@ def _metron_issue_entries(
     source_url = str(detail.get("resource_url") or f"{METRON_API_BASE}/series/{series_id}/")
     # Metron records the year a run ended. Returning it is what lets a finished
     # run be marked finished; discarded, every Metron match looked ongoing.
-    return series_id, source_url, entries, _provider_year(detail.get("year_end"))
+    return series_id, source_url, entries, _run_end_evidence(
+        detail.get("year_end"), modelled="year_end" in detail
+    )
 
 
 def _metron_display_name(value: Any) -> str:
@@ -5333,7 +5336,7 @@ def _provider_series_run_details(
                 publisher_value.get("name")
                 if isinstance(publisher_value, dict) else publisher_value
             ),
-            "endedYear": _provider_year(detail.get("year_end")),
+            "endEvidence": _run_end_evidence(detail.get("year_end"), modelled="year_end" in detail),
         }
     context["comicVineVolumeId"] = str(provider_series_id)
     provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
@@ -5346,7 +5349,9 @@ def _provider_series_run_details(
         "title": str(detail.get("name") or cleaned).strip(),
         "year": _provider_year(detail.get("start_year")),
         "publisher": (detail.get("publisher") or {}).get("name"),
-        "endedYear": None,
+        # Comic Vine volumes carry a start year and an issue count but no end
+        # year at all, so this is silence rather than "still publishing".
+        "endEvidence": _run_end_evidence(None, modelled=False),
     }
 
 
@@ -5366,9 +5371,10 @@ def request_discovered_series(
     source_url, entries = fetched["sourceUrl"], fetched["entries"]
     title, year, publisher = fetched["title"], fetched["year"], fetched["publisher"]
     run = catalog_store().ensure_provider_series_run(provider, provider_id, title, year, publisher)
-    status = _run_status_for_end_year(fetched["endedYear"])
+    evidence = fetched["endEvidence"]
     catalog_store().apply_issue_list(
-        int(run["id"]), provider, provider_id, source_url, entries, status=status,
+        int(run["id"]), provider, provider_id, source_url, entries,
+        status=_run_catalog_status(evidence), end_evidence=evidence,
         detail=f"Added from {PROVIDER_DEFINITIONS[provider]['name']} with {len(entries)} known issues.",
         source="added from library discovery search",
     )
@@ -5444,7 +5450,8 @@ def confirm_series_match(
     rebuilt = store.rebuild_series_run(series_run_id)
     applied = store.apply_issue_list(
         series_run_id, provider, fetched["providerId"], fetched["sourceUrl"], entries,
-        status=_run_status_for_end_year(fetched["endedYear"]),
+        status=_run_catalog_status(fetched["endEvidence"]),
+        end_evidence=fetched["endEvidence"],
         detail=(
             f"You matched this run to {name} series {fetched['providerId']}; "
             f"{len(entries)} issues were imported."
@@ -5496,12 +5503,12 @@ def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
                 credential = str(values.get("token") or "").strip()
                 if not credential:
                     continue
-                provider_series_id, api_url, entries, ended_year = _metron_issue_entries(
+                provider_series_id, api_url, entries, evidence = _metron_issue_entries(
                     context, credential
                 )
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
-                    status=_run_status_for_end_year(ended_year),
+                    status=_run_catalog_status(evidence), end_evidence=evidence,
                     detail="Issue structure and details synchronized through Metron.",
                     source="matched automatically by canonical title, year, and cross-provider identifiers",
                 )
@@ -5512,10 +5519,12 @@ def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
                 provider_series_id, api_url, entries = _comic_vine_issue_entries(context, credential)
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
-                    # Comic Vine volumes carry a start year and an issue count but
-                    # no end year, so a run matched here is only ever known to be
-                    # complete up to today.
+                    # Comic Vine volumes carry a start year and an issue count
+                    # but no end year at all. That is silence, not a statement
+                    # that the run continues, so it must not overwrite what a
+                    # provider that does model an end year already recorded.
                     status="complete_to_date",
+                    end_evidence=_run_end_evidence(None, modelled=False),
                     detail="Issue structure and details synchronized through Comic Vine.",
                     source="matched automatically by canonical title, year, and cross-provider identifiers",
                 )
@@ -5706,12 +5715,12 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
                 token = str(values.get("token") or "").strip()
                 if not token:
                     continue
-                provider_series_id, api_url, entries, ended_year = _metron_issue_entries(
+                provider_series_id, api_url, entries, evidence = _metron_issue_entries(
                     context, token
                 )
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
-                    status=_run_status_for_end_year(ended_year),
+                    status=_run_catalog_status(evidence), end_evidence=evidence,
                     detail=f"Matched automatically through Metron during initial library enrichment.",
                     source="initial import: unambiguous title, year, and provider identifiers",
                 )
@@ -5722,10 +5731,12 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
                 provider_series_id, api_url, entries = _comic_vine_issue_entries(context, api_key)
                 result = store.apply_issue_list(
                     series_run_id, provider_id, provider_series_id, api_url, entries,
-                    # Comic Vine volumes carry a start year and an issue count but
-                    # no end year, so a run matched here is only ever known to be
-                    # complete up to today.
+                    # Comic Vine volumes carry a start year and an issue count
+                    # but no end year at all. That is silence, not a statement
+                    # that the run continues, so it must not overwrite what a
+                    # provider that does model an end year already recorded.
                     status="complete_to_date",
+                    end_evidence=_run_end_evidence(None, modelled=False),
                     detail=f"Matched automatically through Comic Vine during initial library enrichment.",
                     source="initial import: unambiguous title, year, and provider identifiers",
                 )
