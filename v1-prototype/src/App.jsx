@@ -1590,9 +1590,14 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
   // A run reaches Acquired after it was unfollowed, so the row can no longer
   // assume it is being watched. Cancelled is the only status that means that;
   // a fulfilled request is still followed, which is what the Comics grid says.
-  const following = request.status !== "cancelled";
-  const status = !following ? "Not following" : request.status === "fulfilled" ? "Up to date" : failed ? requestFailureStatus(jobs) : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
-  const tone = !following ? "muted" : request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
+  // A request for named issues never followed anything -- pulling one comic
+  // from Discover is not taking on its run.
+  const pulled = request.coverage === "issues";
+  const following = !pulled && request.status !== "cancelled";
+  const status = pulled ? (request.status === "fulfilled" ? "Arrived" : "Pulled issue")
+    : !following ? "Not following" : request.status === "fulfilled" ? "Up to date" : failed ? requestFailureStatus(jobs) : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
+  const tone = pulled ? (request.status === "fulfilled" ? "green" : "violet")
+    : !following ? "muted" : request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
   const display = { id: `request-${request.id}`, title: request.title, cover: request.cover };
   // An issue already in the library is not a missing issue. Listing its job
   // under "Missing issues" put "Added to library" in the middle of a list of
@@ -1629,12 +1634,12 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
   return <article data-request={`series-${request.id}`} className={`request-card ${expanded ? "expanded" : ""}`}>
     <div className="request-row">
       <span className="request-cover"><SeriesCover series={display} decorative /></span>
-      <div><h3>{request.title}</h3><p>{scope}</p><span>{following ? `Following · ${request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : request.publicationStatus === "completed" ? "completed run" : "checks daily in case it continues"}` : request.publicationStatus === "completed" ? "Completed run" : "Nothing is being looked for"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
+      <div><h3>{request.title}</h3><p>{scope}</p><span>{pulled ? `${request.targetIssueCount === 1 ? "One issue" : `${request.targetIssueCount} issues`} pulled from Discover · not following this run` : following ? `Following · ${request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : request.publicationStatus === "completed" ? "completed run" : "checks daily in case it continues"}` : request.publicationStatus === "completed" ? "Completed run" : "Nothing is being looked for"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
       <StatusBadge tone={tone}>{status}</StatusBadge>
       <button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button>
     </div>
     {expanded ? <div className="request-job-panel">
-      <header><div><strong>{!following ? "What arrived" : request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{!following ? "You stopped following this run. Everything already in your library stays there; nothing new is looked for." : request.status === "fulfilled" ? (request.publicationStatus === "completed" ? "Every issue in this completed run is in your library." : "Flipparr will keep checking this run and add newly released issues to Wanted.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div>{following ? <b>Following</b> : null}</header>
+      <header><div><strong>{pulled ? "Pulled from Discover" : !following ? "What arrived" : request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{pulled ? "You asked for these issues by name. The rest of the run is not being looked for." : !following ? "You stopped following this run. Everything already in your library stays there; nothing new is looked for." : request.status === "fulfilled" ? (request.publicationStatus === "completed" ? "Every issue in this completed run is in your library." : "Flipparr will keep checking this run and add newly released issues to Wanted.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div>{following ? <b>Following</b> : null}</header>
       {panelJobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
         {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>

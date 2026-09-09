@@ -3656,6 +3656,22 @@ class PullOneIssueTests(unittest.TestCase):
                 ).fetchone()[0]
             self.assertEqual(rows, 1, "and must still be checked daily")
 
+    def test_the_catalog_says_a_pulled_issue_is_not_being_followed(self):
+        """The screen reads this field, and it derived from open-ness alone.
+
+        An issue pulled from Discover is open until the comic arrives, so it
+        reported as monitored and the Pull List called it Following -- for a
+        run it had deliberately not taken on.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            self.assertEqual(pulled["coverage"], "issues")
+            self.assertEqual(pulled["monitoringStatus"], "stopped")
+            followed = store.create_acquisition_request("series", run_id)
+            self.assertEqual(followed["coverage"], "run")
+            self.assertEqual(followed["monitoringStatus"], "monitored")
+
     def test_an_unknown_issue_number_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             store, run_id = self._run(Path(folder))

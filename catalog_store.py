@@ -7205,7 +7205,14 @@ class CatalogStore:
                 "publisher": scope_item.get("publisher"), "year": scope_item.get("year"),
                 "cover": scope_item.get("cover"), "status": effective_status,
                 "storedStatus": row["status"],
-                "monitoringStatus": "monitored" if row["status"] == "open" else "stopped",
+                # Following is what a 'run' request does. A request for named
+                # issues is open until those comics arrive and then done; it
+                # was never watching the run, so it must not report that it is.
+                "coverage": row["coverage"],
+                "monitoringStatus": (
+                    "monitored" if row["status"] == "open" and row["coverage"] == "run"
+                    else "stopped"
+                ),
                 "publicationStatus": scope_item.get("publicationStatus", "unknown"),
                 "monitorRefresh": scope_item.get("monitorRefresh"),
                 "acquisitionPreference": row["acquisition_preference"],
