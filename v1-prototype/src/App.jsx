@@ -1290,7 +1290,7 @@ function DiscoverView({
 
     {searching ? <>
       <section className="discover-results" aria-label="Library matches">
-        <header><h2><b>{libraryMatches.length}</b> {libraryMatches.length === 1 ? "Library Match" : "Library Matches"}</h2></header>
+        <header><h2>{libraryMatches.length} <span>{libraryMatches.length === 1 ? "Library Match" : "Library Matches"}</span></h2></header>
         {libraryMatches.length ? <div className="library-match-row">
           {libraryMatches.map((series) => <LibraryMatchCard series={series}
             onOpen={(item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item)}
@@ -1300,7 +1300,7 @@ function DiscoverView({
 
       <section className="discover-results" aria-label="New matches">
         <header>
-          <h2><b>{fresh.length}</b> {fresh.length === 1 ? "New Match" : "New Matches"}</h2>
+          <h2>{fresh.length} <span>{fresh.length === 1 ? "New Match" : "New Matches"}</span></h2>
           {discovery.state === "loading" || discovery.fallbacks?.length ? <p className="provider-progress" role="status" aria-live="polite">
             {progress.map((item) => <span className={`provider-${item.status}`} key={item.name}
               title={item.error || undefined}>

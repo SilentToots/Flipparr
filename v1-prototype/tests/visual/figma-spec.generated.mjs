@@ -5,8 +5,8 @@
 // `npm run figma:generate` after refreshing those files.
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
-// selector nor skipped with a reason in node-map.json fails the run. 141 nodes
-// accounted for, 39 style assertions, 12 frame assertions, 13 icons.
+// selector nor skipped with a reason in node-map.json fails the run. 201 nodes
+// accounted for, 71 style assertions, 12 frame assertions, 21 icons.
 
 export const spec = [
   {
@@ -20,7 +20,8 @@ export const spec = [
       "paddingTop": "8px",
       "paddingLeft": "24px",
       "paddingRight": "20px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".appbar .search-field",
@@ -33,7 +34,8 @@ export const spec = [
       "paddingLeft": "8px",
       "paddingRight": "12px",
       "columnGap": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".appbar .search-field input::placeholder",
@@ -44,6 +46,7 @@ export const spec = [
       "fontWeight": "400",
       "whiteSpace": "nowrap"
     },
+    "route": "/library",
     "pseudo": "::placeholder"
   },
   {
@@ -51,7 +54,8 @@ export const spec = [
     "node": "1:95",
     "props": {
       "columnGap": "12px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".appbar-badge",
@@ -62,6 +66,7 @@ export const spec = [
       "paddingBottom": "2px",
       "paddingTop": "2px"
     },
+    "route": "/library",
     "centred": true,
     "synth": {
       "parent": ".appbar-bell",
@@ -76,7 +81,8 @@ export const spec = [
       "backgroundColor": "rgb(9, 9, 11)",
       "padding": "16px",
       "rowGap": "8px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".nav-item.active > span",
@@ -85,7 +91,8 @@ export const spec = [
       "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": "[data-nav=\"discover\"]",
@@ -96,7 +103,8 @@ export const spec = [
       "paddingBottom": "12px",
       "paddingTop": "12px",
       "columnGap": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": "[data-nav=\"requests\"]",
@@ -107,7 +115,8 @@ export const spec = [
       "paddingBottom": "12px",
       "paddingTop": "12px",
       "columnGap": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": "[data-nav=\"metadata\"]",
@@ -118,7 +127,8 @@ export const spec = [
       "paddingBottom": "12px",
       "paddingTop": "12px",
       "columnGap": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": "[data-nav=\"metadata\"] b",
@@ -129,6 +139,7 @@ export const spec = [
       "paddingBottom": "4px",
       "paddingTop": "4px"
     },
+    "route": "/library",
     "synth": {
       "parent": "[data-nav=\"metadata\"]",
       "tag": "b",
@@ -144,6 +155,7 @@ export const spec = [
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
+    "route": "/library",
     "centred": true,
     "synth": {
       "parent": "[data-nav=\"metadata\"]",
@@ -158,7 +170,8 @@ export const spec = [
       "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": "[data-nav=\"requests\"] > span",
@@ -167,7 +180,8 @@ export const spec = [
       "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": "[data-nav=\"metadata\"] > span",
@@ -176,14 +190,16 @@ export const spec = [
       "fontSize": "16px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".sidebar-identity",
     "node": "8:292",
     "props": {
       "columnGap": "8px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".sidebar-counts",
@@ -192,7 +208,8 @@ export const spec = [
       "columnGap": "2px",
       "fontWeight": "400",
       "whiteSpace": "nowrap"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".sidebar-counts i",
@@ -200,7 +217,8 @@ export const spec = [
     "props": {
       "fontSize": "16px",
       "color": "rgb(113, 113, 122)"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".dashboard-header",
@@ -209,7 +227,8 @@ export const spec = [
       "borderBottomWidth": "2px",
       "borderBottomColor": "rgb(9, 9, 11)",
       "padding": "20px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".view-toggle",
@@ -220,7 +239,8 @@ export const spec = [
       "borderRadius": "8px",
       "padding": "4px",
       "columnGap": "8px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".view-toggle button.active",
@@ -229,7 +249,8 @@ export const spec = [
       "backgroundColor": "rgb(109, 40, 217)",
       "borderRadius": "4px",
       "padding": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".view-toggle button:not(.active)",
@@ -237,7 +258,8 @@ export const spec = [
     "props": {
       "borderRadius": "4px",
       "padding": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".sort-trigger",
@@ -250,7 +272,8 @@ export const spec = [
       "paddingLeft": "8px",
       "paddingBottom": "4px",
       "paddingTop": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".filter-button",
@@ -264,7 +287,8 @@ export const spec = [
       "paddingBottom": "4px",
       "paddingTop": "4px",
       "columnGap": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".filter-button",
@@ -274,7 +298,8 @@ export const spec = [
       "color": "rgb(113, 113, 122)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".series-card",
@@ -286,14 +311,16 @@ export const spec = [
       "borderRadius": "8px",
       "paddingBottom": "20px",
       "rowGap": "12px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".series-card-identity",
     "node": "I1:495;1:443",
     "props": {
       "rowGap": "2px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".series-card-identity strong",
@@ -303,7 +330,8 @@ export const spec = [
       "color": "rgb(255, 255, 255)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".series-card-byline",
@@ -313,7 +341,8 @@ export const spec = [
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400",
       "whiteSpace": "nowrap"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".series-card-statuses",
@@ -322,7 +351,8 @@ export const spec = [
       "paddingRight": "12px",
       "paddingLeft": "12px",
       "columnGap": "4px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".publication-status.ongoing",
@@ -335,7 +365,8 @@ export const spec = [
       "paddingBottom": "3px",
       "paddingTop": "3px",
       "columnGap": "2px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".monitoring-status",
@@ -349,6 +380,7 @@ export const spec = [
       "paddingTop": "3px",
       "columnGap": "2px"
     },
+    "route": "/library",
     "synth": {
       "parent": ".series-card-statuses",
       "tag": "span",
@@ -360,7 +392,8 @@ export const spec = [
     "node": "I1:495;1:484",
     "props": {
       "rowGap": "8px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".ownership.compact .ownership-label",
@@ -370,7 +403,8 @@ export const spec = [
       "color": "rgb(255, 255, 255)",
       "fontWeight": "400",
       "whiteSpace": "nowrap"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".ownership.compact .progress",
@@ -379,7 +413,8 @@ export const spec = [
       "backgroundColor": "rgb(0, 0, 0)",
       "borderRadius": "100px",
       "height": "8px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".ownership.partial .progress i",
@@ -387,7 +422,8 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(244, 183, 64)",
       "borderRadius": "100px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".series-card",
@@ -399,7 +435,8 @@ export const spec = [
       "borderRadius": "8px",
       "paddingBottom": "20px",
       "rowGap": "12px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".publication-status.completed",
@@ -412,7 +449,8 @@ export const spec = [
       "paddingBottom": "3px",
       "paddingTop": "3px",
       "columnGap": "2px"
-    }
+    },
+    "route": "/library"
   },
   {
     "sel": ".ownership.complete .progress i",
@@ -420,7 +458,350 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(78, 211, 119)",
       "borderRadius": "100px"
-    }
+    },
+    "route": "/library"
+  },
+  {
+    "sel": ".discover-hero",
+    "node": "33:415",
+    "props": {
+      "backgroundColor": "rgb(9, 9, 11)",
+      "borderRadius": "8px",
+      "padding": "80px",
+      "rowGap": "20px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".discover-hero h2",
+    "node": "33:417",
+    "props": {
+      "fontSize": "20px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "600"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".discover-hero .discover-search",
+    "node": "35:546",
+    "props": {
+      "backgroundColor": "rgb(0, 0, 0)",
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(113, 113, 122)",
+      "borderRadius": "100px",
+      "paddingBottom": "8px",
+      "paddingTop": "8px",
+      "paddingLeft": "8px",
+      "paddingRight": "12px",
+      "columnGap": "4px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".discover-hero .discover-search input::placeholder",
+    "node": "35:550",
+    "props": {
+      "fontSize": "14px",
+      "color": "rgba(255, 255, 255, 0.6)",
+      "fontWeight": "400"
+    },
+    "route": "/discover",
+    "pseudo": "::placeholder"
+  },
+  {
+    "sel": ".release-shelf > header",
+    "node": "29:414",
+    "props": {
+      "columnGap": "20px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".release-shelf h2",
+    "node": "22:1494",
+    "props": {
+      "fontSize": "16px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "600"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".shelf-scroll",
+    "node": "29:406",
+    "props": {
+      "columnGap": "12px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".shelf-scroll button:disabled",
+    "node": "29:407",
+    "props": {
+      "backgroundColor": "rgb(113, 113, 122)",
+      "borderRadius": "100px",
+      "padding": "4px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".shelf-scroll button:not(:disabled)",
+    "node": "29:409",
+    "props": {
+      "backgroundColor": "rgb(255, 255, 255)",
+      "borderRadius": "100px",
+      "padding": "4px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".pull-card .discover-cover",
+    "node": "22:890",
+    "props": {
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(113, 113, 122)",
+      "borderRadius": "4px",
+      "height": "168px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".pull-card-body",
+    "node": "22:1786",
+    "props": {
+      "paddingTop": "8px",
+      "rowGap": "4px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".pull-card h3",
+    "node": "22:1757",
+    "props": {
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "height": "32px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".pull-card-action",
+    "node": "22:1496",
+    "props": {
+      "paddingBottom": "8px",
+      "paddingTop": "8px"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".pull-card .pull-button",
+    "node": "22:1320",
+    "props": {
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(192, 132, 252)"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".pull-card .pull-button span",
+    "node": "I22:1320;102:754",
+    "props": {
+      "fontSize": "12px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "500",
+      "whiteSpace": "nowrap"
+    },
+    "route": "/discover"
+  },
+  {
+    "sel": ".discover-hero.searching",
+    "node": "37:715",
+    "props": {
+      "backgroundColor": "rgb(9, 9, 11)",
+      "borderRadius": "8px",
+      "paddingRight": "80px",
+      "paddingLeft": "80px",
+      "paddingBottom": "12px",
+      "paddingTop": "12px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".discover-hero.searching .discover-search",
+    "node": "37:718",
+    "props": {
+      "backgroundColor": "rgb(113, 113, 122)",
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(113, 113, 122)",
+      "borderRadius": "100px",
+      "paddingBottom": "8px",
+      "paddingTop": "8px",
+      "paddingLeft": "8px",
+      "paddingRight": "12px",
+      "columnGap": "4px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".discover-hero.searching .discover-search input",
+    "node": "37:722",
+    "props": {
+      "fontSize": "14px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "700"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".discover-results h2",
+    "node": "37:725",
+    "props": {
+      "fontSize": "16px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "900"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".library-match .discover-cover",
+    "node": "37:1139",
+    "props": {
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(113, 113, 122)",
+      "borderRadius": "4px",
+      "height": "168px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".library-match h3",
+    "node": "37:1142",
+    "props": {
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "height": "32px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".library-match-art b",
+    "node": "37:1161",
+    "props": {
+      "backgroundColor": "rgb(9, 9, 11)",
+      "borderRadius": "100px",
+      "paddingRight": "8px",
+      "paddingLeft": "8px",
+      "paddingBottom": "3px",
+      "paddingTop": "3px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-card",
+    "node": "37:1635",
+    "props": {
+      "backgroundColor": "rgb(9, 9, 11)",
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(39, 39, 42)",
+      "borderRadius": "8px",
+      "paddingBottom": "12px",
+      "rowGap": "12px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-copy",
+    "node": "37:1637",
+    "props": {
+      "rowGap": "2px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-copy h3",
+    "node": "37:1639",
+    "props": {
+      "fontSize": "14px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "700",
+      "whiteSpace": "nowrap"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-copy p",
+    "node": "37:1641",
+    "props": {
+      "fontSize": "12px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "400",
+      "whiteSpace": "nowrap"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-status",
+    "node": "37:1642",
+    "props": {
+      "paddingRight": "12px",
+      "paddingLeft": "12px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-action",
+    "node": "37:1651",
+    "props": {
+      "paddingRight": "12px",
+      "paddingLeft": "12px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-card .pull-button",
+    "node": "37:1663",
+    "props": {
+      "borderTopWidth": "1px",
+      "borderTopColor": "rgb(192, 132, 252)"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".new-run-card .pull-button span",
+    "node": "I37:1663;102:742",
+    "props": {
+      "fontSize": "14px",
+      "color": "rgb(255, 255, 255)",
+      "fontWeight": "500",
+      "whiteSpace": "nowrap"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".run-status.active",
+    "node": "37:1817",
+    "props": {
+      "backgroundColor": "rgba(109, 40, 217, 0.4)",
+      "borderRadius": "100px",
+      "paddingRight": "8px",
+      "paddingLeft": "8px",
+      "paddingBottom": "3px",
+      "paddingTop": "3px",
+      "columnGap": "2px"
+    },
+    "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".run-status.active",
+    "node": "37:1813",
+    "props": {
+      "fontSize": "10px",
+      "color": "rgba(255, 255, 255, 0.8)",
+      "fontWeight": "700",
+      "whiteSpace": "nowrap"
+    },
+    "route": "/discover?q=Batman"
   }
 ];
 
@@ -428,11 +809,13 @@ export const frames = [
   {
     "sel": ".appbar",
     "node": "1:87",
+    "route": "/library",
     "h": 58
   },
   {
     "sel": ".appbar-brand-group",
     "node": "1:88",
+    "route": "/library",
     "w": 20,
     "x": 24,
     "within": ".appbar"
@@ -440,18 +823,21 @@ export const frames = [
   {
     "sel": ".appbar .search-field",
     "node": "1:108",
+    "route": "/library",
     "w": 600,
     "h": 41
   },
   {
     "sel": ".appbar-actions",
     "node": "1:95",
+    "route": "/library",
     "right": 20,
     "within": ".appbar"
   },
   {
     "sel": ".appbar-badge",
     "node": "7:266",
+    "route": "/library",
     "synth": true,
     "w": 16,
     "h": 16,
@@ -462,6 +848,7 @@ export const frames = [
   {
     "sel": ".sidebar",
     "node": "1:122",
+    "route": "/library",
     "w": 228,
     "x": 0,
     "within": null,
@@ -470,11 +857,13 @@ export const frames = [
   {
     "sel": ".nav-item.active",
     "node": "1:152",
+    "route": "/library",
     "h": 44
   },
   {
     "sel": ".main-content",
     "node": "1:492",
+    "route": "/library",
     "x": 228,
     "within": null,
     "y": 58
@@ -482,6 +871,7 @@ export const frames = [
   {
     "sel": ".dashboard-header",
     "node": "1:269",
+    "route": "/library",
     "h": 80,
     "x": 0,
     "within": ".main-content",
@@ -490,6 +880,7 @@ export const frames = [
   {
     "sel": ".library-tools",
     "node": "1:330",
+    "route": "/library",
     "h": 38,
     "x": 20,
     "within": ".dashboard-header",
@@ -498,11 +889,13 @@ export const frames = [
   {
     "sel": ".sort-trigger",
     "node": "1:331",
+    "route": "/library",
     "w": 200
   },
   {
     "sel": ".dashboard-body",
     "node": "1:522",
+    "route": "/library",
     "x": 0,
     "within": ".main-content",
     "y": 80
@@ -514,78 +907,147 @@ export const icons = [
     "node": "1:143",
     "name": "heroicons-mini/book-open",
     "size": 20,
-    "where": "[data-nav=\"library\"] svg"
+    "where": "[data-nav=\"library\"] svg",
+    "route": "/library"
   },
   {
     "node": "I1:157;1:149",
     "name": "heroicons-outline/document-plus",
     "size": 20,
-    "where": "[data-nav=\"discover\"] svg"
+    "where": "[data-nav=\"discover\"] svg",
+    "route": "/library"
   },
   {
     "node": "I1:167;1:149",
     "name": "heroicons-outline/wallet",
     "size": 20,
-    "where": "[data-nav=\"requests\"] svg"
+    "where": "[data-nav=\"requests\"] svg",
+    "route": "/library"
   },
   {
     "node": "I1:174;1:383",
     "name": "heroicons-outline/clipboard-document-list",
     "size": 20,
-    "where": "[data-nav=\"metadata\"] svg"
+    "where": "[data-nav=\"metadata\"] svg",
+    "route": "/library"
   },
   {
     "node": "1:293",
     "name": "heroicons-mini/squares-2x2",
     "size": 20,
-    "where": ".view-toggle button[aria-label=\"Grid view\"] svg"
+    "where": ".view-toggle button[aria-label=\"Grid view\"] svg",
+    "route": "/library"
   },
   {
     "node": "1:314",
     "name": "heroicons-solid/list-bullet",
     "size": 20,
-    "where": ".view-toggle button[aria-label=\"List view\"] svg"
+    "where": ".view-toggle button[aria-label=\"List view\"] svg",
+    "route": "/library"
   },
   {
     "node": "1:374",
     "name": "heroicons-mini/chevron-down",
     "size": 20,
-    "where": ".sort-trigger svg"
+    "where": ".sort-trigger svg",
+    "route": "/library"
   },
   {
     "node": "1:367",
     "name": "heroicons-outline/check-circle",
     "size": 20,
-    "where": ".filter-button svg"
+    "where": ".filter-button svg",
+    "route": "/library"
   },
   {
     "node": "I1:495;1:462",
     "name": "heroicons-micro/bolt",
     "size": 12,
-    "where": ".series-card svg"
+    "where": ".series-card svg",
+    "route": "/library"
   },
   {
     "node": "1:89",
     "name": "heroicons-mini/bars-3",
     "size": 20,
-    "where": ".appbar-menu svg"
+    "where": ".appbar-menu svg",
+    "route": "/library"
   },
   {
     "node": "1:110",
     "name": "heroicons-solid/magnifying-glass",
     "size": 16,
-    "where": ".appbar .search-field > svg"
+    "where": ".appbar .search-field > svg",
+    "route": "/library"
   },
   {
     "node": "1:96",
     "name": "heroicons-outline/bell",
     "size": 24,
-    "where": ".appbar-notifications button svg"
+    "where": ".appbar-notifications button svg",
+    "route": "/library"
   },
   {
     "node": "1:97",
     "name": "heroicons-outline/cog-6-tooth",
     "size": 24,
-    "where": ".appbar-action:last-child svg"
+    "where": ".appbar-action:last-child svg",
+    "route": "/library"
+  },
+  {
+    "node": "I22:1320;102:755",
+    "name": "heroicons-micro/cloud-arrow-down",
+    "size": 16,
+    "where": ".pull-card .pull-button svg",
+    "route": "/discover"
+  },
+  {
+    "node": "28:396",
+    "name": "heroicons-micro/chevron-right",
+    "size": 16,
+    "where": ".shelf-scroll button:not(:disabled) svg",
+    "route": "/discover"
+  },
+  {
+    "node": "28:402",
+    "name": "heroicons-micro/chevron-left",
+    "size": 16,
+    "where": ".shelf-scroll button:disabled svg",
+    "route": "/discover"
+  },
+  {
+    "node": "35:548",
+    "name": "heroicons-solid/magnifying-glass",
+    "size": 16,
+    "where": ".discover-hero .discover-search > svg",
+    "route": "/discover"
+  },
+  {
+    "node": "37:1812",
+    "name": "heroicons-micro/bolt",
+    "size": 12,
+    "where": ".run-status.active svg",
+    "route": "/discover?q=Batman"
+  },
+  {
+    "node": "I37:1663;102:743",
+    "name": "heroicons-micro/cloud-arrow-down",
+    "size": 16,
+    "where": ".new-run-card .pull-button svg",
+    "route": "/discover?q=Batman"
+  },
+  {
+    "node": "37:720",
+    "name": "heroicons-solid/magnifying-glass",
+    "size": 16,
+    "where": ".discover-hero.searching .discover-search > svg",
+    "route": "/discover?q=Batman"
+  },
+  {
+    "node": "37:1006",
+    "name": "heroicons-mini/x-mark",
+    "size": 20,
+    "where": ".discover-search-clear svg",
+    "route": "/discover?q=Batman"
   }
 ];

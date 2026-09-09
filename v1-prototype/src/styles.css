@@ -110,8 +110,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .release-shelf > header, .discover-results > header { display: flex; align-items: center; gap: 20px; }
 .release-shelf h2, .discover-results h2 { margin: 0; flex: 1; min-width: 0; font-size: var(--text-lg); font-weight: 600; color: var(--color-neutral-0); }
 /* "2 Library Matches": the count is Black, the label is Regular. */
-.discover-results h2 { font-weight: 400; }
-.discover-results h2 b { font-weight: 900; }
+.discover-results h2 { font-weight: 900; }
+.discover-results h2 span { font-weight: 400; }
 
 .shelf-scroll { flex: none; display: flex; align-items: center; gap: 12px; }
 .shelf-scroll button { padding: 4px; border: 0; border-radius: 100px; background: var(--color-neutral-0); color: var(--color-neutral-950); display: grid; place-items: center; cursor: pointer; }
@@ -185,7 +185,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* The design's own status chip, smaller and more translucent than the one on a
    series card. */
-.run-status { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; color: rgb(255 255 255 / .8); }
+.run-status { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; white-space: nowrap; color: rgb(255 255 255 / .8); }
 .run-status.active { background: rgb(109 40 217 / .4); }
 .run-status.complete { background: rgb(113 113 122 / .4); }
 

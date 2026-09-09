@@ -7,6 +7,8 @@
 // figma-spec.mjs are a specification, and there is no legitimate drift from
 // one. It exists because "looks close in a screenshot" shipped twice.
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { chromium } from "playwright";
 import { spec, icons, frames } from "./figma-spec.generated.mjs";
 
@@ -14,13 +16,84 @@ const origin = process.env.FLIPPARR_UI_ORIGIN || "http://localhost:4173";
 const width = 1440;
 const height = 951;
 
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width, height } });
-await page.goto(`${origin}/library`, { waitUntil: "networkidle", timeout: 45000 });
-await page.waitForSelector(".series-card", { timeout: 20000 });
-await page.waitForTimeout(400);
+const nodeMap = JSON.parse(
+  await readFile(path.join(import.meta.dirname, "figma", "node-map.json"), "utf8"),
+);
 
-const failures = await page.evaluate(({ spec, icons, frames }) => {
+// Screens that read a third-party API are stubbed. A design check that fails
+// because Metron is busy teaches nobody anything, and a search whose results
+// change week to week cannot pin a card's measurements.
+const shelfIssues = (shelf) => Array.from({ length: 14 }, (_, i) => ({
+  providerIssueId: `${shelf}-${i}`, providerSeriesId: "9",
+  seriesTitle: "Wolverine", number: String(i + 1),
+  title: `Wolverine #${i + 1}`, cover: null, storeDate: "2026-09-02",
+}));
+
+const STUBS = {
+  releases: {
+    url: "**/api/v1/discover/releases",
+    body: {
+      available: true,
+      // Enough to overflow the row: the forward chevron is only enabled when
+      // there is somewhere to scroll to, and it is one of the things measured.
+      latest: { date: "2026-09-02", issues: shelfIssues("latest") },
+      upcoming: { date: "2026-09-09", issues: shelfIssues("upcoming") },
+    },
+  },
+  search: {
+    url: "**/api/v1/discover?**",
+    body: {
+      query: "Batman", titleQuery: "Batman", yearHint: null,
+      provider: "Metron", providerId: "metron",
+      providersChecked: ["Metron"], providersAnswered: ["Metron"],
+      results: [{
+        provider: "metron", providerName: "Metron", providerSeriesId: "9",
+        title: "Comic Title Goes in This Space and truncates", yearBegan: 2026,
+        yearLabel: "2026", publisher: "Publisher", issueCount: 12,
+        cover: null, status: "Ongoing", inLibrary: false,
+        providerIds: { metron: "9" },
+      }],
+    },
+  },
+};
+
+const routes = nodeMap.routes || { "/library": { ready: ".series-card" } };
+const byRoute = new Map();
+for (const list of [spec, icons, frames]) {
+  for (const item of list) {
+    const route = item.route || "/library";
+    if (!byRoute.has(route)) byRoute.set(route, { spec: [], icons: [], frames: [] });
+  }
+}
+for (const item of spec) byRoute.get(item.route || "/library").spec.push(item);
+for (const item of icons) byRoute.get(item.route || "/library").icons.push(item);
+for (const item of frames) byRoute.get(item.route || "/library").frames.push(item);
+
+const browser = await chromium.launch();
+const failures = [];
+for (const [route, work] of byRoute) {
+  const config = routes[route];
+  if (!config) {
+    failures.push({ sel: route, node: "-", bad: [`no entry in node-map.json "routes"`] });
+    continue;
+  }
+  const page = await browser.newPage({ viewport: { width, height } });
+  for (const name of config.stub || []) {
+    const stub = STUBS[name];
+    await page.route(stub.url, (r) =>
+      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(stub.body) }));
+  }
+  // Not networkidle: Discover's shelves and the catalog poll keep a socket
+  // busy, so "idle" never arrives. The screen is ready when the thing being
+  // measured is on it.
+  await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.waitForSelector(config.ready, { timeout: 30000 });
+  await page.waitForTimeout(400);
+  failures.push(...await page.evaluate(assertRoute, work));
+  await page.close();
+}
+
+function assertRoute({ spec, icons, frames }) {
   const out = [];
   for (const c of spec) {
     let el = document.querySelector(c.pseudo ? c.sel.replace(c.pseudo, "") : c.sel);
@@ -113,7 +186,7 @@ const failures = await page.evaluate(({ spec, icons, frames }) => {
     if (bad.length) out.push({ sel: f.sel, node: f.node, bad });
   }
   return out;
-}, { spec, icons, frames });
+}
 
 await browser.close();
 
