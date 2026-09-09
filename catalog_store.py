@@ -7082,6 +7082,12 @@ class CatalogStore:
                 "downloadDestination": download["destination"] if download else None,
                 "downloadError": download["error"] if download else None,
                 "downloadFailureStage": download["failure_stage"] if download else None,
+                # When the issue actually landed, which is not the same as when
+                # the job was last touched: unfollowing a run rewrites every
+                # job's updated_at, so "what arrived lately" read off that would
+                # date thirty old issues to the moment they stopped being
+                # followed. Null for rows imported before the column existed.
+                "importedAt": (download["imported_at"] if download else None),
                 "createdAt": job_row["created_at"], "updatedAt": job_row["updated_at"],
                 "queuedDate": queued_date, "queuedTime": queued_time,
             })

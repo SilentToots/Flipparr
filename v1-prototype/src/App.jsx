@@ -35,7 +35,8 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
-import { jobHasFailed, jobsNeedingAttention } from "./nav-counts.js";
+import { jobsNeedingAttention } from "./nav-counts.js";
+import { arrivalAt, classifyRequest, groupPullList, tabCount, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
 import {
   buildNotifications, pruneDismissed, readDismissed, writeDismissed,
   readSeenUntil, writeSeenUntil,
@@ -952,6 +953,39 @@ function sortLibrary(items, sort) {
   return sorted.sort(byTitle);
 }
 
+// The four states a comic can be in on its way to the library, in the order
+// it moves through them. Following is not among them: monitoring is a property
+// of the run, shown on its card, not a place a run sits.
+const PULL_LIST_TABS = [
+  { id: "wanted", label: "Wanted" },
+  { id: "downloading", label: "Downloading" },
+  { id: "acquired", label: "Acquired" },
+  { id: "failed", label: "Failed" },
+];
+
+const PULL_LIST_COPY = {
+  wanted: {
+    description: "Issues Flipparr is looking for but has not started downloading yet.",
+    emptyTitle: "Nothing on your wanted list",
+    emptyDetail: "Follow a run or request a replacement from Library health.",
+  },
+  downloading: {
+    description: "Downloads in progress right now, and issues out looking for a release.",
+    emptyTitle: "Nothing is downloading",
+    emptyDetail: "Issues appear here while SABnzbd is fetching them and while Flipparr is importing them.",
+  },
+  acquired: {
+    description: `Comics added to your library in the last ${RECENT_ARRIVAL_DAYS} days, newest first. Older ones live on Comics.`,
+    emptyTitle: "Nothing has arrived recently",
+    emptyDetail: "Issues appear here once they are downloaded, validated and added to your library.",
+  },
+  failed: {
+    description: "Downloads and imports that stopped and need a decision. They clear themselves once a retry succeeds or the comic arrives another way.",
+    emptyTitle: "Nothing has failed",
+    emptyDetail: "A download that cannot finish on its own waits here for you to retry it or pick another release.",
+  },
+};
+
 const SORT_OPTIONS = [
   { value: "title", label: "Sort: Title A-Z" },
   { value: "added", label: "Sort: Recently added" },
@@ -1218,38 +1252,11 @@ function RequestsView({ catalog, focus, onCreateRequest, onCancelReplacement, on
     const timer = window.setInterval(poll, 3000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [anyDownloading]);
-  // A failed job needs somewhere to be triaged, and it was in none of the
-  // three tabs: a cancelled request matched no filter at all, and a job whose
-  // download failed but whose own status had moved on sat under Following or
-  // Acquired while the notification sent the reader to Wanted.
-  const hasFailure = (request) => (request.jobs || []).some(jobHasFailed);
-  const failedReplacements = replacements.filter(
-    (request) => request.status !== "cancelled" && hasFailure(request)
-  );
-  const activeReplacements = replacements.filter(
-    (request) => !["fulfilled", "cancelled"].includes(request.status) && !hasFailure(request)
-  );
-  const completedReplacements = replacements.filter(
-    (request) => request.status === "fulfilled" && !hasFailure(request)
-  );
-  // Wanted is what can be acted on now. A followed run whose only remaining
-  // issues are unpublished has nothing to look for, so it belongs under
-  // Following rather than sitting in Wanted marked "Waiting for release".
-  const hasSomethingToFind = (request) => Boolean(
-    (request.wantedIssueCount || 0)
-    || (request.queuedJobCount || 0)
-    || (request.jobs || []).some((job) => !["fulfilled", "cancelled"].includes(job.status))
-  );
-  const failedRuns = requests.filter(
-    (request) => request.status !== "cancelled" && hasFailure(request)
-  );
-  const wantedRuns = requests.filter(
-    (request) => request.status === "open" && hasSomethingToFind(request) && !hasFailure(request)
-  );
-  const followedRuns = requests.filter(
-    (request) => !hasFailure(request) && (request.status === "fulfilled"
-      || (request.status === "open" && !hasSomethingToFind(request)))
-  );
+  // Four tabs for the four states, and every request in exactly one of them.
+  // The classifier lives in src/pull-list.js because this screen cannot be
+  // exercised on a library with no requests, which is how two bugs reached
+  // production; there it is testable without a browser.
+  const buckets = useMemo(() => groupPullList(catalog), [catalog]);
   // A notification about a failed download lands here, so the screen has to
   // put the reader in front of that request rather than on whichever tab they
   // last used. A failure is always on a live request, which is Wanted.
@@ -1257,10 +1264,11 @@ function RequestsView({ catalog, focus, onCreateRequest, onCancelReplacement, on
   useEffect(() => {
     if (!focus || aimedAt.current === focus) return;
     aimedAt.current = focus;
-    // Not always Wanted: a failure is exactly the case that is somewhere else.
-    const inFailed = [...failedRuns, ...failedReplacements]
-      .some((request) => String(request.id) === String(focus.requestId));
-    setTab(inFailed ? "failed" : "wanted");
+    // Ask which tab actually holds the row rather than assuming: a failure or
+    // an arrival is exactly the case that is not on Wanted.
+    const all = [...(catalog?.requests || []), ...(catalog?.replacementRequests || [])];
+    const target = all.find((request) => String(request.id) === String(focus.requestId));
+    setTab(classifyRequest(target) || "wanted");
     // After the tab renders, not before: the row does not exist until then.
     const key = `${focus.kind === "replacement" ? "replacement" : "series"}-${focus.requestId}`;
     const timer = setTimeout(() => {
@@ -1273,40 +1281,11 @@ function RequestsView({ catalog, focus, onCreateRequest, onCancelReplacement, on
     }, 60);
     return () => clearTimeout(timer);
   }, [focus]);
-  const seriesEntries = tab === "wanted" ? wantedRuns
-    : tab === "following" ? followedRuns
-      : tab === "failed" ? failedRuns : [];
-  const replacementEntries = tab === "wanted" ? activeReplacements
-    : tab === "acquired" ? completedReplacements
-      : tab === "failed" ? failedReplacements : [];
-  const wantedCount = wantedRuns.length + activeReplacements.length;
-  const acquiredCount = completedReplacements.length;
-  const followingCount = followedRuns.length;
-  const failedCount = failedRuns.length + failedReplacements.length;
-  const hasEntries = seriesEntries.length || replacementEntries.length;
-  const tabCopy = {
-    wanted: {
-      description: "Missing issues and replacements Flipparr is actively looking for.",
-      emptyTitle: "Nothing on your wanted list",
-      emptyDetail: "Follow a run or request a replacement from Library health.",
-    },
-    acquired: {
-      description: "Replacement issues and volumes that were downloaded, verified, and added to your library.",
-      emptyTitle: "No acquired comics yet",
-      emptyDetail: "Finished replacements appear here after Flipparr validates and imports them.",
-    },
-    following: {
-      description: "Runs Flipparr is monitoring that have no currently released issues on Wanted.",
-      emptyTitle: "No caught-up runs are being followed",
-      emptyDetail: "Follow a run and Flipparr will keep checking it for newly released issues.",
-    },
-    failed: {
-      description: "Downloads and imports that stopped and need a decision. They clear themselves once a retry succeeds or the comic arrives another way.",
-      emptyTitle: "Nothing has failed",
-      emptyDetail: "A download that cannot finish on its own waits here for you to retry it or pick another release.",
-    },
-  }[tab];
-  return <><PageHeader title="Pull List"><button className="secondary-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}>{searchingMissing ? <LoadingSpinner size={18} /> : <MagnifyingGlass size={18} />} Search for missing</button><button className="primary-button" onClick={() => setRequestOpen(true)}><Plus size={19} /> Follow a run</button></PageHeader><div className="request-tabs"><button className={tab === "wanted" ? "active" : ""} onClick={() => setTab("wanted")}>Wanted <b>{wantedCount}</b></button><button className={tab === "acquired" ? "active" : ""} onClick={() => setTab("acquired")}>Acquired <b>{acquiredCount}</b></button><button className={tab === "following" ? "active" : ""} onClick={() => setTab("following")}>Following <b>{followingCount}</b></button>{failedCount ? <button className={`request-tab-failed ${tab === "failed" ? "active" : ""}`} onClick={() => setTab("failed")}>Failed <b>{failedCount}</b></button> : null}</div><p className="request-tab-description">{tabCopy.description}</p>{pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{hasEntries ? <>{replacementEntries.map((request) => <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />)}{seriesEntries.map((request) => <RequestRow request={request} progress={progress} openByDefault={tab === "failed"} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`series-${request.id}`} />)}</> : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{requestOpen ? <RequestModal catalog={catalog} onCreate={async (target) => { const result = await onCreateRequest(target); if (result?.ok) setRequestOpen(false); return result; }} onClose={() => setRequestOpen(false)} /> : null}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
+  const entries = buckets[tab] ?? [];
+  const tabCopy = PULL_LIST_COPY[tab];
+  return <><PageHeader title="Pull List"><button className="secondary-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}>{searchingMissing ? <LoadingSpinner size={18} /> : <MagnifyingGlass size={18} />} Search for missing</button><button className="primary-button" onClick={() => setRequestOpen(true)}><Plus size={19} /> Follow a run</button></PageHeader><div className="request-tabs">{PULL_LIST_TABS.map(({ id, label }) => (id === "failed" && !tabCount(buckets.failed)) ? null : <button key={id} className={`${id === "failed" ? "request-tab-failed " : ""}${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label} <b>{tabCount(buckets[id])}</b></button>)}</div><p className="request-tab-description">{tabCopy.description}</p>{pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{entries.length ? entries.map(({ kind, request }) => kind === "replacement"
+    ? <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />
+    : <RequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{requestOpen ? <RequestModal catalog={catalog} onCreate={async (target) => { const result = await onCreateRequest(target); if (result?.ok) setRequestOpen(false); return result; }} onClose={() => setRequestOpen(false)} /> : null}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }
 
 function acquisitionFailureDetails(job) {
@@ -1380,7 +1359,7 @@ function ReplacementRequestRow({ request, progress = {}, openByDefault = false, 
       setRetryError({ jobId: job.id, message: error.message || "This replacement could not be retried" });
     } finally { setRetryingJobId(null); }
   }
-  return <article data-request={`replacement-${request.id}`} className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><div className="request-row"><span className="request-cover"><SeriesCover series={display} decorative /></span><div><h3>{title}</h3><p>{scope}</p><span>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</span></div><StatusBadge tone={tone}>{statusLabel}</StatusBadge><button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button></div>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>#{job.issueNumber}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong><span>{job.reason}</span>{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
+  return <article data-request={`replacement-${request.id}`} className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><div className="request-row"><span className="request-cover"><SeriesCover series={display} decorative /></span><div><h3>{title}</h3><p>{scope}</p><span>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</span></div><StatusBadge tone={tone}>{statusLabel}</StatusBadge><button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button></div>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>#{job.issueNumber}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
 }
 
 function RequestRow({ request, progress = {}, openByDefault = false, onFindRelease, onRefresh }) {
@@ -1402,8 +1381,12 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
     unknown ? `${unknown} release date${unknown === 1 ? "" : "s"} unknown` : null,
     `${request.ownedIssueCount} of ${request.targetIssueCount} owned`,
   ].filter(Boolean).join(" · ");
-  const status = request.status === "fulfilled" ? "Up to date" : failed ? requestFailureStatus(jobs) : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
-  const tone = request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
+  // A run reaches Acquired after it was unfollowed, so the row can no longer
+  // assume it is being watched. Cancelled is the only status that means that;
+  // a fulfilled request is still followed, which is what the Comics grid says.
+  const following = request.status !== "cancelled";
+  const status = !following ? "Not following" : request.status === "fulfilled" ? "Up to date" : failed ? requestFailureStatus(jobs) : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
+  const tone = !following ? "muted" : request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
   const display = { id: `request-${request.id}`, title: request.title, cover: request.cover };
   // An issue already in the library is not a missing issue. Listing its job
   // under "Missing issues" put "Added to library" in the middle of a list of
@@ -1411,7 +1394,12 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
   const outstandingJobs = jobs.filter(
     (job) => !["fulfilled", "cancelled"].includes(job.status)
   );
-  const jobGroups = outstandingJobs.reduce((groups, job) => {
+  // ...but on a row that has nothing outstanding, those same jobs are the only
+  // thing there is to show, and on Acquired they are the reason the row is
+  // there at all. So the panel falls back to what arrived rather than to an
+  // empty state claiming Flipparr is still checking release dates.
+  const panelJobs = outstandingJobs.length ? outstandingJobs : jobs.filter(arrivalAt);
+  const jobGroups = panelJobs.reduce((groups, job) => {
     const key = job.seriesId || "series";
     if (!groups[key]) groups[key] = { id: key, title: job.seriesTitle || request.title, jobs: [] };
     groups[key].jobs.push(job);
@@ -1435,20 +1423,20 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
   return <article data-request={`series-${request.id}`} className={`request-card ${expanded ? "expanded" : ""}`}>
     <div className="request-row">
       <span className="request-cover"><SeriesCover series={display} decorative /></span>
-      <div><h3>{request.title}</h3><p>{scope}</p><span>Following · {request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : request.publicationStatus === "completed" ? "completed run" : "checks daily in case it continues"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
+      <div><h3>{request.title}</h3><p>{scope}</p><span>{following ? `Following · ${request.publicationStatus === "ongoing" ? "checks daily for newly listed issues" : request.publicationStatus === "completed" ? "completed run" : "checks daily in case it continues"}` : request.publicationStatus === "completed" ? "Completed run" : "Nothing is being looked for"} · {ACQUISITION_LABELS[request.acquisitionPreference] || ACQUISITION_LABELS.either}</span></div>
       <StatusBadge tone={tone}>{status}</StatusBadge>
       <button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button>
     </div>
     {expanded ? <div className="request-job-panel">
-      <header><div><strong>{request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{request.status === "fulfilled" ? (request.publicationStatus === "completed" ? "Every issue in this completed run is in your library." : "Flipparr will keep checking this run and add newly released issues to Wanted.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div><b>Following</b></header>
-      {outstandingJobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
+      <header><div><strong>{!following ? "What arrived" : request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{!following ? "You stopped following this run. Everything already in your library stays there; nothing new is looked for." : request.status === "fulfilled" ? (request.publicationStatus === "completed" ? "Every issue in this completed run is in your library." : "Flipparr will keep checking this run and add newly released issues to Wanted.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div>{following ? <b>Following</b> : null}</header>
+      {panelJobs.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
         {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>
           <b>#{job.issueNumber}</b>
-          <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong><span>{job.reason}</span>{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : displayDetail ? <span className={retryMessage ? "job-error" : ""}>{displayDetail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div>
+          <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : displayDetail ? <span className={retryMessage ? "job-error" : ""}>{displayDetail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div>
           <span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {retryingJobId === job.id ? "Retrying…" : retryLabel}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span>
         </div>; })}
-      </section>)}</div> : <div className="request-job-empty"><ArrowsClockwise size={20} /><div><strong>Nothing is ready to search yet</strong><span>No action is required. Flipparr will keep checking release dates automatically.</span></div></div>}
+      </section>)}</div> : <div className="request-job-empty"><ArrowsClockwise size={20} /><div><strong>{following ? "Nothing is ready to search yet" : "Nothing is being looked for"}</strong><span>{following ? "No action is required. Flipparr will keep checking release dates automatically." : "Follow the run again from Comics to have Flipparr check it."}</span></div></div>}
       {upcoming || unknown ? <footer>{upcoming ? `${upcoming} upcoming issue${upcoming === 1 ? " is" : "s are"} being followed` : null}{upcoming && unknown ? " · " : null}{unknown ? `${unknown} issue${unknown === 1 ? " has" : "s have"} an unknown release date` : null}</footer> : null}
     </div> : null}
   </article>;

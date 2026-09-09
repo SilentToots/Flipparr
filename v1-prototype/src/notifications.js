@@ -9,6 +9,7 @@
 // it, which is what the app's navigate/focus plumbing already takes.
 
 import { jobHasFailed } from "./nav-counts.js";
+import { arrivalAt } from "./pull-list.js";
 
 export const DISMISSED_KEY = "flipparr.notifications.dismissed";
 export const SEEN_UNTIL_KEY = "flipparr.notifications.seenUntil";
@@ -57,17 +58,18 @@ function inboxNotifications(inbox) {
 function acquisitionNotifications(catalog, since) {
   if (!since) return [];
   return (catalog?.requests || []).flatMap((request) => {
-    if (request?.status === "cancelled") return [];
-    const arrived = (request.jobs || []).filter(
-      (job) => job.downloadStatus === "imported" && job.updatedAt && job.updatedAt > since
-    );
+    // Unlike a failure, an arrival is not work waiting on anyone, so
+    // unfollowing the run afterwards does not make it untrue. The times come
+    // from `arrivalAt` -- the moment the file landed -- precisely so that
+    // unfollowing, which rewrites every job, cannot look like fresh arrivals.
+    const arrived = (request.jobs || []).filter((job) => (arrivalAt(job) || "") > since);
     if (!arrived.length) return [];
-    const at = arrived.map((job) => job.updatedAt).sort().at(-1);
+    const at = arrived.map(arrivalAt).sort().at(-1);
     const runTitle = request.title || arrived[0].seriesTitle || "A run";
     if (arrived.length === 1) {
       const job = arrived[0];
       return [{
-        id: `acquired:job:${job.id}:${job.updatedAt}`,
+        id: `acquired:job:${job.id}:${arrivalAt(job)}`,
         kind: "acquired",
         severity: "info",
         title: `${runTitle} #${job.issueNumber} added`,

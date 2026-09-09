@@ -1516,6 +1516,46 @@ class CatalogStoreTests(unittest.TestCase):
                     return job["downloadStatus"]
         return "request-not-in-catalog"
 
+    def _job(self, root, job_id):
+        for request in CatalogStore(root / "catalog.db").catalog()["requests"]:
+            for job in request["jobs"]:
+                if job["id"] == str(job_id):
+                    return job
+        return {}
+
+    def test_an_arrival_is_dated_when_it_landed_not_when_it_was_last_touched(self):
+        # The catalog exposed only updated_at, which unfollowing rewrites for
+        # every job at once -- so a run unfollowed after it finished read as
+        # thirty comics arriving at that moment, and the Pull List sorted
+        # "recently acquired" by when the reader stopped following things.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            download = store.record_acquisition_download(job_id, "SAB-9", "Example.002.2026")
+            store.update_acquisition_download(
+                int(download["id"]), "imported",
+                destination=str(root / "Example 002.cbz"),
+            )
+            store.update_acquisition_job(job_id, "fulfilled", "Imported and verified")
+            arrived_at = self._job(root, job_id)["importedAt"]
+            self.assertTrue(arrived_at, "an imported download must say when it landed")
+
+            store.stop_series_monitoring(series_id)
+            after = self._job(root, job_id)
+            self.assertEqual(after["importedAt"], arrived_at,
+                             "unfollowing must not restate when the comic arrived")
+            self.assertGreater(after["updatedAt"], arrived_at,
+                               "and it must still have touched the job")
+
+    def test_a_download_that_never_landed_has_no_arrival_time(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "grabbed", "Release sent to SABnzbd")
+            store.record_acquisition_download(job_id, "SAB-10", "Example.002.2026")
+            self.assertIsNone(self._job(root, job_id)["importedAt"])
+
     def test_retrying_into_a_new_search_forgets_the_download_that_failed(self):
         # acquisition_downloads.status='failed' used to be a one-way latch: the
         # job went back to 'queued' and the download row stayed failed, so the

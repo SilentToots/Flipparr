@@ -102,7 +102,7 @@ test("a live run with the same failure still notifies", () => {
 
 const imported = (id, issue, at) => ({
   id, issueNumber: issue, issueTitle: `Issue ${issue}`,
-  status: "fulfilled", downloadStatus: "imported", updatedAt: at,
+  status: "fulfilled", downloadStatus: "imported", importedAt: at,
 });
 const SINCE = "2026-09-09T12:00:00Z";
 
@@ -134,9 +134,22 @@ test("nothing that arrived before this client started looking is announced", () 
     "a client with no watermark yet starts from now rather than from the beginning");
 });
 
-test("an unfollowed run announces nothing, the way it badges nothing", () => {
+test("an unfollowed run still announces what arrived before it was unfollowed", () => {
+  // Unfollowing is about future work; it does not retract the comics that
+  // turned up. The failure guard above is the opposite case, and stands.
   const catalog = { requests: [{ id: 20, title: "Paper Girls", status: "cancelled",
     jobs: [imported(1, "1", "2026-09-09T12:05:00Z"), imported(2, "2", "2026-09-09T12:06:00Z")] }] };
+  const [item] = buildNotifications(catalog, [], SINCE);
+  assert.equal(item.title, "Paper Girls — 2 issues added");
+});
+
+test("unfollowing a run does not read as thirty comics arriving at once", () => {
+  // Cancelling rewrites every job's updatedAt. Reading arrival off that would
+  // announce the whole run again at the moment it stopped being followed.
+  const catalog = { requests: [{ id: 20, title: "Paper Girls", status: "cancelled", jobs: [
+    { id: 1, issueNumber: "1", status: "cancelled", downloadStatus: "imported",
+      importedAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-09T12:20:00Z" },
+  ] }] };
   assert.deepEqual(buildNotifications(catalog, [], SINCE), []);
 });
 
