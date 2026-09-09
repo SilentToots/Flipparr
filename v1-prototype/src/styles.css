@@ -99,6 +99,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .discover-hero.searching .discover-search { background: var(--color-neutral-500); }
 .discover-search > svg { flex: none; margin: 4px; }
 .discover-search input { flex: 1; min-width: 0; padding: 4px; border: 0; background: transparent; color: var(--color-neutral-0); font: inherit; font-size: var(--text-md); text-align: center; }
+.discover-search input:focus, .discover-search input:not(:placeholder-shown) { text-align: left; }
 .discover-search input:focus { outline: none; }
 .discover-search input::placeholder { color: rgb(255 255 255 / .6); }
 .discover-hero.searching .discover-search input { text-align: left; font-weight: 700; }
@@ -122,8 +123,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .shelf-row { display: flex; gap: 20px; overflow-x: auto; scroll-behavior: smooth; scrollbar-width: none; }
 .shelf-row::-webkit-scrollbar { display: none; }
 
-.discover-cover { display: grid; place-items: center; overflow: hidden; background: var(--status-muted-bg); color: var(--muted-weak); }
-.discover-cover img { width: 100%; height: 100%; object-fit: cover; }
+.discover-cover { position: relative; display: grid; place-items: center; overflow: hidden; background: var(--status-muted-bg); color: var(--muted-weak); }
+/* Absolute, not a grid child: Safari lays a 100%-height image out against the
+   row's baseline rather than filling the track, which pushed every cover down
+   inside its box. Chrome and Firefox stretched it and hid the difference. The
+   fallback glyph is still a grid child, and still centred. */
+.discover-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .pull-card { flex: none; width: 120px; display: flex; flex-direction: column; }
 .pull-card .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
@@ -1946,10 +1951,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Beside the bell rather than over it, which is what the file draws and
      what stops the count hiding the icon it belongs to. The button grows to
      40px when there is a count and is 24px when there is not. */
-  .appbar-bell { width: auto; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
-  .appbar-badge { flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 2px 0; overflow: visible; box-shadow: 0 0 0 2px var(--appbar-bg), 0 0 0 3px var(--color-neutral-0); display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--badge-alert-bg); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; line-height: 1; pointer-events: none; }
-  /* Two digits do not fit a 16px circle; the file only ever shows one. */
-  .appbar-badge.wide { width: auto; min-width: 16px; padding: 2px 5px; }
+  .appbar-bell { position: relative; width: 24px; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
+  /* White, with the count in the bar's own purple, pinned to the bell's left.
+     This replaces a red circle that needed a ring drawn round it to be seen at
+     all -- #b91c1c on the purple bar measured 1.08:1. White reads at 6.98:1
+     both ways, so the ring is gone and the file's own values stand. The box is
+     its padding rather than a fixed 16px, which is what made the old one's
+     horizontal padding impossible to honour. */
+  .appbar-badge { position: absolute; left: -16px; top: 3.5px; padding: 1px 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: var(--radius-pill); background: var(--color-neutral-0); color: var(--violet); font-size: var(--text-3xs); font-weight: 700; line-height: normal; text-align: center; white-space: nowrap; pointer-events: none; }
   .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
   .notifications-menu header { min-height: 34px; padding: 0 8px; display: flex; align-items: center; gap: 8px; }
   .notifications-menu header strong { flex: 1; color: var(--text); font-size: var(--text-md); }
@@ -1972,8 +1981,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notifications-open .severity-done { color: var(--green); }
   .notifications-empty { margin: 0; padding: 14px 8px 16px; color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: 8px; }
   .notifications-empty svg { color: var(--green); }
-  .notifications-all { width: 100%; min-height: 36px; margin-top: 4px; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; background: transparent; color: var(--violet-text); font-size: var(--text-sm); display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
-  .notifications-all:hover { background: var(--status-muted-bg); }
 
   /* The bar carries this now; the phone keeps the in-page panel. */
   .attention-panel { display: none; }

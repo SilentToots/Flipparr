@@ -553,9 +553,6 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
         </button>
       </div>)}
     </div> : <p className="notifications-empty"><CheckCircle size={19} weight="fill" /> Nothing needs attention.</p>}
-    {items.length ? <button type="button" className="notifications-all" onClick={() => { onClose(); onOpen(); }}>
-      {items.length > shown.length ? `Review all ${items.length}` : "Review all"} <ArrowRight size={15} />
-    </button> : null}
   </div>;
 }
 
@@ -588,7 +585,7 @@ function AppBar({ query, collapsed, settingsActive, notifications, onToggleNav, 
           aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
           aria-expanded={notificationsOpen}
         >
-          {items.length ? <b className={`appbar-badge${items.length > 9 ? " wide" : ""}`}>{items.length > 99 ? "99+" : items.length}</b> : null}
+          {items.length ? <b className="appbar-badge">{items.length > 99 ? "99+" : items.length}</b> : null}
           <NotificationsIcon />
         </button>
         {notificationsOpen ? <NotificationsMenu

@@ -58,23 +58,6 @@ export const spec = [
     "route": "/library"
   },
   {
-    "sel": ".appbar-badge",
-    "node": "7:266",
-    "props": {
-      "backgroundColor": "rgb(185, 28, 28)",
-      "borderRadius": "100px",
-      "paddingBottom": "2px",
-      "paddingTop": "2px"
-    },
-    "route": "/library",
-    "centred": true,
-    "synth": {
-      "parent": ".appbar-bell",
-      "tag": "b",
-      "className": "appbar-badge"
-    }
-  },
-  {
     "sel": ".sidebar",
     "node": "1:122",
     "props": {
@@ -802,6 +785,23 @@ export const spec = [
       "whiteSpace": "nowrap"
     },
     "route": "/discover?q=Batman"
+  },
+  {
+    "sel": ".appbar-badge",
+    "node": "22:242",
+    "props": {
+      "backgroundColor": "rgb(255, 255, 255)",
+      "borderRadius": "100px",
+      "paddingRight": "3px",
+      "paddingLeft": "3px"
+    },
+    "route": "/library",
+    "centred": true,
+    "synth": {
+      "parent": ".appbar-bell",
+      "tag": "b",
+      "className": "appbar-badge"
+    }
   }
 ];
 
@@ -833,17 +833,6 @@ export const frames = [
     "route": "/library",
     "right": 20,
     "within": ".appbar"
-  },
-  {
-    "sel": ".appbar-badge",
-    "node": "7:266",
-    "route": "/library",
-    "synth": true,
-    "w": 16,
-    "h": 16,
-    "x": 0,
-    "within": ".appbar-bell",
-    "y": 0
   },
   {
     "sel": ".sidebar",
@@ -899,6 +888,15 @@ export const frames = [
     "x": 0,
     "within": ".main-content",
     "y": 80
+  },
+  {
+    "sel": ".appbar-badge",
+    "node": "22:242",
+    "route": "/library",
+    "synth": true,
+    "x": -16,
+    "within": ".appbar-bell",
+    "y": 3.5
   }
 ];
 
