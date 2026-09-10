@@ -2787,7 +2787,7 @@ class AutomaticSearchOnCreationTests(unittest.TestCase):
         ) as grab:
             app._automatic_release_grabs(5)
 
-        store.acquisition_jobs_awaiting_release.assert_called_once_with(5)
+        store.acquisition_jobs_awaiting_release.assert_called_once_with(5, backoff=False)
         self.assertEqual([call.args[0] for call in grab.call_args_list], [11, 12, 13])
 
     def test_one_issue_without_a_release_does_not_stop_the_others(self):
@@ -2898,7 +2898,7 @@ class StaleJobsAreNotRedownloadedTests(unittest.TestCase):
         calls = []
         store.reconcile_acquisition_jobs.side_effect = lambda *a: calls.append("reconcile")
         store.acquisition_jobs_awaiting_release.side_effect = (
-            lambda *a: calls.append("select") or [1]
+            lambda *a, **kw: calls.append("select") or [1]
         )
         with patch("app.catalog_store", return_value=store), patch(
             "app._enabled_acquisition_service", return_value={}
@@ -2911,7 +2911,7 @@ class StaleJobsAreNotRedownloadedTests(unittest.TestCase):
         calls = []
         store.reconcile_acquisition_jobs.side_effect = lambda *a: calls.append("reconcile")
         store.acquisition_jobs_awaiting_release.side_effect = (
-            lambda *a: calls.append("select") or []
+            lambda *a, **kw: calls.append("select") or []
         )
         with patch("app.catalog_store", return_value=store):
             app._automatic_release_grabs(7)

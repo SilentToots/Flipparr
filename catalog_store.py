@@ -342,6 +342,15 @@ def _group_logical_volumes(editions: list[dict[str, Any]]) -> list[dict[str, Any
     return logical_volumes
 
 
+def _parse_timestamp(value: Any) -> dt.datetime | None:
+    """An aware datetime from a stored timestamp, or None if it will not read."""
+    try:
+        parsed = dt.datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
 def _display_time(timestamp: str | None) -> tuple[str, str]:
     if not timestamp:
         return "Not scanned", ""
@@ -4492,7 +4501,16 @@ class CatalogStore:
                     continue
                 if desired == "queued" and current in {"searching", "grabbed", "failed"}:
                     continue
-                if current == desired and job["queue_reason"] == reason:
+                # Reconcile's job is to move a job when ownership or the release
+                # date changes. When the status is not changing it has nothing
+                # newer to say than whoever wrote the reason last -- and a job
+                # that has been searched knows something reconcile does not:
+                # that it looked and found nothing. Overwriting that put
+                # "available to search" back on an issue searched five times.
+                # A job never attempted has no such finding, so it stays in
+                # step with reconcile's own reading.
+                searched = int(job["attempt_count"] or 0) > 0
+                if current == desired and (job["queue_reason"] == reason or searched):
                     continue
                 # The file arrived by another route, or the request was
                 # cancelled. Either way the failure that is still on the
@@ -4774,9 +4792,13 @@ class CatalogStore:
         return dict(row)
 
     def acquisition_jobs_awaiting_release(
-        self, request_id: int | None = None
+        self, request_id: int | None = None, *, backoff: bool = False
     ) -> list[int]:
         """Jobs with nothing sent to the download client yet.
+
+        `backoff` holds back issues searched recently, for the scheduled sweep.
+        A person pressing "Search for missing" means now, so that path leaves
+        it off.
 
         A job qualifies when nothing it has downloaded is still standing and
         neither it nor its request has been cancelled or fulfilled.
@@ -4818,7 +4840,9 @@ class CatalogStore:
             parameters.append(int(request_id))
         with self._connect() as connection:
             rows = connection.execute(
-                f"""SELECT acquisition_jobs.id AS id
+                f"""SELECT acquisition_jobs.id AS id,
+                          acquisition_jobs.attempt_count AS attempt_count,
+                          acquisition_jobs.last_attempt_at AS last_attempt_at
                    FROM acquisition_jobs
                    JOIN acquisition_requests
                      ON acquisition_requests.id=acquisition_jobs.request_id
@@ -4826,7 +4850,32 @@ class CatalogStore:
                    ORDER BY acquisition_jobs.id""",
                 parameters,
             ).fetchall()
-        return [int(row["id"]) for row in rows]
+        if not backoff:
+            return [int(row["id"]) for row in rows]
+        now = _parse_timestamp(_utc_now())
+        return [
+            int(row["id"]) for row in rows
+            if self._search_is_due(row["attempt_count"], row["last_attempt_at"], now)
+        ]
+
+    # How long to leave an issue alone between searches that found nothing.
+    # A comic posted three days after it shipped is found within a day of that;
+    # one nobody ever posts costs a request a day rather than one per sweep.
+    SEARCH_BACKOFF_HOURS = (0, 1, 3, 6, 12, 24)
+
+    @classmethod
+    def _search_is_due(cls, attempts: Any, last_attempt_at: Any, now: dt.datetime | None) -> bool:
+        """Whether enough time has passed to look for this issue again."""
+        attempted = int(attempts or 0)
+        if attempted <= 0 or not last_attempt_at:
+            return True
+        last = _parse_timestamp(last_attempt_at)
+        if last is None or now is None:
+            # An unreadable timestamp must not park an issue forever; the
+            # sweep is idempotent and one extra search is the cheaper mistake.
+            return True
+        index = min(attempted, len(cls.SEARCH_BACKOFF_HOURS) - 1)
+        return (now - last).total_seconds() >= cls.SEARCH_BACKOFF_HOURS[index] * 3600
 
     @staticmethod
     def _clear_download_failure(connection: sqlite3.Connection, job_id: int) -> None:

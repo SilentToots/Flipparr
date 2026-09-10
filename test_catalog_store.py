@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app import ParsedFile, _metron_reprint_coverage
 from catalog_core_v2.provider_evidence import native_issue_evidence
-from catalog_store import CatalogStore
+from catalog_store import CatalogStore, _parse_timestamp, _utc_now
 
 
 class CatalogStoreTests(unittest.TestCase):
@@ -1522,6 +1522,86 @@ class CatalogStoreTests(unittest.TestCase):
                 if job["id"] == str(job_id):
                     return job
         return {}
+
+    def test_an_issue_searched_a_moment_ago_is_not_searched_again(self):
+        """The sweep runs every quarter hour; the backoff is what spaces it.
+
+        Without it the scheduled re-search would ask the indexer about the
+        same unfindable comic four times an hour, forever.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            self.assertIn(job_id, store.acquisition_jobs_awaiting_release(backoff=True),
+                          "a job never searched is due immediately")
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            store.update_acquisition_job(job_id, "queued", "No release found yet")
+            self.assertNotIn(job_id, store.acquisition_jobs_awaiting_release(backoff=True))
+            self.assertIn(job_id, store.acquisition_jobs_awaiting_release(),
+                          "pressing the button still means now")
+
+    def test_the_wait_grows_with_each_empty_search(self):
+        now = _parse_timestamp(_utc_now())
+        due = CatalogStore._search_is_due
+        ago = lambda minutes: (now - dt.timedelta(minutes=minutes)).isoformat()
+        self.assertFalse(due(1, ago(10), now))
+        self.assertTrue(due(1, ago(90), now))
+        self.assertFalse(due(3, ago(240), now))
+        self.assertTrue(due(3, ago(420), now))
+        # Past the end of the table the wait stops growing, at a day.
+        self.assertFalse(due(99, ago(720), now))
+        self.assertTrue(due(99, ago(1500), now))
+
+    def test_a_timestamp_that_will_not_read_does_not_park_an_issue(self):
+        """The sweep is idempotent; one extra search is the cheaper mistake."""
+        now = _parse_timestamp(_utc_now())
+        self.assertTrue(CatalogStore._search_is_due(3, "not-a-date", now))
+        self.assertTrue(CatalogStore._search_is_due(3, None, now))
+
+    def test_reconcile_does_not_erase_what_a_search_found_out(self):
+        """"No release found" survived one reconcile pass and no longer.
+
+        The searcher writes what it learned; reconcile rewrote every queued
+        job's reason to its own boilerplate, so an issue searched five times
+        with nothing to show still read "Missing from the library and available
+        to search". There was no way to tell it had ever looked.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            # A real search: the job goes to searching -- which is what counts
+            # the attempt -- and comes back queued with its finding.
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            store.update_acquisition_job(job_id, "queued", "No release found yet")
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._job(root, job_id)["reason"], "No release found yet")
+
+    def test_a_job_that_has_never_looked_still_tracks_reconcile(self):
+        """The guard is about findings, not about queued jobs generally."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "queued", "Something stale")
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(
+                self._job(root, job_id)["reason"],
+                "Missing from the library and available to search",
+            )
+
+    def test_a_searched_job_still_moves_when_its_request_ends(self):
+        """Keeping the reason must not keep the status.
+
+        Reconcile skips the write when nothing is changing; it must still act
+        when something is, or a searched job would be frozen where it stands.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            store.update_acquisition_job(job_id, "queued", "No release found yet")
+            store.stop_series_monitoring(series_id)
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._job(root, job_id)["status"], "cancelled")
 
     def test_an_arrival_is_dated_when_it_landed_not_when_it_was_last_touched(self):
         # The catalog exposed only updated_at, which unfollowing rewrites for

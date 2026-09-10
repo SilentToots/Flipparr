@@ -578,12 +578,17 @@ _CATALOG_STORE_LOCK = threading.Lock()
 _ENRICHMENT_STOP = threading.Event()
 _ENRICHMENT_THREAD: threading.Thread | None = None
 _IMPORT_STOP = threading.Event()
+_RESEARCH_STOP = threading.Event()
+_RESEARCH_THREAD: threading.Thread | None = None
 _IMPORT_THREAD: threading.Thread | None = None
 COMIC_LIBRARY_ROOT = Path(_env("LIBRARY_ROOT", "/comics"))
 SAB_COMPLETE_ROOT = Path(
     _env("SAB_COMPLETE_ROOT", "/downloads/complete/comics")
 )
 IMPORT_POLL_SECONDS = max(5, int(_env("IMPORT_POLL_SECONDS", "15")))
+# The sweep itself is cheap; the backoff decides how often any given issue is
+# actually searched, so this only sets how promptly a due one is picked up.
+RESEARCH_POLL_SECONDS = max(60, int(_env("RESEARCH_POLL_SECONDS", "900")))
 IMPORT_MIN_FREE_BYTES = max(
     0, int(_env("MIN_FREE_SPACE_MB", "100")) * 1024 * 1024
 )
@@ -1836,7 +1841,14 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 break
     candidates.sort(key=lambda item: (-item["matchScore"], -item["sizeBytes"], item["title"]))
     candidates = candidates[:24]
-    detail = f"{len(candidates)} release candidate{'s' if len(candidates) != 1 else ''} found"
+    # Nothing found is a finding. Reporting it as "0 release candidates found"
+    # and then letting reconcile stamp the boilerplate back over it left an
+    # issue reading "available to search" after five searches that came up
+    # empty -- with nothing on the row to say it had ever looked.
+    detail = (
+        f"{len(candidates)} release candidate{'s' if len(candidates) != 1 else ''} found"
+        if candidates else "No release found yet"
+    )
     store.update_acquisition_job(job_id, "queued", detail)
     return {
         "job": context, "query": query, "candidateCount": len(candidates),
@@ -2358,8 +2370,12 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     return {**grabbed, "release": best}
 
 
-def _automatic_release_grabs(request_id: int | None = None) -> None:
+def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = False) -> None:
     """Grab the best release for every job still waiting on one.
+
+    `backoff` is for the scheduled sweep, which must not ask the indexer about
+    the same unfindable issue every quarter of an hour. A person pressing
+    "Search for missing" means now, and passes it off.
 
     With a request id this covers one newly created request. Without one it
     covers the whole backlog, which is the "search for missing" pass Radarr
@@ -2384,7 +2400,7 @@ def _automatic_release_grabs(request_id: int | None = None) -> None:
             None if request_id is None else int(request_id)
         )
         job_ids = store.acquisition_jobs_awaiting_release(
-            None if request_id is None else int(request_id)
+            None if request_id is None else int(request_id), backoff=backoff,
         )
     except Exception as exc:
         log_exception("automatic_grab_lookup_failed", exc, level="warning")
@@ -2675,6 +2691,49 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
         except Exception:
             pass
         stop_event.wait(IMPORT_POLL_SECONDS)
+
+
+def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> None:
+    """Look again, on a schedule, for issues no release was found for.
+
+    Nothing re-searched. An issue whose search came up empty sat at queued
+    until somebody pressed "Search for missing" by hand -- and a #1 that ships
+    on Wednesday is often not posted until the weekend, so the common case was
+    a comic that would have been found by simply asking again.
+
+    The backoff lives in the query, so this is a cheap sweep that mostly
+    returns nothing: an issue searched minutes ago is not due, and one nobody
+    ever posts costs a request a day rather than one per pass.
+    """
+    while not stop_event.is_set():
+        stop_event.wait(RESEARCH_POLL_SECONDS)
+        if stop_event.is_set():
+            break
+        try:
+            for service in ("prowlarr", "sabnzbd"):
+                _enabled_acquisition_service(service)
+        except Exception:
+            # No indexer or no download client: every search would fail in a
+            # loop and say nothing useful.
+            continue
+        try:
+            _automatic_release_grabs(None, backoff=True)
+        except Exception as exc:
+            log_exception("release_research_failed", exc, level="warning")
+
+
+def start_release_research_worker() -> threading.Thread:
+    global _RESEARCH_THREAD
+    if _RESEARCH_THREAD and _RESEARCH_THREAD.is_alive():
+        return _RESEARCH_THREAD
+    _RESEARCH_STOP.clear()
+    _RESEARCH_THREAD = threading.Thread(
+        target=release_research_worker,
+        name="flipparr-release-research",
+        daemon=True,
+    )
+    _RESEARCH_THREAD.start()
+    return _RESEARCH_THREAD
 
 
 def start_acquisition_import_worker() -> threading.Thread:
@@ -8522,6 +8581,7 @@ def main() -> None:
     load_persisted_provider_cache()
     start_metadata_enrichment_worker()
     start_acquisition_import_worker()
+    start_release_research_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     log_event("server_started", host=args.host, port=args.port,
               version=APP_VERSION, build=APP_BUILD)
