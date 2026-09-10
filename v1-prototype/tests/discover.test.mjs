@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   pullState, issueKey, PULL_STATES, shelfState, splitSearchResults, countLabel,
-  providerProgress,
+  providerProgress, libraryMatchState,
 } from "../src/discover.js";
 
 test("a pulled card stops offering to pull", () => {
@@ -88,4 +88,18 @@ test("each provider reports for itself while the others are still out", () => {
   ]);
   assert.equal(progress[1].error, "rate limited");
   assert.deepEqual(providerProgress(null), []);
+});
+
+test("the library half says it is reading, not that nothing matched", () => {
+  // Before the catalog arrives the match list is empty, and that used to
+  // render as "Nothing in your library matches" -- false, on every cold load.
+  assert.equal(libraryMatchState(null, "loading", []), "loading");
+  assert.equal(libraryMatchState(null, "online", []), "loading");
+  assert.equal(libraryMatchState({ series: [] }, "online", []), "empty");
+  assert.equal(libraryMatchState({ series: [{}] }, "online", [{ id: 1 }]), "ready");
+});
+
+test("offline, the demo library is the answer rather than a wait", () => {
+  assert.equal(libraryMatchState(null, "offline", []), "empty");
+  assert.equal(libraryMatchState(null, "offline", [{ id: 1 }]), "ready");
 });

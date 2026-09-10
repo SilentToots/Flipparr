@@ -68,6 +68,19 @@ export function splitSearchResults(results = []) {
   return { fresh, ownedCount: runs.length - fresh.length };
 }
 
+/**
+ * Whether the library half of a search has an answer yet.
+ *
+ * Before the catalog arrives the match list is empty, and an empty list read
+ * as "Nothing in your library matches" -- a false answer, shown on every cold
+ * load of a search link until the library turned up. Offline, the demo
+ * library is the answer, so that is never "loading".
+ */
+export function libraryMatchState(catalog, backendStatus, matches = []) {
+  if (!catalog && backendStatus !== "offline") return "loading";
+  return (matches || []).length ? "ready" : "empty";
+}
+
 /** "2 Library Matches" — the count is bold, the label is not. */
 export const countLabel = (count, singular, plural = `${singular}es`) =>
   `${count} ${count === 1 ? singular : plural}`;

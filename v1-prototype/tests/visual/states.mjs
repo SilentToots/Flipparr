@@ -87,7 +87,7 @@ export const states = [
   },
   { name: "discover", path: "/discover", require: [".discover-panel"] },
   { name: "pull-list", path: "/pull-list", require: [".request-tabs"] },
-  { name: "library-health", path: "/health", require: [".metadata-layout, .empty-state"] },
+  { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings", require: [".settings-layout"] },
   { name: "import", path: "/import", require: [".page-header"] },
 ];

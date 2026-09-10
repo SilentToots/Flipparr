@@ -153,7 +153,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    reaching for one. */
 .pull-card-skeleton .discover-cover, .pull-card-skeleton h3 i, .pull-card-skeleton .pull-card-action i,
 .new-run-skeleton .discover-cover, .new-run-skeleton h3 i, .new-run-skeleton p i,
-.new-run-skeleton .new-run-status i, .new-run-skeleton .new-run-action i {
+.new-run-skeleton .new-run-status i, .new-run-skeleton .new-run-action i,
+.library-match-skeleton .discover-cover, .library-match-skeleton h3 i {
   display: block; border-radius: 5px; background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite;
 }
 .pull-card-skeleton h3 i { height: 12px; width: 80%; margin: 2px auto; }
@@ -176,6 +177,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .provider-progress .provider-failed { color: var(--amber); }
 
 .library-match-row { display: flex; flex-wrap: wrap; gap: 20px; }
+.library-match-skeleton { width: 120px; display: flex; flex-direction: column; }
+.library-match-skeleton .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
+.library-match-skeleton h3 { margin: 8px 0 0; height: 32px; }
+.library-match-skeleton h3 i { height: 12px; width: 70%; margin: 2px auto; }
 .library-match { width: 120px; padding: 0; border: 0; background: transparent; text-align: center; cursor: pointer; display: flex; flex-direction: column; }
 .library-match-art { position: relative; display: block; }
 .library-match .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
@@ -698,6 +703,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 
 .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 900px; }
+/* Library health is a list beside a detail pane; 900px squeezed the detail. */
+.settings-layout-wide { max-width: none; }
 /* minmax(0, 1fr) rather than the implicit auto column: grid items default to
    min-width:auto, so an auto column refuses to shrink below its content's
    min-content width and the whole page scrolls sideways at 320px. */
@@ -1517,7 +1524,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .pull-card-skeleton .discover-cover,
   .pull-card-skeleton i,
   .new-run-skeleton .discover-cover,
-  .new-run-skeleton i {
+  .new-run-skeleton i,
+  .library-match-skeleton .discover-cover,
+  .library-match-skeleton i {
     animation: none;
     background: var(--surface-soft);
   }
@@ -2054,11 +2063,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .appbar .search-field input::placeholder { color: rgb(255 255 255 / .6); font-size: var(--text-md); white-space: nowrap; }
 }
 
-/* Settings lives in the bar on desktop, so the left nav stops repeating it.
-   The phone has no bar, so it keeps the item -- hiding it there would leave no
-   way in at all. */
+/* Settings is in the rail at every size now, under Pull List, and carries
+   Library health. The bar's cog stays as a second way in. */
 @media (min-width: 641px) {
-  .nav-item[data-nav="settings"] { display: none; }
   .appbar-action.active { color: var(--violet-text); background: var(--violet-soft); }
 }
 

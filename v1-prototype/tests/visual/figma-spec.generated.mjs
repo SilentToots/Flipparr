@@ -102,7 +102,7 @@ export const spec = [
     "route": "/library"
   },
   {
-    "sel": "[data-nav=\"metadata\"]",
+    "sel": "[data-nav=\"settings\"]",
     "node": "1:174",
     "props": {
       "paddingRight": "8px",
@@ -114,7 +114,7 @@ export const spec = [
     "route": "/library"
   },
   {
-    "sel": "[data-nav=\"metadata\"] b",
+    "sel": "[data-nav=\"settings\"] b",
     "node": "I1:174;1:391",
     "props": {
       "backgroundColor": "rgb(0, 0, 0)",
@@ -124,13 +124,13 @@ export const spec = [
     },
     "route": "/library",
     "synth": {
-      "parent": "[data-nav=\"metadata\"]",
+      "parent": "[data-nav=\"settings\"]",
       "tag": "b",
       "className": ""
     }
   },
   {
-    "sel": "[data-nav=\"metadata\"] b",
+    "sel": "[data-nav=\"settings\"] b",
     "node": "I1:174;1:392",
     "props": {
       "fontSize": "12px",
@@ -141,7 +141,7 @@ export const spec = [
     "route": "/library",
     "centred": true,
     "synth": {
-      "parent": "[data-nav=\"metadata\"]",
+      "parent": "[data-nav=\"settings\"]",
       "tag": "b",
       "className": ""
     }
@@ -167,7 +167,7 @@ export const spec = [
     "route": "/library"
   },
   {
-    "sel": "[data-nav=\"metadata\"] > span",
+    "sel": "[data-nav=\"settings\"] > span",
     "node": "I1:174;1:384",
     "props": {
       "fontSize": "16px",
@@ -900,7 +900,7 @@ export const icons = [
     "node": "I1:174;1:383",
     "name": "heroicons-outline/clipboard-document-list",
     "size": 20,
-    "where": "[data-nav=\"metadata\"] svg",
+    "where": "[data-nav=\"settings\"] svg",
     "route": "/library"
   },
   {

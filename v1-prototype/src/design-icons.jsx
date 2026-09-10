@@ -50,6 +50,8 @@ export const ComicsIcon = sized(BookOpenIcon, 20);              // heroicons-min
 export const DiscoverIcon = sized(DocumentPlusIcon, 20);        // heroicons-outline/document-plus
 export const PullListIcon = sized(WalletIcon, 20);              // heroicons-outline/wallet
 export const LibraryHealthIcon = sized(ClipboardDocumentListIcon, 20); // heroicons-outline/clipboard-document-list
+// The bar's cog at the rail's 20px, so the four rail icons share one size.
+export const SettingsNavIcon = sized(Cog6ToothIcon, 20);         // heroicons-outline/cog-6-tooth
 
 // Page header and toolbar
 export const SyncIcon = sized(ArrowPathRoundedSquareIcon, 20);  // heroicons-solid/arrow-path-rounded-square
