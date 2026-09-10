@@ -1967,7 +1967,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      waiting. The button's aria-label still carries the count, so nothing is
      lost to a screen reader. Deliberately not what node 22:242 draws; recorded
      in node-map.json as such. */
-  .appbar-badge { position: absolute; top: 0; right: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--color-neutral-0); pointer-events: none; }
+  /* Clear of the icon, not on it: sitting in the bell's top-right corner the
+     white dot ran into the white strokes of the bell itself and the two read
+     as one shape. Lifted out past the corner, with a ring of the bar's own
+     colour so the separation survives the pulse expanding back over it. */
+  .appbar-badge { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--color-neutral-0); box-shadow: 0 0 0 2px var(--appbar-bg); pointer-events: none; }
   /* The pulse is a second circle expanding out of the first and fading, rather
      than the dot itself changing size -- a dot that grows and shrinks reads as
      a glitch at 8px. */

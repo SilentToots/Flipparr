@@ -87,7 +87,9 @@ for (const [route, work] of byRoute) {
   // busy, so "idle" never arrives. The screen is ready when the thing being
   // measured is on it.
   await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForSelector(config.ready, { timeout: 30000 });
+  for (const selector of [config.ready].flat()) {
+    await page.waitForSelector(selector, { timeout: 30000 });
+  }
   await page.waitForTimeout(400);
   failures.push(...await page.evaluate(assertRoute, work));
   await page.close();
