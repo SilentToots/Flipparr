@@ -4779,19 +4779,50 @@ def fetch_release_calendar(start: dt.date, end: dt.date, token: str) -> list[dic
     return entries
 
 
+def _issue_key(number: Any) -> str:
+    """Compare issue numbers without arguing about leading zeros.
+
+    Providers write "1", "01" and "001" for the same comic, and the shelf has
+    to line a release up against the library's own record of it.
+    """
+    cleaned = str(number or "").strip()
+    return cleaned.lstrip("0") or cleaned
+
+
 def _library_relevance() -> dict[str, dict[str, Any]]:
     """What the library already says about a run, keyed for provider titles.
 
     Keyed by title-and-year and by title alone, because a provider's start year
     and the library's do not always agree and a title match is still worth more
     than nothing.
+
+    Per-issue as well as per-run: a shelf card is one comic, and owning Archie
+    #1 says nothing about #2. Run-level facts alone meant the shelf offered a
+    comic already on disk, and pulling it again is a second acquisition request
+    for a file you have.
     """
+    catalog = catalog_store().catalog()
+    queued_by_run: dict[str, set[str]] = {}
+    for request in catalog.get("requests") or []:
+        for job in request.get("jobs") or []:
+            if job.get("status") in {"fulfilled", "cancelled"}:
+                continue
+            queued_by_run.setdefault(str(job.get("seriesId")), set()).add(
+                _issue_key(job.get("issueNumber"))
+            )
     relevance: dict[str, dict[str, Any]] = {}
-    for item in catalog_store().catalog().get("series") or []:
+    for item in catalog.get("series") or []:
+        run_id = str(item.get("id"))
         entry = {
-            "runId": str(item.get("id")),
+            "runId": run_id,
             "following": item.get("monitoringStatus") == "monitored",
             "publisher": item.get("publisher"),
+            "owned": {
+                _issue_key(issue.get("number"))
+                for issue in item.get("issues") or []
+                if issue.get("ownership") not in {None, "", "unowned"}
+            },
+            "queued": queued_by_run.get(run_id, set()),
         }
         title = normalized_title(item.get("title"))
         relevance.setdefault(title, entry)
@@ -4817,8 +4848,13 @@ def _rank_releases(
         title = normalized_title(entry["seriesTitle"])
         known = relevance.get(f"{title}|{entry.get('seriesYear') or ''}") or relevance.get(title)
         item = dict(entry)
+        number = _issue_key(entry["number"])
         item["inLibrary"] = bool(known)
         item["following"] = bool(known and known["following"])
+        # Per issue, not per run: the card offers one comic, and the button has
+        # to say whether that one is already here or already asked for.
+        item["owned"] = bool(known and number in known["owned"])
+        item["queued"] = bool(known and number in known["queued"])
         item["runId"] = known["runId"] if known else None
         item["publisher"] = known["publisher"] if known else None
         first_issue = entry["number"] in {"1", "01", "001"}

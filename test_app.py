@@ -4063,6 +4063,76 @@ class ReleaseCalendarTests(unittest.TestCase):
         ])
         self.assertTrue(order[0]["following"])
 
+    def library(self, issues, requests=(), title="Wolverine", year="2026",
+                monitoring="cataloged"):
+        return types.SimpleNamespace(catalog=lambda: {
+            "series": [{
+                "id": "7", "title": title, "year": year, "publisher": "Marvel",
+                "monitoringStatus": monitoring, "issues": issues,
+            }],
+            "requests": list(requests),
+        })
+
+    def shelf(self, rows, catalog):
+        with patch("app.catalog_store", return_value=catalog):
+            entries = [app._release_entry(row) for row in rows]
+            return app._rank_releases([e for e in entries if e])
+
+    def test_a_comic_you_already_own_is_not_offered_again(self):
+        """Pulling it a second time is a second request for a file on disk.
+
+        The card knows how to say "In library" -- pullState reads issue.owned
+        -- but nothing set it. Only `following` reached the button, so a run in
+        the library but not followed still read "Pull Issue".
+        """
+        catalog = self.library([
+            {"number": "1", "ownership": "direct"},
+            {"number": "2", "ownership": "unowned"},
+        ])
+        order = self.shelf([self.row("Wolverine", "1"), self.row("Wolverine", "2")], catalog)
+        by_number = {item["number"]: item for item in order}
+        self.assertTrue(by_number["1"]["owned"])
+        self.assertFalse(by_number["2"]["owned"],
+                         "owning #1 says nothing about the issue after it")
+
+    def test_a_collected_copy_counts_as_owned(self):
+        catalog = self.library([{"number": "1", "ownership": "collection"}])
+        self.assertTrue(self.shelf([self.row("Wolverine", "1")], catalog)[0]["owned"])
+
+    def test_an_issue_already_asked_for_reads_as_queued(self):
+        catalog = self.library(
+            [{"number": "3", "ownership": "unowned"}],
+            requests=[{"jobs": [{"seriesId": "7", "issueNumber": "3", "status": "searching"}]}],
+        )
+        item = self.shelf([self.row("Wolverine", "3")], catalog)[0]
+        self.assertTrue(item["queued"])
+        self.assertFalse(item["owned"])
+
+    def test_a_finished_job_does_not_keep_an_issue_queued(self):
+        # Retiring a job is how a request ends. If fulfilled still counted, an
+        # issue whose file was later removed could never be asked for again.
+        catalog = self.library(
+            [{"number": "3", "ownership": "unowned"}],
+            requests=[{"jobs": [
+                {"seriesId": "7", "issueNumber": "3", "status": "fulfilled"},
+                {"seriesId": "7", "issueNumber": "4", "status": "cancelled"},
+            ]}],
+        )
+        order = self.shelf([self.row("Wolverine", "3"), self.row("Wolverine", "4")], catalog)
+        self.assertEqual([item["queued"] for item in order], [False, False])
+
+    def test_leading_zeros_are_the_same_issue(self):
+        """Providers write "1", "01" and "001" for the same comic."""
+        catalog = self.library([{"number": "001", "ownership": "direct"}])
+        self.assertTrue(self.shelf([self.row("Wolverine", "1")], catalog)[0]["owned"])
+
+    def test_a_run_you_do_not_have_is_still_offered(self):
+        catalog = self.library([{"number": "1", "ownership": "direct"}], title="Something Else")
+        item = self.shelf([self.row("Wolverine", "1")], catalog)[0]
+        self.assertFalse(item["owned"])
+        self.assertFalse(item["queued"])
+        self.assertFalse(item["inLibrary"])
+
     def test_metron_unconfigured_says_so_rather_than_showing_nothing(self):
         for config in ({}, {"metron": {"enabled": False, "token": "x"}},
                        {"metron": {"enabled": True}}):
