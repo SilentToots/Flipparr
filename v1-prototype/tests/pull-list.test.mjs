@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  classifyRequest, groupPullList, tabCount, lastArrivalAt, RECENT_ARRIVAL_DAYS,
+  classifyRequest, groupPullList, tabCount, lastArrivalAt, isWorking,
+  RECENT_ARRIVAL_DAYS,
 } from "../src/pull-list.js";
 
 const NOW = new Date("2026-09-09T12:00:00Z");
@@ -159,4 +160,25 @@ test("an empty or absent catalog groups into four empty tabs", () => {
     assert.equal(Object.values(buckets).reduce((s, b) => s + tabCount(b), 0), 0);
     assert.ok(Object.values(buckets).every(Array.isArray));
   }
+});
+
+test("a run that has only just been asked for still counts as working", () => {
+  // The page polls while something is working. It used to ask only about
+  // downloadStatus, which does not exist until a release is grabbed -- so a
+  // run added a moment ago sat on "Searching Prowlarr" until something else
+  // happened to refresh it, which is exactly when a reader is watching.
+  assert.equal(isWorking(req({ jobs: [{ id: 1, status: "queued" }] })), true);
+  assert.equal(isWorking(req({ jobs: [{ id: 1, status: "searching" }] })), true);
+  assert.equal(isWorking(req({ jobs: [{ id: 1, status: "grabbed" }] })), true);
+  assert.equal(isWorking(req({ jobs: [{ id: 1, downloadStatus: "downloading" }] })), true);
+  assert.equal(isWorking(req({ jobs: [{ id: 1, downloadStatus: "importing" }] })), true);
+});
+
+test("nothing left to do stops the polling", () => {
+  // A failed job is waiting on a person, not on the system, and a run with
+  // nothing outstanding must not keep the page fetching forever.
+  assert.equal(isWorking(req({ jobs: [{ id: 1, status: "failed" }] })), false);
+  assert.equal(isWorking(req({ jobs: [arrived(1, daysAgo(1))] })), false);
+  assert.equal(isWorking(req({ jobs: [] })), false);
+  assert.equal(isWorking(null), false);
 });

@@ -128,7 +128,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    row's baseline rather than filling the track, which pushed every cover down
    inside its box. Chrome and Firefox stretched it and hid the difference. The
    fallback glyph is still a grid child, and still centred. */
-.discover-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Anchored to the top, which is what the file draws: the image is `top-0` at
+   104.76% of the frame's height, so it overflows the bottom and is clipped
+   there. Centring it instead took a slice off the top of every cover -- the
+   half with the logo and the title on it. */
+.discover-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
 
 .pull-card { flex: none; width: 120px; display: flex; flex-direction: column; }
 .pull-card .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
@@ -1520,6 +1524,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* A shelf scrolls itself when a chevron is pressed; jumping is the point of
      the control, and the smoothing is the part that is motion. */
   .shelf-row { scroll-behavior: auto; }
+  /* The dot stays; only the pulse goes -- it loops for as long as the
+     notification stands, which is unbounded. Scoped through .appbar because
+     the badge's own rules sit inside a later min-width query, and an equally
+     specific selector up here would lose on source order. */
+  .appbar .appbar-badge::after { animation: none; display: none; }
 }
 
 /* Sign-in gate */
@@ -1952,13 +1961,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      what stops the count hiding the icon it belongs to. The button grows to
      40px when there is a count and is 24px when there is not. */
   .appbar-bell { position: relative; width: 24px; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
-  /* White, with the count in the bar's own purple, pinned to the bell's left.
-     This replaces a red circle that needed a ring drawn round it to be seen at
-     all -- #b91c1c on the purple bar measured 1.08:1. White reads at 6.98:1
-     both ways, so the ring is gone and the file's own values stand. The box is
-     its padding rather than a fixed 16px, which is what made the old one's
-     horizontal padding impossible to honour. */
-  .appbar-badge { position: absolute; left: -16px; top: 3.5px; padding: 1px 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: var(--radius-pill); background: var(--color-neutral-0); color: var(--violet); font-size: var(--text-3xs); font-weight: 700; line-height: normal; text-align: center; white-space: nowrap; pointer-events: none; }
+  /* A dot, not a count. The number never read as a circle at this size -- one
+     digit made a squat pill and two made a wide one -- and the exact figure was
+     doing no work in the bar, where the only question is whether anything is
+     waiting. The button's aria-label still carries the count, so nothing is
+     lost to a screen reader. Deliberately not what node 22:242 draws; recorded
+     in node-map.json as such. */
+  .appbar-badge { position: absolute; top: 0; right: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--color-neutral-0); pointer-events: none; }
+  /* The pulse is a second circle expanding out of the first and fading, rather
+     than the dot itself changing size -- a dot that grows and shrinks reads as
+     a glitch at 8px. */
+  .appbar-badge::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit; animation: notification-pulse 2.4s var(--motion-ease-standard) infinite; }
+  @keyframes notification-pulse {
+    0% { transform: scale(1); opacity: .65; }
+    70%, 100% { transform: scale(2.75); opacity: 0; }
+  }
   .notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
   .notifications-menu header { min-height: 34px; padding: 0 8px; display: flex; align-items: center; gap: 8px; }
   .notifications-menu header strong { flex: 1; color: var(--text); font-size: var(--text-md); }

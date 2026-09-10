@@ -6924,8 +6924,16 @@ class CatalogStore:
                 chosen = resolved_cover_by_file.get(preference["file_id"])
             elif preference and preference["source"] in {"provider", "upload"}:
                 chosen = preference["cover_url"]
+            # group["covers"] is gathered from the files the library owns, so a
+            # run that has just been followed and has nothing downloaded yet had
+            # no face at all -- the Pull List drew a placeholder next to "0 of 34
+            # owned". Its issues already carry the provider's art; the run's
+            # natural cover is its first issue's, so fall back to that.
+            issue_covers = [
+                issue["cover"] for issue in group["issues"] if issue.get("cover")
+            ]
             run_covers = list(dict.fromkeys(
-                ([chosen] if chosen else []) + group["covers"]
+                ([chosen] if chosen else []) + group["covers"] + issue_covers
             ))
             status = "warning" if group["hasProblem"] else "unknown" if not catalog_known else "partial" if unowned else "complete"
             ownership = (

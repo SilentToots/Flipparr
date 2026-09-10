@@ -32,6 +32,19 @@ export const isDownloading = (request) => jobs(request).some((job) =>
   (job.downloadStatus && IN_FLIGHT_DOWNLOADS.has(job.downloadStatus))
   || (!job.downloadStatus && IN_FLIGHT_JOBS.has(job.status)));
 
+/**
+ * Work that will change the screen on its own, so the page should keep looking.
+ *
+ * Not the same question as "is it downloading". A run added a moment ago has
+ * jobs that are `queued`, then `searching`, and neither has a `downloadStatus`
+ * at all -- that only appears once a release is grabbed. Watching
+ * downloadStatus alone meant a new run sat on "Searching Prowlarr" until
+ * something else happened to refresh the page, which is exactly the stretch
+ * where a reader is watching it.
+ */
+export const isWorking = (request) =>
+  isDownloading(request) || jobs(request).some((job) => job.status === "queued");
+
 // What the old Wanted tab meant: something to look for now. A followed run
 // whose only remaining issues are unpublished has nothing to search for.
 export const hasSomethingToFind = (request) => Boolean(

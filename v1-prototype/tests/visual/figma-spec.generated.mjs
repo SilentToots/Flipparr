@@ -6,7 +6,7 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 201 nodes
-// accounted for, 71 style assertions, 12 frame assertions, 21 icons.
+// accounted for, 70 style assertions, 11 frame assertions, 21 icons.
 
 export const spec = [
   {
@@ -785,23 +785,6 @@ export const spec = [
       "whiteSpace": "nowrap"
     },
     "route": "/discover?q=Batman"
-  },
-  {
-    "sel": ".appbar-badge",
-    "node": "22:242",
-    "props": {
-      "backgroundColor": "rgb(255, 255, 255)",
-      "borderRadius": "100px",
-      "paddingRight": "3px",
-      "paddingLeft": "3px"
-    },
-    "route": "/library",
-    "centred": true,
-    "synth": {
-      "parent": ".appbar-bell",
-      "tag": "b",
-      "className": "appbar-badge"
-    }
   }
 ];
 
@@ -888,15 +871,6 @@ export const frames = [
     "x": 0,
     "within": ".main-content",
     "y": 80
-  },
-  {
-    "sel": ".appbar-badge",
-    "node": "22:242",
-    "route": "/library",
-    "synth": true,
-    "x": -16,
-    "within": ".appbar-bell",
-    "y": 3.5
   }
 ];
 

@@ -36,7 +36,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { jobsNeedingAttention } from "./nav-counts.js";
-import { arrivalAt, classifyRequest, groupPullList, tabCount, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
+import { arrivalAt, classifyRequest, groupPullList, isWorking, tabCount, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
 import {
   buildNotifications, pruneDismissed, readDismissed, writeDismissed,
   readSeenUntil, writeSeenUntil,
@@ -585,7 +585,7 @@ function AppBar({ query, collapsed, settingsActive, notifications, onToggleNav, 
           aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
           aria-expanded={notificationsOpen}
         >
-          {items.length ? <b className="appbar-badge">{items.length > 99 ? "99+" : items.length}</b> : null}
+          {items.length ? <b className="appbar-badge" aria-hidden="true" /> : null}
           <NotificationsIcon />
         </button>
         {notificationsOpen ? <NotificationsMenu
@@ -3855,9 +3855,10 @@ export function App() {
   }, [pendingSeriesId, catalog]);
   useEffect(() => {
     const acquisitionEntries = [...(catalog?.requests || []), ...(catalog?.replacementRequests || [])];
-    const activeDownload = acquisitionEntries.some((request) =>
-      (request.jobs || []).some((job) => ["queued", "downloading", "completed", "importing", "waiting_for_files"].includes(job.downloadStatus))
-    );
+    // `isWorking` rather than a fourth copy of the downloadStatus list: a job
+    // that is queued or out searching has no downloadStatus yet, so the list
+    // was blind to precisely the stretch a reader watches.
+    const activeDownload = acquisitionEntries.some(isWorking);
     // A scan counts too. Polling was tied to enrichment and downloads only, so
     // a page opened during a scan sat still until something else woke it.
     const scanning = Boolean(catalog?.activeScan);

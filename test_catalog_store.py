@@ -3539,7 +3539,7 @@ class PullOneIssueTests(unittest.TestCase):
         {"number": "3", "provider_id": "103", "publication_date": "2020-03-01", "publication_year": 2020},
     ]
 
-    def _run(self, root, issues=None):
+    def _run(self, root, issues=None, file_cover=None):
         """A library owning issue 1 of a three-issue run, following nothing."""
         path = root / "Example 001.cbz"
         path.write_bytes(b"comic")
@@ -3553,7 +3553,7 @@ class PullOneIssueTests(unittest.TestCase):
                     "title": "Example", "issue": "1", "record_type": "single_issue",
                     "publisher": "Example Press", "source": "Test",
                 },
-                "file_cover": None,
+                "file_cover": {"url": file_cover} if file_cover else None,
             })
         run_id = int(store.catalog()["series"][0]["id"])
         store.apply_issue_list(
@@ -3655,6 +3655,44 @@ class PullOneIssueTests(unittest.TestCase):
                     (run_id,),
                 ).fetchone()[0]
             self.assertEqual(rows, 1, "and must still be checked daily")
+
+    def test_a_run_with_no_files_yet_still_has_a_face(self):
+        """Run covers were gathered from owned files only.
+
+        Follow a run and the Pull List drew a placeholder beside "0 of 34
+        owned" until the first download landed -- while every issue in it
+        already carried the provider's art.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, run_id = self._run(root)
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute(
+                    "UPDATE issues SET cover=? WHERE series_run_id=? AND issue_number='2'",
+                    ("https://example.invalid/two.jpg", run_id),
+                )
+            series = next(
+                item for item in CatalogStore(root / "catalog.db").catalog()["series"]
+                if int(item["id"]) == run_id
+            )
+            self.assertIn("two.jpg", series["cover"] or "")
+
+    def test_an_owned_file_still_outranks_the_provider(self):
+        """The fallback is a fallback: your own scan is the better likeness."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, run_id = self._run(root, file_cover="/api/file-cover?path=own.cbz")
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute(
+                    "UPDATE issues SET cover=? WHERE series_run_id=?",
+                    ("https://example.invalid/provider.jpg", run_id),
+                )
+            series = next(
+                item for item in CatalogStore(root / "catalog.db").catalog()["series"]
+                if int(item["id"]) == run_id
+            )
+            self.assertNotIn("provider.jpg", series["cover"] or "",
+                             "issue 1 is owned, so its own cover leads")
 
     def test_the_catalog_says_a_pulled_issue_is_not_being_followed(self):
         """The screen reads this field, and it derived from open-ness alone.
