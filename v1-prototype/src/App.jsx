@@ -53,6 +53,7 @@ import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
   countLabel, providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
+  runModes, completeRunToPull,
 } from "./discover.js";
 
 const NAV_ITEMS = [
@@ -1271,12 +1272,17 @@ function DiscoverView({
   async function pullRun(item) {
     const key = `run:${item.provider}-${item.providerSeriesId}`;
     mark(key, PULL_STATES.pending);
-    const result = await onDiscoverRequest({ ...item, query });
+    // A run that has ended is pulled once, whole; following it would watch
+    // for issues that will never come.
+    const result = discoveryRunStatus(item) === "completed"
+      ? await onPullIssues({ provider: item.provider, providerSeriesId: item.providerSeriesId,
+          released: true, title: item.title, query })
+      : await onDiscoverRequest({ ...item, query });
     mark(key, result?.ok ? PULL_STATES.queued : PULL_STATES.idle);
   }
-  // From the run drawer. Following or taking every released issue settles the
-  // card behind it; a handful of chosen issues does not, because the card's
-  // own button still means "follow", which is still on offer.
+  // From the run drawer. Following, or taking every released issue or the
+  // whole of an ended run, settles the card behind it; a handful of chosen
+  // issues does not, because the card's own button is still on offer.
   const runKey = (item) => `run:${item?.provider}-${item?.providerSeriesId}`;
   async function followFromDrawer(target) {
     const result = await onDiscoverRequest(target);
@@ -1285,7 +1291,7 @@ function DiscoverView({
   }
   async function pullFromDrawer(target) {
     const result = await onPullIssues(target);
-    if (result?.ok && target.released && drawer?.item) mark(runKey(drawer.item), PULL_STATES.queued);
+    if (result?.ok && (target.released || target.complete) && drawer?.item) mark(runKey(drawer.item), PULL_STATES.queued);
     return result;
   }
 
@@ -1510,7 +1516,15 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
   useEffect(() => { load(); }, [idsKey]);
   const run = preview.data;
   const issues = run?.issues || [];
-  const summary = runPullSummary(mode, issues, [...selected], { following: Boolean(run?.following) });
+  // The preview's own reading outranks the search row's, which is often
+  // silent about whether a run has ended.
+  const status = run?.publicationStatus || discoveryRunStatus(item);
+  const completed = status === "completed";
+  // A mode the run no longer offers -- picked before the preview said it had
+  // ended -- falls back to taking the whole run.
+  const activeMode = completed && (mode === "follow" || mode === "released") ? "complete"
+    : !completed && mode === "complete" ? "released" : mode;
+  const summary = runPullSummary(activeMode, issues, [...selected], { following: Boolean(run?.following) });
   function toggle(number) {
     setMode("choose");
     setDone("");
@@ -1527,13 +1541,15 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
       provider: run.provider, providerSeriesId: run.providerSeriesId,
       title: run.title, query: query || run.title,
     };
-    const result = mode === "follow"
+    const result = activeMode === "follow"
       ? await onFollow(target)
-      : await onPullIssues(mode === "released"
-        ? { ...target, released: true } : { ...target, numbers: [...selected] });
+      : await onPullIssues(activeMode === "released" ? { ...target, released: true }
+        : activeMode === "complete"
+          ? { ...target, complete: true, numbers: completeRunToPull(issues).map((issue) => issue.number) }
+          : { ...target, numbers: [...selected] });
     setBusy(false);
     if (result?.ok) {
-      setDone(mode === "follow" ? "Following this run." : "On your Pull List.");
+      setDone(activeMode === "follow" ? "Following this run." : "On your Pull List.");
       setSelected(new Set());
       load();
     }
@@ -1557,8 +1573,8 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
       </div>
       {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
       <div className="pull-mode" role="radiogroup" aria-label="How much of this run to pull">
-        {[["follow", "Follow run"], ["released", "Pull all released"], ["choose", "Choose issues"]].map(([id, label]) =>
-          <button type="button" role="radio" aria-checked={mode === id} className={mode === id ? "active" : ""}
+        {runModes(completed ? "completed" : status).map(([id, label]) =>
+          <button type="button" role="radio" aria-checked={activeMode === id} className={activeMode === id ? "active" : ""}
             disabled={!run || busy} onClick={() => { setMode(id); setDone(""); }} key={id}>{label}</button>)}
       </div>
       {run?.detailsLimited ? <p className="discover-note">The Grand Comics Database lists this run&rsquo;s issue numbers without titles, dates or covers.</p> : null}

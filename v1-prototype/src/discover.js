@@ -114,6 +114,22 @@ export const selectableIssue = (issue) => Boolean(issue) && !issue.owned && !iss
 export const releasedToPull = (issues = []) =>
   (issues || []).filter((issue) => selectableIssue(issue) && issue.releaseState === "released");
 
+/** A run that has ended, taken whole: every issue not already yours or asked for. */
+export const completeRunToPull = (issues = []) => (issues || []).filter(selectableIssue);
+
+/**
+ * The choices the run drawer offers.
+ *
+ * Following a run that has ended watches for issues that will never come, and
+ * "Pull all released" is the same thing as the whole run once nothing is left
+ * to release. So an ended run offers one way to take all of it, and choosing.
+ */
+export function runModes(publicationStatus) {
+  return publicationStatus === "completed"
+    ? [["complete", "Pull complete run"], ["choose", "Choose issues"]]
+    : [["follow", "Follow run"], ["released", "Pull all released"], ["choose", "Choose issues"]];
+}
+
 /**
  * The run drawer's footer: what the button does, said before it is done.
  *
@@ -137,6 +153,18 @@ export function runPullSummary(mode, issues = [], selected = [], { following = f
         : "New issues as they ship.",
       disabled: false,
     };
+  }
+  if (mode === "complete") {
+    const count = completeRunToPull(list).length;
+    const all = count === list.length;
+    return count
+      ? { label: all ? "Pull complete run" : `Pull ${count} missing issue${count === 1 ? "" : "s"}`,
+          detail: all
+            ? `All ${count} issue${count === 1 ? "" : "s"}, once. The run has ended, so there is nothing to follow.`
+            : "The rest are already yours or on your Pull List. The run has ended, so nothing is followed.",
+          disabled: false }
+      : { label: "Nothing left to pull",
+          detail: "Every issue is already yours or on your Pull List.", disabled: true };
   }
   if (mode === "released") {
     const count = releasedToPull(list).length;

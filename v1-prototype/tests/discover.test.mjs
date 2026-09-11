@@ -4,7 +4,40 @@ import {
   pullState, issueKey, PULL_STATES, shelfState, splitSearchResults, countLabel,
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
+  runModes, completeRunToPull,
 } from "../src/discover.js";
+
+test("a run that has ended is taken whole or chosen, never followed", () => {
+  // Following an ended run watches for issues that will never come.
+  assert.deepEqual(runModes("completed").map(([id]) => id), ["complete", "choose"]);
+  for (const status of ["ongoing", "unknown", undefined]) {
+    assert.deepEqual(runModes(status).map(([id]) => id), ["follow", "released", "choose"], String(status));
+  }
+});
+
+test("pulling a complete run takes every issue you do not have", () => {
+  const ended = [
+    { number: "1", releaseState: "released", owned: true },
+    { number: "2", releaseState: "released", queued: true },
+    { number: "3", releaseState: "released" },
+    { number: "4", releaseState: "released" },
+  ];
+  assert.deepEqual(completeRunToPull(ended).map((i) => i.number), ["3", "4"]);
+  const summary = runPullSummary("complete", ended);
+  assert.equal(summary.label, "Pull 2 missing issues");
+  assert.match(summary.detail, /nothing is followed/);
+  assert.equal(summary.disabled, false);
+});
+
+test("a complete run you have none of says so plainly", () => {
+  const fresh = [{ number: "1" }, { number: "2" }];
+  const summary = runPullSummary("complete", fresh);
+  assert.equal(summary.label, "Pull complete run");
+  assert.match(summary.detail, /All 2 issues, once/);
+  const done = runPullSummary("complete", [{ number: "1", owned: true }]);
+  assert.equal(done.label, "Nothing left to pull");
+  assert.equal(done.disabled, true);
+});
 
 test("a pulled card stops offering to pull", () => {
   // A card that still says Pull Issue after a successful pull invites a second
