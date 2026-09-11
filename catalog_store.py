@@ -18,7 +18,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
+# What a run is. Manga comes in volumes that *are* the unit, where a western
+# comic's volume is a collected edition of issues -- every step from search to
+# import has to know which rule applies.
+SERIES_FORMATS = ("comic", "manga")
 # Bumped when local analysis starts producing something it did not before, so
 # the next scan re-reads files it would otherwise reuse on their fingerprint.
 # 3: comics that are not zip archives yield covers and embedded metadata.
@@ -592,6 +596,7 @@ class CatalogStore:
                     publisher TEXT,
                     acquisition_preference TEXT NOT NULL DEFAULT 'either',
                     monitoring_status TEXT NOT NULL DEFAULT 'cataloged',
+                    format TEXT NOT NULL DEFAULT 'comic',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -1021,6 +1026,10 @@ class CatalogStore:
             if "monitoring_status" not in run_columns:
                 connection.execute(
                     "ALTER TABLE series_runs ADD COLUMN monitoring_status TEXT NOT NULL DEFAULT 'cataloged'"
+                )
+            if "format" not in run_columns:
+                connection.execute(
+                    "ALTER TABLE series_runs ADD COLUMN format TEXT NOT NULL DEFAULT 'comic'"
                 )
             issue_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(issues)")
@@ -2897,6 +2906,7 @@ class CatalogStore:
         return {
             "id": int(series["id"]), "title": series["canonical_title"],
             "year": series["start_year"], "publisher": series["publisher"],
+            "format": series["format"] or "comic",
             # A year-qualified canonical key exists specifically because the
             # normalized title belongs to more than one publication era.  In
             # that case provider matching must not fall back to another era
@@ -3514,8 +3524,15 @@ class CatalogStore:
         title: str,
         year: int | None = None,
         publisher: str | None = None,
+        *,
+        run_format: str | None = None,
     ) -> dict[str, Any]:
-        """Create a catalog-only run when a provider run is not represented by a local file."""
+        """Create a catalog-only run when a provider run is not represented by a local file.
+
+        `run_format` says the run is manga or a comic when the provider row
+        knows; None leaves an existing run as it is.
+        """
+        wanted_format = run_format if run_format in SERIES_FORMATS else None
         title = re.sub(r"\s+", " ", str(title or "")).strip()
         canonical_key = _normalized(title)
         if not canonical_key:
@@ -3547,6 +3564,10 @@ class CatalogStore:
                     conflicting_provider_identity is None
                     and title_match is not None
                     and _years_compatible(title_match["start_year"], year)
+                    # Berserk the manga is not Berserk the comic, whatever the
+                    # year: joining them merges two issue lists into one run.
+                    and (wanted_format is None
+                         or (title_match["format"] or "comic") == wanted_format)
                 ):
                     existing = title_match
             created = existing is None
@@ -3571,9 +3592,10 @@ class CatalogStore:
                     run_key = candidate_key
                 cursor = connection.execute(
                     """INSERT INTO series_runs(
-                           canonical_title, canonical_key, start_year, publisher, created_at, updated_at
-                       ) VALUES (?, ?, ?, ?, ?, ?)""",
-                    (title, run_key, year, publisher, now, now),
+                           canonical_title, canonical_key, start_year, publisher, format,
+                           created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (title, run_key, year, publisher, wanted_format or "comic", now, now),
                 )
                 run_id = int(cursor.lastrowid)
             else:
@@ -3581,9 +3603,10 @@ class CatalogStore:
                 connection.execute(
                     """UPDATE series_runs SET
                            start_year=COALESCE(start_year, ?),
-                           publisher=COALESCE(publisher, ?), updated_at=?
+                           publisher=COALESCE(publisher, ?),
+                           format=COALESCE(?, format), updated_at=?
                        WHERE id=?""",
-                    (year, publisher, now, run_id),
+                    (year, publisher, wanted_format, now, run_id),
                 )
             alias_owner = connection.execute(
                 "SELECT series_run_id FROM series_aliases WHERE normalized_alias=?", (canonical_key,)
@@ -4586,6 +4609,20 @@ class CatalogStore:
             "updatedAt": updated["updated_at"],
         }
 
+    def set_series_format(self, series_run_id: int, run_format: str) -> dict[str, Any]:
+        """Say a run is manga or a comic, for the publishers that print both."""
+        desired = str(run_format or "").strip().casefold()
+        if desired not in SERIES_FORMATS:
+            raise ValueError("A run is either a comic or manga")
+        with self._write_lock, self._connect() as connection:
+            changed = connection.execute(
+                "UPDATE series_runs SET format=?, updated_at=? WHERE id=?",
+                (desired, _utc_now(), series_run_id),
+            ).rowcount
+        if not changed:
+            raise LookupError("Series run was not found")
+        return {"id": str(series_run_id), "format": desired}
+
     def get_acquisition_job_context(self, job_id: int) -> dict[str, Any]:
         """Return the trusted comic identity needed to search for one wanted issue."""
         with self._connect() as connection:
@@ -4600,6 +4637,7 @@ class CatalogStore:
                           series_runs.canonical_title AS series_title,
                           series_runs.start_year AS series_year,
                           series_runs.publisher,
+                          series_runs.format AS series_format,
                           file_replacement_requests.id AS replacement_id,
                           file_replacement_requests.file_id AS replacement_file_id,
                           replacement_files.path AS replacement_file_path
@@ -4633,6 +4671,7 @@ class CatalogStore:
             "publicationDate": row["publication_date"],
             "seriesId": str(row["series_id"]), "seriesTitle": row["series_title"],
             "seriesYear": row["series_year"], "publisher": row["publisher"],
+            "format": row["series_format"] or "comic",
             "acquisitionPreference": row["acquisition_preference"],
             "replacementId": str(row["replacement_id"]) if row["replacement_id"] is not None else None,
             "replacementFileId": (
@@ -6903,6 +6942,7 @@ class CatalogStore:
                 "publisher": run["publisher"] or "Publisher unknown",
                 "acquisitionPreference": run["acquisition_preference"],
                 "monitoringStatus": run["monitoring_status"],
+                "format": run["format"] or "comic",
                 "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
                 "updatedAt": run["updated_at"], "addedAt": None,
@@ -7108,6 +7148,7 @@ class CatalogStore:
                     "publisher": group["publisher"], "run": run,
                     "acquisitionPreference": group["acquisitionPreference"],
                     "monitoringStatus": group["monitoringStatus"],
+                    "format": group.get("format") or "comic",
                     "monitorRefresh": {
                         "status": group["monitorRefresh"]["status"],
                         "lastCheckedAt": group["monitorRefresh"]["last_checked_at"],
@@ -7377,6 +7418,7 @@ class CatalogStore:
                 # issues is open until those comics arrive and then done; it
                 # was never watching the run, so it must not report that it is.
                 "coverage": row["coverage"],
+                "format": scope_item.get("format") or "comic",
                 "monitoringStatus": (
                     "monitored" if row["status"] == "open" and row["coverage"] == "run"
                     else "stopped"

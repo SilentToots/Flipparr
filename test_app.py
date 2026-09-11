@@ -4526,3 +4526,156 @@ class ASearchCannotStallThePassTests(unittest.TestCase):
         self.assertEqual(stop.wait.call_args_list[0].args[0], app.RESEARCH_FIRST_SWEEP_SECONDS)
         self.assertLess(app.RESEARCH_FIRST_SWEEP_SECONDS, app.RESEARCH_POLL_SECONDS)
         sweep.assert_called_once_with(None, backoff=True)
+
+
+class MangaVolumeTests(unittest.TestCase):
+    """English manga comes in volumes, and the volume is the book.
+
+    Every real title below came off the indexers. Before this, each scored
+    5-40 of the 85 needed -- the volume number was erased as a collected
+    edition -- while a 974 MB chapter pack scored 90 and would have won.
+    """
+
+    def context(self, title="Chainsaw Man", number="18", year=2025, publisher="Viz"):
+        return {"seriesTitle": title, "issueNumber": number, "publicationYear": year,
+                "publisher": publisher, "format": "manga", "preferredLanguage": "en"}
+
+    def score(self, release_title, **kw):
+        release = {"title": release_title, "categories": [{"id": 7030}]}
+        return app._release_candidate_score(release, self.context(**kw))[0]
+
+    def test_real_volume_names_score_for_their_own_volume(self):
+        for title, kw in [
+            ("Chainsaw Man v18 (2025) (Digital) (LuCaZ) (cbz)", {}),
+            ("Chainsaw Man v18 [2025] [Digital] [LuCaZ]", {}),
+            ("VIZ.Media.Chainsaw.Man.Vol.18.2025.HYBRiD.MANGA.eBook-PNLS", {}),
+            ("VIZ.Media.-.Spy.X.Family.Vol.03.2020.HYBRID.MANGA.eBook-21A1",
+             dict(title="Spy x Family", number="3", year=2020)),
+            ("Kodansha-Blue.Lock.Vol.03.2021.HYBRID.MANGA",
+             dict(title="Blue Lock", number="3", year=2021, publisher="Kodansha Comics USA")),
+            ("One Piece v098 (2021) (Digital) (1r0n) (cbz)",
+             dict(title="One Piece", number="98", year=2021)),
+            ("One Piece v100 (2022) (Digital) (1r0n) (cbz)",
+             dict(title="One Piece", number="100", year=2022)),
+            ("Frieren - Beyond Journey's End v01 (2021) (Digital) (1r0n) (f2)",
+             dict(title="Frieren: Beyond Journey's End", number="1", year=2021)),
+        ]:
+            with self.subTest(title=title):
+                self.assertGreaterEqual(self.score(title, **kw), 85)
+
+    def test_a_neighbouring_volume_does_not(self):
+        self.assertLess(self.score("Chainsaw Man v17 (2025) (Digital) (LuCaZ) (cbz)"), 85)
+        # The release group 21A1 is not volume 21.
+        self.assertLess(
+            self.score("VIZ.Media.Chainsaw.Man.Vol.18.2025.HYBRID.MANGA.eBook-21A1",
+                       number="21", year=2026), 85)
+
+    def test_packs_specials_and_other_formats_are_refused(self):
+        for title, kw in [
+            ("Chainsaw Man - 13 (cbz)", dict(number="13")),
+            ("Chainsaw Man v01-v11 (2020-2023) (Digital)", dict(number="1")),
+            ("Chainsaw Man v18 c150 (2025)", {}),
+            ("One Piece - Heroines v01 (2025) (Digital) (LuCaZ) (cbz)",
+             dict(title="One Piece", number="1")),
+            ("Hajime Tanaka - Oshi No Ko 01 (epub)", dict(title="Oshi no Ko", number="1")),
+            ("Chainsaw Man v18 (2025) (epub)", {}),
+            ("-Porn Comics- A Chance With Nami (One Piece) v01", dict(title="One Piece", number="1")),
+            ("Chainsaw Man v18 (2025) (German)", {}),
+            ("Chainsaw Man v18 (2025) raw", {}),
+            ("Chainsaw Man v18 (2025) Jpn", {}),
+        ]:
+            with self.subTest(title=title):
+                self.assertLess(self.score(title, **kw), 85)
+
+    def test_a_comic_volume_is_still_not_the_issue(self):
+        """Comics keep the rule manga breaks: Saga v01 collects six issues."""
+        context = {"seriesTitle": "Saga", "issueNumber": "1", "publicationYear": 2012,
+                   "preferredLanguage": "en"}
+        release = {"title": "Saga v01 (2012) (Digital) (cbz)", "categories": [{"id": 7030}]}
+        self.assertLess(app._release_candidate_score(release, context)[0], 85)
+
+    def test_manga_is_searched_by_volume_in_both_categories(self):
+        forms = app._prowlarr_query_forms(
+            {"seriesTitle": "Chainsaw Man", "issueNumber": "18", "format": "manga"})
+        self.assertEqual(forms[:3], ["Chainsaw Man v18", "Chainsaw Man Vol 18", "Chainsaw Man v018"])
+        self.assertEqual(forms[-1], "Chainsaw Man")
+        self.assertEqual(app._prowlarr_query_forms({"seriesTitle": "Saga", "issueNumber": "3"}),
+                         ["Saga 003", "Saga 3", "Saga"], "comics are unchanged")
+        with patch("app.fetch_json_with_headers", return_value=[]) as fetch:
+            app._prowlarr_search({"url": "http://p", "apiKey": "k"}, "Chainsaw Man v18",
+                                 categories=app.MANGA_CATEGORIES)
+        self.assertIn("categories=7030&categories=7020", fetch.call_args.args[0])
+
+    def test_the_english_edition_is_told_from_the_others(self):
+        for publisher in ("Viz", "VIZ Media", "Kodansha Comics USA", "Yen Press", "Seven Seas"):
+            self.assertEqual(app.manga_edition(publisher), "manga", publisher)
+        for publisher in ("Shueisha", "Kodansha", "Egmont Ehapa Verlag", "Norma Editorial",
+                          "Pika Édition", "NXB Trẻ", "Crunchyroll SA"):
+            self.assertEqual(app.manga_edition(publisher), "foreign", publisher)
+        for publisher in ("Marvel", "Image", "DC Comics", None):
+            self.assertIsNone(app.manga_edition(publisher), publisher)
+
+    def test_discover_shows_only_the_english_edition(self):
+        payload = {"status_code": 1, "results": [
+            {"id": 117318, "name": "Chainsaw Man", "start_year": "2019", "publisher": {"name": "Shueisha"}},
+            {"id": 130799, "name": "Chainsaw Man", "start_year": "2020", "publisher": {"name": "Viz"}},
+            {"id": 137488, "name": "Chainsaw Man", "start_year": "2020",
+             "publisher": {"name": "Egmont Ehapa Verlag"}},
+        ]}
+        with patch("app.fetch_provider_json", return_value=payload), \
+             patch("app.preferred_language", return_value="en"):
+            result = app.discover_comic_vine_series("Chainsaw Man", "k", {"keys": set()})
+        self.assertEqual([(row["publisher"], row["format"]) for row in result["results"]],
+                         [("Viz", "manga")])
+
+    def manga_job(self, **kw):
+        return {"seriesTitle": "Chainsaw Man", "seriesYear": 2020, "issueNumber": "18",
+                "publisher": "Viz", "format": "manga", **kw}
+
+    def test_a_downloaded_volume_verifies_as_that_volume(self):
+        clean = {"file_health": {"status": "ok"}, "lookup_identity": {}, "embedded_metadata": {}}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "Chainsaw Man v18 (2025) (Digital) (LuCaZ).cbz"
+            path.write_bytes(b"x")
+            with patch("app.inventory_file", return_value=clean):
+                score, detail = app._download_candidate_score(path, self.manga_job())
+                self.assertTrue(detail["issueMatch"])
+                self.assertGreaterEqual(score, 180)
+                self.assertLess(app._download_candidate_score(path, self.manga_job(issueNumber="17"))[0], 180)
+                self.assertLess(app._download_candidate_score(path, self.manga_job(format="comic"))[0], 180,
+                                "a comic still does not read v18 as issue 18")
+
+    def test_an_epub_volume_is_refused_so_the_next_release_is_tried(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "job"
+            source.mkdir()
+            (source / "Chainsaw Man v18 (2025).epub").write_bytes(b"x")
+            with self.assertRaisesRegex(app.DownloadContentMismatch, "EPUB"):
+                app.select_downloaded_comic(source, self.manga_job(), root)
+
+    def test_a_volume_is_filed_in_the_manga_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            dest = app._issue_destination(Path("x.cbz"), self.manga_job(issueTitle="All Pets"), root)
+            self.assertEqual(dest.relative_to(root).as_posix(),
+                             "Manga/Viz/Chainsaw Man (2020)/Chainsaw Man (2020) v18 - All Pets.cbz")
+            generic = app._issue_destination(Path("x.cbz"), self.manga_job(issueTitle="Volume 18"), root)
+            self.assertEqual(generic.name, "Chainsaw Man (2020) v18.cbz")
+            comic = app._issue_destination(Path("x.cbz"), self.manga_job(format="comic"), root)
+            self.assertEqual(comic.relative_to(root).as_posix(),
+                             "Viz/Chainsaw Man (2020)/Chainsaw Man (2020) #018.cbz")
+
+    def test_a_manga_run_never_asks_metron_by_title(self):
+        """Metron answers "Berserk" with the comic, not the manga."""
+        store = Mock()
+        store.get_series_sync_context.return_value = {"title": "Berserk", "format": "manga"}
+        store.metadata_provider_available.return_value = True
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._series_enrichment_provider_order",
+                   return_value=[("metron", {"token": "t"}), ("comic_vine", {"apiKey": "k"})]), \
+             patch("app._metron_issue_entries") as metron, \
+             patch("app._comic_vine_issue_entries", return_value=("9", "u", [])):
+            result = app.enrich_catalog_series(7)
+        metron.assert_not_called()
+        self.assertEqual(result["provider"], "comic_vine")

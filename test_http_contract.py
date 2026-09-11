@@ -675,6 +675,10 @@ class HttpContractTests(unittest.TestCase):
     # the feature, because the directory it wrote to was inside a read-only
     # image. Nothing asked these routes anything, which is how that lasted.
 
+    def test_an_unknown_run_cannot_be_filed_as_manga(self):
+        response = self.post("/api/v1/series/999999/format", {"format": "manga"})
+        self.assertEqual(response.status, 404)
+
     def test_an_unknown_run_has_no_synopsis(self):
         response = self.get("/api/v1/series/999999/synopsis")
         self.assertEqual(response.status, 404)

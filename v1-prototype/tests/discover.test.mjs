@@ -4,8 +4,14 @@ import {
   pullState, issueKey, PULL_STATES, shelfState, splitSearchResults, countLabel,
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
-  runModes, completeRunToPull,
+  runModes, completeRunToPull, issueLabel,
 } from "../src/discover.js";
+
+test("a manga volume reads as a volume, a comic issue as an issue", () => {
+  assert.equal(issueLabel("18", "manga"), "Vol. 18");
+  assert.equal(issueLabel("18", "comic"), "#18");
+  assert.equal(issueLabel("18"), "#18", "anything not known to be manga is a comic");
+});
 
 test("a run that has ended is taken whole or chosen, never followed", () => {
   // Following an ended run watches for issues that will never come.

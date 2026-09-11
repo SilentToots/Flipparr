@@ -1536,6 +1536,8 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
     conflict = release_language_conflicts(title, context.get("preferredLanguage"))
     if conflict:
         return 0, [f"Labelled as {language_name(conflict)}"]
+    if context.get("format") == "manga":
+        return _manga_release_score(release, context)
     score = 0
     reasons: list[str] = []
     if _release_series_matches(
@@ -1567,6 +1569,7 @@ def _release_format_tags(title: Any) -> list[str]:
     for label, pattern in (
         ("CBZ", r"\bcbz\b"), ("CBR", r"\bcbr\b"), ("Digital", r"\bdigital\b"),
         ("Retail", r"\bretail\b"), ("English", r"\b(?:english|eng)\b"),
+        ("Manga", r"\bmanga\b"), ("Hybrid", r"\bhybrid\b"), ("EPUB", r"\bepub\b"),
     ):
         if re.search(pattern, value, re.I):
             tags.append(label)
@@ -1712,6 +1715,189 @@ def _submit_nzb_to_sabnzbd(
     return response
 
 
+# ---------------------------------------------------------------------------
+# Manga
+# ---------------------------------------------------------------------------
+
+def _publisher_key(value: Any) -> str:
+    """A publisher name compared without case, accents or punctuation."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+# Who publishes manga in English. Comic Vine has no language field and lists
+# each edition of a manga as its own run -- Chainsaw Man is Shueisha (the
+# Japanese original), Viz (English), Egmont (German), Norma (Spanish) -- so
+# the publisher is the only thing that says which one an English reader wants.
+_ENGLISH_MANGA_PUBLISHERS = frozenset(_publisher_key(name) for name in (
+    "Viz", "Viz Media", "Viz Media LLC", "Kodansha Comics", "Kodansha Comics USA",
+    "Kodansha USA", "Kodansha USA Publishing", "Yen Press", "Yen On",
+    "Seven Seas", "Seven Seas Entertainment", "Vertical", "Vertical Comics",
+    "Vertical Inc", "Tokyopop", "Dark Horse Manga", "Square Enix Manga & Books",
+    "Square Enix Manga", "Ghost Ship", "Denpa", "Udon Entertainment",
+    "J-Novel Club", "Airship", "Titan Manga", "Digital Manga Publishing",
+    "Del Rey Manga", "One Peace Books", "Kaiten Books", "Irodori Comics",
+))
+# Japanese originals and other languages' editions of the same books.
+_OTHER_MANGA_EDITIONS = frozenset(_publisher_key(name) for name in (
+    "Shueisha", "Kodansha", "Shogakukan", "Hakusensha", "Kadokawa",
+    "Kadokawa Shoten", "Akita Shoten", "Square Enix", "Futabasha", "Houbunsha",
+    "Ichijinsha", "Mag Garden", "Shonen Gahosha", "Tokuma Shoten", "Alpha Polis",
+    "Pika Édition", "Ki-oon", "Kurokawa", "Glénat", "Kana", "Delcourt", "Kazé",
+    "Crunchyroll SA", "Crunchyroll SAS", "Norma Editorial", "Editorial Ivrea",
+    "Ivrea", "Panini", "Panini Comics", "Panini Verlag", "Panini Manga",
+    "Panini Brasil", "Planet Manga", "Egmont", "Egmont Ehapa Verlag",
+    "Egmont Manga", "Carlsen", "Carlsen Manga", "Tokyopop GmbH", "Haksan",
+    "Daewon C.I.", "Tong Li Publishing Co.", "NXB Trẻ", "Edizioni BD", "J-Pop",
+    "Star Comics", "JBC", "NewPOP", "Nasha idea", "Planeta Cómic",
+    "Planeta DeAgostini", "Milky Way Ediciones", "ECC Ediciones", "Altraverse",
+    "Manga Cult",
+))
+
+
+def manga_edition(publisher: Any) -> str | None:
+    """'manga' for an English manga publisher, 'foreign' for a Japanese
+    original or another language's edition, None for everyone else."""
+    key = _publisher_key(publisher)
+    if not key:
+        return None
+    if key in _ENGLISH_MANGA_PUBLISHERS:
+        return "manga"
+    if key in _OTHER_MANGA_EDITIONS:
+        return "foreign"
+    return None
+
+
+# Manga is posted in Comics and in EBook, where comics are only in Comics.
+MANGA_CATEGORIES = ("7030", "7020")
+# CBZ and CBR only: the library reads comic archives, and an EPUB would sit
+# there looking like the volume without being one it can show.
+MANGA_FILE_TYPES = frozenset({".cbz", ".cbr"})
+# "v18", "v018", "Vol.18", "Vol 18", "Volume 18" -- never a number glued to a
+# letter, which is how the release groups 21A1 and 1r0n read as volumes.
+_MANGA_VOLUME = re.compile(
+    r"(?<![A-Za-z0-9])(?:v|vol(?:ume)?)\.?\s*0*(\d{1,4})(?![\dA-Za-z])", re.I
+)
+_MANGA_RANGE = re.compile(
+    r"(?<![A-Za-z0-9])(?:v|vol(?:ume)?)\.?\s*\d{1,4}\s*[-–~]\s*(?:v|vol(?:ume)?)?\.?\s*\d{1,4}(?![\dA-Za-z])",
+    re.I,
+)
+_MANGA_CHAPTER = re.compile(r"(?<![A-Za-z0-9])(?:c|ch|chapter)\.?\s*\d{1,4}(?![\dA-Za-z])", re.I)
+# Not a comic-archive volume of this book: another format, an adult parody
+# named after the series, or an untranslated scan.
+_MANGA_REFUSED = re.compile(
+    r"\b(?:epub|pdf|mobi|azw3?|hentai|doujin(?:shi)?|porn|xxx|nsfw|erotic|parody|raw)\b", re.I
+)
+# Publishers that lead a scene name: "VIZ.Media.-.Spy.X.Family.Vol.03",
+# "Kodansha-Blue.Lock.Vol.03". Longest first, so "Viz Media" goes whole.
+_MANGA_PUBLISHER_PREFIXES = (
+    "viz media", "viz", "kodansha comics", "kodansha usa", "kodansha", "yen press",
+    "seven seas entertainment", "seven seas", "vertical comics", "vertical",
+    "tokyopop", "dark horse manga", "dark horse", "square enix manga", "square enix",
+    "ghost ship", "j novel club", "denpa", "udon",
+)
+
+
+def _number_label(context: dict[str, Any]) -> str:
+    number = context.get("issueNumber")
+    return f"Vol. {number}" if context.get("format") == "manga" else f"#{number}"
+
+
+def _manga_release_name(title: Any) -> str:
+    """The release name, unwrapped from Usenet's subject line and its dots."""
+    text = str(title or "")
+    quoted = _RELEASE_QUOTED_NAME.search(text)
+    if quoted:
+        text = quoted.group(1)
+    text = re.sub(r"[._]+", " ", text)
+    previous = None
+    while previous != text:
+        previous = text
+        text = _RELEASE_NOISE_PREFIX.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _strip_manga_publisher(value: Any, publisher: Any = None) -> str:
+    """Take a leading publisher off a release or file name."""
+    text = re.sub(r"[-–—:]+", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    prefixes = sorted(
+        {_publisher_key(publisher)} | set(_MANGA_PUBLISHER_PREFIXES) - {""},
+        key=len, reverse=True,
+    )
+    for prefix in prefixes:
+        stripped = re.sub(rf"^{re.escape(prefix)}\b\s*", "", text, flags=re.I)
+        if stripped != text:
+            return stripped.strip()
+    return text
+
+
+def _manga_volumes(name: Any) -> set[int]:
+    return {int(found.group(1)) for found in _MANGA_VOLUME.finditer(str(name or ""))}
+
+
+def _manga_file_volume(name: Any) -> str | None:
+    """The one volume a file name states, or None for none, a range or a pack."""
+    text = _manga_release_name(Path(str(name or "")).stem)
+    if _MANGA_RANGE.search(text) or _MANGA_CHAPTER.search(text):
+        return None
+    volumes = _manga_volumes(text)
+    return str(volumes.pop()) if len(volumes) == 1 else None
+
+
+def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
+    """How well a release is one English volume of this manga.
+
+    The comic rules do not transfer. There a volume is a collected edition, so
+    "Saga v01" must never answer Saga #1; here the volume is the book. What a
+    manga release has to prove instead: one volume, the right one, of this
+    series and not a special beside it, in a format the library can read.
+    """
+    name = _manga_release_name(release.get("title"))
+    if _MANGA_REFUSED.search(name):
+        return 0, ["Not a comic-archive volume of this book"]
+    # "Chainsaw Man - 13 (cbz)", 974 MB, is thirteen chapters' worth of
+    # something, not volume 13; "v01-v11" is eleven volumes in one file.
+    if _MANGA_RANGE.search(name) or _MANGA_CHAPTER.search(name):
+        return 0, ["A pack, not one volume"]
+    volumes = _manga_volumes(name)
+    wanted = str(context.get("issueNumber") or "").strip()
+    marker = _MANGA_VOLUME.search(name)
+    if len(volumes) != 1 or not wanted.isdigit() or not marker:
+        return 0, ["No single volume number"]
+    score = 0
+    reasons: list[str] = []
+    lead = name[: marker.start()]
+    bare_wanted = normalized_title(_without_leading_article(context.get("seriesTitle")))
+    # Equality, as for comics: "One Piece - Heroines v01" is a spin-off, and
+    # a title that merely contains the series is how specials got through.
+    leads = {lead, _strip_manga_publisher(lead, context.get("publisher"))}
+    if bare_wanted and any(
+        normalized_title(_without_leading_article(re.sub(r"[-–—:]+", " ", form))) == bare_wanted
+        for form in leads
+    ):
+        score += 50
+        reasons.append("Series title matches")
+    if volumes == {int(wanted)}:
+        score += 35
+        reasons.append(f"Volume {int(wanted)} matches")
+    year = str(context.get("publicationYear") or context.get("seriesYear") or "").strip()
+    if year and year in name:
+        score += 10
+        reasons.append(f"Publication year {year} matches")
+    category_ids = {
+        str(category.get("id") if isinstance(category, dict) else category)
+        for category in (release.get("categories") or [])
+    }
+    if category_ids & set(MANGA_CATEGORIES):
+        score += 5
+        reasons.append("Listed as a comic or book")
+    return min(score, 100), reasons
+
+
 def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     """The queries to try for one wanted issue, widest match last.
 
@@ -1735,7 +1921,16 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     issue = str(context.get("issueNumber") or "").strip()
     forms = []
     for title in titles:
-        if issue.isdigit():
+        if context.get("format") == "manga" and issue.isdigit():
+            # Manga is posted by volume -- "Chainsaw Man v18", "Vol.18",
+            # "One Piece v098" -- and an indexer matches whole words, so
+            # "Chainsaw Man 018" finds none of them.
+            number = int(issue)
+            forms.append(f"{title} v{number:02d}")
+            forms.append(f"{title} Vol {number:02d}")
+            if number < 100:
+                forms.append(f"{title} v{number:03d}")
+        elif issue.isdigit():
             forms.append(f"{title} {issue.zfill(3)}")
             if issue.lstrip("0") != issue.zfill(3):
                 forms.append(f"{title} {issue.lstrip('0') or '0'}")
@@ -1778,10 +1973,13 @@ def _with_deadline(work: Any, seconds: float, what: str) -> Any:
     return outcome.get("value")
 
 
-def _prowlarr_search(prowlarr: dict[str, Any], query: str) -> list[dict[str, Any]]:
-    endpoint = f"{prowlarr['url']}/api/v1/search?" + urllib.parse.urlencode({
-        "query": query, "type": "search", "categories": "7030", "limit": 100,
-    })
+def _prowlarr_search(
+    prowlarr: dict[str, Any], query: str, categories: tuple[str, ...] = ("7030",)
+) -> list[dict[str, Any]]:
+    endpoint = f"{prowlarr['url']}/api/v1/search?" + urllib.parse.urlencode(
+        [("query", query), ("type", "search"),
+         *(("categories", category) for category in categories), ("limit", 100)]
+    )
     payload = _with_deadline(
         lambda: fetch_json_with_headers(
             endpoint,
@@ -1880,7 +2078,10 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     try:
         for form in forms:
             query = form
-            candidates = candidates_for(_prowlarr_search(prowlarr, form))
+            candidates = candidates_for(
+                _prowlarr_search(prowlarr, form, categories=MANGA_CATEGORIES)
+                if context.get("format") == "manga" else _prowlarr_search(prowlarr, form)
+            )
             if candidates:
                 break
     except Exception as exc:
@@ -2033,9 +2234,20 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
     lookup = result.get("lookup_identity") or {}
     embedded = result.get("embedded_metadata") or {}
     candidate_issue = lookup.get("issue") or embedded.get("number")
+    manga = context.get("format") == "manga"
+    if manga and not candidate_issue:
+        # A manga file names its volume, "Chainsaw Man v18", and the parser
+        # rightly reads no issue there -- for a comic that is a collected
+        # edition. For a manga run the volume is the book it was grabbed for.
+        candidate_issue = (
+            _manga_file_volume(path.name) or embedded.get("volume")
+            or _manga_file_volume(path.parent.name)
+        )
     expected_issue = context.get("issueNumber")
     issue_match = bool(candidate_issue) and _issue_key(candidate_issue) == _issue_key(expected_issue)
     candidate_title = lookup.get("title") or embedded.get("series") or parsed.title
+    if manga:
+        candidate_title = _MANGA_VOLUME.sub(" ", str(candidate_title or ""))
     expected_title = context.get("seriesTitle") or ""
     # A scene name leads with the publisher and marks the number with "No",
     # so the same trimming the release scorer does is needed again here --
@@ -2049,6 +2261,7 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
             (candidate_title, wanted),
             (_without_leading_article(candidate_title), bare_wanted),
             (_release_series_trim(candidate_title, context.get("publisher")), bare_wanted),
+            (_strip_manga_publisher(candidate_title, context.get("publisher")), bare_wanted),
         )
     )
     score = (140 if issue_match else 0) + round(title_ratio * 70)
@@ -2076,6 +2289,14 @@ def select_downloaded_comic(
         raise DownloadContentMismatch(
             "The completed download does not contain a supported comic file"
         )
+    if context.get("format") == "manga":
+        archives = [path for path in candidates if path.suffix.lower() in MANGA_FILE_TYPES]
+        if not archives:
+            # Refused as the wrong release, so the next one is tried.
+            raise DownloadContentMismatch(
+                "The download is an EPUB or PDF, not a CBZ or CBR volume"
+            )
+        candidates = archives
     ranked = sorted(
         (_download_candidate_score(path, context) for path in candidates),
         key=lambda item: (-item[0], str(item[1]["path"])),
@@ -2084,7 +2305,7 @@ def select_downloaded_comic(
     if score < 180 or not selected.get("issueMatch") or selected.get("titleRatio", 0) < 0.55:
         raise DownloadContentMismatch(
             f"No downloaded comic confidently matched {context.get('seriesTitle')} "
-            f"#{context.get('issueNumber')}"
+            f"{_number_label(context)}"
         )
     # Said in the file or in the folder it arrived in. Refusing here is what
     # makes a foreign edition visible: filed silently, it looks like the issue
@@ -2117,7 +2338,9 @@ def _series_destination_directory(context: dict[str, Any], library_root: Path) -
     year = context.get("seriesYear")
     series_folder = title if not year or re.search(rf"\({re.escape(str(year))}\)$", title) else f"{title} ({year})"
     publisher = _safe_path_component(str(context.get("publisher") or ""), "")
-    return root / publisher / series_folder if publisher else root / series_folder
+    # Manga has a folder of its own, so comics and manga browse apart.
+    base = root / "Manga" if context.get("format") == "manga" else root
+    return base / publisher / series_folder if publisher else base / series_folder
 
 
 def _issue_destination(path: Path, context: dict[str, Any], library_root: Path) -> Path:
@@ -2127,8 +2350,13 @@ def _issue_destination(path: Path, context: dict[str, Any], library_root: Path) 
     issue = str(context.get("issueNumber") or "").strip()
     issue_label = issue.zfill(3) if issue.isdigit() else _safe_path_component(issue, "Special")
     issue_title = _safe_path_component(str(context.get("issueTitle") or ""), "")
-    generic_title = normalized_title(issue_title) in {"", normalized_title(f"Issue {issue}")}
-    filename = f"{series_label} #{issue_label}"
+    generic_title = normalized_title(issue_title) in {
+        "", normalized_title(f"Issue {issue}"), normalized_title(f"Volume {issue}"),
+        normalized_title(f"Vol. {issue}"),
+    }
+    # A manga volume is named the way manga is: "Chainsaw Man (2020) v18".
+    manga = context.get("format") == "manga" and issue.isdigit()
+    filename = f"{series_label} v{int(issue):02d}" if manga else f"{series_label} #{issue_label}"
     if issue_title and not generic_title:
         filename += f" - {issue_title}"
     return _series_destination_directory(context, library_root) / f"{filename}{path.suffix.lower()}"
@@ -4669,6 +4897,11 @@ def discover_comic_vine_series(
     if str(payload.get("status_code")) != "1":
         raise ValueError(str(payload.get("error") or "Comic Vine series search failed"))
     library_keys = (library or _discovery_library_view())["keys"]
+    # Comic Vine lists every edition of a manga as its own run. For a reader
+    # in English the Japanese original and the German, Spanish and Korean
+    # editions are the same book they cannot read, so they are left out --
+    # before the cut below, or the English one can be the row that is cut.
+    english_only = preferred_language() == "en"
     results = []
     for row in (payload.get("results") or []):
         title = str(row.get("name") or "").strip()
@@ -4676,12 +4909,16 @@ def discover_comic_vine_series(
             continue
         year = _provider_year(row.get("start_year"))
         publisher = (row.get("publisher") or {}).get("name")
+        edition = manga_edition(publisher)
+        if edition == "foreign" and english_only:
+            continue
         image = row.get("image") or {}
         results.append({
             "provider": "comic_vine", "providerName": "Comic Vine",
             "providerSeriesId": str(row["id"]), "title": title,
             "yearBegan": year, "yearEnded": None, "yearLabel": str(year or "Unknown"),
             "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
+            "format": "manga" if edition == "manga" else "comic",
             "cover": image.get("medium_url") or image.get("small_url"),
             "url": row.get("site_detail_url"),
             "description": row.get("description"),
@@ -4719,7 +4956,7 @@ _DISCOVERY_PROVIDERS = {
 # week. `yearLabel` is derived from it and goes with it.
 _DISCOVERY_FILLABLE = (
     "cover", "publisher", "status", "issueCount",
-    "creators", "creatorCreditsSource", "coverProvider",
+    "creators", "creatorCreditsSource", "coverProvider", "format",
 )
 
 
@@ -5075,6 +5312,7 @@ def _import_gcd_run(query: str, provider_series_id: str) -> tuple[dict[str, Any]
     run = store.ensure_provider_series_run(
         "gcd", provider_series_id, candidate["title"],
         candidate.get("yearBegan"), candidate.get("publisher"),
+        run_format="manga" if manga_edition(candidate.get("publisher")) == "manga" else None,
     )
     evidence = _run_end_evidence(candidate.get("yearEnded"), modelled="yearEnded" in candidate)
     store.apply_issue_list(
@@ -5770,6 +6008,8 @@ def _provider_series_run_details(
             ),
             "endEvidence": _run_end_evidence(detail.get("year_end"), modelled="year_end" in detail),
             "synopsis": _synopsis_text(detail.get("desc")),
+            # Metron catalogs no manga.
+            "format": "comic",
         }
     context["comicVineVolumeId"] = str(provider_series_id)
     provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
@@ -5787,6 +6027,10 @@ def _provider_series_run_details(
         # year at all, so this is silence rather than "still publishing".
         "endEvidence": _run_end_evidence(None, modelled=False),
         "synopsis": _comic_vine_synopsis(detail),
+        "format": (
+            "manga" if manga_edition((detail.get("publisher") or {}).get("name")) == "manga"
+            else "comic"
+        ),
     }
 
 
@@ -5803,7 +6047,8 @@ def _import_provider_run(
     fetched = _provider_series_run_details(provider, provider_series_id, query, credential)
     provider_id = fetched["providerId"]
     run = catalog_store().ensure_provider_series_run(
-        provider, provider_id, fetched["title"], fetched["year"], fetched["publisher"]
+        provider, provider_id, fetched["title"], fetched["year"], fetched["publisher"],
+        run_format=fetched.get("format"),
     )
     evidence = fetched["endEvidence"]
     catalog_store().apply_issue_list(
@@ -6015,6 +6260,7 @@ def _shape_run_preview(provider: str, run: dict[str, Any], errors: list[dict[str
         "providerSeriesId": str(run.get("providerSeriesId") or ""),
         "title": title, "year": year, "publisher": run.get("publisher"),
         "synopsis": run.get("synopsis"),
+        "format": run.get("format") or "comic",
         "publicationStatus": (
             "completed" if state == "ended" else "ongoing" if state == "ongoing" else "unknown"
         ),
@@ -6212,6 +6458,8 @@ def sync_issue_catalog(series_run_id: int) -> dict[str, Any]:
     retry_after_seconds: int | None = None
     context = store.get_series_sync_context(series_run_id)
     for provider_id, values in _series_enrichment_provider_order():
+        if provider_id == "metron" and context.get("format") == "manga":
+            continue
         if not store.metadata_provider_available(provider_id):
             provider_errors.append({
                 "provider": provider_id,
@@ -6425,6 +6673,10 @@ def enrich_catalog_series(series_run_id: int) -> dict[str, Any]:
     available_provider = False
     considered: list[str] = []
     for provider_id, values in _series_enrichment_provider_order():
+        # Metron has no manga, and asked by title it answers with whatever
+        # comic shares the name -- Berserk, Monster, Akira.
+        if provider_id == "metron" and context.get("format") == "manga":
+            continue
         considered.append(provider_id)
         if not store.metadata_provider_available(provider_id):
             continue
@@ -8143,6 +8395,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             _start_automatic_release_grabs(request)
             self.send_json(request, 201)
+            return
+        series_format = re.fullmatch(r"/api/v1/series/(\d+)/format", parsed_url.path)
+        if series_format:
+            try:
+                result = catalog_store().set_series_format(
+                    int(series_format.group(1)), str(payload.get("format") or "")
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
             return
         replacement_status = re.fullmatch(r"/api/v1/replacements/(\d+)/status", parsed_url.path)
         if replacement_status:

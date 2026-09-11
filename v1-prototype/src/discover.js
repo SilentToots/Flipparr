@@ -181,6 +181,10 @@ export function runPullSummary(mode, issues = [], selected = [], { following = f
     : { label: "Choose issues", detail: "Tick the issues you want below.", disabled: true };
 }
 
+/** "Vol. 18" for manga, "#18" for a comic: a manga volume is the book, not an issue of it. */
+export const issueLabel = (number, format) =>
+  `${format === "manga" ? "Vol. " : "#"}${number ?? ""}`;
+
 /** Provider ids for the preview, from a merged search row or a shelf issue. */
 export function runPreviewIds(item) {
   const ids = { ...(item?.providerIds || {}) };

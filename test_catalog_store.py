@@ -3919,3 +3919,31 @@ class PullOneIssueTests(unittest.TestCase):
                 store.delete_pulled_issues(int(pulled["id"]), [self._issue_id(store, run_id, "2")])
             with self.assertRaises(ValueError):
                 store.delete_pulled_issues(999)
+
+
+class MangaRunTests(unittest.TestCase):
+    """A run says whether it is manga, and nothing merges the two."""
+
+    def _format(self, store, run_id):
+        return store.get_series_sync_context(int(run_id))["format"]
+
+    def test_a_manga_run_is_not_joined_to_a_comic_of_the_same_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            comic = store.ensure_provider_series_run("metron", "1", "Berserk", 1995, "Dark Horse Comics")
+            manga = store.ensure_provider_series_run(
+                "comic_vine", "2", "Berserk", 1996, "Dark Horse Manga", run_format="manga")
+            self.assertNotEqual(comic["id"], manga["id"])
+            self.assertEqual(self._format(store, comic["id"]), "comic")
+            self.assertEqual(self._format(store, manga["id"]), "manga")
+
+    def test_a_run_can_be_told_it_is_manga(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            run = store.ensure_provider_series_run("comic_vine", "3", "Berserk", 2003, "Dark Horse Comics")
+            self.assertEqual(store.set_series_format(int(run["id"]), "manga")["format"], "manga")
+            self.assertEqual(self._format(store, run["id"]), "manga")
+            with self.assertRaises(ValueError):
+                store.set_series_format(int(run["id"]), "novel")
+            with self.assertRaises(LookupError):
+                store.set_series_format(9999, "manga")
