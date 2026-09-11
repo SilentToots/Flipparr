@@ -621,6 +621,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-job-panel > header div { display: grid; gap: 4px; }
 .request-job-panel > header strong { font-size: var(--text-md); }
 .request-job-panel > header span, .request-job-panel > footer { color: var(--muted); font-size: var(--text-sm); line-height: 1.45; }
+.request-job-panel > header > button { flex: none; white-space: nowrap; }
 .request-job-panel > header > b { color: var(--violet-text); background: var(--violet-soft); border-radius: 12px; padding: 4px 8px; font-size: var(--text-sm); white-space: nowrap; }
 .request-jobs { display: grid; }
 .request-job-group + .request-job-group { border-top: 1px solid var(--line-strong); }
