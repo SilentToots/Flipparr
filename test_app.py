@@ -444,6 +444,10 @@ class FilenameParserTests(unittest.TestCase):
 
         self.assertEqual(result["query"], "Absolute Batman 004")
         self.assertEqual(result["candidateCount"], 1)
+        # What came back and was set aside, so "nothing found" can say which it was.
+        self.assertEqual(result["resultCount"], 2, "the Usenet results the indexers returned")
+        self.assertEqual([miss["title"] for miss in result["nearMisses"]], ["Absolute Batman 005 (2025)"])
+        self.assertNotIn("Issue #4 matches", result["nearMisses"][0]["reasons"])
         candidate = result["candidates"][0]
         self.assertEqual(candidate["title"], releases[0]["title"])
         self.assertEqual(candidate["formatTags"], ["Digital", "English"])
@@ -3414,6 +3418,46 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
                 patch("app._fallback_after_sab_failure", return_value={"status": "fallback_queued"}) as fallback:
             result = app.reconcile_acquisition_download(download)
         return result, store, queue, fallback
+
+    def test_a_scene_name_marks_its_issue_with_no(self):
+        """Every copy of American Vampire #19 was refused as the wrong comic."""
+        cases = {
+            "American.Vampire.Vol.1.No.19.Nov.2011.SCAN.Comic.eBook-iNTENSiTY.pdf":
+                ("American Vampire", "19", None, 2011),
+            "Image.Comics.If.Destruction.Be.Our.Lot.No.04.2026.HYBRID.COMIC.eBook-21A1.cbz":
+                ("Image Comics If Destruction Be Our Lot", "4", None, 2026),
+            "Fables.Vol.1.No.129.Jul.2013.SCAN.Comic.eBook-iNTENSiTY.cbr":
+                ("Fables", "129", None, 2013),
+            # Not every "No" is an issue marker.
+            "Batman - No Man's Land 001 (1999).cbz": ("Batman No Man's Land", "1", None, 1999),
+            "Saga Vol 2 (2013).cbz": ("Saga", None, 2, 2013),
+        }
+        for name, (title, issue, volume, year) in cases.items():
+            parsed = app.parse_filename(Path("/downloads") / name)
+            self.assertEqual((parsed.title, parsed.issue, parsed.volume, parsed.year),
+                             (title, issue, volume, year), name)
+
+    def test_removing_a_sab_job_deletes_its_files_but_never_the_category(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "comics"
+            job = root / "American.Vampire.Vol.1.No.19"
+            job.mkdir(parents=True)
+            (job / "issue.pdf").write_bytes(b"pdf")
+            neighbour = root / "Saga.001"
+            neighbour.mkdir()
+            with patch("app.SAB_COMPLETE_ROOT", root), \
+                    patch("app._enabled_acquisition_service", return_value={"url": "http://sab", "apiKey": "k"}), \
+                    patch("app.fetch_json_with_headers", return_value={"status": True}) as sab:
+                app._sab_remove_job({"sab_nzo_id": "SAB_1",
+                                     "sab_storage": "/host/data/complete/comics/American.Vampire.Vol.1.No.19"})
+                self.assertIn("archive=0", sab.call_args.args[0], "deleted from SABnzbd, not archived")
+                # A storage path naming the category itself, or nothing, removes nothing.
+                app._sab_remove_job({"sab_nzo_id": "SAB_2", "sab_storage": "/host/data/complete/comics"})
+                app._sab_remove_job({"sab_nzo_id": "SAB_3", "sab_storage": ""})
+            self.assertFalse(job.exists())
+            self.assertTrue(neighbour.exists())
+            self.assertTrue(root.exists())
 
     def test_a_download_sabnzbd_has_forgotten_moves_on_to_the_next_release(self):
         """American Vampire #19 sat on Downloading for good after its files were deleted."""

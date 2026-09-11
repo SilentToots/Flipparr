@@ -613,7 +613,8 @@ YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?![\dA-Za-z])")
 ISBN_13 = re.compile(r"(?<!\d)(97[89](?:[ -]?\d){10})(?!\d)")
 ISBN_10 = re.compile(r"(?<!\d)(\d(?:[ -]?\d){8}[ -]?[\dXx])(?!\d)")
 VOLUME = re.compile(r"\b(?:vol(?:ume)?\.?|book)\s*[-#:]?\s*(\d+)\b", re.I)
-ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*)(\d+(?:\.\w+)?)\b", re.I)
+# "No 19" is how scene releases mark the issue: American.Vampire.Vol.1.No.19.
+ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*|no\s*)(\d+(?:\.\w+)?)\b", re.I)
 # An unmarked issue number is only believable when a year follows it, which is
 # what keeps a number inside a title from being read as an issue. Releases
 # often put a variant tag in between -- "Terminal 007 (Blind Bag) (2026)" --
@@ -2388,6 +2389,11 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         for item in rejected_records if isinstance(item, dict)
     }
     now = time.time()
+    # What came back and was set aside. "No release found yet" could mean the
+    # indexers have nothing, or that everything they had was refused -- and
+    # telling those apart used to take a trip into the container.
+    results_seen = [0]
+    near_misses: list[dict[str, Any]] = []
 
     def candidates_for(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -2399,6 +2405,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             download_url = str(release.get("downloadUrl") or "").strip()
             if protocol != "usenet" or not title or not download_url:
                 continue
+            results_seen[0] += 1
             try:
                 download_path = _prowlarr_download_reference(download_url)
             except ValueError:
@@ -2406,9 +2413,11 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             release_key = _release_candidate_key(release, download_path)
             normalized_title = re.sub(r"\s+", " ", title).strip().casefold()
             if release_key in rejected_keys or normalized_title in rejected_titles:
+                near_misses.append({"title": title, "score": None, "reasons": ["Refused before for this issue"]})
                 continue
             score, reasons = _release_candidate_score(release, context)
             if score < 85:
+                near_misses.append({"title": title, "score": score, "reasons": reasons})
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
             candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
@@ -2471,9 +2480,11 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         if candidates else "No release found yet"
     )
     store.update_acquisition_job(job_id, "queued", detail)
+    near_misses.sort(key=lambda item: -(item["score"] if item["score"] is not None else 101))
     return {
         "job": context, "query": query, "candidateCount": len(candidates),
         "candidates": candidates,
+        "resultCount": results_seen[0], "nearMisses": near_misses[:8],
     }
 
 
@@ -2977,20 +2988,59 @@ def _sab_remove_job(download: dict[str, Any]) -> None:
     is only logged.
     """
     nzo_id = str((download or {}).get("sab_nzo_id") or "").strip()
-    if not nzo_id:
-        return
+    if nzo_id:
+        try:
+            sab = _enabled_acquisition_service("sabnzbd")
+            # archive=0 deletes the entry; without it SABnzbd 4 only archives
+            # it. del_files covers a failed job's files -- SABnzbd leaves a
+            # completed job's alone, which is why they are removed below.
+            endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+                "mode": "history", "name": "delete", "value": nzo_id, "del_files": 1,
+                "archive": 0, "output": "json", "apikey": sab["apiKey"],
+            })
+            fetch_json_with_headers(
+                endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"},
+                timeout=30.0,
+            )
+        except Exception as exc:
+            log_exception("sab_cleanup_failed", exc, level="warning")
+    # Three copies of American Vampire #19 were still in the completed folder
+    # after being "removed": SABnzbd had forgotten the jobs and kept the files.
+    folder = _sab_job_folder(str((download or {}).get("sab_storage") or ""), SAB_COMPLETE_ROOT)
+    if folder is not None:
+        try:
+            if folder.is_dir():
+                shutil.rmtree(folder)
+            else:
+                folder.unlink()
+        except OSError as exc:
+            log_exception("sab_files_cleanup_failed", exc, level="warning")
+
+
+def _sab_job_folder(storage: str, completed_root: Path) -> Path | None:
+    """The folder SABnzbd finished one job into, beneath the comics category.
+
+    Taken only from the storage path SABnzbd reported, never from a folder
+    that merely looks like the release, because whatever this returns is
+    deleted -- and never the category folder itself.
+    """
     try:
-        sab = _enabled_acquisition_service("sabnzbd")
-        endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
-            "mode": "history", "name": "delete", "value": nzo_id, "del_files": 1,
-            "output": "json", "apikey": sab["apiKey"],
-        })
-        fetch_json_with_headers(
-            endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"},
-            timeout=30.0,
-        )
-    except Exception as exc:
-        log_exception("sab_cleanup_failed", exc, level="warning")
+        root = completed_root.resolve()
+    except OSError:
+        return None
+    parts = Path(str(storage or "").rstrip("/\\")).parts
+    indexes = [index for index, part in enumerate(parts) if part.casefold() == root.name.casefold()]
+    if not indexes or len(parts) <= indexes[-1] + 1:
+        return None
+    folder = root / parts[indexes[-1] + 1]
+    try:
+        resolved = folder.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if resolved == root or not folder.exists():
+        return None
+    return folder
 
 
 def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
@@ -3440,7 +3490,7 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         if isinstance(exc, DownloadContentMismatch):
             # The wrong comic is of no use to keep, and it is recorded as
             # unusable, so it will not be grabbed again.
-            _sab_remove_job(download)
+            _sab_remove_job({**download, "sab_storage": storage})
             # The release is the problem, not the machine, so the same thing
             # happens as when SABnzbd proves one unusable: record it and take
             # the next candidate. Without this the issue sat failed until
@@ -3462,7 +3512,7 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         int(download["job_id"]), "fulfilled",
         f"Imported and verified as {Path(imported['destination']).name}",
     )
-    _sab_remove_job(download)
+    _sab_remove_job({**download, "sab_storage": storage})
     replacement = store.replacement_for_job(int(download["job_id"]))
     if replacement and int(replacement.get("unfinished_jobs") or 0) == 0:
         try:
@@ -3767,6 +3817,17 @@ def parse_filename(path: Path) -> ParsedFile:
     issue = issue_match.group(1) if issue_match else None
     if issue and issue.isdigit():
         issue = str(int(issue))
+    # A scene name marks the issue "No 19", after the series' own volume, and
+    # puts only tags after the number: "American Vampire Vol 1 No 19 Nov 2011
+    # SCAN Comic eBook-iNTENSiTY" is issue 19 of the first series, not
+    # collected volume 1. Read the other way, every copy of it was refused as
+    # the wrong comic.
+    scene_title_end = None
+    if issue_match is not None and re.match(r"\s*no\b", issue_match.group(0), re.I):
+        scene_title_end = issue_match.start()
+        if volume_match and volume_match.start() < issue_match.start():
+            volume = None
+            scene_title_end = volume_match.start()
 
     detected_format = None
     for name, pattern in FORMAT_PATTERNS:
@@ -3774,8 +3835,8 @@ def parse_filename(path: Path) -> ParsedFile:
             detected_format = name
             break
 
-    title = raw
-    if issue_match:
+    title = raw if scene_title_end is None else raw[:scene_title_end]
+    if issue_match and scene_title_end is None:
         # Organized issue filenames may include a human-readable story title
         # after the issue token. It describes the issue, not the publication run.
         trailing = raw[issue_match.end():]

@@ -144,6 +144,46 @@ class CatalogStoreTests(unittest.TestCase):
             with store._connect() as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM series_run_creators").fetchone()[0], 0)
 
+    def test_releases_refused_for_a_misread_scene_name_are_taken_back(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                connection.execute("PRAGMA foreign_keys = OFF")
+                for job_id, status in ((761, "queued"), (14, "fulfilled"), (5, "failed")):
+                    connection.execute(
+                        """INSERT INTO acquisition_jobs(id, request_id, issue_id, status, attempt_count,
+                               last_attempt_at, created_at, updated_at)
+                           VALUES (?, 1, ?, ?, 4, ?, ?, ?)""", (job_id, job_id, status, now, now, now),
+                    )
+                failures = [
+                    (761, "av-1", "American.Vampire.Vol.1.No.19.Nov.2011.SCAN.Comic.eBook-iNTENSiTY",
+                     "No downloaded comic confidently matched American Vampire #19"),
+                    (761, "av-2", "American.Vampire.Vol.1.No.19.Nov.2011.SCAN.Comic.eBook-iNTENSiTY-1",
+                     "SABnzbd no longer has this download"),
+                    (14, "idbol", "Image.Comics.If.Destruction.Be.Our.Lot.No.04.2026.HYBRID.COMIC.eBook-21A1",
+                     "No downloaded comic confidently matched If Destruction Be Our Lot #4"),
+                    (5, "saga", "Saga 006 (2012) (Digital) (Zone-Empire)",
+                     "No downloaded comic confidently matched Saga #7"),
+                ]
+                for job_id, key, title, error in failures:
+                    connection.execute(
+                        """INSERT INTO acquisition_release_failures(job_id, release_key, release_title,
+                               error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (job_id, key, title, error, now, now),
+                    )
+                forgotten = CatalogStore._forget_misread_scene_releases(connection)
+                left = {row["release_key"] for row in connection.execute(
+                    "SELECT release_key FROM acquisition_release_failures")}
+                jobs = {row["id"]: (row["status"], row["attempt_count"]) for row in connection.execute(
+                    "SELECT id, status, attempt_count FROM acquisition_jobs")}
+            self.assertEqual(forgotten, 2)
+            # A different failure, and a genuinely wrong comic, are still on record.
+            self.assertEqual(left, {"av-2", "saga"})
+            self.assertEqual(jobs[761], ("queued", 0), "back to search, with its backoff reset")
+            self.assertEqual(jobs[14], ("fulfilled", 4), "an issue already in the library is left alone")
+            self.assertEqual(jobs[5], ("failed", 4))
+
     def test_library_roots_reject_overlapping_folders(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "comics"

@@ -19,7 +19,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
+# A scene release name marking its issue "No.19"; see _forget_misread_scene_releases.
+_SCENE_ISSUE_NAME = re.compile(r"(?:^|[.\s_])No[.\s_]?\d{1,4}(?=[.\s_]|$)", re.I)
 # What a run is. Manga comes in volumes that *are* the unit, where a western
 # comic's volume is a collected edition of issues -- every step from search to
 # import has to know which rule applies.
@@ -1362,6 +1364,48 @@ class CatalogStore:
                                                  WHERE run_end_status='unknown')""",
                     (unknown_now,),
                 )
+            if stored_version is not None and stored_version < 34:
+                self._forget_misread_scene_releases(connection)
+
+    @staticmethod
+    def _forget_misread_scene_releases(connection: sqlite3.Connection) -> int:
+        """Take back refusals made by a filename reading since corrected.
+
+        Scene names mark the issue "No.19" -- American.Vampire.Vol.1.No.19 --
+        and until schema 34 the import check did not read that as an issue.
+        Every such download was refused as the wrong comic and its release
+        barred from the job, so the right issue could never be taken again.
+        Those refusals are forgotten and their jobs put back to search.
+        """
+        misread = [
+            row for row in connection.execute(
+                """SELECT id, job_id, release_title FROM acquisition_release_failures
+                   WHERE error LIKE 'No downloaded comic confidently matched%'"""
+            )
+            if _SCENE_ISSUE_NAME.search(str(row["release_title"] or ""))
+        ]
+        if not misread:
+            return 0
+        now = _utc_now()
+        connection.executemany(
+            "DELETE FROM acquisition_release_failures WHERE id=?", [(row["id"],) for row in misread]
+        )
+        detail = "Ready to search again: its releases were refused by a filename reading since fixed"
+        for job_id in sorted({int(row["job_id"]) for row in misread}):
+            changed = connection.execute(
+                """UPDATE acquisition_jobs
+                   SET status='queued', queue_reason=?, error=NULL, attempt_count=0,
+                       last_attempt_at=NULL, updated_at=?
+                   WHERE id=? AND status IN ('queued', 'waiting', 'failed')""",
+                (detail, now, job_id),
+            ).rowcount
+            if changed:
+                connection.execute(
+                    """INSERT INTO acquisition_job_events(job_id, status, detail, created_at)
+                       VALUES (?, 'queued', ?, ?)""",
+                    (job_id, detail, now),
+                )
+        return len(misread)
 
     def _reconcile_all_identities(self) -> None:
         with self._connect() as connection:
