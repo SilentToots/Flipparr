@@ -189,7 +189,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .new-run-card .discover-open { border-radius: 0; }
 .discover-open:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 2px; }
 
-.discover-drawer { display: flex; flex-direction: column; padding-bottom: 0; }
+/* The footer sticks to the scroller's padding edge, so any bottom padding is a
+   strip under it that the issue list scrolls through. `.series-drawer` sets
+   that padding later in the file (and again for phones), hence the doubled
+   class: a plain `.discover-drawer` lost on source order. */
+.series-drawer.discover-drawer { display: flex; flex-direction: column; padding-bottom: 0; }
 .discover-drawer .drawer-cover .discover-cover { width: 100%; height: 100%; }
 .discover-drawer-section { margin-top: 24px; }
 .discover-drawer-section h3 { margin: 0 0 12px; }
