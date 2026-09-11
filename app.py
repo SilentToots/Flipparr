@@ -2754,7 +2754,29 @@ def select_downloaded_comic(
         raise
     if converted_dir is not None:
         selected = {**selected, "converted": True, "convertedDir": str(converted_dir)}
+    elif context.get("format") != "manga" and Path(selected["path"]).suffix.lower() == ".pdf":
+        selected = _comic_pdf_as_cbz(selected, context)
     return selected
+
+
+def _comic_pdf_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """A comic that arrived as a PDF, as the CBZ the library keeps.
+
+    Only the release already chosen is converted, not every PDF in the
+    download. Unlike manga, a PDF that is not one image per page is filed as
+    it came rather than refused: it is still the issue that was asked for.
+    """
+    source = Path(selected["path"])
+    converted_dir = Path(tempfile.mkdtemp(prefix="flipparr-comic-"))
+    target = converted_dir / f"{_safe_path_component(source.stem, 'issue')}.cbz"
+    try:
+        convert_ebook_to_cbz(source, target)
+        _score, rescored = _download_candidate_score(target, context)
+    except EbookNotConvertible as exc:
+        shutil.rmtree(converted_dir, ignore_errors=True)
+        log_event("comic_pdf_kept", file=source.name, reason=str(exc))
+        return selected
+    return {**selected, **rescored, "converted": True, "convertedDir": str(converted_dir)}
 
 
 def _choose_downloaded_comic(

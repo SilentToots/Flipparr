@@ -5174,6 +5174,35 @@ class MangaEbookConversionTests(unittest.TestCase):
                 app._discard_converted(selected)
             self.assertFalse(Path(selected["path"]).exists(), "the converted copy is cleaned up")
 
+    def test_a_comic_that_arrives_as_a_pdf_is_filed_as_a_cbz(self):
+        """American Vampire #19 exists only as iNTENSiTY's scanned PDF."""
+        name = "American.Vampire.Vol.1.No.19.Nov.2011.SCAN.Comic.eBook-iNTENSiTY"
+        job = {"seriesTitle": "American Vampire", "seriesYear": 2010, "issueNumber": "19",
+               "publisher": "DC Comics", "format": "comic", "preferredLanguage": "en"}
+
+        def inventory(parsed):
+            return {"file_health": {"status": "ok"}, "embedded_metadata": {},
+                    "lookup_identity": {"title": parsed.title, "issue": parsed.issue}}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / name
+            source.mkdir()
+            (source / f"{name}.pdf").write_bytes(_image_pdf(self.pages))
+            with patch("app.inventory_file", side_effect=inventory):
+                selected = app.select_downloaded_comic(source, job, root)
+            try:
+                self.assertEqual(Path(selected["path"]).suffix, ".cbz")
+                self.assertEqual(self.cbz_pages(selected["path"]), self.pages)
+                self.assertTrue(selected.get("issueMatch"))
+            finally:
+                app._discard_converted(selected)
+            # One that is not a page per image is still the issue: kept as it came.
+            (source / f"{name}.pdf").write_bytes(_image_pdf(self.pages, two_images=True))
+            with patch("app.inventory_file", side_effect=inventory):
+                kept = app.select_downloaded_comic(source, job, root)
+            self.assertEqual(Path(kept["path"]).suffix, ".pdf")
+            self.assertFalse(kept.get("converted"))
+
 
 class RemoveFromLibraryTests(unittest.TestCase):
     """Removing a run deletes its files -- only ever inside the library."""

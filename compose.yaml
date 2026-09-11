@@ -45,7 +45,11 @@ services:
     volumes:
       - "${CONFIG_PATH:-./docker-data}:/config"
       - "${COMICS_PATH:?Set COMICS_PATH to the NAS comics directory}:/comics:rw"
-      - "${SAB_COMPLETE_PATH:?Set SAB_COMPLETE_PATH to SABnzbd's completed comics directory}:/downloads/complete/comics:ro"
+      # Writable so a download is removed once its comic is verified in the
+      # library: SABnzbd drops a finished job from its history but keeps its
+      # files. Flipparr deletes only the one folder SABnzbd reported for that
+      # job, never the category folder itself.
+      - "${SAB_COMPLETE_PATH:?Set SAB_COMPLETE_PATH to SABnzbd's completed comics directory}:/downloads/complete/comics:rw"
     networks:
       - proxy
     read_only: true
