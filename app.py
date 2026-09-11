@@ -2099,6 +2099,39 @@ def _whole_book(images: list[bytes], page_count: int) -> list[bytes]:
     return images
 
 
+# How colourful a page has to be to read as a cover, and how grey to read as
+# an interior page, in mean HSV saturation (0-255).
+_COVER_SATURATION = 40
+_INTERIOR_SATURATION = 12
+
+
+def _page_saturation(image: bytes) -> float:
+    from PIL import Image, ImageStat
+
+    with Image.open(io.BytesIO(image)) as picture:
+        picture.draft("RGB", (80, 120))
+        small = picture.convert("RGB").resize((48, 72))
+        return ImageStat.Stat(small.convert("HSV")).mean[1]
+
+
+def _pages_run_backwards(pages: list[bytes]) -> bool:
+    """Whether a publisher PDF stores a right-to-left book back to front.
+
+    Viz's Chainsaw Man PDF opens on the last page of the story and ends on the
+    colour front cover, and declares nothing -- no reading direction, no page
+    labels. So the pages say it: a manga's interior is black and white and its
+    cover is not. Only a colour last page after a grey first one reverses the
+    book; anything less certain keeps the order it came in.
+    """
+    if len(pages) < 4:
+        return False
+    try:
+        first, last = _page_saturation(pages[0]), _page_saturation(pages[-1])
+    except Exception:  # noqa: BLE001 -- an unreadable page is no evidence either way
+        return False
+    return last >= _COVER_SATURATION and first <= _INTERIOR_SATURATION
+
+
 def convert_ebook_to_cbz(source: Path, destination: Path) -> int:
     """Copy an image-per-page PDF or EPUB into a CBZ, page for page. Returns pages."""
     import zipfile
@@ -2110,6 +2143,10 @@ def convert_ebook_to_cbz(source: Path, destination: Path) -> int:
         raise
     except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
         raise EbookNotConvertible(f"The {kind.lstrip('.').upper()} could not be read") from exc
+    # An EPUB's spine is its reading order by definition; a PDF's page order
+    # is only the order the pages were saved in.
+    if kind == ".pdf" and _pages_run_backwards(pages):
+        pages = list(reversed(pages))
     width = max(3, len(str(len(pages))))
     # Stored, not deflated: JPEG does not compress, and a reader opens it faster.
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_STORED) as archive:

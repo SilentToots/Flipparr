@@ -4808,6 +4808,35 @@ class MangaEbookConversionTests(unittest.TestCase):
             with self.assertRaises(app.EbookNotConvertible, msg="a page drawing two images is still refused"):
                 app.convert_ebook_to_cbz(layered, Path(folder) / "out.cbz")
 
+    def page(self, colour):
+        """A real JPEG page: grey for an interior, orange for a cover."""
+        from PIL import Image
+        buffer = io.BytesIO()
+        Image.new("RGB", (30, 45), colour).save(buffer, "JPEG")
+        return buffer.getvalue()
+
+    def test_a_pdf_saved_back_to_front_is_put_the_right_way_round(self):
+        """Viz's PDF opens on the story's last page and ends on the colour cover."""
+        grey, cover = self.page((200, 200, 200)), self.page((230, 90, 30))
+        backwards = [grey, grey, grey, grey, cover]
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder) / "v01.pdf", Path(folder) / "v01.cbz"
+            source.write_bytes(_image_pdf(backwards))
+            app.convert_ebook_to_cbz(source, target)
+            self.assertEqual(self.cbz_pages(target), list(reversed(backwards)), "the cover comes first")
+
+    def test_a_pdf_already_in_order_is_left_alone(self):
+        grey, cover = self.page((200, 200, 200)), self.page((230, 90, 30))
+        for pages in ([cover, grey, grey, grey, grey],   # cover first: already right
+                      [grey, grey, grey, grey, grey],    # no colour anywhere: no evidence
+                      [cover, grey, grey, grey, cover]):  # colour both ends: not certain
+            with self.subTest(first=pages[0] == cover, last=pages[-1] == cover):
+                with tempfile.TemporaryDirectory() as folder:
+                    source, target = Path(folder) / "v01.pdf", Path(folder) / "v01.cbz"
+                    source.write_bytes(_image_pdf(pages))
+                    app.convert_ebook_to_cbz(source, target)
+                    self.assertEqual(self.cbz_pages(target), pages)
+
     def test_an_image_epub_becomes_a_cbz_in_reading_order(self):
         with tempfile.TemporaryDirectory() as folder:
             source, target = Path(folder) / "v01.epub", Path(folder) / "v01.cbz"
