@@ -453,6 +453,10 @@ def is_local_address(address: str) -> bool:
 def collected_editions_enabled() -> bool:
     return bool(load_app_settings().get("collectedEditionsEnabled"))
 _RELEASE_CANDIDATE_LOCK = threading.Lock()
+# Jobs some pass is working on right now. The sweep and a new request's own
+# pass can overlap, and each works from the list it read when it started.
+_JOBS_IN_FLIGHT: set[int] = set()
+_JOBS_IN_FLIGHT_LOCK = threading.Lock()
 _RELEASE_CANDIDATES: dict[str, dict[str, Any]] = {}
 _RELEASE_CANDIDATE_TTL_SECONDS = 30 * 60
 MAX_AUTOMATIC_RELEASE_FAILURES = 3
@@ -1742,15 +1746,50 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     return [form for form in forms if not (form in seen or seen.add(form))]
 
 
+# A search the indexer never finishes answering must not hold up the issues
+# after it. The socket timeout bounds each read, not the whole exchange: the
+# first automatic pass over Ultimate Spider-Man sat on #050 for seven minutes,
+# Prowlarr having logged the request at once, and every issue after it waited.
+PROWLARR_SEARCH_DEADLINE_SECONDS = 90.0
+
+
+def _with_deadline(work: Any, seconds: float, what: str) -> Any:
+    """Run `work`, giving up on it after `seconds` of wall-clock time.
+
+    A thread rather than a socket option, because the stall is not always in a
+    read the socket can time out. An abandoned call is left to finish or fail
+    on its own, and whatever it returns is discarded.
+    """
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = work()
+        except BaseException as exc:  # noqa: BLE001 -- re-raised by the caller
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, name="flipparr-deadline", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise TimeoutError(f"{what} did not answer within {int(seconds)} seconds")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
 def _prowlarr_search(prowlarr: dict[str, Any], query: str) -> list[dict[str, Any]]:
     endpoint = f"{prowlarr['url']}/api/v1/search?" + urllib.parse.urlencode({
         "query": query, "type": "search", "categories": "7030", "limit": 100,
     })
-    payload = fetch_json_with_headers(
-        endpoint,
-        {"Accept": "application/json", "X-Api-Key": str(prowlarr["apiKey"]),
-         "User-Agent": f"Flipparr/{APP_VERSION}"},
-        timeout=45.0,
+    payload = _with_deadline(
+        lambda: fetch_json_with_headers(
+            endpoint,
+            {"Accept": "application/json", "X-Api-Key": str(prowlarr["apiKey"]),
+             "User-Agent": f"Flipparr/{APP_VERSION}"},
+            timeout=45.0,
+        ),
+        PROWLARR_SEARCH_DEADLINE_SECONDS, "Prowlarr",
     )
     return payload if isinstance(payload, list) else []
 
@@ -1807,13 +1846,14 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
             candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
-            _RELEASE_CANDIDATES[candidate_id] = {
-                "jobId": int(job_id),
-                "downloadPath": download_path,
-                "title": title,
-                "releaseKey": release_key,
-                "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
-            }
+            with _RELEASE_CANDIDATE_LOCK:
+                _RELEASE_CANDIDATES[candidate_id] = {
+                    "jobId": int(job_id),
+                    "downloadPath": download_path,
+                    "title": title,
+                    "releaseKey": release_key,
+                    "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
+                }
             candidates.append({
                 "id": candidate_id, "title": title,
                 "indexer": str(release.get("indexer") or "Unknown indexer"),
@@ -1825,20 +1865,32 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             })
         return candidates
 
+    # The lock guards the candidate table, not the indexer. Held across the
+    # searches, one slow answer stalled every other search in the process --
+    # "Find release" included -- for as long as it took.
     with _RELEASE_CANDIDATE_LOCK:
         for candidate_id, cached in list(_RELEASE_CANDIDATES.items()):
             if float(cached.get("expiresAt") or 0) <= now:
                 _RELEASE_CANDIDATES.pop(candidate_id, None)
-        # A form that returns results but none of this issue is not an answer.
-        # Stopping at the first non-empty search left one issue looking for a
-        # release among forty-seven of its siblings, when the next form down
-        # had the one it wanted.
-        candidates = []
+    # A form that returns results but none of this issue is not an answer.
+    # Stopping at the first non-empty search left one issue looking for a
+    # release among forty-seven of its siblings, when the next form down
+    # had the one it wanted.
+    candidates = []
+    try:
         for form in forms:
             query = form
             candidates = candidates_for(_prowlarr_search(prowlarr, form))
             if candidates:
                 break
+    except Exception as exc:
+        # A job left at "searching" is invisible to every later pass, which
+        # only picks up queued work, so a search that failed once was never
+        # tried again. Put it back where the sweep will find it.
+        store.update_acquisition_job(
+            job_id, "queued", f"Search did not finish ({exc}); it will be tried again"
+        )
+        raise
     candidates.sort(key=lambda item: (-item["matchScore"], -item["sizeBytes"], item["title"]))
     candidates = candidates[:24]
     # Nothing found is a finding. Reporting it as "0 release candidates found"
@@ -2409,11 +2461,24 @@ def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = F
         return
     grabbed = 0
     for job_id in job_ids:
+        # Another pass may be on this issue, or have finished it since this one
+        # read its list. Searching it again sends a second copy to SABnzbd.
+        with _JOBS_IN_FLIGHT_LOCK:
+            if job_id in _JOBS_IN_FLIGHT:
+                continue
+            _JOBS_IN_FLIGHT.add(job_id)
         try:
+            if job_id not in store.acquisition_jobs_awaiting_release(
+                None if request_id is None else int(request_id)
+            ):
+                continue
             if _auto_grab_release(job_id):
                 grabbed += 1
         except Exception as exc:
             log_exception("automatic_grab_failed", exc, level="warning")
+        finally:
+            with _JOBS_IN_FLIGHT_LOCK:
+                _JOBS_IN_FLIGHT.discard(job_id)
     log_event(
         "automatic_release_grabs",
         request_id=None if request_id is None else int(request_id),
@@ -2693,6 +2758,11 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
         stop_event.wait(IMPORT_POLL_SECONDS)
 
 
+# The first sweep comes soon after start. A restart in the middle of a pass --
+# a deploy, a crash -- otherwise left the rest of it for a quarter of an hour.
+RESEARCH_FIRST_SWEEP_SECONDS = 60
+
+
 def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> None:
     """Look again, on a schedule, for issues no release was found for.
 
@@ -2705,8 +2775,10 @@ def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> Non
     returns nothing: an issue searched minutes ago is not due, and one nobody
     ever posts costs a request a day rather than one per pass.
     """
+    delay = RESEARCH_FIRST_SWEEP_SECONDS
     while not stop_event.is_set():
-        stop_event.wait(RESEARCH_POLL_SECONDS)
+        stop_event.wait(delay)
+        delay = RESEARCH_POLL_SECONDS
         if stop_event.is_set():
             break
         try:
@@ -8895,6 +8967,12 @@ def main() -> None:
     args = parser.parse_args()
     load_persisted_remote_cache()
     load_persisted_provider_cache()
+    try:
+        recovered = catalog_store().recover_interrupted_searches()
+        if recovered:
+            log_event("interrupted_searches_recovered", jobs=recovered)
+    except Exception as exc:
+        log_exception("interrupted_search_recovery_failed", exc, level="warning")
     start_metadata_enrichment_worker()
     start_acquisition_import_worker()
     start_release_research_worker()

@@ -1540,6 +1540,23 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertIn(job_id, store.acquisition_jobs_awaiting_release(),
                           "pressing the button still means now")
 
+    def test_a_search_cut_short_by_a_restart_is_due_again_at_once(self):
+        """A job left at "searching" is picked up by no pass at all.
+
+        A deploy in the middle of a run's first pass left one issue there,
+        and it stayed until someone searched it by hand.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            self.assertNotIn(job_id, store.acquisition_jobs_awaiting_release())
+            self.assertEqual(store.recover_interrupted_searches(), 1)
+            self.assertEqual(self._job(root, job_id)["status"], "queued")
+            self.assertIn(job_id, store.acquisition_jobs_awaiting_release(backoff=True),
+                          "the attempt that never finished does not count")
+            self.assertEqual(store.recover_interrupted_searches(), 0)
+
     def test_the_wait_grows_with_each_empty_search(self):
         now = _parse_timestamp(_utc_now())
         due = CatalogStore._search_is_due

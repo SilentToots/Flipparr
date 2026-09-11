@@ -4807,6 +4807,40 @@ class CatalogStore:
             ).fetchone()
         return dict(row)
 
+    def recover_interrupted_searches(self) -> int:
+        """Put back every search a restart cut short.
+
+        A job is marked searching before the indexer is asked, and moved on
+        when it answers. A process that stops in between leaves it at
+        searching, which no pass picks up -- so the issue sat until someone
+        searched it by hand. A fresh process has no search in flight, so any it
+        finds are orphans: they go back to the queue, due at once, without the
+        attempt that never finished counting against them.
+        """
+        now = _utc_now()
+        detail = "Search was interrupted by a restart; it will run again shortly"
+        with self._write_lock, self._connect() as connection:
+            ids = [
+                int(row["id"]) for row in connection.execute(
+                    "SELECT id FROM acquisition_jobs WHERE status='searching'"
+                )
+            ]
+            for job_id in ids:
+                connection.execute(
+                    """UPDATE acquisition_jobs
+                       SET status='queued', queue_reason=?,
+                           attempt_count=MAX(attempt_count-1, 0),
+                           last_attempt_at=NULL, updated_at=?
+                       WHERE id=?""",
+                    (detail, now, job_id),
+                )
+                connection.execute(
+                    """INSERT INTO acquisition_job_events(job_id, status, detail, created_at)
+                       VALUES (?, 'queued', ?, ?)""",
+                    (job_id, detail, now),
+                )
+        return len(ids)
+
     def acquisition_jobs_awaiting_release(
         self, request_id: int | None = None, *, backoff: bool = False
     ) -> list[int]:

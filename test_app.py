@@ -2787,7 +2787,8 @@ class AutomaticSearchOnCreationTests(unittest.TestCase):
         ) as grab:
             app._automatic_release_grabs(5)
 
-        store.acquisition_jobs_awaiting_release.assert_called_once_with(5, backoff=False)
+        first = store.acquisition_jobs_awaiting_release.call_args_list[0]
+        self.assertEqual((first.args, first.kwargs), ((5,), {"backoff": False}))
         self.assertEqual([call.args[0] for call in grab.call_args_list], [11, 12, 13])
 
     def test_one_issue_without_a_release_does_not_stop_the_others(self):
@@ -2832,6 +2833,31 @@ class AutomaticSearchOnCreationTests(unittest.TestCase):
         self.assertTrue(thread.call_args.kwargs["daemon"])
         self.assertEqual(thread.call_args.kwargs["args"], (5,))
         thread.return_value.start.assert_called_once()
+
+    def test_an_issue_another_pass_finished_is_left_alone(self):
+        """Each pass works from the list it read at the start; a second
+        search of an issue already sent to SABnzbd sends it twice."""
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.side_effect = [[11, 12], [12], [12]]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._auto_grab_release", return_value={"status": "grabbed"}
+        ) as grab:
+            app._automatic_release_grabs(5)
+        self.assertEqual([call.args[0] for call in grab.call_args_list], [12])
+
+    def test_an_issue_another_pass_is_searching_is_not_searched_twice(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [11, 12]
+        app._JOBS_IN_FLIGHT.add(11)
+        try:
+            with patch("app.catalog_store", return_value=store), patch(
+                "app._auto_grab_release", return_value={"status": "grabbed"}
+            ) as grab:
+                app._automatic_release_grabs(5)
+        finally:
+            app._JOBS_IN_FLIGHT.discard(11)
+        self.assertEqual([call.args[0] for call in grab.call_args_list], [12])
+        self.assertNotIn(12, app._JOBS_IN_FLIGHT, "a finished job is released")
 
 
 class SearchForMissingTests(unittest.TestCase):
@@ -4456,3 +4482,47 @@ class RunSynopsisTests(unittest.TestCase):
             "comic_vine": {"results": {"deck": " ", "description":
                                        "<p>Ongoing series.</p><h4>Collected Editions</h4>"}}})
         self.assertIsNone(result["synopsis"])
+
+
+class ASearchCannotStallThePassTests(unittest.TestCase):
+    """Ultimate Spider-Man, 134 issues: the automatic pass asked Prowlarr for
+    #050, Prowlarr logged the request, and the answer never came. The pass sat
+    there for seven minutes, the 45 issues after it were never searched, and
+    #050 was left at "searching" -- which no pass picks up again."""
+
+    def test_a_call_that_never_answers_is_given_up_on(self):
+        release = threading.Event()
+        try:
+            with self.assertRaisesRegex(TimeoutError, "Prowlarr did not answer"):
+                app._with_deadline(lambda: release.wait(5), 0.05, "Prowlarr")
+        finally:
+            release.set()
+
+    def test_an_answer_or_an_error_comes_through_unchanged(self):
+        self.assertEqual(app._with_deadline(lambda: [1], 1, "Prowlarr"), [1])
+        with self.assertRaisesRegex(ValueError, "bad"):
+            app._with_deadline(lambda: (_ for _ in ()).throw(ValueError("bad")), 1, "Prowlarr")
+
+    def test_a_search_that_fails_goes_back_on_the_queue(self):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {"seriesTitle": "Example", "issueNumber": "50"}
+        store.rejected_acquisition_releases.return_value = []
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._enabled_acquisition_service", return_value={"url": "x", "apiKey": "y"}), \
+             patch("app._prowlarr_search", side_effect=TimeoutError("Prowlarr did not answer")):
+            with self.assertRaises(TimeoutError):
+                app.search_prowlarr_releases(7)
+        last = store.update_acquisition_job.call_args_list[-1]
+        self.assertEqual(last.args[:2], (7, "queued"))
+        self.assertIn("tried again", last.args[2])
+
+    def test_the_first_sweep_comes_soon_after_start(self):
+        """A restart mid-pass otherwise left the rest for a quarter of an hour."""
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        with patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app._automatic_release_grabs") as sweep:
+            app.release_research_worker(stop)
+        self.assertEqual(stop.wait.call_args_list[0].args[0], app.RESEARCH_FIRST_SWEEP_SECONDS)
+        self.assertLess(app.RESEARCH_FIRST_SWEEP_SECONDS, app.RESEARCH_POLL_SECONDS)
+        sweep.assert_called_once_with(None, backoff=True)
