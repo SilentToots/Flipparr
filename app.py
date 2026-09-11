@@ -5697,7 +5697,7 @@ def _provider_series_run_details(
                 if isinstance(publisher_value, dict) else publisher_value
             ),
             "endEvidence": _run_end_evidence(detail.get("year_end"), modelled="year_end" in detail),
-            "synopsis": _plain_text(detail.get("desc")),
+            "synopsis": _synopsis_text(detail.get("desc")),
         }
     context["comicVineVolumeId"] = str(provider_series_id)
     provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
@@ -5819,17 +5819,41 @@ def _plain_text(value: Any) -> str | None:
     return text or None
 
 
+# Words that say what shape a run is, not what happens in it.
+_FORMAT_WORDS = frozenset("""
+    a an the ongoing one shot oneshot mini miniseries series limited maxi maxiseries
+    issue issues part parts monthly bimonthly bi comic book special annual
+    two three four five six seven eight nine ten eleven twelve
+""".split())
+
+
+def _synopsis_text(value: Any) -> str | None:
+    """Provider prose, if it says what the story is.
+
+    Catalogs fill the field with whatever they have: "Ongoing series.", "A 7
+    issue mini-series.", an editor's note about the indicia. Under "Story",
+    those read as a blurb that says nothing, so they count as none.
+    """
+    text = _plain_text(value)
+    if not text or text.casefold().startswith("note:"):
+        return None
+    words = re.findall(r"[a-z0-9]+", text.casefold())
+    if len(text) < 80 and all(word.isdigit() or word in _FORMAT_WORDS for word in words):
+        return None
+    return text
+
+
 def _comic_vine_synopsis(volume: dict[str, Any]) -> str | None:
     """Comic Vine's one-line deck, else the opening paragraph of its article.
 
     A volume's description is a wiki page -- headings, issue lists, credits --
     and a drawer wants what the story is, which is the deck or the lead.
     """
-    deck = _plain_text(volume.get("deck"))
+    deck = _synopsis_text(volume.get("deck"))
     if deck:
         return deck
     lead = re.search(r"<p[^>]*>(.*?)</p>", str(volume.get("description") or ""), re.S | re.I)
-    return _plain_text(lead.group(1)) if lead else None
+    return _synopsis_text(lead.group(1)) if lead else None
 
 
 _SYNOPSIS_ORDER = ("metron", "comic_vine")
@@ -5854,7 +5878,7 @@ def series_synopsis(series_run_id: int) -> dict[str, Any]:
                 detail = fetch_provider_json(
                     provider, f"{METRON_API_BASE}/series/{provider_id}/", credential
                 )
-                text = _plain_text(detail.get("desc"))
+                text = _synopsis_text(detail.get("desc"))
             else:
                 url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
                     "api_key": credential, "format": "json", "field_list": "deck,description",

@@ -4439,3 +4439,20 @@ class RunSynopsisTests(unittest.TestCase):
     def test_no_source_is_no_synopsis_not_an_error(self):
         """GCD has publication notes, not a story, so it is not asked."""
         self.assertIsNone(self.synopsis({"gcd": "3"}, {})["synopsis"])
+
+    def test_a_format_label_is_not_a_story(self):
+        """All of these came back from the live library, under "Story"."""
+        for text in ("Ongoing series.", "A one-shot.", "A 7 issue mini-series.",
+                     "<p>Seven issue mini-series.</p>", " ",
+                     'Note: Indicia list title as "Geiger (2024)". We use "Geiger".'):
+            with self.subTest(text=text):
+                self.assertIsNone(app._synopsis_text(text))
+        story = "A one-shot where Batman meets another Batman."
+        self.assertEqual(app._synopsis_text(story), story)
+
+    def test_a_label_falls_through_to_the_next_source(self):
+        result = self.synopsis({"metron": "9", "comic_vine": "5"}, {
+            "metron": {"desc": "A 7 issue mini-series."},
+            "comic_vine": {"results": {"deck": " ", "description":
+                                       "<p>Ongoing series.</p><h4>Collected Editions</h4>"}}})
+        self.assertIsNone(result["synopsis"])
