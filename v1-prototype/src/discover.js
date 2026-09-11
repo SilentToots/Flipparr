@@ -102,3 +102,62 @@ export function providerProgress(state) {
     error: failed.get(name) || null,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// The run drawer
+// ---------------------------------------------------------------------------
+
+/** An issue that can still be asked for: not here already, not asked for already. */
+export const selectableIssue = (issue) => Boolean(issue) && !issue.owned && !issue.queued;
+
+/** What "Pull all released" would take: out now, and not already yours or asked for. */
+export const releasedToPull = (issues = []) =>
+  (issues || []).filter((issue) => selectableIssue(issue) && issue.releaseState === "released");
+
+/**
+ * The run drawer's footer: what the button does, said before it is done.
+ *
+ * The three modes end in different places -- following keeps watching, the
+ * other two do not -- so the line under the button says which, rather than
+ * leaving it to be discovered next month.
+ */
+export function runPullSummary(mode, issues = [], selected = [], { following = false } = {}) {
+  const list = issues || [];
+  // Following a run you already follow joins the request you have; offering
+  // it as an action says the opposite of what is true.
+  if (mode === "follow" && following) {
+    return { label: "Already following", detail: "New issues are added as they ship.", disabled: true };
+  }
+  if (mode === "follow") {
+    const now = list.filter(selectableIssue).length;
+    return {
+      label: "Follow run",
+      detail: now
+        ? `${now} issue${now === 1 ? "" : "s"} now, and new ones as they ship.`
+        : "New issues as they ship.",
+      disabled: false,
+    };
+  }
+  if (mode === "released") {
+    const count = releasedToPull(list).length;
+    return count
+      ? { label: `Pull ${count} released issue${count === 1 ? "" : "s"}`,
+          detail: "Once. The run is not followed.", disabled: false }
+      : { label: "Nothing left to pull",
+          detail: "Every released issue is already yours or on your Pull List.", disabled: true };
+  }
+  const count = (selected || []).length;
+  return count
+    ? { label: `Pull ${count} issue${count === 1 ? "" : "s"}`,
+        detail: "Only these. Issues not out yet are pulled when they ship.", disabled: false }
+    : { label: "Choose issues", detail: "Tick the issues you want below.", disabled: true };
+}
+
+/** Provider ids for the preview, from a merged search row or a shelf issue. */
+export function runPreviewIds(item) {
+  const ids = { ...(item?.providerIds || {}) };
+  if (item?.provider && item?.providerSeriesId && !ids[item.provider]) {
+    ids[item.provider] = item.providerSeriesId;
+  }
+  return Object.fromEntries(Object.entries(ids).filter(([, value]) => value));
+}

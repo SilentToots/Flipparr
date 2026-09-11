@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from catalog_store import CatalogStore
+from catalog_store import CatalogStore, _issue_release_state
 from catalog_core_v2.language import (
     LANGUAGE_NAMES,
     detect_language as detect_release_language,
@@ -4974,10 +4974,12 @@ def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
     return {"available": True, **shelves}
 
 
-def request_discovered_gcd_series(
-    query: str, provider_series_id: str, acquisition_preference: str = "either"
-) -> dict[str, Any]:
-    """Import one discovered run and immediately place its missing issues on the wanted list."""
+def _import_gcd_run(query: str, provider_series_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bring one GCD run into the library, with its issue list.
+
+    GCD's half of _import_provider_run. It lived only inside following a run,
+    so a GCD run could be followed or nothing -- never pulled in part.
+    """
     cleaned = re.sub(r"\s+", " ", str(query or "")).strip()
     provider_series_id = str(provider_series_id or "").strip()
     if len(cleaned) < 2 or not re.fullmatch(r"\d+", provider_series_id):
@@ -5009,15 +5011,26 @@ def request_discovered_gcd_series(
         detail=f"Added from Discover with {len(entries)} known issues.",
         source="added from library discovery search",
     )
-    request = store.create_acquisition_request(
+    return run, {
+        "entries": entries, "metadata": metadata,
+        "publisher": candidate.get("publisher"), "year": candidate.get("yearBegan"),
+    }
+
+
+def request_discovered_gcd_series(
+    query: str, provider_series_id: str, acquisition_preference: str = "either"
+) -> dict[str, Any]:
+    """Import one discovered run and immediately place its missing issues on the wanted list."""
+    run, fetched = _import_gcd_run(query, provider_series_id)
+    request = catalog_store().create_acquisition_request(
         "series", int(run["id"]), acquisition_preference, True
     )
     _start_automatic_release_grabs(request)
     return {
-        "series": {**run, "publisher": candidate.get("publisher"), "year": candidate.get("yearBegan")},
+        "series": {**run, "publisher": fetched["publisher"], "year": fetched["year"]},
         "request": request,
-        "issueCount": len(entries),
-        "metadata": metadata,
+        "issueCount": len(fetched["entries"]),
+        "metadata": fetched["metadata"],
     }
 
 
@@ -5728,31 +5741,193 @@ def _import_provider_run(
     return run, fetched
 
 
-def pull_discovered_issue(
-    provider: str, provider_series_id: str, number: str, query: str = "",
+def pull_discovered_issues(
+    provider: str, provider_series_id: str, numbers: list[Any] | None = None,
+    *, released: bool = False, query: str = "",
 ) -> dict[str, Any]:
-    """Acquire one issue of a run, without taking on the rest of it.
+    """Acquire chosen issues of a run -- or every released one -- without following it.
 
-    The run has to exist in the library before a single issue of it can be
-    asked for -- there is nothing to hang the request on otherwise -- but
-    importing it is not the same as following it. The request covers this issue
-    and nothing else, so the run is not monitored, is not checked daily, and
-    picks up no back catalogue.
+    The run has to exist in the library before any issue of it can be asked
+    for, but importing is not following: the request covers exactly these
+    issues, so the run is not monitored, not checked daily, and picks up no
+    back catalogue. `released` is resolved after import, against the library's
+    own record of which issues are out and which are already here.
     """
     provider = str(provider or "").strip().lower()
-    number = str(number or "").strip()
-    if provider not in {"metron", "comic_vine"} or not re.fullmatch(r"\d+", str(provider_series_id or "")):
+    provider_series_id = str(provider_series_id or "").strip()
+    if provider not in {"metron", "comic_vine", "gcd"} or not re.fullmatch(r"\d+", provider_series_id):
         raise ValueError("Choose a valid publication run")
-    if not number:
-        raise ValueError("Choose an issue to pull")
-    run, fetched = _import_provider_run(provider, provider_series_id, query)
+    wanted = list(dict.fromkeys(
+        str(number).strip() for number in (numbers or []) if str(number).strip()
+    ))
+    if not released and not wanted:
+        raise ValueError("Choose at least one issue to pull")
+    if provider == "gcd":
+        run, fetched = _import_gcd_run(query, provider_series_id)
+    else:
+        run, fetched = _import_provider_run(provider, provider_series_id, query)
+    if released:
+        series = next((
+            item for item in catalog_store().catalog().get("series") or []
+            if str(item.get("id")) == str(run["id"])
+        ), None) or {}
+        wanted = [
+            str(issue.get("number")) for issue in series.get("issues") or []
+            if issue.get("releaseState") == "released"
+            and issue.get("ownership") in {None, "", "unowned"}
+        ]
+        if not wanted:
+            raise ValueError("Every released issue of this run is already in your library")
     request = catalog_store().create_acquisition_request(
-        "series", int(run["id"]), "issues", True, issue_numbers=[number],
+        "series", int(run["id"]), "issues", True, issue_numbers=wanted,
     )
     _start_automatic_release_grabs(request)
     return {
-        "series": {**run, "publisher": fetched["publisher"], "year": fetched["year"]},
-        "request": request, "number": number,
+        "series": {**run, "publisher": fetched.get("publisher"), "year": fetched.get("year")},
+        "request": request, "numbers": wanted,
+    }
+
+
+def pull_discovered_issue(
+    provider: str, provider_series_id: str, number: str, query: str = "",
+) -> dict[str, Any]:
+    """One issue: the shelf's Pull Issue, kept as its own entry point."""
+    number = str(number or "").strip()
+    if not number:
+        raise ValueError("Choose an issue to pull")
+    result = pull_discovered_issues(provider, provider_series_id, [number], query=query)
+    return {**result, "number": number}
+
+
+# ---------------------------------------------------------------------------
+# Discover's drawers
+# ---------------------------------------------------------------------------
+
+_PREVIEW_ORDER = ("metron", "comic_vine", "gcd")
+
+
+def _plain_text(value: Any) -> str | None:
+    """Provider prose without its markup; Metron and Comic Vine both send HTML."""
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    text = html.unescape(re.sub(r"\s+", " ", text)).strip()
+    return text or None
+
+
+def _gcd_run_preview(provider_series_id: str) -> dict[str, Any]:
+    """GCD's account of a run from one request: issue numbers, not details.
+
+    Filling each issue in is a request per issue against the harshest limit of
+    the three providers, so the preview stops at the series record and says so
+    rather than spending an hour of GCD's quota on a drawer.
+    """
+    series = fetch_gcd_json(f"{GCD_API_BASE}/series/{provider_series_id}/?format=json")
+    return {
+        "providerSeriesId": provider_series_id,
+        "title": str(series.get("name") or "").strip(),
+        "year": _provider_year(series.get("year_began")),
+        "publisher": _gcd_series_publisher(series),
+        "endEvidence": _run_end_evidence(series.get("year_ended"), modelled="year_ended" in series),
+        "entries": _gcd_canonical_issue_entries(series),
+    }
+
+
+def _shape_run_preview(provider: str, run: dict[str, Any], errors: list[dict[str, Any]]) -> dict[str, Any]:
+    """A run as the drawer draws it, each issue saying what the library knows of it."""
+    relevance = _library_relevance()
+    title = str(run.get("title") or "").strip()
+    year = run.get("year")
+    known = relevance.get(f"{normalized_title(title)}|{year or ''}") or relevance.get(normalized_title(title))
+    issues = []
+    for entry in run.get("entries") or []:
+        number = str(entry.get("number") or "").strip()
+        if not number:
+            continue
+        key = _issue_key(number)
+        issues.append({
+            "number": number,
+            "title": entry.get("title"),
+            "publicationDate": entry.get("publication_date"),
+            "publicationYear": entry.get("publication_year"),
+            "cover": entry.get("cover"),
+            "releaseState": _issue_release_state(
+                entry.get("publication_date"), entry.get("publication_year")
+            ),
+            "owned": bool(known and key in known["owned"]),
+            # A followed run already has every issue on its way.
+            "queued": bool(known and (known["following"] or key in known["queued"])),
+        })
+    state = (run.get("endEvidence") or {}).get("state")
+    return {
+        "provider": provider, "providerName": _DISCOVERY_PROVIDERS.get(provider, provider),
+        "providerSeriesId": str(run.get("providerSeriesId") or ""),
+        "title": title, "year": year, "publisher": run.get("publisher"),
+        "publicationStatus": (
+            "completed" if state == "ended" else "ongoing" if state == "ongoing" else "unknown"
+        ),
+        "cover": next((issue["cover"] for issue in issues if issue.get("cover")), None),
+        "inLibrary": bool(known), "following": bool(known and known["following"]),
+        "runId": known["runId"] if known else None,
+        "detailsLimited": provider == "gcd",
+        "issues": issues, "fallbacks": errors,
+    }
+
+
+def preview_discovered_run(provider_ids: dict[str, Any], query: str = "") -> dict[str, Any]:
+    """A run's issues, before anything is imported.
+
+    Tried in the order Discover already prefers for display -- Metron, then
+    Comic Vine, then GCD -- falling through a provider that is not configured
+    or does not answer. The provider actually used is returned, so a pull goes
+    back to the same source and its issue numbers line up. Nothing is written:
+    importing waits until something is pulled.
+    """
+    errors: list[dict[str, Any]] = []
+    for provider in _PREVIEW_ORDER:
+        provider_series_id = str((provider_ids or {}).get(provider) or "").strip()
+        if not re.fullmatch(r"\d+", provider_series_id):
+            continue
+        try:
+            if provider == "gcd":
+                run = _gcd_run_preview(provider_series_id)
+            else:
+                fetched = _provider_series_run_details(
+                    provider, provider_series_id, query, _provider_credential(provider)
+                )
+                run = {**fetched, "providerSeriesId": fetched.get("providerId") or provider_series_id}
+        except Exception as exc:
+            errors.append({"provider": _DISCOVERY_PROVIDERS.get(provider, provider), "error": str(exc)})
+            continue
+        return _shape_run_preview(provider, run, errors)
+    if errors:
+        raise RuntimeError(errors[0]["error"])
+    raise ValueError("Choose a valid publication run")
+
+
+def discovered_issue_detail(provider_issue_id: str) -> dict[str, Any]:
+    """What Metron knows about one issue, for Discover's issue drawer.
+
+    One request, made after the drawer opens: the shelf already has the cover,
+    title and dates, so those show at once and this fills in the rest.
+    """
+    provider_issue_id = str(provider_issue_id or "").strip()
+    if not re.fullmatch(r"\d+", provider_issue_id):
+        raise ValueError("Choose a valid issue")
+    row = fetch_provider_json(
+        "metron", f"{METRON_API_BASE}/issue/{provider_issue_id}/", _provider_credential("metron"),
+    )
+    names = row.get("name") or []
+    return {
+        "providerIssueId": provider_issue_id,
+        "storyTitles": [
+            str(name).strip() for name in (names if isinstance(names, list) else [names])
+            if str(name).strip()
+        ],
+        "description": _plain_text(row.get("desc")),
+        "creators": _metron_discovery_creators(row),
+        "pageCount": row.get("page"),
+        "price": row.get("price"),
+        "coverDate": _provider_date(row.get("cover_date")),
+        "storeDate": _provider_date(row.get("store_date")),
     }
 
 
@@ -7460,6 +7635,25 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/acquisition-services":
             self.send_json(public_acquisition_service_config())
             return
+        if parsed_url.path == "/api/v1/discover/run":
+            params = urllib.parse.parse_qs(parsed_url.query)
+            ids = {key: (params.get(key) or [""])[0] for key in _PREVIEW_ORDER}
+            try:
+                self.send_json(preview_discovered_run(ids, (params.get("query") or [""])[0]))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            except Exception as exc:
+                self.send_json({"error": f"This run's issues could not be listed: {exc}"}, 502)
+            return
+        if parsed_url.path == "/api/v1/discover/issue":
+            issue_id = (urllib.parse.parse_qs(parsed_url.query).get("id") or [""])[0]
+            try:
+                self.send_json(discovered_issue_detail(issue_id))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            except Exception as exc:
+                self.send_json({"error": f"This issue's details are unavailable: {exc}"}, 502)
+            return
         if parsed_url.path == "/api/v1/discover/releases":
             try:
                 self.send_json(release_calendar())
@@ -7732,12 +7926,22 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed_url.path == "/api/v1/discover/pull-issue":
             try:
-                result = pull_discovered_issue(
-                    str(payload.get("provider") or "metron"),
-                    str(payload.get("providerSeriesId") or ""),
-                    str(payload.get("number") or ""),
-                    str(payload.get("seriesTitle") or ""),
-                )
+                numbers = payload.get("numbers")
+                if isinstance(numbers, list) or payload.get("released"):
+                    result = pull_discovered_issues(
+                        str(payload.get("provider") or "metron"),
+                        str(payload.get("providerSeriesId") or ""),
+                        numbers if isinstance(numbers, list) else None,
+                        released=bool(payload.get("released")),
+                        query=str(payload.get("seriesTitle") or payload.get("query") or ""),
+                    )
+                else:
+                    result = pull_discovered_issue(
+                        str(payload.get("provider") or "metron"),
+                        str(payload.get("providerSeriesId") or ""),
+                        str(payload.get("number") or ""),
+                        str(payload.get("seriesTitle") or ""),
+                    )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

@@ -4196,3 +4196,186 @@ class ReleaseCalendarTests(unittest.TestCase):
         with patch("app.fetch_provider_json", return_value=looping) as fetch:
             app.fetch_release_calendar(dt.date(2026, 9, 2), dt.date(2026, 9, 8), "t")
         self.assertLessEqual(fetch.call_count, 20, "a self-referential next must not spin")
+
+
+class DiscoverDrawerTests(unittest.TestCase):
+    """Tap a cover, see the run, choose how much of it to take.
+
+    The preview must not import anything -- only a pull does -- and a pull of
+    chosen issues must cover exactly those, without following the run.
+    """
+
+    def library(self, issues=(), requests=(), monitoring="cataloged"):
+        return {
+            "series": [{
+                "id": "7", "title": "Wolverine", "year": "2026", "publisher": "Marvel",
+                "monitoringStatus": monitoring, "issues": list(issues),
+            }],
+            "requests": list(requests),
+        }
+
+    def fetched(self):
+        return {
+            "providerId": "9", "sourceUrl": "https://metron.invalid/series/9/",
+            "title": "Wolverine", "year": 2026, "publisher": "Marvel",
+            "endEvidence": {"state": "ongoing"},
+            "entries": [
+                {"number": "1", "title": "Hunt", "publication_date": "2020-01-01",
+                 "publication_year": 2020, "cover": "https://c.invalid/1.jpg"},
+                {"number": "2", "publication_date": "2020-02-01", "publication_year": 2020},
+                {"number": "3", "publication_date": "2099-01-01", "publication_year": 2099},
+            ],
+        }
+
+    def preview(self, catalog, **patches):
+        store = Mock()
+        store.catalog.return_value = catalog
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._provider_credential", return_value="t"), \
+             patch("app._provider_series_run_details", return_value=self.fetched()):
+            return app.preview_discovered_run({"metron": "9"}, "Wolverine"), store
+
+    def test_the_preview_lists_issues_with_what_the_library_knows(self):
+        catalog = self.library(
+            issues=[{"number": "1", "ownership": "direct"}],
+            requests=[{"status": "open", "jobs": [],
+                       "issues": [{"seriesId": "7", "number": "2"}]}],
+        )
+        run, _ = self.preview(catalog)
+        self.assertEqual(run["provider"], "metron")
+        self.assertEqual(run["providerSeriesId"], "9")
+        self.assertEqual(run["publicationStatus"], "ongoing")
+        self.assertEqual(run["cover"], "https://c.invalid/1.jpg")
+        by_number = {issue["number"]: issue for issue in run["issues"]}
+        self.assertTrue(by_number["1"]["owned"])
+        self.assertTrue(by_number["2"]["queued"])
+        self.assertEqual(by_number["3"]["releaseState"], "upcoming")
+        self.assertEqual(by_number["1"]["releaseState"], "released")
+
+    def test_the_preview_writes_nothing(self):
+        """Looking is not pulling. Importing waits for a pull."""
+        _, store = self.preview(self.library())
+        store.ensure_provider_series_run.assert_not_called()
+        store.apply_issue_list.assert_not_called()
+        store.create_acquisition_request.assert_not_called()
+
+    def test_a_followed_run_reads_as_already_on_its_way(self):
+        run, _ = self.preview(self.library(monitoring="monitored"))
+        self.assertTrue(all(issue["queued"] for issue in run["issues"]))
+        self.assertTrue(run["following"])
+
+    def test_the_preview_falls_through_a_provider_that_is_not_there(self):
+        def credential(provider):
+            if provider == "metron":
+                raise ValueError("Metron is not configured")
+            return "k"
+        store = Mock()
+        store.catalog.return_value = self.library()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._provider_credential", side_effect=credential), \
+             patch("app._provider_series_run_details", return_value=self.fetched()):
+            run = app.preview_discovered_run({"metron": "9", "comic_vine": "88"}, "Wolverine")
+        self.assertEqual(run["provider"], "comic_vine")
+        self.assertEqual(run["fallbacks"][0]["provider"], "Metron")
+
+    def test_a_gcd_preview_is_one_request_and_numbers_only(self):
+        """Filling each issue in is a request per issue against GCD's limit."""
+        series = {
+            "name": "Wolverine", "year_began": 2026, "year_ended": None, "publisher": "Marvel",
+            "active_issues": ["https://www.comics.org/api/issue/101/",
+                              "https://www.comics.org/api/issue/102/"],
+            "issue_descriptors": ["1", "2"],
+        }
+        store = Mock()
+        store.catalog.return_value = self.library()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.fetch_gcd_json", return_value=series) as fetch:
+            run = app.preview_discovered_run({"gcd": "55"}, "Wolverine")
+        self.assertEqual(fetch.call_count, 1)
+        self.assertTrue(run["detailsLimited"])
+        self.assertEqual(len(run["issues"]), 2)
+        self.assertIsNone(run["issues"][0]["title"])
+
+    def pull(self, catalog=None, **kwargs):
+        store = Mock()
+        store.catalog.return_value = catalog or {"series": []}
+        store.create_acquisition_request.return_value = {"id": "r1"}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._import_provider_run",
+                   return_value=({"id": 5}, {"publisher": "P", "year": 2026})) as imported, \
+             patch("app._import_gcd_run",
+                   return_value=({"id": 6}, {"publisher": "P", "year": 2026})) as imported_gcd, \
+             patch("app._start_automatic_release_grabs"):
+            result = app.pull_discovered_issues(**kwargs)
+        return result, store, imported, imported_gcd
+
+    def test_chosen_issues_are_the_only_ones_requested(self):
+        result, store, _, _ = self.pull(provider="metron", provider_series_id="9",
+                                        numbers=["3", "1", "3"])
+        args, kwargs = store.create_acquisition_request.call_args
+        self.assertEqual(kwargs["issue_numbers"], ["3", "1"])
+        self.assertEqual(args[2], "issues")
+        self.assertEqual(result["numbers"], ["3", "1"])
+
+    def test_all_released_takes_released_issues_you_do_not_have(self):
+        catalog = {"series": [{"id": "5", "issues": [
+            {"number": "1", "releaseState": "released", "ownership": "direct"},
+            {"number": "2", "releaseState": "released", "ownership": "unowned"},
+            {"number": "3", "releaseState": "upcoming", "ownership": "unowned"},
+            {"number": "4", "releaseState": "unknown", "ownership": "unowned"},
+        ]}]}
+        _, store, _, _ = self.pull(catalog, provider="metron", provider_series_id="9",
+                                   released=True)
+        self.assertEqual(store.create_acquisition_request.call_args.kwargs["issue_numbers"], ["2"])
+
+    def test_all_released_with_nothing_left_says_so(self):
+        catalog = {"series": [{"id": "5", "issues": [
+            {"number": "1", "releaseState": "released", "ownership": "direct"},
+        ]}]}
+        with self.assertRaises(ValueError):
+            self.pull(catalog, provider="metron", provider_series_id="9", released=True)
+
+    def test_choosing_nothing_is_refused_before_anything_is_imported(self):
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._import_provider_run") as imported:
+            with self.assertRaises(ValueError):
+                app.pull_discovered_issues("metron", "9", [])
+        imported.assert_not_called()
+
+    def test_a_gcd_run_can_be_pulled_in_part(self):
+        """GCD could only be followed before; importing lived inside following."""
+        _, _, imported, imported_gcd = self.pull(provider="gcd", provider_series_id="55",
+                                                 numbers=["2"], query="Wolverine")
+        imported_gcd.assert_called_once_with("Wolverine", "55")
+        imported.assert_not_called()
+
+    def test_the_shelf_pull_is_still_one_issue(self):
+        store = Mock()
+        store.create_acquisition_request.return_value = {"id": "r1"}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._import_provider_run", return_value=({"id": 5}, {})), \
+             patch("app._start_automatic_release_grabs"):
+            result = app.pull_discovered_issue("metron", "9", "27")
+        self.assertEqual(result["number"], "27")
+        self.assertEqual(store.create_acquisition_request.call_args.kwargs["issue_numbers"], ["27"])
+
+    def test_issue_details_come_back_readable(self):
+        row = {
+            "desc": "<p>Logan &amp; the <b>hunt</b></p>", "page": 32, "price": "4.99",
+            "name": ["The Hunt"], "cover_date": "2026-11-01", "store_date": "2026-09-16",
+            "credits": [{"creator": "Saladin Ahmed", "role": [{"name": "Writer"}]},
+                        {"creator": "Somebody", "role": [{"name": "Editor"}]}],
+        }
+        with patch("app._provider_credential", return_value="t"), \
+             patch("app.fetch_provider_json", return_value=row):
+            detail = app.discovered_issue_detail("123")
+        self.assertEqual(detail["description"], "Logan & the hunt")
+        self.assertEqual(detail["creators"], [{"name": "Saladin Ahmed", "roles": ["Writer"]}])
+        self.assertEqual(detail["pageCount"], 32)
+        self.assertEqual(detail["storyTitles"], ["The Hunt"])
+        self.assertEqual(detail["storeDate"], "2026-09-16")
+
+    def test_a_bad_issue_id_is_refused(self):
+        with self.assertRaises(ValueError):
+            app.discovered_issue_detail("../etc")

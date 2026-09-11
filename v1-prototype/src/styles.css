@@ -154,7 +154,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .pull-card-skeleton .discover-cover, .pull-card-skeleton h3 i, .pull-card-skeleton .pull-card-action i,
 .new-run-skeleton .discover-cover, .new-run-skeleton h3 i, .new-run-skeleton p i,
 .new-run-skeleton .new-run-status i, .new-run-skeleton .new-run-action i,
-.library-match-skeleton .discover-cover, .library-match-skeleton h3 i {
+.library-match-skeleton .discover-cover, .library-match-skeleton h3 i,
+.discover-drawer-lines i, .discover-issue-skeleton .discover-cover, .discover-issue-skeleton i {
   display: block; border-radius: 5px; background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite;
 }
 .pull-card-skeleton h3 i { height: 12px; width: 80%; margin: 2px auto; }
@@ -177,6 +178,64 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .provider-progress .provider-failed { color: var(--amber); }
 
 .library-match-row { display: flex; flex-wrap: wrap; gap: 20px; }
+/* ---------------------------------------------------------------------------
+   Discover drawers: the series drawer's surface, with the pull pinned to its
+   foot so the button stays in reach down a long run.
+   --------------------------------------------------------------------------- */
+
+/* A cover is the way in. The button wraps the cover alone and takes its box
+   exactly, so the card's measured layout does not move. */
+.discover-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 4px; background: none; color: inherit; cursor: pointer; }
+.new-run-card .discover-open { border-radius: 0; }
+.discover-open:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 2px; }
+
+.discover-drawer { display: flex; flex-direction: column; padding-bottom: 0; }
+.discover-drawer .drawer-cover .discover-cover { width: 100%; height: 100%; }
+.discover-drawer-section { margin-top: 24px; }
+.discover-drawer-section h3 { margin: 0 0 12px; }
+.discover-drawer-section p { margin: 0 0 12px; color: var(--muted-strong); line-height: 1.55; }
+.discover-story-titles { color: var(--text) !important; font-weight: 600; }
+.discover-drawer-lines i { display: block; height: 12px; margin: 10px 0; }
+.discover-drawer-lines i:last-of-type { width: 60%; }
+.discover-credits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin: 16px 0 0; }
+.discover-credits div { display: grid; gap: 2px; min-width: 0; }
+.discover-credits dt { color: var(--muted); font-size: var(--text-xs); }
+.discover-credits dd { margin: 0; color: var(--text); font-size: var(--text-md); }
+.discover-chip { padding: 3px 8px; border-radius: 100px; background: var(--surface-soft); color: var(--muted-strong); font-size: var(--text-xs); }
+
+/* How much of the run: three ends, one control. */
+.pull-mode { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 24px 0 12px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.pull-mode button { min-height: 36px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-strong); font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
+.pull-mode button.active { background: var(--pull-bg); color: var(--color-neutral-0); box-shadow: inset 0 0 0 1px var(--pull-border); }
+.pull-mode button:disabled { cursor: default; opacity: .5; }
+
+.discover-issue-list { display: grid; margin-top: 8px; }
+.discover-issue-list > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.discover-issue-list > header h3 { margin: 0; }
+.discover-issue-list > header button { padding: 4px 6px; border: 0; background: none; color: var(--violet-text); font-size: var(--text-sm); cursor: pointer; }
+.discover-issue-list > header button:disabled { color: var(--muted-weak); cursor: default; }
+.discover-issue-row { min-height: 62px; display: grid; grid-template-columns: 20px 36px minmax(0, 1fr); gap: 12px; align-items: center; border-bottom: 1px solid var(--line); cursor: pointer; }
+.discover-issue-row.unavailable { cursor: default; }
+.discover-issue-row.unavailable strong { color: var(--muted); }
+.discover-issue-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--violet); }
+.discover-issue-row .discover-cover { width: 36px; height: 50px; border-radius: 3px; }
+.discover-issue-row > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.discover-issue-row strong { overflow: hidden; color: var(--text); font-size: var(--text-md); text-overflow: ellipsis; white-space: nowrap; }
+.discover-issue-row small { color: var(--muted); font-size: var(--text-sm); }
+.discover-issue-skeleton > i { display: block; width: 18px; height: 18px; border-radius: 4px; }
+.discover-issue-skeleton > span:last-child i { display: block; height: 11px; }
+.discover-issue-skeleton > span:last-child i:last-child { width: 45%; }
+
+.discover-drawer-actions { position: sticky; bottom: 0; margin: 24px -30px 0; padding: 16px 30px calc(16px + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); background: var(--surface); }
+.discover-drawer-actions small { min-width: 0; color: var(--muted); font-size: var(--text-sm); }
+.discover-drawer-actions .pull-button { width: auto; min-width: 180px; flex: none; }
+.discover-drawer-actions .pull-button-idle:disabled { opacity: .5; }
+@media (max-width: 640px) {
+  .discover-drawer-actions { margin: 20px -16px 0; padding-inline: 16px; flex-wrap: wrap; }
+  .discover-drawer-actions .pull-button { width: 100%; }
+  .pull-mode { grid-template-columns: 1fr; }
+}
+
 .library-match-skeleton { width: 120px; display: flex; flex-direction: column; }
 .library-match-skeleton .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
 .library-match-skeleton h3 { margin: 8px 0 0; height: 32px; }
@@ -1526,7 +1585,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .new-run-skeleton .discover-cover,
   .new-run-skeleton i,
   .library-match-skeleton .discover-cover,
-  .library-match-skeleton i {
+  .library-match-skeleton i,
+  .discover-drawer-lines i,
+  .discover-issue-skeleton .discover-cover,
+  .discover-issue-skeleton i {
     animation: none;
     background: var(--surface-soft);
   }

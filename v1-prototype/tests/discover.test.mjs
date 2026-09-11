@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   pullState, issueKey, PULL_STATES, shelfState, splitSearchResults, countLabel,
   providerProgress, libraryMatchState,
+  selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
 } from "../src/discover.js";
 
 test("a pulled card stops offering to pull", () => {
@@ -102,4 +103,54 @@ test("the library half says it is reading, not that nothing matched", () => {
 test("offline, the demo library is the answer rather than a wait", () => {
   assert.equal(libraryMatchState(null, "offline", []), "empty");
   assert.equal(libraryMatchState(null, "offline", [{ id: 1 }]), "ready");
+});
+
+const run = [
+  { number: "1", releaseState: "released", owned: true },
+  { number: "2", releaseState: "released", queued: true },
+  { number: "3", releaseState: "released" },
+  { number: "4", releaseState: "released" },
+  { number: "5", releaseState: "upcoming" },
+];
+
+test("an issue already here or already asked for cannot be chosen again", () => {
+  assert.deepEqual(run.filter(selectableIssue).map((i) => i.number), ["3", "4", "5"]);
+  assert.equal(selectableIssue(null), false);
+});
+
+test("all released means out now and not already yours", () => {
+  assert.deepEqual(releasedToPull(run).map((i) => i.number), ["3", "4"]);
+  assert.deepEqual(releasedToPull(null), []);
+});
+
+test("the footer says what the button will do before it is done", () => {
+  // The three modes end in different places; following keeps watching.
+  assert.equal(runPullSummary("follow", run).label, "Follow run");
+  assert.match(runPullSummary("follow", run).detail, /3 issues now, and new ones as they ship/);
+  assert.equal(runPullSummary("released", run).label, "Pull 2 released issues");
+  assert.match(runPullSummary("released", run).detail, /not followed/);
+  assert.equal(runPullSummary("choose", run, ["5"]).label, "Pull 1 issue");
+  assert.equal(runPullSummary("choose", run, []).disabled, true);
+});
+
+test("nothing left to take is said, not offered", () => {
+  const all = [{ number: "1", releaseState: "released", owned: true }];
+  const summary = runPullSummary("released", all);
+  assert.equal(summary.disabled, true);
+  assert.equal(summary.label, "Nothing left to pull");
+});
+
+test("preview ids come from a merged row or a single provider", () => {
+  assert.deepEqual(runPreviewIds({ providerIds: { metron: "9", gcd: "55" } }), { metron: "9", gcd: "55" });
+  assert.deepEqual(runPreviewIds({ provider: "metron", providerSeriesId: "9" }), { metron: "9" });
+  assert.deepEqual(runPreviewIds({ providerIds: { metron: "9", comic_vine: null } }), { metron: "9" });
+  assert.deepEqual(runPreviewIds(null), {});
+});
+
+test("a run you already follow is not offered to you again", () => {
+  const summary = runPullSummary("follow", run, [], { following: true });
+  assert.equal(summary.label, "Already following");
+  assert.equal(summary.disabled, true);
+  // Not following: the offer stands.
+  assert.equal(runPullSummary("follow", run, [], { following: false }).disabled, false);
 });
