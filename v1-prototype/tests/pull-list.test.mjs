@@ -182,3 +182,16 @@ test("nothing left to do stops the polling", () => {
   assert.equal(isWorking(req({ jobs: [] })), false);
   assert.equal(isWorking(null), false);
 });
+
+test("a comic pulled before it ships waits on Wanted, not on no tab at all", () => {
+  // No job exists until release, so there was nothing to search for and the
+  // request fell through every bucket -- pulled, and nowhere to be seen.
+  const request = req({ coverage: "issues", upcomingIssueCount: 1, wantedIssueCount: 0 });
+  assert.equal(classifyRequest(request, NOW), "wanted");
+});
+
+test("a followed run waiting on unreleased issues is still not work", () => {
+  // The pulled-issue rule must not sweep followed runs onto Wanted.
+  const request = req({ coverage: "run", upcomingIssueCount: 3, wantedIssueCount: 0 });
+  assert.equal(classifyRequest(request, NOW), null);
+});

@@ -4869,6 +4869,15 @@ def _library_relevance() -> dict[str, dict[str, Any]]:
             queued_by_run.setdefault(str(job.get("seriesId")), set()).add(
                 _issue_key(job.get("issueNumber"))
             )
+        # An issue asked for before it ships has no job yet -- reconcile makes
+        # jobs only for released issues -- so pulling next week's comic left
+        # nothing to report and the card went on offering it. The open
+        # request's own issue list is the record that it was asked for.
+        if request.get("status") == "open":
+            for issue in request.get("issues") or []:
+                queued_by_run.setdefault(str(issue.get("seriesId")), set()).add(
+                    _issue_key(issue.get("number"))
+                )
     relevance: dict[str, dict[str, Any]] = {}
     for item in catalog.get("series") or []:
         run_id = str(item.get("id"))

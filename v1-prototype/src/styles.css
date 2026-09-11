@@ -2063,8 +2063,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .appbar .search-field input::placeholder { color: rgb(255 255 255 / .6); font-size: var(--text-md); white-space: nowrap; }
 }
 
-/* Settings is in the rail at every size now, under Pull List, and carries
-   Library health. The bar's cog stays as a second way in. */
+/* Settings is in the rail at every size, under Pull List, and carries
+   Library health; the bar no longer repeats it. `.active` here is the bell's
+   open state. */
 @media (min-width: 641px) {
   .appbar-action.active { color: var(--violet-text); background: var(--violet-soft); }
 }

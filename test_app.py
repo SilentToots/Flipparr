@@ -4108,6 +4108,27 @@ class ReleaseCalendarTests(unittest.TestCase):
         self.assertTrue(item["queued"])
         self.assertFalse(item["owned"])
 
+    def test_an_issue_pulled_before_it_ships_reads_as_queued(self):
+        """No job exists until release, so jobs alone could not see this.
+
+        Pulling Batman of Two Worlds a week early created the request but no
+        job, and the card went on reading "Pull Issue".
+        """
+        catalog = self.library(
+            [{"number": "1", "ownership": "unowned"}],
+            requests=[{"status": "open", "jobs": [],
+                       "issues": [{"seriesId": "7", "number": "1"}]}],
+        )
+        self.assertTrue(self.shelf([self.row("Wolverine", "1")], catalog)[0]["queued"])
+
+    def test_a_closed_request_does_not_keep_its_issues_queued(self):
+        catalog = self.library(
+            [{"number": "1", "ownership": "unowned"}],
+            requests=[{"status": "cancelled", "jobs": [],
+                       "issues": [{"seriesId": "7", "number": "1"}]}],
+        )
+        self.assertFalse(self.shelf([self.row("Wolverine", "1")], catalog)[0]["queued"])
+
     def test_a_finished_job_does_not_keep_an_issue_queued(self):
         # Retiring a job is how a request ends. If fulfilled still counted, an
         # issue whose file was later removed could never be asked for again.

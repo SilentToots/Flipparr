@@ -84,7 +84,13 @@ export function classifyRequest(request, now = new Date()) {
   const live = request.status !== "cancelled";
   if (live && hasFailure(request)) return "failed";
   if (live && isDownloading(request)) return "downloading";
-  if (request.status === "open" && hasSomethingToFind(request)) return "wanted";
+  // A comic pulled by name is wanted from the moment it is asked for, even
+  // before it ships and has nothing to search for. A followed run with only
+  // unreleased issues left is different -- it is just being watched, and it
+  // lives on Comics. Without this, pulling next week's issue put it on no
+  // tab at all.
+  if (request.status === "open"
+    && (hasSomethingToFind(request) || request.coverage === "issues")) return "wanted";
   const arrived = lastArrivalAt(request);
   if (!arrived) return null;
   const cutoff = new Date(now.getTime() - RECENT_ARRIVAL_DAYS * 24 * 60 * 60 * 1000);
