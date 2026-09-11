@@ -4578,7 +4578,6 @@ class MangaVolumeTests(unittest.TestCase):
             ("One Piece - Heroines v01 (2025) (Digital) (LuCaZ) (cbz)",
              dict(title="One Piece", number="1")),
             ("Hajime Tanaka - Oshi No Ko 01 (epub)", dict(title="Oshi no Ko", number="1")),
-            ("Chainsaw Man v18 (2025) (epub)", {}),
             ("-Porn Comics- A Chance With Nami (One Piece) v01", dict(title="One Piece", number="1")),
             ("Chainsaw Man v18 (2025) (German)", {}),
             ("Chainsaw Man v18 (2025) raw", {}),
@@ -4645,7 +4644,7 @@ class MangaVolumeTests(unittest.TestCase):
                 self.assertLess(app._download_candidate_score(path, self.manga_job(format="comic"))[0], 180,
                                 "a comic still does not read v18 as issue 18")
 
-    def test_an_epub_volume_is_refused_so_the_next_release_is_tried(self):
+    def test_an_ebook_that_is_not_page_images_is_refused_so_the_next_release_is_tried(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
             source = root / "job"
@@ -4687,3 +4686,125 @@ class MangaVolumeTests(unittest.TestCase):
                            number="1", year=2020)
         self.assertGreater(cbz, ebook)
         self.assertGreaterEqual(ebook, 85, "still a fallback when nothing else is posted")
+        epub = self.score("Chainsaw Man v18 (2025) (epub)")
+        self.assertGreaterEqual(epub, 85, "an EPUB is converted now, not refused")
+        self.assertLess(epub, self.score("Chainsaw Man v18 (2025) (Digital) (LuCaZ) (cbz)"))
+
+
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 16 + b"\xff\xd9"
+
+
+def _image_pdf(pages, *, text=False, two_images=False):
+    """A real PDF 1.3: each page one DCT (JPEG) image XObject, classic xref."""
+    objects = {}
+    kids = []
+    number = 3
+    for page_index, image in enumerate(pages):
+        page_no, image_no = number, number + 1
+        number += 2
+        xobjects = f"/Im0 {image_no} 0 R" + (f" /Im1 {image_no} 0 R" if two_images else "")
+        font = " /Font << /F1 99 0 R >>" if text else ""
+        objects[page_no] = (f"<< /Type /Page /Parent 2 0 R /Resources << /XObject << {xobjects} >>{font} >> "
+                            f"/MediaBox [0 0 10 10] >>").encode()
+        objects[image_no] = (f"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /Filter /DCTDecode "
+                             f"/Length {len(image)} >>\nstream\n").encode() + image + b"\nendstream"
+        kids.append(f"{page_no} 0 R")
+    objects[1] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    objects[2] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>".encode()
+    out = bytearray(b"%PDF-1.3\n")
+    offsets = {}
+    for key in sorted(objects):
+        offsets[key] = len(out)
+        out += f"{key} 0 obj\n".encode() + objects[key] + b"\nendobj\n"
+    xref = len(out)
+    size = max(objects) + 1
+    out += f"xref\n0 {size}\n".encode() + b"0000000000 65535 f \n"
+    for key in range(1, size):
+        out += (f"{offsets[key]:010d} 00000 n \n" if key in offsets else "0000000000 65535 f \n").encode()
+    out += f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def _image_epub(path, pages, *, text_pages=0):
+    import zipfile
+    with zipfile.ZipFile(path, "w") as book:
+        book.writestr("mimetype", "application/epub+zip")
+        book.writestr("META-INF/container.xml",
+                      '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
+        items, spine = [], []
+        for index, image in enumerate(pages):
+            book.writestr(f"OEBPS/images/p{index}.jpg", image)
+            book.writestr(f"OEBPS/p{index}.xhtml",
+                          f'<html><head><title>x</title></head><body><img src="images/p{index}.jpg"/></body></html>')
+            items.append(f'<item id="p{index}" href="p{index}.xhtml" media-type="application/xhtml+xml"/>')
+            spine.append(f'<itemref idref="p{index}"/>')
+        for index in range(text_pages):
+            book.writestr(f"OEBPS/t{index}.xhtml", "<html><body><p>" + "words " * 40 + "</p></body></html>")
+            items.append(f'<item id="t{index}" href="t{index}.xhtml" media-type="application/xhtml+xml"/>')
+            spine.append(f'<itemref idref="t{index}"/>')
+        book.writestr("OEBPS/content.opf",
+                      f"<package><manifest>{''.join(items)}</manifest><spine>{''.join(spine)}</spine></package>")
+
+
+class MangaEbookConversionTests(unittest.TestCase):
+    """The publisher's image-only ebook, copied into a CBZ page for page.
+
+    Chainsaw Man v1 and v2 exist on the indexers only as Viz's PDF: 193 pages,
+    192 of them one JPEG, no text. CBZ-only refused them and nothing else came.
+    """
+
+    pages = [JPEG + b"1", JPEG + b"2", JPEG + b"3"]
+
+    def cbz_pages(self, cbz):
+        import zipfile
+        with zipfile.ZipFile(cbz) as archive:
+            return [archive.read(name) for name in sorted(archive.namelist())]
+
+    def test_an_image_pdf_becomes_a_cbz_page_for_page(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder) / "v01.pdf", Path(folder) / "v01.cbz"
+            source.write_bytes(_image_pdf(self.pages))
+            self.assertEqual(app.convert_ebook_to_cbz(source, target), 3)
+            self.assertEqual(self.cbz_pages(target), self.pages, "the JPEGs are copied, not re-encoded")
+
+    def test_an_image_epub_becomes_a_cbz_in_reading_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder) / "v01.epub", Path(folder) / "v01.cbz"
+            _image_epub(source, self.pages)
+            self.assertEqual(app.convert_ebook_to_cbz(source, target), 3)
+            self.assertEqual(self.cbz_pages(target), self.pages)
+
+    def test_an_ebook_that_is_not_page_images_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            layered = folder / "layered.pdf"
+            layered.write_bytes(_image_pdf(self.pages, two_images=True))
+            prose = folder / "prose.epub"
+            _image_epub(prose, self.pages[:1], text_pages=5)
+            junk = folder / "junk.pdf"
+            junk.write_bytes(b"not a pdf")
+            for source in (layered, prose, junk):
+                with self.subTest(source=source.name):
+                    with self.assertRaises(app.EbookNotConvertible):
+                        app.convert_ebook_to_cbz(source, folder / "out.cbz")
+
+    def test_a_downloaded_pdf_volume_imports_as_a_cbz(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "VIZ.Media.Chainsaw.Man.Vol.01.2020.HYBRiD.MANGA.eBook-PNLS"
+            source.mkdir()
+            (source / "Chainsaw Man v01 (2020) (Digital).pdf").write_bytes(_image_pdf(self.pages))
+            (source / "release.nfo").write_bytes(b"info")
+            job = {"seriesTitle": "Chainsaw Man", "seriesYear": 2020, "issueNumber": "1",
+                   "publisher": "Viz", "format": "manga", "preferredLanguage": "en"}
+            clean = {"file_health": {"status": "ok"}, "lookup_identity": {}, "embedded_metadata": {}}
+            with patch("app.inventory_file", return_value=clean):
+                selected = app.select_downloaded_comic(source, job, root)
+            try:
+                self.assertEqual(Path(selected["path"]).suffix, ".cbz")
+                self.assertEqual(self.cbz_pages(selected["path"]), self.pages)
+                self.assertTrue(selected.get("converted"))
+            finally:
+                app._discard_converted(selected)
+            self.assertFalse(Path(selected["path"]).exists(), "the converted copy is cleaned up")

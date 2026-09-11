@@ -1789,7 +1789,7 @@ _MANGA_CHAPTER = re.compile(r"(?<![A-Za-z0-9])(?:c|ch|chapter)\.?\s*\d{1,4}(?![\
 # Not a comic-archive volume of this book: another format, an adult parody
 # named after the series, or an untranslated scan.
 _MANGA_REFUSED = re.compile(
-    r"\b(?:epub|pdf|mobi|azw3?|hentai|doujin(?:shi)?|porn|xxx|nsfw|erotic|parody|raw)\b", re.I
+    r"\b(?:mobi|azw3?|hentai|doujin(?:shi)?|porn|xxx|nsfw|erotic|parody|raw)\b", re.I
 )
 # Publishers that lead a scene name: "VIZ.Media.-.Spy.X.Family.Vol.03",
 # "Kodansha-Blue.Lock.Vol.03". Longest first, so "Viz Media" goes whole.
@@ -1848,6 +1848,249 @@ def _manga_file_volume(name: Any) -> str | None:
     return str(volumes.pop()) if len(volumes) == 1 else None
 
 
+# ---------------------------------------------------------------------------
+# Manga ebooks, made into comic archives
+# ---------------------------------------------------------------------------
+#
+# The publisher's own digital edition is often the only English copy posted --
+# Chainsaw Man volumes 1 and 2 exist on the indexers only as Viz's
+# "HYBRID.MANGA.eBook", a PDF of 193 pages, 192 of them a single JPEG and none
+# carrying text. A page that is one JPEG can be copied into a CBZ byte for byte,
+# so the library stays comic archives without re-rendering anything. An ebook
+# that is not built that way -- text, layered pages, encryption -- is refused,
+# and the next release is tried.
+
+MANGA_EBOOK_TYPES = frozenset({".pdf", ".epub"})
+
+
+class EbookNotConvertible(ValueError):
+    """An ebook that is not one image per page, so it cannot become a CBZ."""
+
+
+_PDF_SUBSECTION = re.compile(rb"\s*(\d+)\s+(\d+)[ \t]*\r?\n")
+_PDF_XREF_ENTRY = re.compile(rb"(\d{10})\s(\d{5})\s([nf])")
+_PDF_OBJECT_HEAD = re.compile(rb"\s*(\d+)\s+(\d+)\s+obj\s*")
+_PDF_REFERENCE = re.compile(rb"(\d+)\s+\d+\s+R")
+
+
+def _pdf_cross_reference(data: bytes) -> tuple[dict[int, int], int]:
+    """Object number -> byte offset, and the catalog's object number."""
+    marker = data.rfind(b"startxref")
+    found = re.search(rb"startxref\s+(\d+)", data[marker:]) if marker >= 0 else None
+    if not found:
+        raise EbookNotConvertible("The PDF has no cross-reference table")
+    offset = int(found.group(1))
+    offsets: dict[int, int] = {}
+    root: int | None = None
+    visited: set[int] = set()
+    while offset and offset not in visited:
+        visited.add(offset)
+        if not data.startswith(b"xref", offset):
+            # PDF 1.5 packs the table into a compressed stream. Publisher image
+            # PDFs are the classic kind; anything else is refused, not guessed at.
+            raise EbookNotConvertible("The PDF uses a compressed cross-reference table")
+        position = offset + 4
+        while True:
+            section = _PDF_SUBSECTION.match(data, position)
+            if not section:
+                break
+            first, count = int(section.group(1)), int(section.group(2))
+            position = section.end()
+            for index in range(count):
+                entry = _PDF_XREF_ENTRY.match(data, position)
+                if not entry:
+                    raise EbookNotConvertible("The PDF cross-reference table is damaged")
+                if entry.group(3) == b"n":
+                    # The newest section is read first, so it wins.
+                    offsets.setdefault(first + index, int(entry.group(1)))
+                position = entry.end()
+                while data[position:position + 1] in (b" ", b"\r", b"\n"):
+                    position += 1
+        trailer = re.compile(rb"\s*trailer\s*(<<.*?>>)", re.S).match(data, position)
+        if not trailer:
+            raise EbookNotConvertible("The PDF has no trailer")
+        if b"/Encrypt" in trailer.group(1):
+            raise EbookNotConvertible("The PDF is encrypted")
+        if root is None:
+            catalog = re.search(rb"/Root\s+(\d+)\s+\d+\s+R", trailer.group(1))
+            root = int(catalog.group(1)) if catalog else None
+        previous = re.search(rb"/Prev\s+(\d+)", trailer.group(1))
+        offset = int(previous.group(1)) if previous else 0
+    if root is None:
+        raise EbookNotConvertible("The PDF names no catalog")
+    return offsets, root
+
+
+def _pdf_object(data: bytes, offsets: dict[int, int], number: int) -> tuple[bytes, bytes | None]:
+    """An object's dictionary text and, when it is a stream, its raw bytes."""
+    start = offsets.get(number)
+    head = _PDF_OBJECT_HEAD.match(data, start) if start is not None else None
+    if not head or int(head.group(1)) != number:
+        raise EbookNotConvertible("The PDF points at an object that is not there")
+    body = head.end()
+    stream_at = data.find(b"stream", body)
+    end_at = data.find(b"endobj", body)
+    if stream_at < 0 or 0 <= end_at < stream_at:
+        return data[body:end_at if end_at >= 0 else None], None
+    dictionary = data[body:stream_at]
+    begin = stream_at + len(b"stream")
+    if data[begin:begin + 2] == b"\r\n":
+        begin += 2
+    elif data[begin:begin + 1] in (b"\n", b"\r"):
+        begin += 1
+    length = re.search(rb"/Length\s+(\d+)(?:\s+(\d+)\s+R)?", dictionary)
+    if not length:
+        raise EbookNotConvertible("A PDF stream does not say how long it is")
+    if length.group(2) is not None:
+        size = int(_pdf_object(data, offsets, int(length.group(1)))[0].strip() or 0)
+    else:
+        size = int(length.group(1))
+    return dictionary, data[begin:begin + size]
+
+
+def _pdf_entry(data: bytes, offsets: dict[int, int], text: bytes, key: bytes) -> bytes | None:
+    """The value of `key` in a dictionary: an inline << >>, or the object it refers to."""
+    found = re.search(re.escape(key) + rb"(?![A-Za-z])\s*", text)
+    if not found:
+        return None
+    position = found.end()
+    if text.startswith(b"<<", position):
+        depth, index = 0, position
+        while index < len(text):
+            if text.startswith(b"<<", index):
+                depth, index = depth + 1, index + 2
+            elif text.startswith(b">>", index):
+                depth, index = depth - 1, index + 2
+                if depth == 0:
+                    return text[position:index]
+            else:
+                index += 1
+        return None
+    reference = _PDF_REFERENCE.match(text, position)
+    return _pdf_object(data, offsets, int(reference.group(1)))[0] if reference else None
+
+
+def _pdf_page_images(path: Path) -> list[bytes]:
+    """Each page's one JPEG, in reading order."""
+    data = path.read_bytes()
+    offsets, root = _pdf_cross_reference(data)
+    catalog = _pdf_object(data, offsets, root)[0]
+    pages_root = re.search(rb"/Pages\s+(\d+)\s+\d+\s+R", catalog)
+    if not pages_root:
+        raise EbookNotConvertible("The PDF has no pages")
+    images: list[bytes] = []
+    page_count = 0
+
+    def walk(number: int, inherited: bytes | None, depth: int) -> None:
+        nonlocal page_count
+        if depth > 32:
+            raise EbookNotConvertible("The PDF page tree does not end")
+        node = _pdf_object(data, offsets, number)[0]
+        resources = _pdf_entry(data, offsets, node, b"/Resources") or inherited
+        if re.search(rb"/Type\s*/Pages(?![A-Za-z])", node):
+            kids = re.search(rb"/Kids\s*\[([^\]]*)\]", node)
+            for kid in _PDF_REFERENCE.findall(kids.group(1) if kids else b""):
+                walk(int(kid), resources, depth + 1)
+            return
+        page_count += 1
+        xobjects = _pdf_entry(data, offsets, resources or b"", b"/XObject") or b""
+        refs = [int(ref) for ref in re.findall(rb"/[^\s/<>\[\]()]+\s+(\d+)\s+\d+\s+R", xobjects)]
+        if not refs:
+            return  # a blank page
+        if len(refs) != 1:
+            raise EbookNotConvertible("A PDF page is built from several pieces")
+        dictionary, stream = _pdf_object(data, offsets, refs[0])
+        filters = re.search(rb"/Filter\s*(\[[^\]]*\]|/\w+)", dictionary)
+        if (not re.search(rb"/Subtype\s*/Image", dictionary) or not filters
+                or re.findall(rb"/(\w+)", filters.group(1)) != [b"DCTDecode"]
+                or not stream or not stream.startswith(b"\xff\xd8")):
+            raise EbookNotConvertible("A PDF page is not a single JPEG")
+        images.append(stream)
+
+    walk(int(pages_root.group(1)), None, 0)
+    return _whole_book(images, page_count)
+
+
+def _epub_page_images(path: Path) -> list[bytes]:
+    """Each page's one image, in the order the book is read."""
+    import posixpath
+    import zipfile
+
+    with zipfile.ZipFile(path) as book:
+        container = book.read("META-INF/container.xml").decode("utf-8", "ignore")
+        package = re.search(r'full-path\s*=\s*"([^"]+)"', container)
+        if not package:
+            raise EbookNotConvertible("The EPUB names no package")
+        opf_path = package.group(1)
+        opf = book.read(opf_path).decode("utf-8", "ignore")
+        base = posixpath.dirname(opf_path)
+        manifest: dict[str, tuple[str, str]] = {}
+        for item in re.finditer(r"<item\b[^>]*>", opf):
+            attributes = dict(re.findall(r'([\w:-]+)\s*=\s*"([^"]*)"', item.group(0)))
+            if attributes.get("id") and attributes.get("href"):
+                manifest[attributes["id"]] = (attributes["href"], attributes.get("media-type", ""))
+        images: list[bytes] = []
+        page_count = text_pages = 0
+        for idref in re.findall(r'<itemref\b[^>]*\bidref\s*=\s*"([^"]+)"', opf):
+            href, media = manifest.get(idref, ("", ""))
+            if not href:
+                continue
+            member = posixpath.normpath(posixpath.join(base, urllib.parse.unquote(href)))
+            page_count += 1
+            if media.startswith("image/"):
+                images.append(book.read(member))
+                continue
+            page = book.read(member).decode("utf-8", "ignore")
+            sources = re.findall(
+                r'<(?:img\b[^>]*?\bsrc|image\b[^>]*?\b(?:xlink:)?href)\s*=\s*["\']([^"\']+)', page
+            )
+            words = re.sub(r"\s+", "", re.sub(r"<[^>]+>", " ", re.sub(r"(?is)<head>.*?</head>", " ", page)))
+            if not sources:
+                text_pages += len(words) > 40
+                continue
+            if len(sources) != 1:
+                raise EbookNotConvertible("An EPUB page is built from several pictures")
+            image = posixpath.normpath(posixpath.join(
+                posixpath.dirname(member), urllib.parse.unquote(sources[0])
+            ))
+            images.append(book.read(image))
+    # A title page or a credits page of text is ordinary; a book of text is not
+    # manga pages at all.
+    if text_pages > 2:
+        raise EbookNotConvertible("The EPUB is text, not page images")
+    return _whole_book(images, page_count)
+
+
+def _whole_book(images: list[bytes], page_count: int) -> list[bytes]:
+    """The images, if they are the book -- not a cover and some text."""
+    if not images or len(images) < 0.9 * page_count:
+        raise EbookNotConvertible("The ebook is not one image per page")
+    for image in images:
+        if not (image.startswith(b"\xff\xd8") or image.startswith(b"\x89PNG")):
+            raise EbookNotConvertible("An ebook page is not a JPEG or PNG")
+    return images
+
+
+def convert_ebook_to_cbz(source: Path, destination: Path) -> int:
+    """Copy an image-per-page PDF or EPUB into a CBZ, page for page. Returns pages."""
+    import zipfile
+
+    kind = source.suffix.lower()
+    try:
+        pages = _pdf_page_images(source) if kind == ".pdf" else _epub_page_images(source)
+    except EbookNotConvertible:
+        raise
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise EbookNotConvertible(f"The {kind.lstrip('.').upper()} could not be read") from exc
+    width = max(3, len(str(len(pages))))
+    # Stored, not deflated: JPEG does not compress, and a reader opens it faster.
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_STORED) as archive:
+        for index, image in enumerate(pages, 1):
+            suffix = ".png" if image.startswith(b"\x89PNG") else ".jpg"
+            archive.writestr(f"{index:0{width}d}{suffix}", image)
+    return len(pages)
+
+
 def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
     """How well a release is one English volume of this manga.
 
@@ -1896,12 +2139,12 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
         score += 5
         reasons.append("Listed as a comic or book")
     score = min(score, 100)
-    # Viz's own "HYBRID.MANGA.eBook" posts can hold an EPUB, which import
-    # refuses -- and its reposts ("-FTP") hold the same file, so each refusal
-    # spends one of the three automatic fallbacks on a copy of the last. A
-    # release that says it is a comic archive goes first; these stay behind
-    # it as a fallback.
-    if re.search(r"\b(?:ebook|hybrid)\b", name, re.I) and not re.search(r"\bcb[zr]\b", name, re.I):
+    # Publisher ebook posts -- Viz's "HYBRID.MANGA.eBook" is an image-only
+    # PDF -- are converted to CBZ on import. A release that is already a comic
+    # archive needs no conversion and cannot fail one, so it goes first; the
+    # ebook stays eligible for when nothing else is posted, which for early
+    # volumes is often the case.
+    if re.search(r"\b(?:ebook|hybrid|epub|pdf)\b", name, re.I) and not re.search(r"\bcb[zr]\b", name, re.I):
         score -= 10
         reasons.append("Posted as an ebook, which may not be a comic archive")
     return score, reasons
@@ -2256,7 +2499,15 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
     issue_match = bool(candidate_issue) and _issue_key(candidate_issue) == _issue_key(expected_issue)
     candidate_title = lookup.get("title") or embedded.get("series") or parsed.title
     if manga:
-        candidate_title = _MANGA_VOLUME.sub(" ", str(candidate_title or ""))
+        # The series is what comes before the volume, as in the release name:
+        # "VIZ Media Chainsaw Man Vol 01 2020 HYBRiD MANGA eBook-PNLS" is
+        # Chainsaw Man, and the tags after it only drag the likeness down.
+        name = _manga_release_name(path.stem)
+        marker = _MANGA_VOLUME.search(name)
+        if marker and not lookup.get("title") and not embedded.get("series"):
+            candidate_title = name[: marker.start()]
+        else:
+            candidate_title = _MANGA_VOLUME.sub(" ", str(candidate_title or ""))
     expected_title = context.get("seriesTitle") or ""
     # A scene name leads with the publisher and marks the number with "No",
     # so the same trimming the release scorer does is needed again here --
@@ -2298,14 +2549,43 @@ def select_downloaded_comic(
         raise DownloadContentMismatch(
             "The completed download does not contain a supported comic file"
         )
+    converted_dir: Path | None = None
     if context.get("format") == "manga":
         archives = [path for path in candidates if path.suffix.lower() in MANGA_FILE_TYPES]
         if not archives:
-            # Refused as the wrong release, so the next one is tried.
-            raise DownloadContentMismatch(
-                "The download is an EPUB or PDF, not a CBZ or CBR volume"
-            )
+            ebooks = [path for path in candidates if path.suffix.lower() in MANGA_EBOOK_TYPES]
+            if not ebooks:
+                raise DownloadContentMismatch("The download has no CBZ, CBR, PDF or EPUB volume")
+            converted_dir = Path(tempfile.mkdtemp(prefix="flipparr-manga-"))
+            for ebook in ebooks:
+                # Named for the volume it states; a publisher's file is often
+                # named for nothing, and the release folder says which it is.
+                label = ebook.stem if _manga_file_volume(ebook.name) else Path(source).name
+                target = converted_dir / f"{_safe_path_component(label, 'volume')}.cbz"
+                try:
+                    convert_ebook_to_cbz(ebook, target)
+                except EbookNotConvertible as exc:
+                    shutil.rmtree(converted_dir, ignore_errors=True)
+                    # Refused as the wrong release, so the next one is tried.
+                    raise DownloadContentMismatch(
+                        f"{exc}, so this {ebook.suffix.lstrip('.').upper()} cannot become a CBZ volume"
+                    ) from exc
+                archives.append(target)
         candidates = archives
+    try:
+        selected = _choose_downloaded_comic(candidates, source, context)
+    except Exception:
+        if converted_dir is not None:
+            shutil.rmtree(converted_dir, ignore_errors=True)
+        raise
+    if converted_dir is not None:
+        selected = {**selected, "converted": True, "convertedDir": str(converted_dir)}
+    return selected
+
+
+def _choose_downloaded_comic(
+    candidates: list[Path], source: Path, context: dict[str, Any]
+) -> dict[str, Any]:
     ranked = sorted(
         (_download_candidate_score(path, context) for path in candidates),
         key=lambda item: (-item[0], str(item[1]["path"])),
@@ -2473,6 +2753,25 @@ def import_downloaded_comic(
         completed_root,
     )
     selected = select_downloaded_comic(source_container, context, completed_root)
+    try:
+        return _import_selected_comic(selected, context, download, library_root)
+    finally:
+        # A manga ebook is converted into a temporary CBZ. By now the library
+        # holds its copy, or the import failed and the copy is of no use.
+        _discard_converted(selected)
+
+
+def _discard_converted(selected: dict[str, Any] | None) -> None:
+    folder = (selected or {}).get("convertedDir")
+    if folder:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _import_selected_comic(
+    selected: dict[str, Any], context: dict[str, Any], download: dict[str, Any],
+    library_root: Path,
+) -> dict[str, Any]:
+    store = catalog_store()
     source = Path(selected["path"])
     root = library_root.resolve()
     if not root.is_dir():
