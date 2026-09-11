@@ -5299,6 +5299,27 @@ class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
         self.assertEqual(refused.exception.kind, "unreadable")
         self.assertIn("the archive is truncated", str(refused.exception))
 
+    def test_a_zero_filled_download_is_incomplete_and_bars_its_release(self):
+        """Supergirl #2's only release: 22 of 140 MB zeros, no RAR header, no repair files."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "download"
+            source.mkdir()
+            holed = source / "broken - Supergirl - Woman of Tomorrow 02 (of 08).cbr"
+            holed.write_bytes(b"\x00" * (2 << 20) + b"page data")
+            with patch("app.inventory_file", side_effect=self.inventory):
+                with self.assertRaises(app.DownloadContentMismatch) as refused:
+                    app.select_downloaded_comic(source, self.supergirl, root,
+                                                release_title=self.supergirl_release)
+        self.assertEqual((refused.exception.kind, refused.exception.stage), ("damaged", "damaged"))
+        self.assertNotIn(refused.exception.kind, app.DownloadContentMismatch.UNPROVEN,
+                         "missing data is proof: the release is not tried again tomorrow")
+        self.assertIn("2 MB of it is zero-filled", str(refused.exception))
+        # Merely unreadable, with no holes, is still only unproven.
+        with self.assertRaises(app.DownloadContentMismatch) as unproven:
+            self.choose(["broken.cbr"])
+        self.assertEqual(unproven.exception.kind, "unreadable")
+
     def test_two_files_that_name_nothing_are_not_guessed_between(self):
         with self.assertRaises(app.DownloadContentMismatch) as refused:
             self.choose(["a.cbr", "b.cbr"])

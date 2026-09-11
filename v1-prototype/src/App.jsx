@@ -1801,6 +1801,13 @@ function acquisitionFailureDetails(job) {
     message: "The release held a different comic than this issue, so it will not be used again. Its files are kept for a week; the technical details say what was found.",
     technical,
   };
+  // Parts of the posted release are missing, so downloading it again gives
+  // the same holes; it is not grabbed again.
+  if (job?.downloadFailureStage === "damaged") return {
+    label: "Incomplete release",
+    message: "Parts of this release are missing from the Usenet server, so it cannot be used and will not be grabbed again. Another release, or another indexer, is needed; the technical details say how much was missing.",
+    technical,
+  };
   // Nothing proved it wrong -- it could not be read or identified -- so the
   // release is only set aside for a day.
   if (job?.downloadFailureStage === "unidentified") return {

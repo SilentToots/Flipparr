@@ -2653,7 +2653,12 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
     result = inventory_file(parsed)
     health = result.get("file_health") or {}
     if health.get("status") == "error":
-        return -1000, {"path": path, "result": result, "reason": health.get("message")}
+        reason = health.get("message")
+        missing = _zero_filled_megabytes(path)
+        if missing:
+            reason = (f"{reason} {missing} MB of it is zero-filled: data missing from the "
+                      "download itself, which downloading it again cannot fill")
+        return -1000, {"path": path, "result": result, "reason": reason, "damaged": bool(missing)}
     lookup = result.get("lookup_identity") or {}
     embedded = result.get("embedded_metadata") or {}
     candidate_issue = lookup.get("issue") or embedded.get("number")
@@ -2726,8 +2731,26 @@ class DownloadContentMismatch(ValueError):
 
     @property
     def stage(self) -> str:
-        """The download's failure_stage: a proven wrong comic, or one not confirmed."""
+        """The download's failure_stage: a wrong comic, an incomplete one, or one not confirmed."""
+        if self.kind == "damaged":
+            return "damaged"
         return "unidentified" if self.kind in self.UNPROVEN else "content"
+
+
+def _zero_filled_megabytes(path: Path) -> int:
+    """How many whole megabytes of a file are zeros: the holes SABnzbd leaves
+    where a release's Usenet articles never arrived and there was nothing to
+    repair them from. A real comic archive has none."""
+    block = 1 << 20
+    missing = 0
+    try:
+        with path.open("rb") as source:
+            while chunk := source.read(block):
+                if len(chunk) == block and not chunk.strip(b"\x00"):
+                    missing += 1
+    except OSError:
+        return 0
+    return missing
 
 
 def select_downloaded_comic(
@@ -2836,6 +2859,12 @@ def _choose_downloaded_comic(
     readable = [info for score, info in ranked if score > -1000]
     if not readable:
         reason = ranked[0][1].get("reason") or "the archive could not be opened"
+        # Zero-filled means the posted data is missing -- Supergirl: Woman of
+        # Tomorrow #2's only release had 22 of its 140 MB gone, no RAR header,
+        # and no repair files. That is proof, so it bars the release; a file
+        # that is merely unreadable here may only be beyond this machine.
+        if all(info.get("damaged") for _score, info in ranked):
+            raise refuse(f"The download is incomplete ({reason})", "damaged")
         raise refuse(f"No comic in the download could be read ({reason})", "unreadable")
     score, selected = ranked[0]
     if not (score >= 180 and selected.get("issueMatch") and selected.get("titleRatio", 0) >= 0.55):
