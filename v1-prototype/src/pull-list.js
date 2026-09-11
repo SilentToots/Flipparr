@@ -130,9 +130,11 @@ function setAsideReason(miss) {
   if (miss?.score == null || (miss.score === 0 && reasons.length)) return reasons[0] || "Set aside";
   const series = reasons.some((reason) => reason.startsWith("Series title matches"));
   const issue = reasons.some((reason) => /^Issue #.+ matches$/.test(reason));
-  if (!series && !issue) return "Not this series or issue";
-  if (!series) return "Not this series";
+  // The series is read from what comes before the issue number, so without
+  // this issue's number it cannot be judged at all: Woman of Tomorrow #3 is
+  // not "not this series", it is not this issue.
   if (!issue) return "Not this issue";
+  if (!series) return "Not this series";
   return `Too weak a match (${miss.score} of the 85 needed)`;
 }
 
