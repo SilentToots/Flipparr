@@ -2878,6 +2878,33 @@ def _import_selected_comic(
     }
 
 
+def _sab_remove_job(download: dict[str, Any]) -> None:
+    """Ask SABnzbd to forget a finished job and delete its files.
+
+    Called once the library holds a verified copy, and when a release is
+    refused as the wrong content. Left alone, every download stays in
+    SABnzbd's completed folder: one manga run's failed attempts left nine
+    copies of two PDFs there, 930 MB. Sonarr and Radarr remove completed
+    downloads the same way. A failure costs disk space, not the import, so it
+    is only logged.
+    """
+    nzo_id = str((download or {}).get("sab_nzo_id") or "").strip()
+    if not nzo_id:
+        return
+    try:
+        sab = _enabled_acquisition_service("sabnzbd")
+        endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+            "mode": "history", "name": "delete", "value": nzo_id, "del_files": 1,
+            "output": "json", "apikey": sab["apiKey"],
+        })
+        fetch_json_with_headers(
+            endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"},
+            timeout=30.0,
+        )
+    except Exception as exc:
+        log_exception("sab_cleanup_failed", exc, level="warning")
+
+
 def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     sab = _enabled_acquisition_service("sabnzbd")
     endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
@@ -3239,6 +3266,9 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             error=message, failure_stage="import",
         )
         if isinstance(exc, DownloadContentMismatch):
+            # The wrong comic is of no use to keep, and it is recorded as
+            # unusable, so it will not be grabbed again.
+            _sab_remove_job(download)
             # The release is the problem, not the machine, so the same thing
             # happens as when SABnzbd proves one unusable: record it and take
             # the next candidate. Without this the issue sat failed until
@@ -3260,6 +3290,7 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         int(download["job_id"]), "fulfilled",
         f"Imported and verified as {Path(imported['destination']).name}",
     )
+    _sab_remove_job(download)
     replacement = store.replacement_for_job(int(download["job_id"]))
     if replacement and int(replacement.get("unfinished_jobs") or 0) == 0:
         try:
@@ -6512,6 +6543,65 @@ def _comic_vine_synopsis(volume: dict[str, Any]) -> str | None:
     return _synopsis_text(lead.group(1)) if lead else None
 
 
+def series_removal_preview(series_run_id: int) -> dict[str, Any]:
+    """What "Remove from library" would delete, for the confirmation."""
+    plan = catalog_store().series_removal_plan(series_run_id)
+    return {key: value for key, value in plan.items() if key != "files"}
+
+
+def _remove_empty_folders(folder: Path, root: Path) -> None:
+    """Take away folders a removal emptied, up to but never including the root."""
+    current = folder
+    while current != root and root in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def remove_series_from_library(series_run_id: int) -> dict[str, Any]:
+    """Remove a run from Flipparr and delete its comic files from disk.
+
+    Only ever asked for by a person, after being told how many files and how
+    much space it deletes. Every path is checked to lie inside a library
+    folder before anything is deleted, so one that does not stops the whole
+    removal rather than half of it.
+    """
+    store = catalog_store()
+    plan = store.series_removal_plan(series_run_id)
+    if plan["activeDownloads"]:
+        raise ValueError(
+            "Something for this run is downloading or being searched. "
+            "Remove it once that has finished."
+        )
+    targets: list[tuple[Path, Path]] = []
+    for item in plan["files"]:
+        root = Path(item["root"]).resolve()
+        path = Path(item["path"])
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            raise ValueError(f"{path.name} is outside the library folder, so nothing was removed")
+        if resolved == root:
+            raise ValueError("A library folder itself cannot be removed this way")
+        targets.append((resolved, root))
+    deleted = freed = 0
+    for path, root in targets:
+        try:
+            size = path.stat().st_size
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        deleted += 1
+        freed += size
+        _remove_empty_folders(path.parent, root)
+    store.remove_series_run(series_run_id)
+    log_event("series_removed", series_run_id=series_run_id, files_deleted=deleted)
+    return {"removed": True, "title": plan["title"], "filesDeleted": deleted, "bytesFreed": freed}
+
+
 _SYNOPSIS_ORDER = ("metron", "comic_vine")
 
 
@@ -8474,6 +8564,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        series_removal = re.fullmatch(r"/api/v1/series/(\d+)/removal", parsed_url.path)
+        if series_removal:
+            try:
+                payload = series_removal_preview(int(series_removal.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
         series_synopsis_match = re.fullmatch(r"/api/v1/series/(\d+)/synopsis", parsed_url.path)
         if series_synopsis_match:
             try:
@@ -9209,6 +9308,18 @@ class Handler(BaseHTTPRequestHandler):
         if root_match:
             try:
                 result = catalog_store().remove_root(int(root_match.group(1)))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        series_match = re.fullmatch(r"/api/v1/series/(\d+)", parsed_url.path)
+        if series_match:
+            try:
+                result = remove_series_from_library(int(series_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

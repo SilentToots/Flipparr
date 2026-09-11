@@ -3947,3 +3947,40 @@ class MangaRunTests(unittest.TestCase):
                 store.set_series_format(int(run["id"]), "novel")
             with self.assertRaises(LookupError):
                 store.set_series_format(9999, "manga")
+
+
+class SeriesRemovalTests(unittest.TestCase):
+    """A run can be removed, with everything recorded about it."""
+
+    def test_the_plan_counts_what_goes_and_removal_takes_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "Example 001.cbz"
+            path.write_bytes(b"comic")
+            item = ParsedFile(str(path), path.name, ".cbz", "Example", issue="1")
+            store = CatalogStore(root / "catalog.db")
+            store.perform_scan(
+                store.begin_scan(str(root), True), lambda *_: [item], lambda parsed: {
+                    "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {"title": "Example", "issue": "1", "record_type": "single_issue",
+                                       "publisher": "Example Press", "source": "Test"},
+                })
+            run_id = int(store.catalog()["series"][0]["id"])
+            store.apply_issue_list(run_id, "gcd", "55", "https://www.comics.org/api/series/55/", [
+                {"number": "1", "provider_id": "101", "publication_date": "2020-01-01", "publication_year": 2020},
+                {"number": "2", "provider_id": "102", "publication_date": "2020-02-01", "publication_year": 2020},
+            ])
+            store.create_acquisition_request("series", run_id, issue_numbers=["2"])
+            plan = store.series_removal_plan(run_id)
+            self.assertEqual(plan["fileCount"], 1)
+            self.assertEqual(plan["files"][0]["path"], str(path))
+            self.assertEqual(plan["requestCount"], 1)
+            store.remove_series_run(run_id)
+            snapshot = store.catalog()
+            self.assertEqual(snapshot["series"], [])
+            self.assertEqual(snapshot["requests"], [])
+            with self.assertRaises(LookupError):
+                store.series_removal_plan(run_id)
+            with self.assertRaises(LookupError):
+                store.remove_series_run(run_id)

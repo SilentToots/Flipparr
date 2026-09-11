@@ -4609,6 +4609,72 @@ class CatalogStore:
             "updatedAt": updated["updated_at"],
         }
 
+    def series_removal_plan(self, series_run_id: int) -> dict[str, Any]:
+        """What removing a run takes with it, so it can be said before it is done."""
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT id, canonical_title FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone()
+            if not run:
+                raise LookupError("Series run was not found")
+            files = [
+                dict(row) for row in connection.execute(
+                    """SELECT files.id, files.path, files.size_bytes, library_roots.path AS root
+                       FROM files
+                       JOIN file_identities ON file_identities.file_id=files.id
+                       JOIN library_roots ON library_roots.id=files.root_id
+                       WHERE file_identities.series_run_id=? AND files.present=1
+                       ORDER BY files.path""",
+                    (series_run_id,),
+                )
+            ]
+            active = connection.execute(
+                """SELECT COUNT(*) FROM acquisition_jobs
+                   JOIN acquisition_requests
+                     ON acquisition_requests.id=acquisition_jobs.request_id
+                   LEFT JOIN acquisition_downloads
+                     ON acquisition_downloads.job_id=acquisition_jobs.id
+                   WHERE acquisition_requests.series_run_id=?
+                     AND (acquisition_jobs.status='searching'
+                          OR acquisition_downloads.status IN
+                             ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files'))""",
+                (series_run_id,),
+            ).fetchone()[0]
+            requests = connection.execute(
+                "SELECT COUNT(*) FROM acquisition_requests WHERE series_run_id=?", (series_run_id,)
+            ).fetchone()[0]
+        return {
+            "id": str(run["id"]), "title": run["canonical_title"],
+            "files": [
+                {"id": item["id"], "path": item["path"], "root": item["root"],
+                 "size": int(item["size_bytes"] or 0)}
+                for item in files
+            ],
+            "fileCount": len(files),
+            "sizeBytes": sum(int(item["size_bytes"] or 0) for item in files),
+            "requestCount": int(requests), "activeDownloads": int(active),
+        }
+
+    def remove_series_run(self, series_run_id: int) -> None:
+        """Forget a run and everything recorded about it.
+
+        The caller has already dealt with the files on disk. Issues, requests,
+        jobs, provider ids, aliases and editions go with the run; its files'
+        records go first, because a file identity holds its run with RESTRICT.
+        """
+        with self._write_lock, self._connect() as connection:
+            if not connection.execute(
+                "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone():
+                raise LookupError("Series run was not found")
+            connection.execute(
+                """DELETE FROM files WHERE id IN (
+                       SELECT file_id FROM file_identities WHERE series_run_id=?
+                   )""",
+                (series_run_id,),
+            )
+            connection.execute("DELETE FROM series_runs WHERE id=?", (series_run_id,))
+
     def set_series_format(self, series_run_id: int, run_format: str) -> dict[str, Any]:
         """Say a run is manga or a comic, for the publishers that print both."""
         desired = str(run_format or "").strip().casefold()

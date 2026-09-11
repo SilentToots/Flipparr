@@ -4848,3 +4848,73 @@ class MangaEbookConversionTests(unittest.TestCase):
             finally:
                 app._discard_converted(selected)
             self.assertFalse(Path(selected["path"]).exists(), "the converted copy is cleaned up")
+
+
+class RemoveFromLibraryTests(unittest.TestCase):
+    """Removing a run deletes its files -- only ever inside the library."""
+
+    def plan(self, root, files, active=0):
+        return {"id": "7", "title": "Blue Lock", "fileCount": len(files), "sizeBytes": 0,
+                "requestCount": 1, "activeDownloads": active,
+                "files": [{"id": index, "path": str(path), "root": str(root), "size": 1}
+                          for index, path in enumerate(files)]}
+
+    def test_the_files_go_and_so_do_the_folders_they_leave_empty(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            series = root / "Manga" / "Kodansha" / "Blue Lock (2018)"
+            series.mkdir(parents=True)
+            volume = series / "Blue Lock (2018) v01.cbz"
+            volume.write_bytes(b"x" * 10)
+            (root / "Manga" / "keep.txt").write_bytes(b"k")
+            store = Mock()
+            store.series_removal_plan.return_value = self.plan(root, [volume])
+            with patch("app.catalog_store", return_value=store):
+                result = app.remove_series_from_library(7)
+            self.assertEqual((result["filesDeleted"], result["bytesFreed"]), (1, 10))
+            self.assertFalse(volume.exists())
+            self.assertFalse((root / "Manga" / "Kodansha").exists(), "emptied folders go")
+            self.assertTrue((root / "Manga").exists(), "a folder with something else in it stays")
+            store.remove_series_run.assert_called_once_with(7)
+
+    def test_a_path_outside_the_library_stops_the_whole_removal(self):
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as elsewhere:
+            root = Path(folder).resolve()
+            inside = root / "a.cbz"
+            inside.write_bytes(b"x")
+            outside = Path(elsewhere) / "b.cbz"
+            outside.write_bytes(b"x")
+            store = Mock()
+            store.series_removal_plan.return_value = self.plan(root, [inside, outside])
+            with patch("app.catalog_store", return_value=store):
+                with self.assertRaisesRegex(ValueError, "outside the library"):
+                    app.remove_series_from_library(7)
+            self.assertTrue(inside.exists() and outside.exists(), "nothing is deleted")
+            store.remove_series_run.assert_not_called()
+
+    def test_nothing_is_removed_while_it_is_downloading(self):
+        store = Mock()
+        store.series_removal_plan.return_value = self.plan(Path("/tmp"), [], active=1)
+        with patch("app.catalog_store", return_value=store):
+            with self.assertRaisesRegex(ValueError, "downloading"):
+                app.remove_series_from_library(7)
+        store.remove_series_run.assert_not_called()
+
+
+class SabCleanupTests(unittest.TestCase):
+    """A finished download leaves SABnzbd's folder once the library has it."""
+
+    def test_the_job_and_its_files_are_deleted_through_sabnzbd(self):
+        with patch("app._enabled_acquisition_service", return_value={"url": "http://sab", "apiKey": "k"}), \
+             patch("app.fetch_json_with_headers", return_value={"status": True}) as fetch:
+            app._sab_remove_job({"sab_nzo_id": "SABnzbd_nzo_1"})
+        url = fetch.call_args.args[0]
+        for part in ("mode=history", "name=delete", "value=SABnzbd_nzo_1", "del_files=1"):
+            self.assertIn(part, url)
+
+    def test_a_failed_cleanup_never_fails_the_import(self):
+        with patch("app._enabled_acquisition_service", side_effect=ValueError("SABnzbd is off")):
+            app._sab_remove_job({"sab_nzo_id": "SABnzbd_nzo_1"})
+        with patch("app.fetch_json_with_headers") as fetch:
+            app._sab_remove_job({})
+        fetch.assert_not_called()
