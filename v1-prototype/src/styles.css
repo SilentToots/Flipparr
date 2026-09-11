@@ -909,7 +909,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .advanced-collection-tools p { margin: 10px 0 8px; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
 /* A run's Advanced tab: one card per tool -- a name, one line on what it does,
    and its button -- so the six read as a list rather than a page of prose. */
-.advanced-tools { display: grid; gap: 10px; }
+.advanced-tools { display: grid; gap: 10px; margin-top: 20px; }
 .advanced-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); }
 .advanced-card strong { display: block; font-size: var(--text-md); font-weight: 650; color: var(--text); }
 .advanced-card p { margin: 4px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.45; }
