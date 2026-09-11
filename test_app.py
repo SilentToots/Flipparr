@@ -4695,23 +4695,37 @@ class MangaVolumeTests(unittest.TestCase):
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 16 + b"\xff\xd9"
 
 
-def _image_pdf(pages, *, text=False, two_images=False):
-    """A real PDF 1.3: each page one DCT (JPEG) image XObject, classic xref."""
+def _image_pdf(pages, *, text=False, two_images=False, shared=False):
+    """A real PDF 1.3: each page one DCT (JPEG) image XObject, classic xref.
+
+    `shared` lays it out as Viz does: every image listed once in the page
+    tree's resources, and each page's (deflated) content stream drawing one.
+    """
+    import zlib
     objects = {}
     kids = []
+    shared_names = []
     number = 3
     for page_index, image in enumerate(pages):
-        page_no, image_no = number, number + 1
-        number += 2
-        xobjects = f"/Im0 {image_no} 0 R" + (f" /Im1 {image_no} 0 R" if two_images else "")
+        page_no, image_no, content_no = number, number + 1, number + 2
+        number += 3
+        drawn = f"/Im{page_index} Do" + (f" /Im{(page_index + 1) % len(pages)} Do" if two_images else "")
+        content = zlib.compress(f"q 10 0 0 10 0 0 cm {drawn} Q".encode())
+        objects[content_no] = (f"<< /Length {len(content)} /Filter /FlateDecode >>\nstream\n").encode() + content + b"\nendstream"
+        shared_names.append(f"/Im{page_index} {image_no} 0 R")
         font = " /Font << /F1 99 0 R >>" if text else ""
-        objects[page_no] = (f"<< /Type /Page /Parent 2 0 R /Resources << /XObject << {xobjects} >>{font} >> "
+        own = "" if shared else (
+            f"/Resources << /XObject << /Im{page_index} {image_no} 0 R"
+            + (f" /Im{(page_index + 1) % len(pages)} {image_no} 0 R" if two_images else "") + f" >>{font} >> "
+        )
+        objects[page_no] = (f"<< /Type /Page /Parent 2 0 R {own}/Contents {content_no} 0 R "
                             f"/MediaBox [0 0 10 10] >>").encode()
         objects[image_no] = (f"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /Filter /DCTDecode "
                              f"/Length {len(image)} >>\nstream\n").encode() + image + b"\nendstream"
         kids.append(f"{page_no} 0 R")
     objects[1] = b"<< /Type /Catalog /Pages 2 0 R >>"
-    objects[2] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>".encode()
+    tree_resources = f" /Resources << /XObject << {' '.join(shared_names)} >> >>" if shared else ""
+    objects[2] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)}{tree_resources} >>".encode()
     out = bytearray(b"%PDF-1.3\n")
     offsets = {}
     for key in sorted(objects):
@@ -4767,6 +4781,18 @@ class MangaEbookConversionTests(unittest.TestCase):
             source.write_bytes(_image_pdf(self.pages))
             self.assertEqual(app.convert_ebook_to_cbz(source, target), 3)
             self.assertEqual(self.cbz_pages(target), self.pages, "the JPEGs are copied, not re-encoded")
+
+    def test_a_pdf_that_shares_its_images_across_pages_still_converts(self):
+        """Viz lists every image once on the page tree; each page draws one."""
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder) / "v01.pdf", Path(folder) / "v01.cbz"
+            source.write_bytes(_image_pdf(self.pages, shared=True))
+            self.assertEqual(app.convert_ebook_to_cbz(source, target), 3)
+            self.assertEqual(self.cbz_pages(target), self.pages)
+            layered = Path(folder) / "layered.pdf"
+            layered.write_bytes(_image_pdf(self.pages, shared=True, two_images=True))
+            with self.assertRaises(app.EbookNotConvertible, msg="a page drawing two images is still refused"):
+                app.convert_ebook_to_cbz(layered, Path(folder) / "out.cbz")
 
     def test_an_image_epub_becomes_a_cbz_in_reading_order(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1970,6 +1970,24 @@ def _pdf_entry(data: bytes, offsets: dict[int, int], text: bytes, key: bytes) ->
     return _pdf_object(data, offsets, int(reference.group(1)))[0] if reference else None
 
 
+def _pdf_drawn_names(data: bytes, offsets: dict[int, int], page: bytes) -> set[bytes]:
+    """The XObject names a page's content stream actually draws ("/Im7 Do")."""
+    import zlib
+
+    contents = re.search(rb"/Contents\s*(\[[^\]]*\]|\d+\s+\d+\s+R)", page)
+    drawn: set[bytes] = set()
+    for ref in _PDF_REFERENCE.findall(contents.group(1) if contents else b""):
+        dictionary, stream = _pdf_object(data, offsets, int(ref))
+        body = stream or b""
+        if re.search(rb"/FlateDecode", dictionary):
+            try:
+                body = zlib.decompress(body)
+            except zlib.error as exc:
+                raise EbookNotConvertible("A PDF page's drawing could not be read") from exc
+        drawn.update(re.findall(rb"/([^\s/<>\[\]()]+)\s+Do\b", body))
+    return drawn
+
+
 def _pdf_page_images(path: Path) -> list[bytes]:
     """Each page's one JPEG, in reading order."""
     data = path.read_bytes()
@@ -1994,9 +2012,19 @@ def _pdf_page_images(path: Path) -> list[bytes]:
             return
         page_count += 1
         xobjects = _pdf_entry(data, offsets, resources or b"", b"/XObject") or b""
-        refs = [int(ref) for ref in re.findall(rb"/[^\s/<>\[\]()]+\s+(\d+)\s+\d+\s+R", xobjects)]
-        if not refs:
+        named = {
+            name: int(ref)
+            for name, ref in re.findall(rb"/([^\s/<>\[\]()]+)\s+(\d+)\s+\d+\s+R", xobjects)
+        }
+        if not named:
             return  # a blank page
+        if len(named) > 1:
+            # Resources are often shared: Viz's PDF lists all 192 images once,
+            # at the top of the page tree, and each page draws one of them.
+            # What a page draws is what counts.
+            drawn = _pdf_drawn_names(data, offsets, node)
+            named = {name: ref for name, ref in named.items() if name in drawn}
+        refs = list(named.values())
         if len(refs) != 1:
             raise EbookNotConvertible("A PDF page is built from several pieces")
         dictionary, stream = _pdf_object(data, offsets, refs[0])
