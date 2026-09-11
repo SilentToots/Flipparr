@@ -37,7 +37,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { jobsNeedingAttention } from "./nav-counts.js";
-import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
+import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
 import {
   buildNotifications, pruneDismissed, readDismissed, writeDismissed,
   readSeenUntil, writeSeenUntil,
@@ -53,7 +53,7 @@ import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
   countLabel, providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
-  runModes, completeRunToPull, issueLabel,
+  runModes, completeRunToPull, issueLabel, libraryRunMatches, peopleSections,
 } from "./discover.js";
 
 const NAV_ITEMS = [
@@ -1211,6 +1211,10 @@ function DiscoverView({
     { state: "idle", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
   const [pulled, setPulled] = useState({});
   const [drawer, setDrawer] = useState(null);
+  // Creators and publishers: asked once the title search settles, because
+  // Metron serves one request at a time and the titles come first.
+  const [people, setPeople] = useState({ state: "idle", data: null });
+  const peopleQuery = useRef("");
   const searching = Boolean(query);
 
   const allSeries = useMemo(
@@ -1219,11 +1223,7 @@ function DiscoverView({
   const libraryMatches = useMemo(() => {
     if (!query) return [];
     const parts = searchQueryParts(query);
-    const needle = parts.title.toLowerCase();
-    return allSeries.filter((item) => {
-      const text = `${item.searchText || item.title} ${item.publisher || ""}`.toLowerCase();
-      return text.includes(needle) && (!parts.year || `${item.year || ""} ${item.run || ""}`.includes(parts.year));
-    });
+    return allSeries.filter((item) => libraryRunMatches(item, parts));
   }, [allSeries, query]);
 
   async function loadReleases() {
@@ -1242,10 +1242,14 @@ function DiscoverView({
   async function searchProviders(value = query) {
     const cleaned = String(value || "").trim();
     if (cleaned.length < 2 || backendStatus === "offline") {
+      peopleQuery.current = "";
+      setPeople({ state: "idle", data: null });
       setDiscovery({ state: "done", results: [], providersChecked: [], providersAnswered: [], fallbacks: [],
         error: backendStatus === "offline" ? "Library service is unavailable" : "" });
       return;
     }
+    peopleQuery.current = cleaned;
+    setPeople({ state: "idle", data: null });
     setDiscovery({ state: "loading", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
     try {
       const result = await apiRequest(`/api/v1/discover?query=${encodeURIComponent(cleaned)}`);
@@ -1255,6 +1259,19 @@ function DiscoverView({
     } catch (error) {
       setDiscovery({ state: "done", results: [], error: error.message,
         providersChecked: [], providersAnswered: [], fallbacks: [] });
+    }
+    if (peopleQuery.current === cleaned) searchPeople(cleaned);
+  }
+  async function searchPeople(cleaned) {
+    peopleQuery.current = cleaned;
+    setPeople({ state: "loading", data: null });
+    try {
+      const data = await apiRequest(`/api/v1/discover/people?query=${encodeURIComponent(cleaned)}`);
+      if (peopleQuery.current === cleaned) setPeople({ state: "done", data });
+    } catch {
+      // Titles are the search; creators and publishers only add to it, so a
+      // failure here leaves the page as it was rather than saying so.
+      if (peopleQuery.current === cleaned) setPeople({ state: "done", data: null });
     }
   }
   useEffect(() => {
@@ -1300,6 +1317,7 @@ function DiscoverView({
   const { fresh, ownedCount } = splitSearchResults(discovery.results);
   const progress = providerProgress(discovery);
   const outstanding = progress.filter((item) => item.status === "searching");
+  const sections = peopleSections(people.data, discovery.results);
 
   return <>
     <section className={`discover-hero${searching ? " searching" : ""}`}>
@@ -1337,6 +1355,8 @@ function DiscoverView({
         <header>
           <h2>{discovery.state === "loading" ? null : <>{fresh.length} </>}<span>{fresh.length === 1 ? "New Match" : "New Matches"}</span></h2>
           {discovery.state === "loading" || discovery.fallbacks?.length ? <p className="provider-progress" role="status" aria-live="polite">
+            {/* The providers asked are only known once the answer arrives. */}
+            {discovery.state === "loading" && !progress.length ? <span>Searching catalogs…</span> : null}
             {progress.map((item) => <span className={`provider-${item.status}`} key={item.name}
               title={item.error || undefined}>
               {item.name}{item.status === "searching" ? " searching…" : item.status === "failed" ? " unavailable" : ""}
@@ -1367,6 +1387,33 @@ function DiscoverView({
           Still hearing from {outstanding.map((item) => item.name).join(" and ")}.
         </p> : null}
       </section>
+      {/* After New Matches, never before: the Figma checks measure the first
+          new-run card on the page. */}
+      {sections.map((section) => <section className="discover-results" key={section.key}
+        aria-label={`${section.lead} ${section.name}${section.suffix}`}>
+        <header><h2><span>{section.lead} </span>{section.name}<span>{section.suffix}</span></h2></header>
+        {section.runs.length ? <div className="new-run-grid">
+          {section.runs.map((item) => <NewRunCard item={item}
+            state={pulled[runKey(item)] || PULL_STATES.idle}
+            onPull={pullRun} onOpen={(run) => setDrawer({ kind: "run", item: run })}
+            key={`${item.provider}-${item.providerSeriesId}`} />)}
+        </div> : null}
+        {section.ownedCount ? <p className="discover-people-note">
+          {section.runs.length ? `${section.ownedCount} more ${section.ownedCount === 1 ? "is" : "are"}`
+            : section.ownedCount === 1 ? "The one run found is" : `All ${section.ownedCount} runs found are`} already in your library.
+        </p> : null}
+      </section>)}
+      {people.state === "loading" ? <p className="discover-people-note" role="status">
+        Checking creators and publishers…
+      </p> : null}
+      {people.state === "done" && people.data?.stillLooking ? <p className="discover-people-note">
+        Still looking up creators and publishers.{" "}
+        <button type="button" className="discover-text-button" onClick={() => searchPeople(query)}>Look again</button>
+      </p> : null}
+      {people.state === "done" && !sections.length && people.data?.didYouMean?.length ? <p className="discover-people-note did-you-mean">
+        <span>Did you mean</span>
+        {people.data.didYouMean.map((name) => <button type="button" key={name} onClick={() => onSearch(name)}>{name}</button>)}
+      </p> : null}
     </> : <>
       <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
         state={shelfState(data.latest, data.available, releases.state === "loading")}
@@ -1774,7 +1821,7 @@ function RequestsView({ catalog, focus, onCreateRequest, onCancelReplacement, on
   const tabCopy = PULL_LIST_COPY[tab];
   return <><PageHeader title="Pull List"><button className="secondary-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}>{searchingMissing ? <LoadingSpinner size={18} /> : <MagnifyingGlass size={18} />} Search for missing</button><button className="primary-button" onClick={() => setRequestOpen(true)}><Plus size={19} /> Follow a run</button></PageHeader><div className="request-tabs">{PULL_LIST_TABS.map(({ id, label }) => (id === "failed" && !tabCount(buckets.failed)) ? null : <button key={id} className={`${id === "failed" ? "request-tab-failed " : ""}${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label} <b>{tabCount(buckets[id])}</b></button>)}</div><p className="request-tab-description">{tabCopy.description}</p>{pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{entries.length ? entries.map(({ kind, request }) => kind === "replacement"
     ? <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />
-    : <RequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{requestOpen ? <RequestModal catalog={catalog} onCreate={async (target) => { const result = await onCreateRequest(target); if (result?.ok) setRequestOpen(false); return result; }} onClose={() => setRequestOpen(false)} /> : null}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
+    : <RequestRow request={request} tab={tab} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{requestOpen ? <RequestModal catalog={catalog} onCreate={async (target) => { const result = await onCreateRequest(target); if (result?.ok) setRequestOpen(false); return result; }} onClose={() => setRequestOpen(false)} /> : null}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }
 
 function acquisitionFailureDetails(job) {
@@ -1783,6 +1830,12 @@ function acquisitionFailureDetails(job) {
   if (job?.downloadFailureStage === "import") return {
     label: "Import failed",
     message: "The download finished, but Flipparr could not validate or add the comic to your library. The original file is still active.",
+    technical,
+  };
+  // Its files were discarded, so there is nothing to import again.
+  if (job?.downloadFailureStage === "content") return {
+    label: "Wrong comic",
+    message: "The release held a different comic than this issue, so it was discarded. Try the next release, or choose one.",
     technical,
   };
   if (normalized.includes("not-complete") || normalized.includes("aborted, cannot be completed")) return {
@@ -1851,7 +1904,7 @@ function ReplacementRequestRow({ request, progress = {}, openByDefault = false, 
   return <article data-request={`replacement-${request.id}`} className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><div className="request-row"><span className="request-cover"><SeriesCover series={display} decorative /></span><div><h3>{title}</h3><p>{scope}</p><span>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</span></div><StatusBadge tone={tone}>{statusLabel}</StatusBadge><button className="request-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span>{expanded ? "Hide issue details" : "View issue details"}</span><CaretDown size={17} /></button></div>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>{issueLabel(job.issueNumber, request.medium)}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
 }
 
-function RequestRow({ request, progress = {}, openByDefault = false, onFindRelease, onRefresh, onDelete }) {
+function RequestRow({ request, tab, progress = {}, openByDefault = false, onFindRelease, onRefresh, onDelete }) {
   const [expanded, setExpanded] = useState(openByDefault);
   const [deleting, setDeleting] = useState(null);
   const [retryingJobId, setRetryingJobId] = useState(null);
@@ -1891,9 +1944,9 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
   // An issue already in the library is not a missing issue. Listing its job
   // under "Missing issues" put "Added to library" in the middle of a list of
   // things still being looked for.
-  const outstandingJobs = jobs.filter(
-    (job) => !["fulfilled", "cancelled"].includes(job.status)
-  );
+  // On Failed, only what failed: the rest of the run is still on its way.
+  const tabJobs = jobsForTab(request, tab);
+  const outstandingJobs = tabJobs.jobs;
   // ...but on a row that has nothing outstanding, those same jobs are the only
   // thing there is to show, and on Acquired they are the reason the row is
   // there at all. So the panel falls back to what arrived rather than to an
@@ -1934,6 +1987,9 @@ function RequestRow({ request, progress = {}, openByDefault = false, onFindRelea
     </div>
     {expanded ? <div className="request-job-panel">
       <header><div><strong>{pulled ? "Pulled from Discover" : !following ? "What arrived" : request.status === "fulfilled" ? "Run is up to date" : "Missing issues"}</strong><span>{pulled ? "You asked for these issues by name. The rest of the run is not being looked for." : !following ? "You stopped following this run. Everything already in your library stays there; nothing new is looked for." : request.status === "fulfilled" ? (request.publicationStatus === "completed" ? "Every issue in this completed run is in your library." : "Flipparr will keep checking this run and add newly released issues to Wanted.") : "Flipparr searches for each missing issue and grabs the best match. Anything it cannot decide waits here for you."}</span></div>{following ? <b>Following</b> : pulled && canDeletePull(request) ? <button type="button" className="ghost-button" disabled={deleting !== null} onClick={() => remove(null)}>{deleting === "all" ? "Deleting…" : "Delete request"}</button> : null}</header>
+      {tabJobs.others ? <p className="request-jobs-note">
+        {tabJobs.others} other issue{tabJobs.others === 1 ? " in this run is" : "s in this run are"} still being looked for or downloaded.
+      </p> : null}
       {panelJobs.length || waiting.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
         {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>
@@ -2630,11 +2686,15 @@ function GroupedIssueInventory({ issues, onEditIssue, medium }) {
           // A missing issue keeps its tile, dimmed, so a gap in a run is
           // visible rather than silently absent from the grid.
           return <article className={`issue-tile ${owned ? "" : "unowned"}`} key={issue.id}>
-            <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
+            {/* The badge sits over the cover, beside it rather than inside it,
+                so a missing issue's dimmed cover does not dim its badge too. */}
+            <span className="issue-tile-art">
+              <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
+              {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}
+            </span>
             {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
             <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong>
             {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
-            {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}
           </article>;
         }
         return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}</small></div><div className="issue-row-actions">{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{onEditIssue ? <button type="button" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}</div></article>;

@@ -63,6 +63,22 @@ export const canDeleteJob = (job) => Boolean(job)
   && !(job.downloadStatus && IN_FLIGHT_DOWNLOADS.has(job.downloadStatus))
   && job.status !== "searching";
 
+/**
+ * The issues a row lists on a tab, and how many more of the run it leaves out.
+ *
+ * A run goes to Failed when any one of its issues fails, and the rest of it is
+ * still on its way. Listed there, an issue still waiting for a release read as
+ * failed too -- American Vampire #21 did, beside the #19 that had. So Failed
+ * lists the failures and counts the others; every other tab lists all that is
+ * outstanding.
+ */
+export function jobsForTab(request, tab) {
+  const outstanding = jobs(request).filter((job) => !["fulfilled", "cancelled"].includes(job.status));
+  if (tab !== "failed") return { jobs: outstanding, others: 0 };
+  const failed = outstanding.filter(jobHasFailed);
+  return { jobs: failed, others: outstanding.length - failed.length };
+}
+
 /** Only a pull by name is deleted; a followed run is stopped by unfollowing. */
 export const canDeletePull = (request) =>
   request?.coverage === "issues" && jobs(request).every(canDeleteJob);

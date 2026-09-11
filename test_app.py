@@ -710,8 +710,128 @@ class FilenameParserTests(unittest.TestCase):
             result = discover_series("Saga")
         self.assertEqual(result["providerId"], "comic_vine")
         self.assertEqual(result["fallbacks"][0]["provider"], "Metron")
-        self.assertEqual(result["providersAnswered"], ["Comic Vine"])
+        # GCD found nothing, but it answered: it is not still "searching".
+        self.assertEqual(result["providersAnswered"], ["Comic Vine", "Grand Comics Database"])
         self.assertEqual(len(result["results"]), 1)
+
+    def test_a_name_counts_only_when_the_catalog_knows_it_outright(self):
+        people = [
+            {"id": 1, "name": "Brian K. Vaughan"}, {"id": 2, "name": "Brian Vaughan"},
+            {"id": 3, "name": "Robert Vaughan"}, {"id": 4, "name": "McNally Sagal"},
+        ]
+        self.assertEqual(app._named_match(people, "brian k vaughan")[0]["id"], 1)
+        match, suggestions = app._named_match(people, "Vaughan")
+        self.assertIsNone(match, "a surname four people share is not a guess worth making")
+        self.assertEqual(suggestions, ["Brian K. Vaughan", "Brian Vaughan", "Robert Vaughan"])
+        self.assertEqual(app._named_match(people, "Saga"), (None, []), "Saga is not McNally Sagal")
+        self.assertEqual(app._named_match([{"id": 7, "name": "James Tynion IV"}], "Tynion")[0]["id"], 7)
+        publishers = [{"id": 1, "name": "Image Comics"}, {"id": 2, "name": "Active Images"}]
+        self.assertEqual(app._named_match(publishers, "Image", company=True)[0]["id"], 1)
+
+    def test_a_creators_runs_are_grouped_from_the_issues_credited_to_them(self):
+        import time
+        issues = [
+            {"id": 12, "number": "2", "image": "saga2.jpg", "series": {"id": 5, "name": "Saga", "year_began": 2012}},
+            {"id": 11, "number": "1", "image": "saga1.jpg", "series": {"id": 5, "name": "Saga", "year_began": 2012}},
+            {"id": 21, "number": "1", "image": "pg1.jpg", "series": {"id": 6, "name": "Paper Girls", "year_began": 2015}},
+        ]
+        library = {"keys": {(app.normalized_title("Paper Girls"), "2015")}, "providerIds": set()}
+        with patch("app.fetch_provider_json", return_value={"results": [{"id": 3, "name": "Brian K. Vaughan"}]}), \
+                patch("app._fetch_provider_pages", return_value=issues) as pages:
+            result = app._metron_creator_runs("Brian K. Vaughan", None, "token", library, time.monotonic() + 10)
+            only_2015 = app._metron_creator_runs("Brian K. Vaughan", 2015, "token", library, time.monotonic() + 10)
+        self.assertIn("creator_id=3", pages.call_args[0][1])
+        self.assertEqual(result["creator"]["name"], "Brian K. Vaughan")
+        self.assertEqual([run["title"] for run in result["runs"]], ["Saga", "Paper Girls"])
+        saga, paper_girls = result["runs"]
+        self.assertEqual((saga["creditedIssues"], saga["cover"], saga["providerIds"]), (2, "saga1.jpg", {"metron": "5"}))
+        self.assertTrue(paper_girls["inLibrary"])
+        self.assertEqual([run["title"] for run in only_2015["runs"]], ["Paper Girls"])
+
+    def test_people_search_merges_a_person_both_catalogs_know(self):
+        metron = {"creator": {"name": "Tatsuki Fujimoto", "provider": "Metron"}, "runs": [
+            {"title": "Chainsaw Man", "yearBegan": 2020, "provider": "metron", "providerSeriesId": "1",
+             "providerIds": {"metron": "1"}, "cover": None},
+        ]}
+        vine = {"creator": {"name": "Tatsuki Fujimoto", "provider": "Comic Vine"}, "runs": [
+            {"title": "Chainsaw Man", "yearBegan": 2020, "provider": "comic_vine", "providerSeriesId": "9",
+             "providerIds": {"comic_vine": "9"}, "cover": "csm.jpg", "publisher": "VIZ Media"},
+            {"title": "Fire Punch", "yearBegan": 2018, "provider": "comic_vine", "providerSeriesId": "8",
+             "providerIds": {"comic_vine": "8"}},
+        ]}
+        with patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"}, "comic_vine": {"enabled": True, "apiKey": "key"},
+        }), patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+                patch("app._metron_creator_runs", return_value=metron), \
+                patch("app._comic_vine_creator_runs", return_value=vine), \
+                patch("app._metron_publisher_runs", return_value={"didYouMean": []}):
+            result = app.discover_people_and_publishers("Tatsuki Fujimoto")
+        self.assertEqual(len(result["creatorMatches"]), 1, "one person, not one per catalog")
+        match = result["creatorMatches"][0]
+        self.assertEqual(match["providers"], ["Metron", "Comic Vine"])
+        self.assertEqual([run["title"] for run in match["runs"]], ["Chainsaw Man", "Fire Punch"])
+        self.assertEqual(match["runs"][0]["providerIds"], {"metron": "1", "comic_vine": "9"})
+        self.assertEqual((match["runs"][0]["cover"], match["runs"][0]["publisher"]), ("csm.jpg", "VIZ Media"))
+        self.assertEqual((result["publisherMatches"], result["didYouMean"], result["stillLooking"]), ([], [], False))
+
+    def test_people_search_offers_the_names_an_ambiguous_one_might_mean(self):
+        with patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"}, "comic_vine": {"enabled": True, "apiKey": "key"},
+        }), patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+                patch("app._metron_creator_runs", return_value={"didYouMean": ["Brian K. Vaughan", "Robert Vaughan"]}), \
+                patch("app._comic_vine_creator_runs", return_value={"didYouMean": ["Brian K Vaughan"]}), \
+                patch("app._metron_publisher_runs", return_value={"didYouMean": []}):
+            result = app.discover_people_and_publishers("Vaughan")
+        self.assertEqual(result["creatorMatches"], [])
+        self.assertEqual(result["didYouMean"], ["Brian K. Vaughan", "Robert Vaughan"])
+
+    def test_people_search_answers_with_what_it_has_at_its_deadline(self):
+        import time
+
+        def slow(*_args, **_kwargs):
+            time.sleep(0.5)
+            return {}
+        with patch.object(app, "PEOPLE_LOOKUP_DEADLINE_SECONDS", 0.05), patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"},
+        }), patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+                patch("app._metron_creator_runs", side_effect=slow), \
+                patch("app._metron_publisher_runs", return_value={
+                    "publisher": {"name": "Image Comics", "provider": "Metron"}, "year": 2012, "runs": [],
+                }):
+            started = time.monotonic()
+            result = app.discover_people_and_publishers("Image 2012")
+        self.assertLess(time.monotonic() - started, 0.4)
+        self.assertTrue(result["stillLooking"])
+        self.assertEqual((result["publisherMatches"][0]["name"], result["publisherMatches"][0]["year"]), ("Image Comics", 2012))
+
+    def test_idle_worker_fills_a_runs_creators_from_one_metron_issue(self):
+        from unittest.mock import Mock
+        store = Mock()
+        store.metadata_provider_available.return_value = True
+        store.claim_run_creator_sync.return_value = {
+            "seriesRunId": 4, "provider": "metron", "providerId": "901", "format": "comic",
+        }
+        issue = {"credits": [
+            {"creator": "Brian K. Vaughan", "role": [{"name": "Writer"}]},
+            {"creator": "Fiona Staples", "role": [{"name": "Artist"}, {"name": "Cover"}]},
+        ]}
+        config = {"metron": {"enabled": True, "token": "token"}}
+        with patch("app.load_provider_config", return_value=config), \
+                patch("app._provider_credential", return_value="token"), \
+                patch("app.fetch_provider_json", return_value=issue) as fetch:
+            self.assertTrue(app.sync_next_run_creators(store))
+        self.assertIn("/issue/901/", fetch.call_args[0][1])
+        store.set_run_catalog_creators.assert_called_once_with(4, "metron", [
+            {"name": "Brian K. Vaughan", "roles": ["writer"]}, {"name": "Fiona Staples", "roles": ["artist"]},
+        ])
+
+        store.reset_mock()
+        with patch("app.load_provider_config", return_value=config), \
+                patch("app._provider_credential", return_value="token"), \
+                patch("app.fetch_provider_json", side_effect=app.MetadataRateLimited("metron", 60, "slow down")):
+            self.assertTrue(app.sync_next_run_creators(store))
+        store.set_run_catalog_creators.assert_not_called()
+        store.release_run_creator_sync.assert_called_once_with(4)
 
     def test_discover_does_not_pay_for_a_byline_it_never_shows(self):
         """Metron paces callers at one request every 3.2s.
@@ -3206,6 +3326,44 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
         self.assertEqual(
             store.record_acquisition_release_failure.call_args.args[1], "deviants-key"
         )
+        # Its files are deleted, so it must not be offered as an import to retry.
+        failed = next(
+            call for call in store.update_acquisition_download.call_args_list
+            if call.args[1] == "failed"
+        )
+        self.assertEqual(failed.kwargs["failure_stage"], "content")
+
+    def _reconcile_missing_from_history(self, sent_seconds_ago, queue_slot):
+        sent = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=sent_seconds_ago)
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "gone-id", "release_title": "American.Vampire.019",
+            "release_key": "av-19", "created_at": sent.isoformat(),
+        }
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), \
+                patch("app._sab_history_slot", return_value=None), \
+                patch("app._sab_queue_slot", return_value=queue_slot) as queue, \
+                patch("app._fallback_after_sab_failure", return_value={"status": "fallback_queued"}) as fallback:
+            result = app.reconcile_acquisition_download(download)
+        return result, store, queue, fallback
+
+    def test_a_download_sabnzbd_has_forgotten_moves_on_to_the_next_release(self):
+        """American Vampire #19 sat on Downloading for good after its files were deleted."""
+        result, store, _queue, fallback = self._reconcile_missing_from_history(3600, None)
+        self.assertEqual(result["status"], "fallback_queued")
+        store.update_acquisition_download.assert_called_once_with(
+            31, "failed", error="SABnzbd no longer has this download", failure_stage="download",
+        )
+        fallback.assert_called_once()
+
+    def test_a_download_still_in_the_queue_or_just_sent_keeps_waiting(self):
+        result, store, _queue, fallback = self._reconcile_missing_from_history(3600, {"nzo_id": "gone-id"})
+        self.assertEqual(result["status"], "downloading")
+        fallback.assert_not_called()
+        result, store, queue, fallback = self._reconcile_missing_from_history(30, None)
+        self.assertEqual(result["status"], "downloading")
+        queue.assert_not_called()
+        fallback.assert_not_called()
 
     def test_a_local_failure_is_not_blamed_on_the_release(self):
         """A disk or quarantine problem says nothing about the download."""

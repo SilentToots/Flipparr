@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   classifyRequest, groupPullList, tabCount, lastArrivalAt, isWorking,
-  RECENT_ARRIVAL_DAYS,
+  RECENT_ARRIVAL_DAYS, jobsForTab,
 } from "../src/pull-list.js";
 
 const NOW = new Date("2026-09-09T12:00:00Z");
@@ -194,4 +194,22 @@ test("a followed run waiting on unreleased issues is still not work", () => {
   // The pulled-issue rule must not sweep followed runs onto Wanted.
   const request = req({ coverage: "run", upcomingIssueCount: 3, wantedIssueCount: 0 });
   assert.equal(classifyRequest(request, NOW), null);
+});
+
+test("on Failed a run lists what failed, not the issues still on their way", () => {
+  // American Vampire #19 failed while #21 was still waiting for a release, and
+  // #21 was listed under Failed beside it as though it had failed too.
+  const request = { jobs: [
+    { id: 1, issueNumber: "18", status: "fulfilled", downloadStatus: "imported" },
+    { id: 2, issueNumber: "19", status: "failed", downloadStatus: "failed" },
+    { id: 3, issueNumber: "20", status: "grabbed", downloadStatus: "downloading" },
+    { id: 4, issueNumber: "21", status: "queued" },
+  ] };
+  const failed = jobsForTab(request, "failed");
+  assert.deepEqual(failed.jobs.map((job) => job.issueNumber), ["19"]);
+  assert.equal(failed.others, 2);
+  const wanted = jobsForTab(request, "wanted");
+  assert.deepEqual(wanted.jobs.map((job) => job.issueNumber), ["19", "20", "21"]);
+  assert.equal(wanted.others, 0);
+  assert.deepEqual(jobsForTab(null, "failed"), { jobs: [], others: 0 });
 });

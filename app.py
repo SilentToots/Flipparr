@@ -42,9 +42,9 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
-from catalog_store import CatalogStore, _issue_release_state
+from catalog_store import CatalogStore, _issue_release_state, normalized_person
 from catalog_core_v2.language import (
     LANGUAGE_NAMES,
     detect_language as detect_release_language,
@@ -3333,10 +3333,56 @@ def _fallback_after_sab_failure(
     }
 
 
+# How long a download may be missing from SABnzbd's queue and history before it
+# counts as lost. A job just sent can take a moment to appear in either.
+SAB_MISSING_GRACE_SECONDS = 600
+
+
+def _sab_queue_slot(download: dict[str, Any]) -> dict[str, Any] | None:
+    sab = _enabled_acquisition_service("sabnzbd")
+    endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+        "mode": "queue", "nzo_ids": str(download["sab_nzo_id"]), "output": "json",
+        "apikey": sab["apiKey"],
+    })
+    payload = fetch_json_with_headers(
+        endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0
+    )
+    queue = payload.get("queue") if isinstance(payload, dict) else None
+    slots = queue.get("slots") if isinstance(queue, dict) else []
+    return next(
+        (slot for slot in slots or [] if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
+        None,
+    )
+
+
+def _sab_lost_download(download: dict[str, Any]) -> bool:
+    """Whether SABnzbd has forgotten a download: in neither its queue nor its history.
+
+    Waiting on one it has forgotten waits forever. American Vampire #19 did:
+    its files were deleted as the wrong comic, "Retry import" put it back to
+    waiting on SABnzbd, and the Pull List said Downloading from then on.
+    """
+    try:
+        sent = dt.datetime.fromisoformat(str(download.get("created_at") or ""))
+    except ValueError:
+        return False
+    if sent.tzinfo is None:
+        sent = sent.replace(tzinfo=dt.timezone.utc)
+    if (dt.datetime.now(dt.timezone.utc) - sent).total_seconds() < SAB_MISSING_GRACE_SECONDS:
+        return False
+    return _sab_queue_slot(download) is None
+
+
 def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     store = catalog_store()
     slot = _sab_history_slot(download)
     if not slot:
+        if _sab_lost_download(download):
+            message = "SABnzbd no longer has this download"
+            store.update_acquisition_download(
+                int(download["id"]), "failed", error=message, failure_stage="download",
+            )
+            return _fallback_after_sab_failure(store, download, message)
         store.update_acquisition_download(int(download["id"]), "downloading")
         return {"status": "downloading"}
     sab_status = str(slot.get("status") or "").casefold()
@@ -3384,9 +3430,12 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             except Exception as rollback_error:
                 exc = ValueError(f"{exc}; original restore also needs attention: {rollback_error}")
         message = str(exc)
+        # A wrong comic is its own stage, not an import to retry: its files
+        # are deleted from SABnzbd below, so "Retry import" had nothing left to
+        # import and waited on a SABnzbd job that no longer existed.
         store.update_acquisition_download(
-            int(download["id"]), "failed", sab_storage=storage,
-            error=message, failure_stage="import",
+            int(download["id"]), "failed", sab_storage=storage, error=message,
+            failure_stage="content" if isinstance(exc, DownloadContentMismatch) else "import",
         )
         if isinstance(exc, DownloadContentMismatch):
             # The wrong comic is of no use to keep, and it is recorded as
@@ -5276,6 +5325,30 @@ def _metron_discovery_creators(issue: dict[str, Any]) -> list[dict[str, Any]]:
     return creators
 
 
+def _metron_series_row(
+    row: dict[str, Any], library_keys: set[tuple[str, str]], search_rank: int = 0,
+) -> dict[str, Any] | None:
+    """One Metron series-list row as a discovery card."""
+    raw_title = str(row.get("series") or row.get("name") or "").strip()
+    title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip()
+    if not title or not row.get("id"):
+        return None
+    year = _provider_year(row.get("year_began"), raw_title)
+    year_ended = _provider_year(row.get("year_end"))
+    publisher_value = row.get("publisher") or {}
+    publisher = publisher_value.get("name") if isinstance(publisher_value, dict) else publisher_value
+    return {
+        "provider": "metron", "providerName": "Metron",
+        "providerSeriesId": str(row["id"]), "title": title,
+        "yearBegan": year, "yearEnded": year_ended,
+        "yearLabel": f"{year or 'Unknown'}{f'–{year_ended}' if year_ended and year_ended != year else ''}",
+        "publisher": publisher, "issueCount": int(row.get("issue_count") or 0),
+        "cover": row.get("image"), "status": row.get("status"),
+        "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
+        "_searchRank": search_rank,
+    }
+
+
 def discover_metron_series(
     query: str, token: str, library: dict[str, Any] | None = None, *, hydrate: bool = True,
 ) -> dict[str, Any]:
@@ -5299,27 +5372,10 @@ def discover_metron_series(
     url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode({"q": title_query})
     payload = fetch_provider_json("metron", url, token)
     library_keys = (library or _discovery_library_view())["keys"]
-    results = []
-    for search_rank, row in enumerate((payload.get("results") or [])[:100]):
-        raw_title = str(row.get("series") or row.get("name") or "").strip()
-        title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", raw_title).strip()
-        if not title or not row.get("id"):
-            continue
-        year = _provider_year(row.get("year_began"), raw_title)
-        year_ended = _provider_year(row.get("year_end"))
-        publisher_value = row.get("publisher") or {}
-        publisher = publisher_value.get("name") if isinstance(publisher_value, dict) else publisher_value
-        issue_count = int(row.get("issue_count") or 0)
-        results.append({
-            "provider": "metron", "providerName": "Metron",
-            "providerSeriesId": str(row["id"]), "title": title,
-            "yearBegan": year, "yearEnded": year_ended,
-            "yearLabel": f"{year or 'Unknown'}{f'–{year_ended}' if year_ended and year_ended != year else ''}",
-            "publisher": publisher, "issueCount": issue_count,
-            "cover": row.get("image"), "status": row.get("status"),
-            "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
-            "_searchRank": search_rank,
-        })
+    results = [
+        item for search_rank, row in enumerate((payload.get("results") or [])[:100])
+        if (item := _metron_series_row(row, library_keys, search_rank))
+    ]
     results.sort(key=lambda item: (
         0 if normalized_title(item["title"]) == normalized_title(title_query) else 1,
         abs((item.get("yearBegan") or 0) - year_hint) if year_hint and item.get("yearBegan") else (9999 if year_hint else 0),
@@ -5384,6 +5440,32 @@ def discover_metron_series(
     }
 
 
+def _comic_vine_volume_row(
+    row: dict[str, Any], library_keys: set[tuple[str, str]], english_only: bool,
+) -> dict[str, Any] | None:
+    """One Comic Vine volume as a discovery card, or None for an edition to skip."""
+    title = str(row.get("name") or "").strip()
+    if not title or not row.get("id"):
+        return None
+    year = _provider_year(row.get("start_year"))
+    publisher = (row.get("publisher") or {}).get("name")
+    edition = manga_edition(publisher)
+    if edition == "foreign" and english_only:
+        return None
+    image = row.get("image") or {}
+    return {
+        "provider": "comic_vine", "providerName": "Comic Vine",
+        "providerSeriesId": str(row["id"]), "title": title,
+        "yearBegan": year, "yearEnded": None, "yearLabel": str(year or "Unknown"),
+        "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
+        "medium": "manga" if edition == "manga" else "comic",
+        "cover": image.get("medium_url") or image.get("small_url"),
+        "url": row.get("site_detail_url"),
+        "description": row.get("description"),
+        "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
+    }
+
+
 def discover_comic_vine_series(
     query: str, api_key: str, library: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -5404,28 +5486,10 @@ def discover_comic_vine_series(
     # editions are the same book they cannot read, so they are left out --
     # before the cut below, or the English one can be the row that is cut.
     english_only = preferred_language() == "en"
-    results = []
-    for row in (payload.get("results") or []):
-        title = str(row.get("name") or "").strip()
-        if not title or not row.get("id"):
-            continue
-        year = _provider_year(row.get("start_year"))
-        publisher = (row.get("publisher") or {}).get("name")
-        edition = manga_edition(publisher)
-        if edition == "foreign" and english_only:
-            continue
-        image = row.get("image") or {}
-        results.append({
-            "provider": "comic_vine", "providerName": "Comic Vine",
-            "providerSeriesId": str(row["id"]), "title": title,
-            "yearBegan": year, "yearEnded": None, "yearLabel": str(year or "Unknown"),
-            "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
-            "medium": "manga" if edition == "manga" else "comic",
-            "cover": image.get("medium_url") or image.get("small_url"),
-            "url": row.get("site_detail_url"),
-            "description": row.get("description"),
-            "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
-        })
+    results = [
+        item for row in (payload.get("results") or [])
+        if (item := _comic_vine_volume_row(row, library_keys, english_only))
+    ]
     results.sort(key=lambda item: (
         0 if normalized_title(item["title"]) == normalized_title(title_query) else 1,
         abs((item.get("yearBegan") or 0) - year_hint) if year_hint and item.get("yearBegan") else (9999 if year_hint else 0),
@@ -5557,7 +5621,9 @@ def discover_series(query: str) -> dict[str, Any]:
             errors[0]["error"] if len(errors) == 1
             else "No comic discovery provider is currently available"
         )
-    answered = [name for provider_id, name, _ in searches if by_provider.get(provider_id)]
+    # Answered means it replied, rows or none. Counting only providers with
+    # rows left one that found nothing reading "searching" for good.
+    answered = [name for provider_id, name, _ in searches if provider_id in by_provider]
     primary = next(
         (provider_id for provider_id in _DISCOVERY_PROVIDERS if by_provider.get(provider_id)),
         None,
@@ -5573,6 +5639,304 @@ def discover_series(query: str) -> dict[str, Any]:
     if errors:
         result["fallbacks"] = errors
     return result
+
+
+# ---------------------------------------------------------------------------
+# Search by creator and by publisher
+#
+# The same box as a title search, asked a second way: is this a person, or a
+# publisher? Only a name the catalog knows outright counts -- "Saga" is not
+# McNally Sagal -- and an ambiguous surname is offered back as a choice rather
+# than guessed at.
+# ---------------------------------------------------------------------------
+
+PEOPLE_LOOKUP_DEADLINE_SECONDS = 25
+# "Image" is Image Comics; "Boom" is BOOM! Studios.
+_COMPANY_SUFFIXES = ("comics", "publishing", "entertainment", "press", "books", "studios", "media", "group")
+# Comic Vine credits a manga artist with the magazine that serialised them.
+_MAGAZINE_TITLE = re.compile(r"\b(?:magazine|weekly|monthly|jump|anthology)\b", re.I)
+
+
+def _named_match(
+    rows: Iterable[dict[str, Any]], query: str, *, company: bool = False,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """The one row a query names outright, else the names it might have meant."""
+    wanted = normalized_person(query)
+    tokens = wanted.split()
+    if len(wanted) < 3:
+        return None, []
+    named = [
+        (row, normalized_person(row.get("name")))
+        for row in rows if isinstance(row, dict) and row.get("name") and row.get("id")
+    ]
+    exact = {wanted} | ({f"{wanted} {suffix}" for suffix in _COMPANY_SUFFIXES} if company else set())
+    for row, name in named:
+        if name in exact:
+            return row, []
+    # Whole words only: a person by any of their names, a company by the
+    # start of its name.
+    close = [
+        row for row, name in named
+        if (name.split()[:len(tokens)] == tokens if company else set(tokens) <= set(name.split()))
+    ]
+    if len(close) == 1:
+        return close[0], []
+    return None, [str(row["name"]) for row in close[:6]]
+
+
+def _metron_creator_runs(
+    query: str, year_hint: int | None, token: str, library: dict[str, Any], deadline: float,
+) -> dict[str, Any]:
+    """A creator's runs, from the issues Metron credits them on."""
+    url = f"{METRON_API_BASE}/creator/?" + urllib.parse.urlencode({"name": query})
+    creator, suggestions = _named_match(fetch_provider_json("metron", url, token).get("results") or [], query)
+    if not creator:
+        return {"didYouMean": suggestions}
+    issues = _fetch_provider_pages(
+        "metron", f"{METRON_API_BASE}/issue/?creator_id={creator['id']}", token,
+        max_pages=5, deadline=deadline,
+    )
+    runs: dict[str, dict[str, Any]] = {}
+    for row in issues:
+        entry = _release_entry(row)
+        if not entry or not entry["providerSeriesId"]:
+            continue
+        series_id = entry["providerSeriesId"]
+        run = runs.get(series_id)
+        if run is None:
+            title = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", entry["seriesTitle"]).strip()
+            year = entry["seriesYear"]
+            run = runs[series_id] = {
+                "provider": "metron", "providerName": "Metron",
+                "providerSeriesId": series_id, "providerIds": {"metron": series_id},
+                "title": title, "yearBegan": year, "yearEnded": None,
+                "yearLabel": str(year or "Unknown"), "publisher": None,
+                "cover": entry["cover"], "medium": "comic", "creditedIssues": 0,
+                "inLibrary": (normalized_title(title), str(year or "")) in library["keys"],
+            }
+        run["creditedIssues"] += 1
+        if entry["number"] == "1" and entry["cover"]:
+            run["cover"] = entry["cover"]
+    found = [run for run in runs.values() if not year_hint or run["yearBegan"] == year_hint]
+    found.sort(key=lambda run: (-run["creditedIssues"], -(run["yearBegan"] or 0), run["title"]))
+    return {"creator": {"name": creator["name"], "provider": "Metron"}, "runs": found[:24]}
+
+
+def _comic_vine_creator_runs(
+    query: str, year_hint: int | None, api_key: str, library: dict[str, Any],
+) -> dict[str, Any]:
+    """A creator's runs from Comic Vine, which is the one that knows manga."""
+    url = f"{COMIC_VINE_API_BASE}/search/?" + urllib.parse.urlencode({
+        "api_key": api_key, "format": "json", "resources": "person", "query": query,
+        "limit": 10, "field_list": "id,name",
+    })
+    payload = fetch_provider_json("comic_vine", url, api_key)
+    if str(payload.get("status_code")) != "1":
+        raise ValueError(str(payload.get("error") or "Comic Vine creator search failed"))
+    person, suggestions = _named_match(payload.get("results") or [], query)
+    if not person:
+        return {"didYouMean": suggestions}
+    detail_url = f"{COMIC_VINE_API_BASE}/person/4040-{person['id']}/?" + urllib.parse.urlencode({
+        "api_key": api_key, "format": "json", "field_list": "id,name,volume_credits",
+    })
+    detail = fetch_provider_json("comic_vine", detail_url, api_key).get("results") or {}
+    volume_ids = [str(item["id"]) for item in (detail.get("volume_credits") or []) if item.get("id")][:100]
+    found: list[dict[str, Any]] = []
+    if volume_ids:
+        volumes_url = f"{COMIC_VINE_API_BASE}/volumes/?" + urllib.parse.urlencode({
+            "api_key": api_key, "format": "json", "filter": f"id:{'|'.join(volume_ids)}",
+            "limit": 100, "field_list": ",".join(COMIC_VINE_VOLUME_FIELDS),
+        })
+        english_only = preferred_language() == "en"
+        for row in fetch_provider_json("comic_vine", volumes_url, api_key).get("results") or []:
+            item = _comic_vine_volume_row(row, library["keys"], english_only)
+            if not item or _MAGAZINE_TITLE.search(item["title"]):
+                continue
+            if year_hint and item["yearBegan"] != year_hint:
+                continue
+            item.pop("description", None)
+            item["providerIds"] = {"comic_vine": item["providerSeriesId"]}
+            found.append(item)
+    found.sort(key=lambda run: (-(run["issueCount"] or 0), -(run["yearBegan"] or 0), run["title"]))
+    return {"creator": {"name": person["name"], "provider": "Comic Vine"}, "runs": found[:24]}
+
+
+def _metron_publisher_runs(
+    query: str, year_hint: int | None, token: str, library: dict[str, Any],
+) -> dict[str, Any]:
+    """Runs a publisher began in one year: the one asked for, else this one.
+
+    A publisher's whole list is thousands of runs in alphabetical order, which
+    answers nothing. A year makes it a question worth asking.
+    """
+    url = f"{METRON_API_BASE}/publisher/?" + urllib.parse.urlencode({"name": query})
+    publisher, suggestions = _named_match(
+        fetch_provider_json("metron", url, token).get("results") or [], query, company=True,
+    )
+    if not publisher:
+        return {"didYouMean": suggestions}
+    year = year_hint or dt.date.today().year
+    series_url = f"{METRON_API_BASE}/series/?" + urllib.parse.urlencode({
+        "publisher_id": publisher["id"], "year_began": year,
+    })
+    found = []
+    for rank, row in enumerate(fetch_provider_json("metron", series_url, token).get("results") or []):
+        item = _metron_series_row(row, library["keys"], rank)
+        if not item or (item["yearBegan"] and item["yearBegan"] != year):
+            continue
+        item.pop("_searchRank", None)
+        item["publisher"] = item.get("publisher") or publisher["name"]
+        item["providerIds"] = {"metron": item["providerSeriesId"]}
+        found.append(item)
+    found.sort(key=lambda run: (-(run["issueCount"] or 0), run["title"]))
+    return {"publisher": {"name": publisher["name"], "provider": "Metron"}, "year": year, "runs": found[:24]}
+
+
+def _merge_creator_runs(primary: list[dict[str, Any]], extra: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Metron's runs for a person, filled out by what Comic Vine has on them."""
+    merged = [dict(run, providerIds=dict(run.get("providerIds") or {})) for run in primary]
+    index = {(normalized_title(run["title"]), str(run.get("yearBegan") or "")): run for run in merged}
+    for run in extra:
+        existing = index.get((normalized_title(run["title"]), str(run.get("yearBegan") or "")))
+        if existing is None:
+            merged.append(run)
+            continue
+        existing["providerIds"].update(run.get("providerIds") or {})
+        for field in ("cover", "publisher", "issueCount", "medium"):
+            if not existing.get(field) and run.get(field):
+                existing[field] = run[field]
+    return merged
+
+
+def discover_people_and_publishers(query: str) -> dict[str, Any]:
+    """The runs a query names as a creator or a publisher rather than a title.
+
+    Its own endpoint, asked after the title search settles: Metron takes one
+    request every 3.2s from everyone, so asking in parallel would put these
+    lookups in front of the title results the reader is waiting on.
+    """
+    cleaned, title_query, year_hint = _discovery_query_parts(query)
+    if len(cleaned) < 2:
+        raise ValueError("Enter at least two characters to discover a series")
+    config = load_provider_config()
+    library = _discovery_library_view()
+    started = time.monotonic()
+    lookups: list[tuple[str, Any]] = []
+    metron = config.get("metron") or {}
+    if metron.get("enabled") and metron.get("token"):
+        token = str(metron["token"])
+        lookups.append(("metronCreator", functools.partial(
+            _metron_creator_runs, title_query, year_hint, token, library,
+            started + PEOPLE_LOOKUP_DEADLINE_SECONDS - 6)))
+        lookups.append(("publisher", functools.partial(
+            _metron_publisher_runs, title_query, year_hint, token, library)))
+    comic_vine = config.get("comic_vine") or {}
+    if comic_vine.get("enabled") and comic_vine.get("apiKey"):
+        lookups.append(("comicVineCreator", functools.partial(
+            _comic_vine_creator_runs, title_query, year_hint, str(comic_vine["apiKey"]), library)))
+
+    answers: dict[str, dict[str, Any]] = {}
+    errors: list[dict[str, str]] = []
+    pending: list[str] = []
+    if lookups:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(lookups))
+        futures = {pool.submit(work): name for name, work in lookups}
+        done, not_done = concurrent.futures.wait(futures, timeout=PEOPLE_LOOKUP_DEADLINE_SECONDS)
+        # A lookup still going is left to finish; it warms the cache, so
+        # asking again a moment later answers at once.
+        pool.shutdown(wait=False)
+        for future in done:
+            try:
+                answers[futures[future]] = future.result() or {}
+            except Exception as exc:
+                errors.append({"lookup": futures[future], "error": str(exc)})
+        pending = [futures[future] for future in not_done]
+
+    creator_matches: list[dict[str, Any]] = []
+    metron_creator = answers.get("metronCreator") or {}
+    vine_creator = answers.get("comicVineCreator") or {}
+    if metron_creator.get("creator"):
+        runs = metron_creator.get("runs") or []
+        providers = ["Metron"]
+        if vine_creator.get("creator") and normalized_person(vine_creator["creator"]["name"]) == normalized_person(metron_creator["creator"]["name"]):
+            runs = _merge_creator_runs(runs, vine_creator.get("runs") or [])
+            providers.append("Comic Vine")
+            vine_creator = {}
+        creator_matches.append({"name": metron_creator["creator"]["name"], "providers": providers, "runs": runs})
+    if vine_creator.get("creator"):
+        creator_matches.append({
+            "name": vine_creator["creator"]["name"], "providers": ["Comic Vine"],
+            "runs": vine_creator.get("runs") or [],
+        })
+    publisher = answers.get("publisher") or {}
+    publisher_matches = [{
+        "name": publisher["publisher"]["name"], "year": publisher.get("year"),
+        "runs": publisher.get("runs") or [],
+    }] if publisher.get("publisher") else []
+
+    suggestions: list[str] = []
+    if not creator_matches and not publisher_matches:
+        seen: set[str] = set()
+        for name in [*metron_creator.get("didYouMean", []), *vine_creator.get("didYouMean", []),
+                     *publisher.get("didYouMean", [])]:
+            if normalized_person(name) not in seen:
+                seen.add(normalized_person(name))
+                suggestions.append(name)
+    return {
+        "query": cleaned, "titleQuery": title_query, "yearHint": year_hint,
+        "creatorMatches": creator_matches, "publisherMatches": publisher_matches,
+        "didYouMean": suggestions[:6], "stillLooking": bool(pending),
+        "errors": errors,
+    }
+
+
+def sync_next_run_creators(store: CatalogStore | None = None) -> bool:
+    """Ask a catalog who made one run whose files do not say. False when none is due."""
+    store = store or catalog_store()
+    config = load_provider_config()
+    available = [
+        provider for provider, field in (("metron", "token"), ("comic_vine", "apiKey"))
+        if (config.get(provider) or {}).get("enabled") and (config.get(provider) or {}).get(field)
+        and store.metadata_provider_available(provider)
+    ]
+    claim = store.claim_run_creator_sync(available) if available else None
+    if not claim:
+        return False
+    provider = claim["provider"]
+    try:
+        credential = _provider_credential(provider)
+        if provider == "metron":
+            issue = fetch_provider_json(
+                "metron", f"{METRON_API_BASE}/issue/{claim['providerId']}/", credential,
+            )
+            creators = [
+                {"name": item["name"], "roles": [role.casefold() for role in item["roles"]]}
+                for item in _metron_discovery_creators(issue)
+            ]
+        else:
+            url = f"{COMIC_VINE_API_BASE}/volume/4050-{claim['providerId']}/?" + urllib.parse.urlencode({
+                "api_key": credential, "format": "json", "field_list": "people",
+            })
+            people = (fetch_provider_json("comic_vine", url, credential).get("results") or {}).get("people") or []
+            # A volume lists everyone credited anywhere in it; the few named
+            # most often are who made it.
+            people = sorted(
+                (person for person in people if person.get("name")),
+                key=lambda person: -int(person.get("count") or 0),
+            )[:6]
+            creators = [
+                {"name": person["name"], "roles": ["creator"], "count": int(person.get("count") or 0) or None}
+                for person in people
+            ]
+    except Exception as exc:
+        limited = _rate_limit_from_error(provider, exc)
+        if limited:
+            store.record_metadata_provider_outcome(provider, str(limited), limited.retry_after_seconds)
+            store.release_run_creator_sync(claim["seriesRunId"])
+        return True
+    store.set_run_catalog_creators(claim["seriesRunId"], provider, creators)
+    store.record_metadata_provider_outcome(provider, minimum_delay_seconds=3)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -6119,11 +6483,13 @@ def _fetch_provider_pages(
     credential: str,
     result_key: str = "results",
     max_pages: int = 20,
+    deadline: float | None = None,
 ) -> list[dict[str, Any]]:
+    """Every page of a list, or as many as arrive before `deadline` (monotonic)."""
     rows: list[dict[str, Any]] = []
     next_url: str | None = url
     for _ in range(max_pages):
-        if not next_url:
+        if not next_url or (deadline is not None and rows and time.monotonic() > deadline):
             break
         payload = fetch_provider_json(provider_id, next_url, credential)
         page_rows = payload.get(result_key) or []
@@ -7361,7 +7727,13 @@ def metadata_enrichment_worker(stop_event: threading.Event = _ENRICHMENT_STOP) -
             continue
         monitored = store.claim_monitored_series_refresh()
         if not monitored:
-            stop_event.wait(5)
+            # Idle: ask about one run whose files name no creator, so search
+            # by creator finds it too.
+            try:
+                synced = sync_next_run_creators(store)
+            except Exception:
+                synced = False
+            stop_event.wait(1 if synced else 5)
             continue
         series_run_id = int(monitored["series_run_id"])
         try:
@@ -8627,6 +8999,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(release_calendar())
             except Exception as exc:
                 self.send_json({"error": f"Release dates are temporarily unavailable: {exc}"}, 502)
+            return
+        if parsed_url.path == "/api/v1/discover/people":
+            query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]
+            try:
+                self.send_json(discover_people_and_publishers(query))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            except Exception as exc:
+                self.send_json({"error": f"Creator and publisher search is temporarily unavailable: {exc}"}, 502)
             return
         if parsed_url.path == "/api/v1/discover":
             query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]

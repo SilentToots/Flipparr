@@ -12,13 +12,14 @@ import math
 import re
 import sqlite3
 import threading
+import unicodedata
 from catalog_core_v2.language import detect_language, language_name, normalize_language
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 # What a run is. Manga comes in volumes that *are* the unit, where a western
 # comic's volume is a collected edition of issues -- every step from search to
 # import has to know which rule applies.
@@ -28,6 +29,72 @@ SERIES_FORMATS = ("comic", "manga")
 # 3: comics that are not zip archives yield covers and embedded metadata.
 LOCAL_ANALYSIS_VERSION = 3
 MONITORED_RUN_REFRESH_HOURS = 24
+# Credits that are kept but not searched. ComicInfo names every variant
+# cover's artist, so "by" a cover artist would claim runs they drew one cover
+# for; a translator or editor is not who a reader is looking for.
+_UNSEARCHED_ROLES = frozenset({"cover_artist", "translator", "editor"})
+_ROLE_ORDER = {"writer": 0, "artist": 1, "penciller": 1, "inker": 2, "colorist": 3, "letterer": 4}
+_EPUB_ROLES = {"aut": "writer", "ill": "artist", "art": "artist", "trl": "translator", "edt": "editor"}
+
+
+def normalized_person(value: Any) -> str:
+    """A name as a search compares it: accents, case and punctuation folded.
+
+    So "Rodríguez" finds "Rodriguez" and "Brian K. Vaughan" finds "brian k vaughan".
+    """
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(char for char in text if not unicodedata.combining(char)).casefold()
+    return " ".join(re.sub(r"[^\w\s]|_", " ", text).split())
+
+
+def _file_credits(result: dict[str, Any]) -> list[tuple[str, str]]:
+    """The (name, role) credits a scanned file carries in its own metadata."""
+    embedded = (result or {}).get("embedded_metadata") or {}
+    credits: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(name: Any, role: str) -> None:
+        cleaned = re.sub(r"\s+", " ", str(name or "")).strip()
+        key = (normalized_person(cleaned), role)
+        if key[0] and key not in seen:
+            seen.add(key)
+            credits.append((cleaned, role))
+
+    for role, value in (embedded.get("contributors") or {}).items():
+        # ComicInfo puts several people in one field, comma separated.
+        for name in value if isinstance(value, list) else str(value or "").split(","):
+            add(name, str(role))
+    for creator in embedded.get("creator_details") or []:
+        name = str((creator or {}).get("name") or "")
+        # EPUB often files a name surname first: "Fujimoto, Tatsuki".
+        parts = [part.strip() for part in name.split(",")]
+        if len(parts) == 2 and all(parts):
+            name = f"{parts[1]} {parts[0]}"
+        add(name, _EPUB_ROLES.get(str((creator or {}).get("role") or "").casefold(), "writer"))
+    return credits
+
+
+def _summarize_run_creators(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    """[{name, roles}] for one run: writers first, then by how often credited."""
+    people: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        role = str(row["role"] or "")
+        if role in _UNSEARCHED_ROLES:
+            continue
+        credits = int(row["credits"] or 1)
+        person = people.setdefault(
+            normalized_person(row["name"]), {"name": row["name"], "roles": set(), "credits": 0}
+        )
+        person["roles"].add(role)
+        person["credits"] += credits
+    ordered = sorted(people.values(), key=lambda person: (
+        min(_ROLE_ORDER.get(role, 5) for role in person["roles"]),
+        -person["credits"], person["name"].casefold(),
+    ))
+    return [
+        {"name": person["name"], "roles": sorted(person["roles"], key=lambda role: (_ROLE_ORDER.get(role, 5), role))}
+        for person in ordered[:12]
+    ]
 
 
 class _ClosingConnection(sqlite3.Connection):
@@ -597,6 +664,7 @@ class CatalogStore:
                     acquisition_preference TEXT NOT NULL DEFAULT 'either',
                     monitoring_status TEXT NOT NULL DEFAULT 'cataloged',
                     format TEXT NOT NULL DEFAULT 'comic',
+                    creators_synced_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -668,6 +736,28 @@ class CatalogStore:
                     updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS file_identities_series ON file_identities(series_run_id);
+                CREATE TABLE IF NOT EXISTS creators (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS file_creators (
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    creator_id INTEGER NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL,
+                    PRIMARY KEY(file_id, creator_id, role)
+                );
+                CREATE INDEX IF NOT EXISTS file_creators_creator ON file_creators(creator_id);
+                CREATE TABLE IF NOT EXISTS series_run_creators (
+                    series_run_id INTEGER NOT NULL REFERENCES series_runs(id) ON DELETE CASCADE,
+                    creator_id INTEGER NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    issue_count INTEGER,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(series_run_id, creator_id, role, source)
+                );
                 CREATE TABLE IF NOT EXISTS issues (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL REFERENCES series_runs(id) ON DELETE CASCADE,
@@ -1031,6 +1121,8 @@ class CatalogStore:
                 connection.execute(
                     "ALTER TABLE series_runs ADD COLUMN format TEXT NOT NULL DEFAULT 'comic'"
                 )
+            if "creators_synced_at" not in run_columns:
+                connection.execute("ALTER TABLE series_runs ADD COLUMN creators_synced_at TEXT")
             issue_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(issues)")
             }
@@ -1689,6 +1781,9 @@ class CatalogStore:
                 ),
             )
         self._sync_file_catalog_entity(file_id, parsed, result, override, connection=connection)
+        # Here rather than in the scan, so the start-up pass over every file
+        # fills the index for a library scanned before it existed.
+        self._sync_file_creators(file_id, result, connection=connection)
 
     def _heal_connected_placeholder_run(
         self,
@@ -4675,6 +4770,129 @@ class CatalogStore:
             )
             connection.execute("DELETE FROM series_runs WHERE id=?", (series_run_id,))
 
+    def _creator_id(self, connection: sqlite3.Connection, name: str) -> int:
+        normalized = normalized_person(name)
+        row = connection.execute(
+            "SELECT id FROM creators WHERE normalized_name=?", (normalized,)
+        ).fetchone()
+        if row:
+            return int(row["id"])
+        return int(connection.execute(
+            "INSERT INTO creators(name, normalized_name, created_at) VALUES (?, ?, ?)",
+            (name, normalized, _utc_now()),
+        ).lastrowid)
+
+    def _sync_file_creators(
+        self, file_id: int, result: dict[str, Any], *, connection: sqlite3.Connection | None = None,
+    ) -> None:
+        """Record who a file credits, from metadata the scan already read.
+
+        Kept per file rather than per run: a file moved to another run takes
+        its credits with it through file_identities, and a deleted one drops
+        them by cascade, so nothing ever has to be rebuilt.
+        """
+        wanted = {(normalized_person(name), role): name for name, role in _file_credits(result)}
+        with self._borrowed_write(connection) as write_connection:
+            existing = {
+                (row["normalized_name"], row["role"])
+                for row in write_connection.execute(
+                    """SELECT creators.normalized_name, file_creators.role FROM file_creators
+                       JOIN creators ON creators.id=file_creators.creator_id
+                       WHERE file_creators.file_id=?""",
+                    (file_id,),
+                )
+            }
+            if existing == set(wanted):
+                return
+            write_connection.execute("DELETE FROM file_creators WHERE file_id=?", (file_id,))
+            for (_normalized_name, role), name in wanted.items():
+                write_connection.execute(
+                    "INSERT OR IGNORE INTO file_creators(file_id, creator_id, role) VALUES (?, ?, ?)",
+                    (file_id, self._creator_id(write_connection, name), role),
+                )
+
+    def claim_run_creator_sync(self, available: Iterable[str]) -> dict[str, Any] | None:
+        """One run whose files credit nobody, to ask a catalog about instead.
+
+        Metron's first issue carries role-labelled credits; Comic Vine's volume
+        record lists its people, and is the only source for manga. A run is
+        stamped when claimed, so a failure is not retried in a loop.
+        """
+        usable = set(available)
+        with self._write_lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT series_runs.id, series_runs.format,
+                          (SELECT issue_provider_ids.provider_id FROM issue_provider_ids
+                             JOIN issues ON issues.id=issue_provider_ids.issue_id
+                            WHERE issues.series_run_id=series_runs.id
+                              AND issue_provider_ids.provider='metron'
+                            ORDER BY CAST(issues.issue_number AS REAL)=0,
+                                     CAST(issues.issue_number AS REAL), issues.id
+                            LIMIT 1) AS metron_issue_id,
+                          (SELECT provider_id FROM series_provider_ids
+                            WHERE series_provider_ids.series_run_id=series_runs.id
+                              AND series_provider_ids.provider='comic_vine'
+                            LIMIT 1) AS comic_vine_id
+                   FROM series_runs
+                   WHERE series_runs.creators_synced_at IS NULL
+                     AND NOT EXISTS(
+                         SELECT 1 FROM file_creators
+                         JOIN file_identities ON file_identities.file_id=file_creators.file_id
+                         WHERE file_identities.series_run_id=series_runs.id
+                           AND file_creators.role NOT IN ('cover_artist', 'translator', 'editor')
+                     )
+                   ORDER BY series_runs.id"""
+            ).fetchall()
+            for row in rows:
+                if row["metron_issue_id"] and "metron" in usable:
+                    provider, provider_id = "metron", row["metron_issue_id"]
+                elif row["comic_vine_id"] and "comic_vine" in usable:
+                    provider, provider_id = "comic_vine", row["comic_vine_id"]
+                else:
+                    continue
+                connection.execute(
+                    "UPDATE series_runs SET creators_synced_at=? WHERE id=?", (_utc_now(), row["id"])
+                )
+                return {
+                    "seriesRunId": int(row["id"]), "provider": provider,
+                    "providerId": str(provider_id), "format": row["format"] or "comic",
+                }
+        return None
+
+    def set_run_catalog_creators(
+        self, series_run_id: int, source: str, creators: Sequence[dict[str, Any]],
+    ) -> None:
+        """Replace what one catalog said about who made a run."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "DELETE FROM series_run_creators WHERE series_run_id=? AND source=?",
+                (series_run_id, source),
+            )
+            for creator in creators:
+                name = re.sub(r"\s+", " ", str(creator.get("name") or "")).strip()
+                if not normalized_person(name):
+                    continue
+                creator_id = self._creator_id(connection, name)
+                for role in creator.get("roles") or ["creator"]:
+                    connection.execute(
+                        """INSERT OR IGNORE INTO series_run_creators(
+                               series_run_id, creator_id, role, source, issue_count, updated_at
+                           ) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (series_run_id, creator_id, str(role).strip().casefold(), source,
+                         creator.get("count"), now),
+                    )
+            connection.execute(
+                "UPDATE series_runs SET creators_synced_at=? WHERE id=?", (now, series_run_id)
+            )
+
+    def release_run_creator_sync(self, series_run_id: int) -> None:
+        """Let a run be asked about again, after the catalog said to wait."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE series_runs SET creators_synced_at=NULL WHERE id=?", (series_run_id,)
+            )
+
     def set_series_format(self, series_run_id: int, run_format: str) -> dict[str, Any]:
         """Say a run is manga or a comic, for the publishers that print both."""
         desired = str(run_format or "").strip().casefold()
@@ -6732,6 +6950,25 @@ class CatalogStore:
                 alias_map.setdefault(int(alias["series_run_id"]), []).append(
                     {"name": alias["alias"], "source": alias["source"], "confirmed": bool(alias["confirmed"])}
                 )
+            creator_rows: dict[int, list[Any]] = {}
+            for creator in connection.execute(
+                """SELECT file_identities.series_run_id AS series_run_id, creators.name AS name,
+                          file_creators.role AS role, COUNT(*) AS credits
+                   FROM file_creators
+                   JOIN file_identities ON file_identities.file_id=file_creators.file_id
+                   JOIN files ON files.id=file_creators.file_id AND files.present=1
+                   JOIN creators ON creators.id=file_creators.creator_id
+                   GROUP BY file_identities.series_run_id, creators.id, file_creators.role
+                   UNION ALL
+                   SELECT series_run_creators.series_run_id, creators.name, series_run_creators.role,
+                          COALESCE(series_run_creators.issue_count, 1)
+                   FROM series_run_creators
+                   JOIN creators ON creators.id=series_run_creators.creator_id"""
+            ):
+                creator_rows.setdefault(int(creator["series_run_id"]), []).append(creator)
+            creators_by_run = {
+                run_id: _summarize_run_creators(rows) for run_id, rows in creator_rows.items()
+            }
             issue_catalog_map = {
                 int(row["series_run_id"]): {
                     "status": row["status"], "provider": row["provider"],
@@ -7015,6 +7252,7 @@ class CatalogStore:
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
                 "updatedAt": run["updated_at"], "addedAt": None,
                 "aliases": alias_map.get(int(run["id"]), []),
+                "creators": creators_by_run.get(int(run["id"]), []),
                 "identityConfidences": [], "issues": issues_by_series.get(int(run["id"]), []),
                 "editions": editions_by_series.get(int(run["id"]), []), "fileDetails": [],
                 "issueCatalog": issue_catalog_map.get(
@@ -7235,6 +7473,7 @@ class CatalogStore:
                     "coverPreference": run_cover_preference,
                     "status": status, "files": group["files"],
                     "aliases": group["aliases"],
+                    "creators": group.get("creators") or [],
                     "identityConfidence": min(group["identityConfidences"]) if group["identityConfidences"] else None,
                     "issues": group["issues"], "editions": group["editions"],
                     "releaseSummary": {

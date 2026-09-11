@@ -5,6 +5,7 @@ import {
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
   runModes, completeRunToPull, issueLabel,
+  searchFold, libraryRunMatches, peopleSections,
 } from "../src/discover.js";
 
 test("a manga volume reads as a volume, a comic issue as an issue", () => {
@@ -192,4 +193,43 @@ test("a run you already follow is not offered to you again", () => {
   assert.equal(summary.disabled, true);
   // Not following: the offer stands.
   assert.equal(runPullSummary("follow", run, [], { following: false }).disabled, false);
+});
+
+test("a search folds accents, case and punctuation", () => {
+  assert.equal(searchFold("Brian K. Vaughan"), "brian k vaughan");
+  assert.equal(searchFold("Rodríguez"), "rodriguez");
+  assert.equal(searchFold(null), "");
+});
+
+test("a library run matches by title, publisher or one of its creators", () => {
+  const run = { title: "Saga", publisher: "Image Comics", year: "2012",
+    creators: [{ name: "Brian K. Vaughan" }, { name: "Fiona Staples" }] };
+  assert.ok(libraryRunMatches(run, { title: "saga", year: "" }));
+  assert.ok(libraryRunMatches(run, { title: "image", year: "2012" }));
+  assert.ok(libraryRunMatches(run, { title: "brian k vaughan", year: "" }));
+  assert.ok(libraryRunMatches(run, { title: "Vaughan", year: "2012" }));
+  assert.ok(!libraryRunMatches(run, { title: "Vaughan", year: "2015" }));
+  assert.ok(!libraryRunMatches(run, { title: "Tynion", year: "" }));
+  assert.ok(!libraryRunMatches({ title: "Saga" }, { title: "", year: "" }));
+});
+
+test("creator and publisher sections skip runs already offered, and count the ones you own", () => {
+  const people = {
+    creatorMatches: [{ name: "Brian K. Vaughan", runs: [
+      { title: "Saga", yearBegan: 2012 },
+      { title: "Paper Girls", yearBegan: 2015, inLibrary: true },
+      { title: "Y: The Last Man", yearBegan: 2002 },
+    ] }],
+    publisherMatches: [{ name: "Image Comics", year: 2012, runs: [{ title: "Saga", yearBegan: 2012 }] }],
+  };
+  // Y is already in New Matches, spelled another way; Saga is in the creator
+  // section, so the publisher section has nothing new and says nothing.
+  const sections = peopleSections(people, [{ title: "Y - The Last Man", yearBegan: 2002 }]);
+  assert.deepEqual(
+    sections.map((section) => [section.lead, section.name, section.suffix, section.runs.map((run) => run.title), section.ownedCount]),
+    [["By", "Brian K. Vaughan", "", ["Saga"], 1]],
+  );
+  assert.deepEqual(peopleSections({ publisherMatches: [{ name: "Image Comics", year: 2012, runs: [{ title: "Geiger", yearBegan: 2021 }] }] })
+    .map((section) => `${section.lead} ${section.name}${section.suffix}`), ["From Image Comics, 2012"]);
+  assert.deepEqual(peopleSections(null), []);
 });

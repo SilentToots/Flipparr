@@ -13,6 +13,15 @@
       "port": 4173
     },
     {
+      "name": "flipparr-prod-ui",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd v1-prototype && SONICBOOM_API_ORIGIN=http://127.0.0.1:8794 npx vite --port 4180 --strictPort"
+      ],
+      "port": 4180
+    },
+    {
       "name": "flipparr-ui",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

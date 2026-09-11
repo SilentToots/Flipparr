@@ -71,6 +71,79 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertTrue(comic.exists())
             self.assertEqual([Path(root["path"]) for root in store.catalog()["roots"]], [second.resolve()])
 
+    def test_names_are_compared_without_accents_case_or_punctuation(self):
+        from catalog_store import normalized_person
+        self.assertEqual(normalized_person("Brian K. Vaughan"), "brian k vaughan")
+        self.assertEqual(normalized_person("Rodríguez"), normalized_person("rodriguez"))
+        self.assertEqual(normalized_person("  "), "")
+
+    def test_a_runs_creators_come_from_what_its_files_already_say(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comics = []
+            for number in ("1", "2"):
+                comic = root / f"Chew {number.zfill(3)}.cbz"
+                comic.write_bytes(number.encode())
+                comics.append((comic, number))
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [
+                ParsedFile(str(comic), comic.name, ".cbz", "Chew", issue=number) for comic, number in comics
+            ], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {"source": "ComicInfo.xml", "contributors": {
+                    "writer": "John Layman", "penciller": "Rob Guillory",
+                    # Every variant's artist: kept out of what is searched.
+                    "cover_artist": "Someone Else",
+                }},
+                "file_health": {"status": "ok"}, "recommendation": None, "file_cover": None,
+            })
+            chew = next(item for item in store.catalog()["series"] if item["title"] == "Chew")
+            self.assertEqual(chew["creators"], [
+                {"name": "John Layman", "roles": ["writer"]},
+                {"name": "Rob Guillory", "roles": ["penciller"]},
+            ])
+            # Its files already say who made it, so no catalog is asked.
+            self.assertIsNone(store.claim_run_creator_sync(["metron", "comic_vine"]))
+
+    def test_a_run_whose_files_credit_nobody_is_asked_about_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                run_id = connection.execute(
+                    """INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at)
+                       VALUES ('Saga', 'saga', ?, ?)""", (now, now),
+                ).lastrowid
+                for number, metron_id in (("2", "902"), ("1", "901")):
+                    issue_id = connection.execute(
+                        """INSERT INTO issues(series_run_id, issue_number, created_at, updated_at)
+                           VALUES (?, ?, ?, ?)""", (run_id, number, now, now),
+                    ).lastrowid
+                    connection.execute(
+                        """INSERT INTO issue_provider_ids(issue_id, provider, provider_id, updated_at)
+                           VALUES (?, 'metron', ?, ?)""", (issue_id, metron_id, now),
+                    )
+            self.assertIsNone(store.claim_run_creator_sync(["comic_vine"]), "no Comic Vine id to ask with")
+            self.assertEqual(store.claim_run_creator_sync(["metron"]), {
+                "seriesRunId": run_id, "provider": "metron", "providerId": "901", "format": "comic",
+            })
+            self.assertIsNone(store.claim_run_creator_sync(["metron"]), "claimed once, not in a loop")
+            store.release_run_creator_sync(run_id)
+            self.assertIsNotNone(store.claim_run_creator_sync(["metron"]), "a rate limit lets it be asked again")
+            store.set_run_catalog_creators(run_id, "metron", [
+                {"name": "Brian K. Vaughan", "roles": ["Writer"]}, {"name": "Fiona Staples", "roles": ["artist"]},
+            ])
+            with store._connect() as connection:
+                credited = connection.execute(
+                    """SELECT creators.normalized_name, series_run_creators.role FROM series_run_creators
+                       JOIN creators ON creators.id=series_run_creators.creator_id ORDER BY 1"""
+                ).fetchall()
+            self.assertEqual([tuple(row) for row in credited], [("brian k vaughan", "writer"), ("fiona staples", "artist")])
+            store.remove_series_run(run_id)
+            with store._connect() as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM series_run_creators").fetchone()[0], 0)
+
     def test_library_roots_reject_overlapping_folders(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "comics"

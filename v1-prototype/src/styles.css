@@ -173,6 +173,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* Search results */
 .discover-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+/* Failed lists only what failed; this says the rest of the run is still coming. */
+.request-jobs-note { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+/* Under a search: "Did you mean" a creator or publisher, and "Look again".
+   Its own class, not .discover-note: that one is how the design check knows the
+   library half of a search has answered, and these arrive before it can. */
+.discover-people-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.did-you-mean { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.did-you-mean button { min-height: var(--control-height-sm); padding: 0 var(--control-padding-sm); border: 1px solid var(--button-secondary-border); border-radius: var(--radius-pill); background: var(--button-secondary-bg); color: var(--button-secondary-text); font: inherit; font-size: var(--control-font-sm); cursor: pointer; transition: background var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard); }
+@media (hover: hover) { .did-you-mean button:hover { background: var(--button-secondary-bg-hover); color: var(--text); } }
+.did-you-mean button:active { background: var(--button-secondary-bg-pressed); transform: scale(var(--button-press-scale)); }
+.discover-text-button { padding: 0; border: 0; background: none; color: var(--violet-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+@media (hover: hover) { .discover-text-button:hover { color: var(--text); } }
+.discover-text-button:active { opacity: .8; }
 .provider-progress { margin: 0; flex: none; display: flex; gap: 12px; color: var(--muted); font-size: var(--text-sm); }
 .provider-progress .provider-answered { color: var(--green-text); }
 .provider-progress .provider-failed { color: var(--amber); }
@@ -1079,7 +1092,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .issue-tile.unowned strong, .issue-tile.unowned .issue-tile-title { color: var(--muted-weak); }
 .issue-tile > strong { color: var(--violet-text); font-size: var(--text-sm); font-weight: 780; display: flex; align-items: center; gap: 4px; }
 .issue-tile-title { color: var(--muted); font-size: var(--text-2xs); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.issue-tile .ownership-source { justify-self: start; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The state badge is centred over the cover rather than under the title, so a
+   gap in a run reads at a glance across the grid. */
+.issue-tile-art { position: relative; display: grid; }
+.issue-tile .ownership-source { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); border-radius: var(--radius-pill); box-shadow: 0 2px 8px rgb(0 0 0 / .45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .issue-tile-edit { position: absolute; top: 6px; right: 6px; width: 27px; height: 27px; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: rgba(14,19,27,.82); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
 .issue-tile-edit:focus-visible { opacity: 1; }
 @media (hover: hover) { .issue-tile:not(:disabled):hover .issue-tile-edit { opacity: var(--button-disabled-opacity); } }

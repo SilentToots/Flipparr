@@ -103,6 +103,56 @@ export function providerProgress(state) {
   }));
 }
 
+/**
+ * Text as a search compares it: accents, case and punctuation folded, so
+ * "rodriguez" finds Rodríguez and "brian k vaughan" finds Brian K. Vaughan.
+ */
+export const searchFold = (value) => String(value || "")
+  .normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** Whether a library run matches a search: its title, publisher or creators. */
+export function libraryRunMatches(item, parts) {
+  const needle = searchFold(parts?.title);
+  if (!needle) return false;
+  const text = searchFold([
+    item?.searchText || item?.title, item?.publisher,
+    ...(item?.creators || []).map((creator) => creator.name),
+  ].filter(Boolean).join(" "));
+  return text.includes(needle)
+    && (!parts.year || `${item?.year || ""} ${item?.run || ""}`.includes(parts.year));
+}
+
+/** One run however many providers describe it: its title and start year. */
+export const runIdentity = (run) => `${searchFold(run?.title)}|${run?.yearBegan || ""}`;
+
+/**
+ * The "By {creator}" and "From {publisher}" sections under a search.
+ *
+ * A run already offered in New Matches, or in an earlier section, is not
+ * offered again; runs you own are counted rather than shown, as New Matches
+ * does. A section with nothing to offer and nothing owned says nothing.
+ */
+export function peopleSections(people, shown = []) {
+  const seen = new Set((shown || []).map(runIdentity));
+  const sections = [
+    ...(people?.creatorMatches || []).map((match) => ({
+      kind: "creator", key: `creator:${match.name}`, lead: "By", name: match.name, suffix: "",
+      runs: match.runs || [],
+    })),
+    ...(people?.publisherMatches || []).map((match) => ({
+      kind: "publisher", key: `publisher:${match.name}`, lead: "From", name: match.name,
+      suffix: match.year ? `, ${match.year}` : "", runs: match.runs || [],
+    })),
+  ];
+  return sections.map((section) => {
+    const ownedCount = section.runs.filter((run) => run.inLibrary).length;
+    const runs = section.runs.filter((run) => !run.inLibrary && !seen.has(runIdentity(run)));
+    runs.forEach((run) => seen.add(runIdentity(run)));
+    return { ...section, runs, ownedCount };
+  }).filter((section) => section.runs.length || section.ownedCount);
+}
+
 // ---------------------------------------------------------------------------
 // The run drawer
 // ---------------------------------------------------------------------------
