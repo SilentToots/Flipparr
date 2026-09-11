@@ -5750,8 +5750,10 @@ def _rank_discovered(
     for run in results:
         title = normalized_title(run.get("title"))
         score = 100.0 if title == wanted else 70.0 * difflib.SequenceMatcher(None, title, wanted).ratio()
-        if year_hint and run.get("yearBegan"):
-            score -= min(abs(int(run["yearBegan"]) - year_hint), 25)
+        # A year typed is part of what was asked: "Image 2012" is not Image+
+        # from 2016, however exactly the title matches.
+        if year_hint and run.get("yearBegan") and int(run["yearBegan"]) != year_hint:
+            score -= 25 + min(abs(int(run["yearBegan"]) - year_hint), 15)
         item = dict(run, relevance=score, matchedBy=None)
         ranked.setdefault(identity(run), item)
         order.append(item)

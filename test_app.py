@@ -844,6 +844,16 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(ranked[0]["cover"], "saga.jpg")
         self.assertEqual(ranked[1]["matchedBy"], "Image Comics, 2012")
 
+    def test_a_title_from_another_year_ranks_below_what_the_year_asked_for(self):
+        ranked = app._rank_discovered(
+            [{"title": "Image+", "yearBegan": 2016, "provider": "metron", "providerSeriesId": "3"}],
+            {"publisherMatches": [{"name": "Image Comics", "year": 2012, "runs": [
+                {"title": "Revival", "yearBegan": 2012, "provider": "metron", "providerSeriesId": "2"},
+            ]}]},
+            "Image", 2012,
+        )
+        self.assertEqual([run["title"] for run in ranked], ["Revival", "Image+"])
+
     def test_a_creator_lookup_lets_the_title_search_have_metron_first(self):
         import threading
         import time
