@@ -1407,7 +1407,12 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     # with a different issue, or with a trade paperback of the whole run.
     cleaned = re.sub(r"\b(?:vol|volume|v)\.?\s*\d{1,4}\b", " ", str(title or ""), flags=re.I)
     cleaned = re.sub(r"\bof\s*\d{1,4}\b", " ", cleaned, flags=re.I)
-    return bool(re.search(rf"(?:#|\b0*){escaped}(?!\d)", cleaned, re.I))
+    return bool(re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", cleaned, re.I))
+
+
+# A number run into letters and more digits is a name, not an issue: the
+# release group "21A1" is not issue 21. A variant letter alone ("21a") still is.
+_NOT_GLUED_TO_A_TAG = r"(?!\d|[A-Za-z]\d)"
 
 
 # Usenet subjects wrap the real name in quotes; posts are often prefixed with a
@@ -1431,21 +1436,56 @@ _RELEASE_NUMBER_LEAD = re.compile(
 )
 
 
+def _release_name_forms(title: str) -> list[str]:
+    """Where in a release title its name might be, most likely first.
+
+    A yEnc subject carries the filename in quotes, but indexers cut subjects
+    short and the quotes stop pairing up. American Vampire #21's only posting
+    is 'Gold Line" releases (2013.01.25) - "American Vampire 021 (2012)
+    (Digital) (Zone-Empire)', which read quote to quote is ' releases
+    (2013.01.25) - ' -- so its series never matched and it was thrown away.
+    Every quoted stretch is a candidate, the last first, then the whole title.
+    """
+    text = str(title or "")
+    forms = [match.group(1) for match in _RELEASE_QUOTED_NAME.finditer(text)]
+    if '"' in text:
+        forms += [part for part in reversed(text.split('"')) if len(part.strip()) >= 4]
+    forms.append(text)
+    seen: set[str] = set()
+    ordered = []
+    for form in forms:
+        if form.strip() and form.strip() not in seen:
+            seen.add(form.strip())
+            ordered.append(form)
+    return ordered
+
+
+def _release_series_leads(title: str, issue_number: Any) -> list[str]:
+    """Every series name a release could be stating, most likely first."""
+    number = str(issue_number or "").strip()
+    if not number:
+        return []
+    leads = []
+    for form in _release_name_forms(title):
+        lead = _release_series_lead_in(form, number)
+        if lead is not None:
+            leads.append(lead)
+    return leads
+
+
 def _release_series_lead(title: str, issue_number: Any) -> str | None:
-    """The series name a release states, or None when it states none.
+    """The series name a release most likely states, or None when it states none."""
+    leads = _release_series_leads(title, issue_number)
+    return leads[0] if leads else None
+
+
+def _release_series_lead_in(text: str, number: str) -> str | None:
+    """The series named in one stretch of a release title, before its number.
 
     A release names its series before the issue number and its provenance
     after, so the series is the text in front of that number -- once the
     wrappers Usenet adds in front of the name are taken off.
     """
-    number = str(issue_number or "").strip()
-    if not number:
-        return None
-    text = str(title or "")
-    quoted = _RELEASE_QUOTED_NAME.search(text)
-    if quoted:
-        # A yEnc subject carries the real filename in quotes.
-        text = quoted.group(1)
     def strip_noise(value: str) -> str:
         previous = None
         while previous != value:
@@ -1458,7 +1498,7 @@ def _release_series_lead(title: str, issue_number: Any) -> str | None:
     text = strip_noise(text)
     text = strip_noise(re.sub(r"[._]+", " ", text))
     escaped = re.escape(number.lstrip("0") or "0")
-    found = re.search(rf"(?:#|\b0*){escaped}(?!\d)", text, re.I)
+    found = re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", text, re.I)
     if not found:
         return None
     lead = text[: found.start()]
@@ -1511,9 +1551,13 @@ def _release_series_matches(
     wanted = normalized_title(str(series_title or ""))
     if not wanted:
         return False
-    lead = _release_series_lead(title, issue_number)
-    if lead is None:
-        return False
+    return any(
+        _release_lead_is_series(lead, wanted, series_title, publisher)
+        for lead in _release_series_leads(title, issue_number)
+    )
+
+
+def _release_lead_is_series(lead: str, wanted: str, series_title: Any, publisher: Any) -> bool:
     if normalized_title(lead) == wanted:
         return True
     # "The Department of Truth" and "Department of Truth" are one series, and

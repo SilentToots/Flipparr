@@ -3419,6 +3419,32 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
             result = app.reconcile_acquisition_download(download)
         return result, store, queue, fallback
 
+    def test_a_usenet_subject_is_read_whichever_quotes_survived(self):
+        """American Vampire #21's only posting was thrown away at 40 points."""
+        context = {
+            "seriesTitle": "American Vampire", "seriesYear": 2010, "publisher": "DC Comics",
+            "issueNumber": "21", "publicationYear": 2011, "publicationDate": "2011-12-14",
+            "format": "comic", "preferredLanguage": "en",
+        }
+        score, reasons = app._release_candidate_score({"title": (
+            'Gold Line" releases (2013.01.25) - "American Vampire 021 (2012) (Digital) (Zone-Empire)'
+        )}, context)
+        self.assertGreaterEqual(score, 85, reasons)
+        self.assertIn("Series title matches", reasons)
+        # The release group "21A1" is a name, not issue 21.
+        _score, reasons = app._release_candidate_score(
+            {"title": "DC.Comics.American.Vampire.Book.One.2024.HYBRID.COMIC.eBook-21A1"}, context)
+        self.assertNotIn("Issue #21 matches", reasons)
+        # A part counter after a well-quoted name must not become the series.
+        self.assertTrue(app._release_series_matches(
+            '2011.12.14 [3/9] - "American Vampire 021 (2012) (Digital) (Zone-Empire).cbr" yEnc (1/21)',
+            "American Vampire", "21"))
+        for title in ("American Vampire 021 (2012) (Digital) (Zone-Empire)",
+                      "American.Vampire.Vol.1.No.21.Jan.2012.SCAN.Comic.eBook-iNTENSiTY",
+                      "American Vampire #21a (2012)"):
+            self.assertTrue(app._release_series_matches(title, "American Vampire", "21"), title)
+            self.assertTrue(app._release_issue_matches(title, "21") or "21a" in title, title)
+
     def test_a_scene_name_marks_its_issue_with_no(self):
         """Every copy of American Vampire #19 was refused as the wrong comic."""
         cases = {
