@@ -6642,6 +6642,7 @@ def _plain_text(value: Any) -> str | None:
 _FORMAT_WORDS = frozenset("""
     a an the ongoing one shot oneshot mini miniseries series limited maxi maxiseries
     issue issues part parts monthly bimonthly bi comic book special annual
+    digital exclusive print only edition release
     two three four five six seven eight nine ten eleven twelve
 """.split())
 

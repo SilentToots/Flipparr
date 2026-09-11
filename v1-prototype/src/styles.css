@@ -893,6 +893,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .advanced-collection-tools { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .advanced-collection-tools summary { width: fit-content; color: var(--muted); font-size: var(--text-xs); cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .advanced-collection-tools p { margin: 10px 0 8px; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
+/* As a tab of its own it needs no rule above it, and reads at body size. */
+.advanced-collection-tools.advanced-tab { margin-top: 0; padding-top: 0; border-top: 0; }
+.advanced-collection-tools.advanced-tab p { margin: 18px 0 8px; font-size: var(--text-sm); }
+.advanced-collection-tools.advanced-tab p:first-child { margin-top: 0; }
 .advanced-collection-tools button { min-height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--status-muted-bg); color: var(--muted-strong); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .placement-callout { margin-top: 15px; padding: 13px; border: 1px solid var(--amber-border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--amber); display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .placement-callout > div { display: grid; gap: 4px; }

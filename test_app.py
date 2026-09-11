@@ -4468,7 +4468,7 @@ class RunSynopsisTests(unittest.TestCase):
 
     def test_a_format_label_is_not_a_story(self):
         """All of these came back from the live library, under "Story"."""
-        for text in ("Ongoing series.", "A one-shot.", "A 7 issue mini-series.",
+        for text in ("Ongoing series.", "A one-shot.", "A 7 issue mini-series.", "Digital Exclusive.",
                      "<p>Seven issue mini-series.</p>", " ",
                      'Note: Indicia list title as "Geiger (2024)". We use "Geiger".'):
             with self.subTest(text=text):
