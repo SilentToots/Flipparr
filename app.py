@@ -3999,10 +3999,19 @@ def file_cover_info(path: Path, embedded: dict[str, Any] | None = None) -> dict[
     member = find_archive_cover_member(path, embedded)
     if not member:
         return None
+    # The cover is cached by the browser for a day, so a file that changes --
+    # a manga volume reordered cover-first -- needs a new address, or the old
+    # picture stays for that day. The version is the file's own mtime and size.
+    try:
+        stat = path.stat()
+        version = f"{stat.st_mtime_ns:x}-{stat.st_size:x}"
+    except OSError:
+        version = ""
+    query = {"path": str(path), **({"v": version} if version else {})}
     return {
         "source": "comic file",
         "member": member,
-        "url": "/api/file-cover?" + urllib.parse.urlencode({"path": str(path)}),
+        "url": "/api/file-cover?" + urllib.parse.urlencode(query),
         "max_dimension": COVER_THUMBNAIL_MAX_DIMENSION,
     }
 
