@@ -5018,3 +5018,38 @@ class MangaFiledUnderAnimeTests(unittest.TestCase):
                       "Blue Lock S01E02 1080p"):
             with self.subTest(title=title):
                 self.assertLess(self.score(title, "2", 2021), 85)
+
+
+class RelaunchIsAnotherComicTests(unittest.TestCase):
+    """Ultimate Spider-Man (2000) was filled with Hickman's 2024 relaunch: the
+    same name and numbers, and the year only ever added points."""
+
+    def score(self, title, number="3", year=2001, series_year=2000):
+        context = {"seriesTitle": "Ultimate Spider-Man", "issueNumber": number,
+                   "publicationYear": year, "seriesYear": series_year, "preferredLanguage": "en"}
+        return app._release_candidate_score({"title": title, "categories": [{"id": 7030}]}, context)[0]
+
+    def test_the_relaunch_is_refused_for_the_original(self):
+        self.assertEqual(self.score("Ultimate Spider-Man 003 (2024) (Digital) (Shan-Empire)"), 0)
+        self.assertEqual(self.score("Ultimate Spider-Man 016 (2025) (Digital) (Shan-Empire)",
+                                    number="16", year=2002), 0)
+
+    def test_the_original_is_still_taken(self):
+        self.assertGreaterEqual(self.score("Ultimate Spider-Man 003 (2001) (Digital)"), 85)
+        self.assertGreaterEqual(self.score("Ultimate Spider-Man 003 (2000) (Digital)"), 85,
+                                "the run's start year is a fair thing for a release to say")
+        self.assertGreaterEqual(self.score("Ultimate Spider-Man 003 (Digital) (cbz)"), 85,
+                                "a release that states no year is not refused for it")
+
+    def test_a_year_in_the_title_is_not_the_release_date(self):
+        context = {"seriesTitle": "2000 AD", "issueNumber": "45", "publicationYear": 1977,
+                   "preferredLanguage": "en"}
+        self.assertGreaterEqual(app._release_candidate_score(
+            {"title": "2000 AD 045 (1977)", "categories": [{"id": 7030}]}, context)[0], 85)
+
+    def test_without_the_issues_own_year_nothing_is_refused(self):
+        """A start year alone would refuse Batman #500 for saying 1993."""
+        context = {"seriesTitle": "Batman", "issueNumber": "500", "seriesYear": 1940,
+                   "preferredLanguage": "en"}
+        self.assertGreaterEqual(app._release_candidate_score(
+            {"title": "Batman 500 (1993) (Digital)", "categories": [{"id": 7030}]}, context)[0], 85)

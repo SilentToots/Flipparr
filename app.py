@@ -1529,6 +1529,42 @@ def _release_series_matches(
     ) == bare_wanted
 
 
+def _release_year_conflict(title: str, context: dict[str, Any]) -> str | None:
+    """Why a release dated years away from this issue is another comic, or None.
+
+    A relaunch reuses the name and the numbers: "Ultimate Spider-Man 003
+    (2024)" is Hickman's #3, not the 2001 issue of the 2000 run, and it scored
+    as a match -- the year only ever added points -- so the 2000 run was filled
+    with the relaunch and replacing those issues found the same files again.
+
+    Only years after the issue number count, so "2000 AD 045" keeps its title,
+    and only when the issue's own year is known: a run's start year alone would
+    refuse Batman #500 from 1993 for saying 1993.
+    """
+    number = str(context.get("issueNumber") or "").strip()
+    try:
+        wanted = int(context.get("publicationYear") or 0)
+    except (TypeError, ValueError):
+        wanted = 0
+    if not number or not wanted:
+        return None
+    text = re.sub(r"[._]+", " ", str(title or ""))
+    found = re.search(rf"(?:#|\b0*){re.escape(number.lstrip('0') or '0')}(?!\d)", text, re.I)
+    if not found:
+        return None
+    stated = [int(year) for year in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", text[found.end():])]
+    try:
+        series_year = int(context.get("seriesYear") or 0)
+    except (TypeError, ValueError):
+        series_year = 0
+    # A release may name the run's start year instead of the issue's, and a
+    # cover year is often a year after the date it went on sale.
+    plausible = {wanted, series_year} - {0}
+    if stated and not any(abs(year - known) <= 1 for year in stated for known in plausible):
+        return f"Dated {stated[0]}, but this issue is from {wanted}"
+    return None
+
+
 def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
     title = str(release.get("title") or "")
     # A release that says it is another language is not this comic in any
@@ -1538,6 +1574,9 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
         return 0, [f"Labelled as {language_name(conflict)}"]
     if context.get("format") == "manga":
         return _manga_release_score(release, context)
+    conflict_year = _release_year_conflict(title, context)
+    if conflict_year:
+        return 0, [conflict_year]
     score = 0
     reasons: list[str] = []
     if _release_series_matches(
@@ -8924,7 +8963,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
-            _start_automatic_release_grabs(request)
+            # This is the replacement's record, and its "id" is the
+            # replacement's own number. Passed as it was, the search ran for
+            # the acquisition request that happened to share that number --
+            # Ultimate Spider-Man #3 and #16 searched requests 8 and 9 and sat
+            # untouched until the next sweep.
+            _start_automatic_release_grabs({"id": request.get("acquisitionRequestId")})
             self.send_json(request, 201)
             return
         series_format = re.fullmatch(r"/api/v1/series/(\d+)/format", parsed_url.path)

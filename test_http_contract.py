@@ -675,6 +675,16 @@ class HttpContractTests(unittest.TestCase):
     # the feature, because the directory it wrote to was inside a read-only
     # image. Nothing asked these routes anything, which is how that lasted.
 
+    def test_replacing_a_file_searches_for_its_own_request(self):
+        """The replacement's number is not its acquisition request's."""
+        with patch("app.catalog_store") as store, patch("app._start_automatic_release_grabs") as grabs:
+            store.return_value.request_file_replacement.return_value = {
+                "id": "8", "acquisitionRequestId": "34", "status": "wanted",
+            }
+            response = self.post("/api/v1/files/763/replacement", {"reason": "wrong_release"})
+        self.assertEqual(response.status, 201)
+        grabs.assert_called_once_with({"id": "34"})
+
     def test_an_unknown_run_cannot_be_removed(self):
         self.assertEqual(self.get("/api/v1/series/999999/removal").status, 404)
         self.assertEqual(self.delete("/api/v1/series/999999").status, 404)
