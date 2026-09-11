@@ -1795,10 +1795,17 @@ function acquisitionFailureDetails(job) {
     message: "The download finished, but Flipparr could not validate or add the comic to your library. The original file is still active.",
     technical,
   };
-  // Its files were discarded, so there is nothing to import again.
+  // The file said it was something else, so the release is not used again.
   if (job?.downloadFailureStage === "content") return {
     label: "Wrong comic",
-    message: "The release held a different comic than this issue, so it was discarded. Try the next release, or choose one.",
+    message: "The release held a different comic than this issue, so it will not be used again. Its files are kept for a week; the technical details say what was found.",
+    technical,
+  };
+  // Nothing proved it wrong -- it could not be read or identified -- so the
+  // release is only set aside for a day.
+  if (job?.downloadFailureStage === "unidentified") return {
+    label: "Couldn't confirm the issue",
+    message: "Flipparr could not confirm this download is the issue, so it was set aside rather than filed. Its files are kept for a week and the release is tried again tomorrow; the technical details say what was read.",
     technical,
   };
   if (normalized.includes("not-complete") || normalized.includes("aborted, cannot be completed")) return {

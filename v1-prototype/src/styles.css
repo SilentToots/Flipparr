@@ -661,7 +661,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-job > div .job-failure-copy > small { color: var(--red-text); font-size: var(--text-xs); line-height: 1.4; }
 .job-failure-copy details { color: var(--muted); font-size: var(--text-xs); }
 .job-failure-copy summary { width: fit-content; cursor: pointer; }
-.job-failure-copy code { display: block; margin-top: 4px; padding: 6px 7px; border-radius: 5px; background: var(--surface-raised); color: var(--red-text); font-family: inherit; line-height: 1.35; overflow-wrap: anywhere; }
+.job-failure-copy code { display: block; margin-top: 4px; padding: 6px 7px; border-radius: 5px; background: var(--surface-raised); color: var(--red-text); font-family: inherit; line-height: 1.35; overflow-wrap: anywhere; white-space: pre-wrap; }
 .job-state { border-radius: 11px; padding: 4px 7px; background: var(--status-muted-bg); color: var(--status-muted-text); font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
 .job-state.queued, .job-state.searching { background: var(--violet-soft); color: var(--violet-text); }
 .job-state.downloading, .job-state.completed, .job-state.importing { background: var(--violet-soft); color: var(--violet-text); }

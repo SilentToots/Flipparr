@@ -2710,18 +2710,34 @@ class DownloadContentMismatch(ValueError):
 
     Distinct from the other ways an import fails -- a disk error, a rollback
     that needs attention -- because it says something about the release rather
-    than about this machine: it is the wrong comic, and asking for it again
-    will fail the same way.
+    than about this machine.
+
+    `kind` says how much it proves. "contradiction", "language" and "format"
+    mean the file is not this issue, and its release is barred. "unidentified"
+    and "unreadable" mean only that this machine could not confirm it, so the
+    release is set aside for a day rather than for good.
     """
+
+    UNPROVEN = frozenset({"unidentified", "unreadable"})
+
+    def __init__(self, message: str, kind: str = "contradiction") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+    @property
+    def stage(self) -> str:
+        """The download's failure_stage: a proven wrong comic, or one not confirmed."""
+        return "unidentified" if self.kind in self.UNPROVEN else "content"
 
 
 def select_downloaded_comic(
-    source: Path, context: dict[str, Any], completed_root: Path = SAB_COMPLETE_ROOT
+    source: Path, context: dict[str, Any], completed_root: Path = SAB_COMPLETE_ROOT,
+    *, release_title: str | None = None,
 ) -> dict[str, Any]:
     candidates = _comic_files_under(source, completed_root)
     if not candidates:
         raise DownloadContentMismatch(
-            "The completed download does not contain a supported comic file"
+            "The completed download does not contain a supported comic file", kind="format",
         )
     converted_dir: Path | None = None
     if context.get("format") == "manga":
@@ -2729,7 +2745,9 @@ def select_downloaded_comic(
         if not archives:
             ebooks = [path for path in candidates if path.suffix.lower() in MANGA_EBOOK_TYPES]
             if not ebooks:
-                raise DownloadContentMismatch("The download has no CBZ, CBR, PDF or EPUB volume")
+                raise DownloadContentMismatch(
+                    "The download has no CBZ, CBR, PDF or EPUB volume", kind="format",
+                )
             converted_dir = Path(tempfile.mkdtemp(prefix="flipparr-manga-"))
             for ebook in ebooks:
                 # Named for the volume it states; a publisher's file is often
@@ -2742,12 +2760,13 @@ def select_downloaded_comic(
                     shutil.rmtree(converted_dir, ignore_errors=True)
                     # Refused as the wrong release, so the next one is tried.
                     raise DownloadContentMismatch(
-                        f"{exc}, so this {ebook.suffix.lstrip('.').upper()} cannot become a CBZ volume"
+                        f"{exc}, so this {ebook.suffix.lstrip('.').upper()} cannot become a CBZ volume",
+                        kind="format",
                     ) from exc
                 archives.append(target)
         candidates = archives
     try:
-        selected = _choose_downloaded_comic(candidates, source, context)
+        selected = _choose_downloaded_comic(candidates, source, context, release_title)
     except Exception:
         if converted_dir is not None:
             shutil.rmtree(converted_dir, ignore_errors=True)
@@ -2780,18 +2799,61 @@ def _comic_pdf_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict
 
 
 def _choose_downloaded_comic(
-    candidates: list[Path], source: Path, context: dict[str, Any]
+    candidates: list[Path], source: Path, context: dict[str, Any],
+    release_title: str | None = None,
 ) -> dict[str, Any]:
+    """The comic in a finished download that is the issue it was grabbed for.
+
+    A file that names the issue is taken on its own word. One that names
+    nothing the parser can read is taken on the release's word, when that
+    release matched this issue and the download holds no other readable comic
+    that could be it. Only a file that says it is something else is refused
+    as the wrong comic; one that cannot be read or identified is refused as
+    unproven, which does not bar its release.
+
+    This used to refuse anything the file alone could not confirm, and every
+    name it could not read -- "Vol.1.No.19", "No.04", Supergirl: Woman of
+    Tomorrow #2's -- was barred as the wrong comic, deleted, and never tried
+    again. Every refusal now says what was read from each file.
+    """
+    wanted_label = f"{context.get('seriesTitle')} {_number_label(context)}"
     ranked = sorted(
         (_download_candidate_score(path, context) for path in candidates),
         key=lambda item: (-item[0], str(item[1]["path"])),
     )
+    readings = "\n".join(_download_reading(info, score) for score, info in ranked)
+    release_matches = bool(release_title) and _release_candidate_score(
+        {"title": release_title}, context
+    )[0] >= 85
+    release_line = (
+        f"Release: {release_title} -- {'matches' if release_matches else 'does not match'} {wanted_label}"
+        if release_title else "Release: not recorded"
+    )
+
+    def refuse(headline: str, kind: str) -> DownloadContentMismatch:
+        return DownloadContentMismatch(f"{headline}\nFiles read:\n{readings}\n{release_line}", kind=kind)
+
+    readable = [info for score, info in ranked if score > -1000]
+    if not readable:
+        reason = ranked[0][1].get("reason") or "the archive could not be opened"
+        raise refuse(f"No comic in the download could be read ({reason})", "unreadable")
     score, selected = ranked[0]
-    if score < 180 or not selected.get("issueMatch") or selected.get("titleRatio", 0) < 0.55:
-        raise DownloadContentMismatch(
-            f"No downloaded comic confidently matched {context.get('seriesTitle')} "
-            f"{_number_label(context)}"
-        )
+    if not (score >= 180 and selected.get("issueMatch") and selected.get("titleRatio", 0) >= 0.55):
+        judged = [(info, _download_contradiction(info, context)) for info in readable]
+        uncontradicted = [info for info, contradiction in judged if not contradiction]
+        if release_matches and len(uncontradicted) == 1:
+            selected = {**uncontradicted[0], "acceptedOn": "release"}
+        elif not uncontradicted:
+            raise refuse(judged[0][1], "contradiction")
+        elif not release_matches:
+            raise refuse(
+                f"Could not tell whether this is {wanted_label}: no file names the issue, "
+                "and the release name does not match it", "unidentified",
+            )
+        else:
+            raise refuse(
+                f"Could not tell which of {len(uncontradicted)} files is {wanted_label}", "unidentified",
+            )
     # Said in the file or in the folder it arrived in. Refusing here is what
     # makes a foreign edition visible: filed silently, it looks like the issue
     # it claims to be and is only found by opening it.
@@ -2801,11 +2863,44 @@ def _choose_downloaded_comic(
         or release_language_conflicts(Path(source).name, wanted)
     )
     if conflict:
-        raise DownloadContentMismatch(
+        raise refuse(
             f"The download is labelled as {language_name(conflict)}, "
-            f"not {language_name(wanted if wanted is not None else preferred_language())}"
+            f"not {language_name(wanted if wanted is not None else preferred_language())}",
+            "language",
         )
     return selected
+
+
+def _download_contradiction(info: dict[str, Any], context: dict[str, Any]) -> str | None:
+    """What a file states that makes it not the issue wanted; None if it states nothing against it."""
+    name = Path(info["path"]).name
+    issue = info.get("candidateIssue")
+    if issue and not info.get("issueMatch"):
+        return (f"{name} is {_number_label({**context, 'issueNumber': issue})}, "
+                f"not {context.get('seriesTitle')} {_number_label(context)}")
+    embedded = (info.get("result") or {}).get("embedded_metadata") or {}
+    series = str(embedded.get("series") or "").strip()
+    wanted = normalized_title(_without_leading_article(context.get("seriesTitle") or ""))
+    if series and wanted:
+        stated = normalized_title(_without_leading_article(series))
+        if difflib.SequenceMatcher(None, stated, wanted).ratio() < 0.55:
+            return f"{name} says it is {series}, not {context.get('seriesTitle')}"
+    return None
+
+
+def _download_reading(info: dict[str, Any], score: int) -> str:
+    """One line of a refusal: what was read from one file."""
+    name = Path(info["path"]).name
+    if score <= -1000:
+        return f"- {name}: could not be read ({info.get('reason') or 'unknown error'})"
+    result = info.get("result") or {}
+    lookup = result.get("lookup_identity") or {}
+    embedded = result.get("embedded_metadata") or {}
+    title = lookup.get("title") or embedded.get("series") or "no series"
+    issue = info.get("candidateIssue")
+    source = " (from its ComicInfo)" if embedded.get("series") or embedded.get("number") else ""
+    return (f"- {name}: read as {title!r}, issue {('#' + str(issue)) if issue else 'not stated'}"
+            f"{source}; title likeness {float(info.get('titleRatio') or 0):.2f}")
 
 
 def _series_destination_directory(context: dict[str, Any], library_root: Path) -> Path:
@@ -2948,7 +3043,10 @@ def import_downloaded_comic(
         str(download.get("sab_storage") or ""), str(download.get("release_title") or ""),
         completed_root,
     )
-    selected = select_downloaded_comic(source_container, context, completed_root)
+    selected = select_downloaded_comic(
+        source_container, context, completed_root,
+        release_title=str(download.get("release_title") or "") or None,
+    )
     try:
         return _import_selected_comic(selected, context, download, library_root)
     finally:
@@ -3402,14 +3500,24 @@ def start_missing_release_search(confirmed: bool = False) -> dict[str, Any]:
 
 
 def _fallback_after_sab_failure(
-    store: CatalogStore, download: dict[str, Any], message: str
+    store: CatalogStore, download: dict[str, Any], message: str,
+    *, kind: str = "download", storage: str | None = None,
 ) -> dict[str, Any]:
-    """Try the next unused strong result after SAB proves a release unusable."""
+    """Record a refused release and try the next unused strong result.
+
+    `kind` is what was proven. A download SABnzbd could not complete, or a
+    wrong comic, bars the release; one that was lost, unreadable or
+    unidentified only sets it aside for a day (catalog_store's
+    SOFT_REFUSAL_KINDS). `storage` is where its files were kept, so they can
+    be removed once they are no longer evidence (_discard_kept_downloads).
+    """
     job_id = int(download["job_id"])
     release_key = str(download.get("release_key") or "").strip() or _legacy_release_key(download)
     release_title = str(download.get("release_title") or "Unknown release")
+    kept_nzo = (str(download.get("sab_nzo_id") or "") or None) if storage else None
     failure = store.record_acquisition_release_failure(
-        job_id, release_key, release_title, message
+        job_id, release_key, release_title, message,
+        kind=kind, sab_nzo_id=kept_nzo, sab_storage=storage or None,
     )
     failure_count = int(failure.get("failureCount") or 0)
     if failure_count >= MAX_AUTOMATIC_RELEASE_FAILURES:
@@ -3498,7 +3606,8 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             store.update_acquisition_download(
                 int(download["id"]), "failed", error=message, failure_stage="download",
             )
-            return _fallback_after_sab_failure(store, download, message)
+            # Lost is not proof the release is bad, so it is set aside, not barred.
+            return _fallback_after_sab_failure(store, download, message, kind="lost")
         store.update_acquisition_download(int(download["id"]), "downloading")
         return {"status": "downloading"}
     sab_status = str(slot.get("status") or "").casefold()
@@ -3546,23 +3655,27 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             except Exception as rollback_error:
                 exc = ValueError(f"{exc}; original restore also needs attention: {rollback_error}")
         message = str(exc)
-        # A wrong comic is its own stage, not an import to retry: its files
-        # are deleted from SABnzbd below, so "Retry import" had nothing left to
-        # import and waited on a SABnzbd job that no longer existed.
+        # A refused download has a stage of its own -- "content" for a proven
+        # wrong comic, "unidentified" for one that could not be confirmed --
+        # not an import to retry: the same check would refuse it again.
         store.update_acquisition_download(
             int(download["id"]), "failed", sab_storage=storage, error=message,
-            failure_stage="content" if isinstance(exc, DownloadContentMismatch) else "import",
+            failure_stage=exc.stage if isinstance(exc, DownloadContentMismatch) else "import",
         )
         if isinstance(exc, DownloadContentMismatch):
-            # The wrong comic is of no use to keep, and it is recorded as
-            # unusable, so it will not be grabbed again.
-            _sab_remove_job({**download, "sab_storage": storage})
-            # The release is the problem, not the machine, so the same thing
-            # happens as when SABnzbd proves one unusable: record it and take
-            # the next candidate. Without this the issue sat failed until
-            # somebody noticed and asked for another search by hand.
+            # Its files stay in SABnzbd's folder: they are the evidence for
+            # why it was refused. Supergirl: Woman of Tomorrow #2's were
+            # deleted the moment it was refused, so what it had downloaded
+            # could never be looked at. They go once the issue is imported
+            # from another release, or after a week (_discard_kept_downloads).
+            #
+            # Then record the release and take the next candidate. Without
+            # this the issue sat failed until somebody noticed and asked for
+            # another search by hand.
             try:
-                outcome = _fallback_after_sab_failure(store, download, message)
+                outcome = _fallback_after_sab_failure(
+                    store, download, message, kind=exc.kind, storage=storage,
+                )
             except Exception as fallback_error:
                 log_exception("import_fallback_failed", fallback_error, level="warning")
             else:
@@ -3579,6 +3692,8 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         f"Imported and verified as {Path(imported['destination']).name}",
     )
     _sab_remove_job({**download, "sab_storage": storage})
+    # Refused downloads of this issue were kept as evidence; it is here now.
+    _discard_kept_downloads(store, job_id=int(download["job_id"]))
     replacement = store.replacement_for_job(int(download["job_id"]))
     if replacement and int(replacement.get("unfinished_jobs") or 0) == 0:
         try:
@@ -3606,8 +3721,33 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     return {"status": "imported", **imported}
 
 
+# How long a refused download is kept as evidence when its issue never arrives.
+KEPT_REFUSED_DAYS = 7
+_KEPT_SWEPT_AT = [0.0]
+
+
+def _discard_kept_downloads(
+    store: CatalogStore, *, job_id: int | None = None, older_than_days: int | None = None,
+) -> int:
+    """Remove refused downloads kept as evidence, once they no longer are:
+    when their issue is imported from another release, or after a week."""
+    kept = store.kept_refused_downloads(job_id=job_id, older_than_days=older_than_days)
+    if not isinstance(kept, list):
+        return 0
+    for row in kept:
+        _sab_remove_job({"sab_nzo_id": row.get("sab_nzo_id"), "sab_storage": row.get("sab_storage")})
+        store.forget_kept_download(int(row["id"]))
+    return len(kept)
+
+
 def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> None:
     while not stop_event.is_set():
+        if time.monotonic() - _KEPT_SWEPT_AT[0] >= 3600:
+            _KEPT_SWEPT_AT[0] = time.monotonic()
+            try:
+                _discard_kept_downloads(catalog_store(), older_than_days=KEPT_REFUSED_DAYS)
+            except Exception as exc:
+                log_exception("kept_download_sweep_failed", exc, level="warning")
         try:
             downloads = catalog_store().pending_acquisition_downloads()
             imported_any = False

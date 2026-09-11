@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
+# Refusals that prove nothing about the release -- a file this machine could
+# not read or identify, a download SABnzbd lost -- set it aside for a day
+# rather than barring it. See app.DownloadContentMismatch.
+SOFT_REFUSAL_KINDS = ("unidentified", "unreadable", "lost")
+SOFT_REFUSAL_HOURS = 24
 # A scene release name marking its issue "No.19"; see _forget_misread_scene_releases.
 _SCENE_ISSUE_NAME = re.compile(r"(?:^|[.\s_])No[.\s_]?\d{1,4}(?=[.\s_]|$)", re.I)
 # What a run is. Manga comes in volumes that *are* the unit, where a western
@@ -980,6 +985,9 @@ class CatalogStore:
                     release_key TEXT NOT NULL,
                     release_title TEXT NOT NULL,
                     error TEXT,
+                    kind TEXT,
+                    sab_nzo_id TEXT,
+                    sab_storage TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(job_id, release_key)
@@ -1226,6 +1234,12 @@ class CatalogStore:
                 connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN imported_at TEXT")
             if "failure_stage" not in acquisition_download_columns:
                 connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN failure_stage TEXT")
+            release_failure_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(acquisition_release_failures)")
+            }
+            for column in ("kind", "sab_nzo_id", "sab_storage"):
+                if column not in release_failure_columns:
+                    connection.execute(f"ALTER TABLE acquisition_release_failures ADD COLUMN {column} TEXT")
             if "release_key" not in acquisition_download_columns:
                 connection.execute("ALTER TABLE acquisition_downloads ADD COLUMN release_key TEXT")
 
@@ -1366,6 +1380,8 @@ class CatalogStore:
                 )
             if stored_version is not None and stored_version < 34:
                 self._forget_misread_scene_releases(connection)
+            if stored_version is not None and stored_version < 35:
+                self._forget_vague_refusals(connection)
 
     @staticmethod
     def _forget_misread_scene_releases(connection: sqlite3.Connection) -> int:
@@ -1384,14 +1400,41 @@ class CatalogStore:
             )
             if _SCENE_ISSUE_NAME.search(str(row["release_title"] or ""))
         ]
-        if not misread:
+        return CatalogStore._forget_refusals(
+            connection, misread,
+            "Ready to search again: its releases were refused by a filename reading since fixed",
+        )
+
+    @staticmethod
+    def _forget_vague_refusals(connection: sqlite3.Connection) -> int:
+        """Take back every refusal the old all-or-nothing import check made.
+
+        Until schema 35 a download was refused as the wrong comic whenever the
+        file alone could not confirm the issue, and its release was barred for
+        good -- Supergirl: Woman of Tomorrow #2's only release was. None of
+        those refusals said why, and none proved anything, so they are
+        forgotten and their jobs put back to search, for the check that
+        trusts a matching release to decide again.
+        """
+        vague = connection.execute(
+            """SELECT id, job_id FROM acquisition_release_failures
+               WHERE error LIKE 'No downloaded comic confidently matched%'"""
+        ).fetchall()
+        return CatalogStore._forget_refusals(
+            connection, vague,
+            "Ready to search again: its release was refused by an import check since made fairer",
+        )
+
+    @staticmethod
+    def _forget_refusals(connection: sqlite3.Connection, rows: Sequence[Any], detail: str) -> int:
+        """Delete these release refusals and put their unfinished jobs back to search."""
+        if not rows:
             return 0
         now = _utc_now()
         connection.executemany(
-            "DELETE FROM acquisition_release_failures WHERE id=?", [(row["id"],) for row in misread]
+            "DELETE FROM acquisition_release_failures WHERE id=?", [(row["id"],) for row in rows]
         )
-        detail = "Ready to search again: its releases were refused by a filename reading since fixed"
-        for job_id in sorted({int(row["job_id"]) for row in misread}):
+        for job_id in sorted({int(row["job_id"]) for row in rows}):
             changed = connection.execute(
                 """UPDATE acquisition_jobs
                    SET status='queued', queue_reason=?, error=NULL, attempt_count=0,
@@ -1405,7 +1448,7 @@ class CatalogStore:
                        VALUES (?, 'queued', ?, ?)""",
                     (job_id, detail, now),
                 )
-        return len(misread)
+        return len(rows)
 
     def _reconcile_all_identities(self) -> None:
         with self._connect() as connection:
@@ -5055,8 +5098,16 @@ class CatalogStore:
         release_key: str,
         release_title: str,
         error: str | None = None,
+        *,
+        kind: str | None = None,
+        sab_nzo_id: str | None = None,
+        sab_storage: str | None = None,
     ) -> dict[str, Any]:
-        """Persist one unusable release so automatic retries never select it again."""
+        """Persist one refused release so automatic retries do not select it again.
+
+        For good when the refusal proved something; for SOFT_REFUSAL_HOURS
+        when it did not. `sab_storage` is where its files were kept.
+        """
         key = str(release_key or "").strip()
         title = str(release_title or "").strip()
         if not key or not title:
@@ -5069,13 +5120,17 @@ class CatalogStore:
                 raise ValueError("Acquisition job was not found")
             connection.execute(
                 """INSERT INTO acquisition_release_failures(
-                       job_id, release_key, release_title, error, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?)
+                       job_id, release_key, release_title, error, kind, sab_nzo_id, sab_storage,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(job_id, release_key) DO UPDATE SET
                        release_title=excluded.release_title,
                        error=excluded.error,
+                       kind=excluded.kind,
+                       sab_nzo_id=COALESCE(excluded.sab_nzo_id, sab_nzo_id),
+                       sab_storage=COALESCE(excluded.sab_storage, sab_storage),
                        updated_at=excluded.updated_at""",
-                (job_id, key, title, error, now, now),
+                (job_id, key, title, error, kind, sab_nzo_id, sab_storage, now, now),
             )
             count = int(connection.execute(
                 "SELECT COUNT(*) AS count FROM acquisition_release_failures WHERE job_id=?",
@@ -5083,25 +5138,68 @@ class CatalogStore:
             ).fetchone()["count"])
         return {"jobId": str(job_id), "releaseKey": key, "failureCount": count}
 
+    # A refusal still in force: proven, or unproven and less than a day old.
+    _REFUSAL_IN_FORCE = (
+        f"NOT (COALESCE(kind, '') IN ({', '.join(repr(kind) for kind in SOFT_REFUSAL_KINDS)})"
+        " AND updated_at < ?)"
+    )
+
+    @staticmethod
+    def _soft_refusal_cutoff() -> str:
+        return (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=SOFT_REFUSAL_HOURS)
+        ).isoformat()
+
     def rejected_acquisition_release_keys(self, job_id: int) -> set[str]:
-        """Return release identities that previously failed for this wanted issue."""
+        """Release identities refused for this wanted issue and still set aside."""
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT release_key FROM acquisition_release_failures WHERE job_id=?",
-                (job_id,),
+                f"""SELECT release_key FROM acquisition_release_failures
+                    WHERE job_id=? AND {self._REFUSAL_IN_FORCE}""",
+                (job_id, self._soft_refusal_cutoff()),
             ).fetchall()
         return {str(row["release_key"]) for row in rows}
 
     def rejected_acquisition_releases(self, job_id: int) -> list[dict[str, Any]]:
-        """Return failed release identities and titles for search de-duplication."""
+        """Refused release identities and titles still set aside, for search de-duplication."""
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT release_key, release_title, error, updated_at
-                   FROM acquisition_release_failures
-                   WHERE job_id=? ORDER BY updated_at, id""",
-                (job_id,),
+                f"""SELECT release_key, release_title, error, updated_at
+                    FROM acquisition_release_failures
+                    WHERE job_id=? AND {self._REFUSAL_IN_FORCE} ORDER BY updated_at, id""",
+                (job_id, self._soft_refusal_cutoff()),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def kept_refused_downloads(
+        self, *, job_id: int | None = None, older_than_days: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Refused downloads whose files were kept as evidence, for one job or past an age."""
+        clauses, parameters = ["sab_storage IS NOT NULL"], []
+        if job_id is not None:
+            clauses.append("job_id=?")
+            parameters.append(int(job_id))
+        if older_than_days is not None:
+            clauses.append("created_at < ?")
+            parameters.append(
+                (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=older_than_days)).isoformat()
+            )
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, job_id, release_title, sab_nzo_id, sab_storage, created_at
+                    FROM acquisition_release_failures WHERE {" AND ".join(clauses)} ORDER BY id""",
+                parameters,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def forget_kept_download(self, failure_id: int) -> None:
+        """The refused download's files are gone; the refusal itself stays on record."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE acquisition_release_failures SET sab_nzo_id=NULL, sab_storage=NULL
+                   WHERE id=?""",
+                (int(failure_id),),
+            )
 
     def pending_acquisition_downloads(self) -> list[dict[str, Any]]:
         """Return SAB downloads that still need completion tracking or a verified import."""

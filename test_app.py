@@ -2062,7 +2062,7 @@ class FilenameParserTests(unittest.TestCase):
                 "issueNumber": "1", "issueTitle": None, "existingDirectory": None,
             }
             with patch("app.catalog_store", return_value=store):
-                with self.assertRaisesRegex(ValueError, "No downloaded comic confidently matched Saga #1"):
+                with self.assertRaisesRegex(ValueError, r"Saga 002 \(2012\)\.cbz is #2, not Saga #1"):
                     import_downloaded_comic(
                         {"job_id": 7, "sab_storage": str(source_folder), "release_title": "Saga.002.2012"},
                         library_root=library, completed_root=completed,
@@ -2131,6 +2131,9 @@ class FilenameParserTests(unittest.TestCase):
         store.record_acquisition_release_failure.assert_called_once_with(
             7, "failed-key", "Fables.095.failed",
             "Repair failed, not enough repair blocks",
+            # SABnzbd could not finish it: proof, so the release is barred,
+            # and there are no finished files to keep.
+            kind="download", sab_nzo_id=None, sab_storage=None,
         )
         search.assert_called_once_with(7)
         send.assert_called_once_with(7, "fallback-candidate")
@@ -3502,6 +3505,21 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
         self.assertEqual(result["status"], "downloading")
         queue.assert_not_called()
         fallback.assert_not_called()
+
+    def test_a_refused_download_is_kept_as_evidence_and_only_proof_bars_it(self):
+        """Supergirl: Woman of Tomorrow #2's files were deleted the moment it was refused."""
+        with patch("app._sab_remove_job") as remove, patch(
+            "app._fallback_after_sab_failure", return_value={"status": "fallback_queued"}
+        ) as fallback:
+            store = self._reconcile_with_import_failure(
+                app.DownloadContentMismatch("Could not tell whether this is Saga #1", kind="unidentified")
+            )
+        remove.assert_not_called()
+        self.assertEqual(fallback.call_args.kwargs,
+                         {"kind": "unidentified", "storage": "/downloads/complete/comics/x"})
+        failed = next(call for call in store.update_acquisition_download.call_args_list
+                      if call.args[1] == "failed")
+        self.assertEqual(failed.kwargs["failure_stage"], "unidentified")
 
     def test_a_local_failure_is_not_blamed_on_the_release(self):
         """A disk or quarantine problem says nothing about the download."""
@@ -5202,6 +5220,90 @@ class MangaEbookConversionTests(unittest.TestCase):
                 kept = app.select_downloaded_comic(source, job, root)
             self.assertEqual(Path(kept["path"]).suffix, ".pdf")
             self.assertFalse(kept.get("converted"))
+
+
+class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
+    """A download is refused as the wrong comic only when a file says it is.
+
+    Every false refusal so far was a file whose name the check could not read
+    -- American Vampire #19's "Vol.1.No.19", If Destruction Be Our Lot's
+    "No.04", Supergirl: Woman of Tomorrow #2's -- each barred as the wrong
+    comic, deleted, and never tried again. These are the names that did it.
+    """
+
+    supergirl = {"seriesTitle": "Supergirl: Woman of Tomorrow", "seriesYear": 2021, "issueNumber": "2",
+                 "publisher": "DC Comics", "format": "comic", "preferredLanguage": "en",
+                 "publicationYear": 2021, "publicationDate": "2021-11-23"}
+    supergirl_release = "Supergirl - Woman of Tomorrow 02 (of 08) (2021) (digital) (Son of Ultron-Empire)"
+
+    @staticmethod
+    def inventory(parsed):
+        if parsed.filename.startswith("broken"):
+            return {"file_health": {"status": "error", "message": "the archive is truncated"},
+                    "lookup_identity": {}, "embedded_metadata": {}}
+        return {"file_health": {"status": "ok"}, "embedded_metadata": {},
+                "lookup_identity": {"title": parsed.title, "issue": parsed.issue}}
+
+    def choose(self, names, job=None, release=None):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "download"
+            source.mkdir()
+            for name in names:
+                (source / name).write_bytes(b"comic")
+            with patch("app.inventory_file", side_effect=self.inventory):
+                return app.select_downloaded_comic(
+                    source, job or self.supergirl, root,
+                    release_title=self.supergirl_release if release is None else release,
+                )
+
+    def test_names_that_were_refused_before_now_import(self):
+        vampire = {"seriesTitle": "American Vampire", "seriesYear": 2010, "issueNumber": "19",
+                   "publisher": "DC Comics", "format": "comic", "preferredLanguage": "en",
+                   "publicationYear": 2011, "publicationDate": "2011-09-28"}
+        destruction = {"seriesTitle": "If Destruction Be Our Lot", "seriesYear": 2026, "issueNumber": "4",
+                       "publisher": "Image", "format": "comic", "preferredLanguage": "en",
+                       "publicationYear": 2026, "publicationDate": "2026-06-10"}
+        cases = [
+            (vampire, "American.Vampire.Vol.1.No.19.Nov.2011.SCAN.Comic.eBook-iNTENSiTY",
+             "American.Vampire.Vol.1.No.19.Nov.2011.SCAN.Comic.eBook-iNTENSiTY.cbr"),
+            (destruction, "Image.Comics.If.Destruction.Be.Our.Lot.No.04.2026.HYBRID.COMIC.eBook-21A1",
+             "Image.Comics.If.Destruction.Be.Our.Lot.No.04.2026.HYBRID.COMIC.eBook-21A1.cbz"),
+            (self.supergirl, self.supergirl_release, f"{self.supergirl_release}.cbr"),
+        ]
+        for job, release, name in cases:
+            with self.subTest(name=name):
+                self.assertEqual(Path(self.choose([name], job, release)["path"]).name, name)
+
+    def test_a_file_that_names_nothing_is_taken_on_a_matching_releases_word(self):
+        selected = self.choose(["swot.cbr"])
+        self.assertEqual(Path(selected["path"]).name, "swot.cbr")
+        self.assertEqual(selected["acceptedOn"], "release")
+
+    def test_without_a_matching_release_a_silent_file_is_unproven_not_wrong(self):
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.choose(["swot.cbr"], release="misc comics upload 2021")
+        self.assertEqual((refused.exception.kind, refused.exception.stage), ("unidentified", "unidentified"))
+        self.assertIn("swot.cbr: read as 'swot', issue not stated", str(refused.exception))
+        self.assertIn("does not match Supergirl: Woman of Tomorrow #2", str(refused.exception))
+
+    def test_a_file_that_names_another_issue_is_the_wrong_comic(self):
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.choose(["Supergirl - Woman of Tomorrow 03 (of 08) (2021) (digital).cbr"])
+        self.assertEqual((refused.exception.kind, refused.exception.stage), ("contradiction", "content"))
+        self.assertIn("is #3, not Supergirl: Woman of Tomorrow #2", str(refused.exception))
+
+    def test_an_unreadable_file_is_unproven(self):
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.choose(["broken.cbr"])
+        self.assertEqual(refused.exception.kind, "unreadable")
+        self.assertIn("the archive is truncated", str(refused.exception))
+
+    def test_two_files_that_name_nothing_are_not_guessed_between(self):
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.choose(["a.cbr", "b.cbr"])
+        self.assertEqual(refused.exception.kind, "unidentified")
+        self.assertIn("which of 2 files", str(refused.exception))
 
 
 class RemoveFromLibraryTests(unittest.TestCase):

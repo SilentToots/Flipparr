@@ -184,6 +184,69 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(jobs[14], ("fulfilled", 4), "an issue already in the library is left alone")
             self.assertEqual(jobs[5], ("failed", 4))
 
+    def test_an_unproven_refusal_sets_a_release_aside_for_a_day_not_for_good(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                connection.execute("PRAGMA foreign_keys = OFF")
+                connection.execute(
+                    """INSERT INTO acquisition_jobs(id, request_id, issue_id, status, created_at, updated_at)
+                       VALUES (813, 1, 1, 'queued', ?, ?)""", (now, now),
+                )
+            store.record_acquisition_release_failure(813, "wrong", "Supergirl 03", "is #3", kind="contradiction")
+            store.record_acquisition_release_failure(
+                813, "silent", "Supergirl 02", "could not tell", kind="unidentified",
+                sab_nzo_id="SAB_9", sab_storage="/data/complete/comics/Supergirl 02",
+            )
+            self.assertEqual(store.rejected_acquisition_release_keys(813), {"wrong", "silent"})
+            yesterday = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=25)).isoformat()
+            with store._connect() as connection:
+                connection.execute("UPDATE acquisition_release_failures SET updated_at=?", (yesterday,))
+            self.assertEqual(store.rejected_acquisition_release_keys(813), {"wrong"},
+                             "tomorrow only the proven refusal still bars its release")
+            self.assertEqual([row["release_key"] for row in store.rejected_acquisition_releases(813)], ["wrong"])
+
+            kept = store.kept_refused_downloads(job_id=813)
+            self.assertEqual([(row["sab_nzo_id"], row["sab_storage"]) for row in kept],
+                             [("SAB_9", "/data/complete/comics/Supergirl 02")])
+            self.assertEqual(store.kept_refused_downloads(older_than_days=7), [], "kept for a week")
+            store.forget_kept_download(int(kept[0]["id"]))
+            self.assertEqual(store.kept_refused_downloads(job_id=813), [])
+            self.assertEqual(len(store.rejected_acquisition_releases(813)), 1, "the refusal stays on record")
+
+    def test_the_old_checks_vague_refusals_are_taken_back(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                connection.execute("PRAGMA foreign_keys = OFF")
+                for job_id, status in ((813, "failed"), (14, "fulfilled")):
+                    connection.execute(
+                        """INSERT INTO acquisition_jobs(id, request_id, issue_id, status, attempt_count,
+                               created_at, updated_at) VALUES (?, 1, ?, ?, 3, ?, ?)""",
+                        (job_id, job_id, status, now, now),
+                    )
+                for job_id, key, error in (
+                    (813, "sg", "No downloaded comic confidently matched Supergirl: Woman of Tomorrow #2"),
+                    (813, "sab", "SABnzbd reported that the download failed"),
+                    (14, "idbol", "No downloaded comic confidently matched If Destruction Be Our Lot #4"),
+                ):
+                    connection.execute(
+                        """INSERT INTO acquisition_release_failures(job_id, release_key, release_title,
+                               error, created_at, updated_at) VALUES (?, ?, 'release', ?, ?, ?)""",
+                        (job_id, key, error, now, now),
+                    )
+                forgotten = CatalogStore._forget_vague_refusals(connection)
+                left = {row["release_key"] for row in connection.execute(
+                    "SELECT release_key FROM acquisition_release_failures")}
+                jobs = {row["id"]: (row["status"], row["attempt_count"]) for row in connection.execute(
+                    "SELECT id, status, attempt_count FROM acquisition_jobs")}
+            self.assertEqual(forgotten, 2)
+            self.assertEqual(left, {"sab"}, "a download SABnzbd could not finish is still a real failure")
+            self.assertEqual(jobs[813], ("queued", 0))
+            self.assertEqual(jobs[14], ("fulfilled", 3))
+
     def test_library_roots_reject_overlapping_folders(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "comics"
