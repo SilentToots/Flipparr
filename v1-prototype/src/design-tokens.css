@@ -109,6 +109,11 @@
      variable, so expect this name to change when it enters the palette. */
   --appbar-bg: var(--violet);
   --appbar-search-bg: #641ba3;
+  /* What the bar actually paints: the violet at 85%, over a blur of whatever
+     scrolls beneath it. --appbar-bg stays solid for the few things drawn to
+     match the bar, and for browsers that cannot blur. */
+  --appbar-bg-translucent: rgb(126 34 206 / .85);
+  --appbar-blur: 16px;
   /* The unread count beside the bell. Its own rung because it is the one red
      that sits under white text rather than on a dark tint. */
   --badge-alert-bg: var(--color-red-700);

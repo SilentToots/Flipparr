@@ -13,7 +13,6 @@ export const spec = [
     "sel": ".appbar",
     "node": "1:87",
     "props": {
-      "backgroundColor": "rgb(126, 34, 206)",
       "borderBottomWidth": "1px",
       "borderBottomColor": "rgb(63, 63, 70)",
       "paddingBottom": "8px",

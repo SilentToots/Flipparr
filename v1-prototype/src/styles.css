@@ -2082,6 +2082,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     align-items: center; padding: 8px 20px 8px 24px;
     background: var(--appbar-bg); border-bottom: 1px solid var(--line-strong);
   }
+  /* Translucent only where the blur behind it is available: 85% violet over
+     unblurred covers is busy, not frosted. */
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .appbar {
+      background: var(--appbar-bg-translucent);
+      -webkit-backdrop-filter: blur(var(--appbar-blur));
+      backdrop-filter: blur(var(--appbar-blur));
+    }
+  }
   .appbar-menu, .appbar-action {
     display: grid; place-items: center; padding: 0; position: relative;
     border: 0; border-radius: var(--radius-sm); background: transparent;
