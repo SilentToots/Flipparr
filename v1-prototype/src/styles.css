@@ -713,6 +713,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .release-loading strong, .release-empty strong { color: var(--text); font-size: var(--text-base); }
 .release-loading span, .release-empty span { max-width: 450px; font-size: var(--text-sm); line-height: 1.5; }
 .release-empty .secondary-button { margin-top: 8px; }
+/* What came back and was set aside, when nothing could be offered. */
+.release-set-aside { width: 100%; max-width: 640px; margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; text-align: left; }
+.release-set-aside li { display: grid; gap: 2px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); }
+.release-set-aside b { overflow: hidden; color: var(--text); font-size: var(--text-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.release-set-aside small { color: var(--muted); font-size: var(--text-xs); line-height: 1.4; }
 .release-error { margin: 16px 0; padding: 12px; border: 1px solid var(--red-border); border-radius: 7px; background: var(--red-soft); color: var(--red-text); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; font-size: var(--text-sm); }
 .release-error span { display: grid; gap: 3px; }
 .release-error button { min-height: 32px; border: 1px solid var(--red-border); border-radius: 6px; background: var(--surface-soft); color: var(--red-text); padding: 0 10px; cursor: pointer; }

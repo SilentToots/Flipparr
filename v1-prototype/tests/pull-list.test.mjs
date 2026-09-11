@@ -232,3 +232,28 @@ test("a run whose only open issue is failing is not also wanted", () => {
   const request = req({ wantedIssueCount: 1, jobs: [{ id: 1, status: "failed", downloadStatus: "failed" }] });
   assert.deepEqual(groupPullList({ requests: [request] }, NOW).wanted, []);
 });
+
+test("an empty release search says what came back and why none was offered", async () => {
+  const { releaseSearchSummary } = await import("../src/pull-list.js");
+  // Supergirl: Woman of Tomorrow #2: fifty-one results, the only #2 refused.
+  const summary = releaseSearchSummary({
+    resultCount: 51,
+    nearMisses: [
+      { title: "Supergirl - Woman of Tomorrow 02 (of 08) (2021)", score: null, copies: 3,
+        reasons: ["Refused before: The download is incomplete: 22 of its 140 MB are zero-filled"] },
+      { title: "Supergirl - Woman of Tomorrow 03 (of 08) (2021)", score: 65,
+        reasons: ["Series title matches", "Publication year 2021 matches"] },
+      { title: "Comics.FR.-.Supergirl.002", score: 0, reasons: ["Labelled as French"] },
+      { title: "Week of 2022.02.16 - Batman 002", score: 40, reasons: ["Issue #2 matches"] },
+    ],
+  }, "#2");
+  assert.equal(summary.headline, "51 results, none a usable #2");
+  assert.deepEqual(summary.setAside.map((item) => [item.reason, item.copies]), [
+    ["Refused before: The download is incomplete: 22 of its 140 MB are zero-filled", 3],
+    ["Not this issue", 1],
+    ["Labelled as French", 1],
+    ["Not this series", 1],
+  ]);
+  assert.equal(releaseSearchSummary({ resultCount: 0 }, "#2").headline, "Nothing came back");
+  assert.equal(releaseSearchSummary(null, "#2").setAside.length, 0);
+});

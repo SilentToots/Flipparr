@@ -1405,8 +1405,15 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     # first: "02 of 04" counts the run, and "Vol 04" is a collected volume.
     # Both read as issue four, so a wanted issue would have been answered
     # with a different issue, or with a trade paperback of the whole run.
-    cleaned = re.sub(r"\b(?:vol|volume|v)\.?\s*\d{1,4}\b", " ", str(title or ""), flags=re.I)
-    cleaned = re.sub(r"\bof\s*\d{1,4}\b", " ", cleaned, flags=re.I)
+    # A Usenet subject's date stamp and part counter carry numbers that are not
+    # the issue: "Week of 2022.02.16 [53/72] ... Woman of Tomorrow 08" matched
+    # issue 2 on the 02 in its date. Taken out first, before "of N" can eat
+    # the year out of "Week of 2022" and leave the date's 02 behind.
+    cleaned = re.sub(r"\b(?:19|20)\d{2}[.\-/_ ]\d{1,2}[.\-/_ ]\d{1,2}\b", " ", str(title or ""))
+    cleaned = re.sub(r"[\[(]\s*\d{1,4}\s*/\s*\d{1,4}\s*[\])]", " ", cleaned)
+    cleaned = re.sub(r"\b(?:vol|volume|v)\.?\s*\d{1,4}\b", " ", cleaned, flags=re.I)
+    # "02 of 04" counts the run; a year is never a count.
+    cleaned = re.sub(r"\bof\s*\d{1,3}\b", " ", cleaned, flags=re.I)
     return bool(re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", cleaned, re.I))
 
 
@@ -2432,11 +2439,22 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         re.sub(r"\s+", " ", str(item.get("release_title") or "")).strip().casefold()
         for item in rejected_records if isinstance(item, dict)
     }
+    # Why each was refused, said back in the release list: "refused before"
+    # alone left an incomplete release looking like a search that found nothing.
+    refusal_reasons: dict[str, str] = {}
+    for item in rejected_records:
+        if not isinstance(item, dict):
+            continue
+        reason = (str(item.get("error") or "").strip().splitlines() or ["no reason recorded"])[0]
+        refusal_reasons[str(item.get("release_key") or "")] = reason
+        refusal_reasons[re.sub(r"\s+", " ", str(item.get("release_title") or "")).strip().casefold()] = reason
     now = time.time()
     # What came back and was set aside. "No release found yet" could mean the
     # indexers have nothing, or that everything they had was refused -- and
     # telling those apart used to take a trip into the container.
-    results_seen = [0]
+    # By release, not by answer: with nothing found every wording is tried, and
+    # each brings back the same releases again.
+    results_seen: set[str] = set()
     near_misses: list[dict[str, Any]] = []
 
     def candidates_for(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2449,19 +2467,21 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             download_url = str(release.get("downloadUrl") or "").strip()
             if protocol != "usenet" or not title or not download_url:
                 continue
-            results_seen[0] += 1
             try:
                 download_path = _prowlarr_download_reference(download_url)
             except ValueError:
                 continue
             release_key = _release_candidate_key(release, download_path)
+            results_seen.add(release_key)
             normalized_title = re.sub(r"\s+", " ", title).strip().casefold()
             if release_key in rejected_keys or normalized_title in rejected_titles:
-                near_misses.append({"title": title, "score": None, "reasons": ["Refused before for this issue"]})
+                reason = refusal_reasons.get(release_key) or refusal_reasons.get(normalized_title)
+                near_misses.append({"title": title, "score": None, "key": release_key,
+                                    "reasons": [f"Refused before: {reason}" if reason else "Refused before for this issue"]})
                 continue
             score, reasons = _release_candidate_score(release, context)
             if score < 85:
-                near_misses.append({"title": title, "score": score, "reasons": reasons})
+                near_misses.append({"title": title, "score": score, "reasons": reasons, "key": release_key})
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
             candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
@@ -2524,11 +2544,22 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         if candidates else "No release found yet"
     )
     store.update_acquisition_job(job_id, "queued", detail)
-    near_misses.sort(key=lambda item: -(item["score"] if item["score"] is not None else 101))
+    # One release is often listed by several indexers; it is one thing set
+    # aside, with a copy per listing -- not per wording that found it again.
+    distinct: dict[str, dict[str, Any]] = {}
+    for miss in near_misses:
+        title_key = re.sub(r"\s+", " ", miss["title"]).strip().casefold()
+        entry = distinct.setdefault(title_key, {**miss, "listings": set()})
+        entry["listings"].add(miss["key"])
+    near_misses = sorted(
+        ({key: value for key, value in entry.items() if key not in {"key", "listings"}}
+         | {"copies": len(entry["listings"])} for entry in distinct.values()),
+        key=lambda item: -(item["score"] if item["score"] is not None else 101),
+    )
     return {
         "job": context, "query": query, "candidateCount": len(candidates),
         "candidates": candidates,
-        "resultCount": results_seen[0], "nearMisses": near_misses[:8],
+        "resultCount": len(results_seen), "nearMisses": near_misses[:8],
     }
 
 

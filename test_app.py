@@ -406,6 +406,50 @@ class FilenameParserTests(unittest.TestCase):
         self.assertFalse(enrichment["allProvidersCooling"])
         self.assertEqual(enrichment["availableProviders"], ["metron", "comic_vine"])
 
+    def test_a_release_refused_before_says_why_and_counts_once(self):
+        """Find release said "no results" for Supergirl #2 when fifty-one came back."""
+        context = {
+            "id": "12", "requestId": "4", "status": "queued",
+            "issueId": "8", "issueNumber": "4", "issueTitle": None,
+            "publicationYear": 2025, "publicationDate": "2025-01-01",
+            "seriesId": "2", "seriesTitle": "Absolute Batman",
+            "seriesYear": 2024, "publisher": "DC Comics", "acquisitionPreference": "either",
+        }
+        store = Mock()
+        store.get_acquisition_job_context.return_value = context
+        store.rejected_acquisition_releases.return_value = [{
+            "release_key": "old", "release_title": "Absolute Batman 004 (2025) (Digital) (ENG)",
+            "error": "The download is incomplete: 3 MB of it is zero-filled\nFiles read:\n- x.cbr",
+        }]
+        refused = {"title": "Absolute Batman 004 (2025) (Digital) (ENG)", "protocol": "usenet",
+                   "size": 1, "categories": [{"id": 7030}]}
+        releases = [
+            {**refused, "guid": "a", "downloadUrl": "http://prowlarr/a", "indexer": "One"},
+            {**refused, "guid": "b", "downloadUrl": "http://prowlarr/b", "indexer": "Two"},
+            {"guid": "c", "title": 'Week of 2025.04.16 [53/72] - yEnc "Absolute Batman 008 (2025)"',
+             "protocol": "usenet", "downloadUrl": "http://prowlarr/c", "indexer": "One",
+             "size": 1, "categories": [{"id": 7030}]},
+        ]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.load_acquisition_service_config", return_value={
+                "prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"}
+            }
+        ), patch("app.fetch_json_with_headers", return_value=releases):
+            result = search_prowlarr_releases(12)
+        self.assertEqual(result["candidateCount"], 0)
+        self.assertEqual(result["resultCount"], 3, "three releases, however many wordings were tried")
+        first = result["nearMisses"][0]
+        self.assertEqual((first["copies"], first["reasons"]),
+                         (2, ["Refused before: The download is incomplete: 3 MB of it is zero-filled"]))
+        dated = next(miss for miss in result["nearMisses"] if miss["title"].startswith("Week of"))
+        self.assertEqual(dated["copies"], 1)
+        self.assertNotIn("Issue #4 matches", dated["reasons"], "the 04 in its date is not the issue")
+        self.assertFalse(app._release_issue_matches(
+            'Week of 2022.02.16 [53/72] - yEnc "Supergirl - Woman of Tomorrow 08 (of 08) (2022)"', "2"))
+        self.assertTrue(app._release_issue_matches("Supergirl - Woman of Tomorrow 02 (of 08) (2021)", "2"))
+        self.assertNotIn("key", first)
+        self.assertNotIn("secret", str(result))
+
     def test_prowlarr_search_returns_safe_ranked_usenet_candidates(self):
         context = {
             "id": "12", "requestId": "4", "status": "queued",

@@ -100,6 +100,42 @@ export function jobsForTab(request, tab) {
   return { jobs: outstanding.filter(belongs), elsewhere };
 }
 
+/**
+ * What an empty release search found, said plainly.
+ *
+ * "Prowlarr returned no Usenet results" was shown whether the indexers had
+ * nothing at all or had answered with fifty-one releases -- every other issue
+ * of Supergirl: Woman of Tomorrow, and the one #2 refused as incomplete.
+ */
+export function releaseSearchSummary(result, label) {
+  const returned = Number(result?.resultCount || 0);
+  if (!returned) {
+    return { headline: "Nothing came back", setAside: [],
+      detail: "Your indexers returned no Usenet results for this search. Try other wording." };
+  }
+  const setAside = (result?.nearMisses || []).map((miss) => ({
+    title: miss.title, copies: miss.copies || 1, reason: setAsideReason(miss),
+  }));
+  return {
+    headline: `${returned} result${returned === 1 ? "" : "s"}, none a usable ${label}`,
+    detail: setAside.length ? "The closest, and why each was set aside:" : "None of them named this series and issue.",
+    setAside,
+  };
+}
+
+/** Why one release was not offered: its refusal, or what it failed to match. */
+function setAsideReason(miss) {
+  const reasons = miss?.reasons || [];
+  // Refused before, or refused outright (a foreign edition, a wrong year).
+  if (miss?.score == null || (miss.score === 0 && reasons.length)) return reasons[0] || "Set aside";
+  const series = reasons.some((reason) => reason.startsWith("Series title matches"));
+  const issue = reasons.some((reason) => /^Issue #.+ matches$/.test(reason));
+  if (!series && !issue) return "Not this series or issue";
+  if (!series) return "Not this series";
+  if (!issue) return "Not this issue";
+  return `Too weak a match (${miss.score} of the 85 needed)`;
+}
+
 /** Only a pull by name is deleted; a followed run is stopped by unfollowing. */
 export const canDeletePull = (request) =>
   request?.coverage === "issues" && jobs(request).every(canDeleteJob);
