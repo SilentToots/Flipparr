@@ -897,6 +897,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .advanced-collection-tools.advanced-tab { margin-top: 0; padding-top: 0; border-top: 0; }
 .advanced-collection-tools.advanced-tab p { margin: 18px 0 8px; font-size: var(--text-sm); }
 .advanced-collection-tools.advanced-tab p:first-child { margin-top: 0; }
+/* Remove from library comes last, set apart: the one tool here that cannot be undone. */
+.advanced-collection-tools.advanced-tab p:has(+ .advanced-danger) { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.advanced-collection-tools button.advanced-danger { border-color: color-mix(in srgb, var(--red-text) 45%, transparent); background: var(--red-soft); color: var(--red-text); }
+.advanced-collection-tools button.advanced-danger:hover { background: color-mix(in srgb, var(--red-text) 22%, transparent); }
 .advanced-collection-tools button { min-height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--status-muted-bg); color: var(--muted-strong); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .placement-callout { margin-top: 15px; padding: 13px; border: 1px solid var(--amber-border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--amber); display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .placement-callout > div { display: grid; gap: 4px; }
