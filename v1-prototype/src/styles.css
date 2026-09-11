@@ -2276,6 +2276,14 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 .pull-button:not(:disabled):active { filter: brightness(.92); }
 .shelf-scroll button:not(:disabled):active { background: var(--color-neutral-400); }
 
+/* Cards ease into their lift rather than jumping. */
+.series-card, .pull-card, .new-run-card, .library-match { transition: transform var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard), scale var(--motion-duration-fast) var(--motion-ease-standard); }
+.pull-card .discover-cover, .library-match .discover-cover { transition: border-color var(--motion-duration-fast) var(--motion-ease-standard); }
+@media (prefers-reduced-motion: reduce) {
+  .series-card, .pull-card, .new-run-card, .library-match,
+  .pull-card .discover-cover, .library-match .discover-cover { transition: none; }
+}
+
 /* Hover, where the device can -- the controls that had none. */
 .modal-close { border-radius: var(--radius-sm); }
 @media (hover: hover) {
@@ -2283,7 +2291,14 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .danger-button:not(:disabled):hover { background: var(--button-danger-bg-hover); }
   .pull-button:not(:disabled):hover { filter: brightness(1.1); }
   .request-expand:hover { background: var(--surface-sunken); color: var(--text); }
-  .discover-open:hover, .library-match:hover { filter: brightness(1.08); }
+  /* Discover's cards lift as the Comics grid's do: up 2px, border to violet.
+     A shelf or search card lifts for its cover, not for its Pull button,
+     which answers on its own. */
+  .pull-card:has(.discover-open:hover), .new-run-card:has(.discover-open:hover),
+  .library-match:hover { transform: translateY(-2px); }
+  .new-run-card:has(.discover-open:hover) { border-color: var(--violet-border); }
+  .pull-card:has(.discover-open:hover) .discover-cover,
+  .library-match:hover .discover-cover { border-color: var(--violet-border); }
   .family-link-chip:hover { filter: brightness(1.2); }
   .discover-search-clear:hover { opacity: .8; }
   .notifications-open:hover { background: var(--button-ghost-bg-hover); }
