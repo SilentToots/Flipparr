@@ -8446,6 +8446,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        pulled = re.fullmatch(r"/api/v1/requests/(\d+)(?:/issues/(\d+))?", parsed_url.path)
+        if pulled:
+            try:
+                result = catalog_store().delete_pulled_issues(
+                    int(pulled.group(1)),
+                    [int(pulled.group(2))] if pulled.group(2) else None,
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
         self.send_json({"error": "Endpoint not found"}, 404)
 
     def query(self, parsed_url: urllib.parse.ParseResult) -> dict[str, str]:

@@ -5227,6 +5227,67 @@ class CatalogStore:
             item for item in refreshed["replacementRequests"] if item["id"] == str(request_id)
         )
 
+    def delete_pulled_issues(
+        self, request_id: int, issue_ids: Sequence[int] | None = None
+    ) -> dict[str, Any]:
+        """Take issues pulled by name off the Pull List, as if never asked for.
+
+        Deleted rather than cancelled: a pull is one click to make again, and a
+        cancelled record would sit on the Pull List as a comic nobody wants.
+        Only a request for named issues can be deleted -- a followed run is
+        stopped by unfollowing it. Without `issue_ids` the whole pull goes, and
+        so does a request whose last issue is deleted.
+
+        An issue SABnzbd is still working on stays. The job is what imports the
+        finished download, so deleting it would leave the file to land with
+        nothing to claim it; the same holds for a search that is out right now.
+        """
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT id, coverage FROM acquisition_requests WHERE id=?", (request_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("That pull is no longer on the Pull List")
+            if row["coverage"] != "issues":
+                raise ValueError("A followed run is stopped by unfollowing it, not deleted")
+            enrolled = {
+                int(item["issue_id"]) for item in connection.execute(
+                    "SELECT issue_id FROM acquisition_request_issues WHERE request_id=?",
+                    (request_id,),
+                )
+            }
+            targets = set(enrolled) if issue_ids is None else {int(value) for value in issue_ids}
+            if not targets or not targets <= enrolled:
+                raise ValueError("That issue is not part of this pull")
+            marks = ",".join("?" for _ in targets)
+            busy = connection.execute(
+                f"""SELECT COUNT(*) FROM acquisition_jobs
+                    LEFT JOIN acquisition_downloads
+                      ON acquisition_downloads.job_id=acquisition_jobs.id
+                    WHERE acquisition_jobs.request_id=? AND acquisition_jobs.issue_id IN ({marks})
+                      AND (acquisition_jobs.status='searching'
+                           OR acquisition_downloads.status IN
+                              ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files'))""",
+                (request_id, *targets),
+            ).fetchone()[0]
+            if busy:
+                raise ValueError(
+                    "That issue is downloading. Delete it once it has finished or failed."
+                )
+            # Events, downloads and failed releases cascade from the job.
+            connection.execute(
+                f"DELETE FROM acquisition_jobs WHERE request_id=? AND issue_id IN ({marks})",
+                (request_id, *targets),
+            )
+            connection.execute(
+                f"DELETE FROM acquisition_request_issues WHERE request_id=? AND issue_id IN ({marks})",
+                (request_id, *targets),
+            )
+            emptied = not (enrolled - targets)
+            if emptied:
+                connection.execute("DELETE FROM acquisition_requests WHERE id=?", (request_id,))
+        return {"deleted": len(targets), "requestDeleted": emptied}
+
     # Whether one comic file stands for one issue: directly, or as a collected
     # edition whose contents have been resolved. Written once because the
     # replacement flow has been wrong twice by joining on the request alone --

@@ -657,6 +657,18 @@ class HttpContractTests(unittest.TestCase):
             self.post("/api/v1/requests/search-missing", {"confirmed": True})
         search.assert_called_once_with(True)
 
+    # ---- deleting a pull ---------------------------------------------------
+
+    def test_deleting_a_pull_that_is_not_there_says_so(self):
+        for path in ("/api/v1/requests/999999", "/api/v1/requests/999999/issues/1"):
+            with self.subTest(path=path):
+                response = self.delete(path)
+                self.assertEqual(response.status, 400)
+                self.assertIn("error", json.loads(response.body))
+
+    def test_a_malformed_pull_path_is_not_found(self):
+        self.assertEqual(self.delete("/api/v1/requests/abc").status, 404)
+
     # ---- series cover picker ---------------------------------------------
 
     # Uploading a cover returned a 422 carrying a raw errno for the life of

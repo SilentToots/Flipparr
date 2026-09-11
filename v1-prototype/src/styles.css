@@ -648,6 +648,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .job-state.fulfilled { background: var(--green-soft); color: var(--green-text); }
 .request-job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-job-actions button { min-height: 31px; border: 1px solid var(--violet-border); border-radius: 6px; background: var(--violet-soft); color: var(--violet-text); padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); font-weight: 700; cursor: pointer; white-space: nowrap; }
+/* Quieter than the actions beside it: deleting is the way out, not the next step. */
+.request-job-actions button.request-job-delete { border-color: var(--line-strong); background: transparent; color: var(--muted-strong); }
+.request-job-actions button.request-job-delete:hover:not(:disabled) { background: var(--surface-soft); color: var(--text); }
+.request-job-actions button:disabled { opacity: .6; cursor: default; }
 .request-job-empty { min-height: 72px; display: flex; align-items: center; gap: 11px; padding: 14px 15px; color: var(--muted); font-size: var(--text-md); border-top: 1px solid var(--line); }
 .request-job-empty > div { display: grid; gap: 4px; }
 .request-job-empty strong { color: var(--text); font-size: var(--text-md); }

@@ -3837,3 +3837,68 @@ class PullOneIssueTests(unittest.TestCase):
             )
             self.assertEqual(series["monitoringStatus"], "monitored",
                              "and it is still followed afterwards")
+
+    def _issue_id(self, store, run_id, number):
+        series = next(item for item in store.catalog()["series"] if int(item["id"]) == run_id)
+        return int(next(issue["id"] for issue in series["issues"] if issue["number"] == number))
+
+    def test_deleting_one_pulled_issue_leaves_the_others(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["2", "3"])
+            store.reconcile_acquisition_jobs()
+            result = store.delete_pulled_issues(int(pulled["id"]), [self._issue_id(store, run_id, "2")])
+            self.assertEqual(result, {"deleted": 1, "requestDeleted": False})
+            request = self._request(store, pulled["id"])
+            self.assertEqual(self._numbers(request), ["3"])
+            self.assertEqual([issue["number"] for issue in request["issues"]], ["3"])
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._numbers(self._request(store, pulled["id"])), ["3"],
+                             "reconcile does not bring the deleted issue back")
+
+    def test_deleting_the_last_issue_deletes_the_pull(self):
+        """Nothing is left on the Pull List -- not a cancelled row, nothing."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            store.reconcile_acquisition_jobs()
+            result = store.delete_pulled_issues(int(pulled["id"]))
+            self.assertEqual(result, {"deleted": 1, "requestDeleted": True})
+            self.assertEqual(store.catalog()["requests"], [])
+
+    def test_a_deleted_pull_can_be_made_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            first = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            store.delete_pulled_issues(int(first["id"]))
+            again = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(self._numbers(self._request(store, again["id"])), ["3"])
+
+    def test_an_issue_that_is_downloading_is_not_deleted(self):
+        """Its job is what imports the file when SABnzbd finishes."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            store.reconcile_acquisition_jobs()
+            job_id = int(self._request(store, pulled["id"])["jobs"][0]["id"])
+            store.record_acquisition_download(job_id, "SABnzbd_nzo_1", "Example 003", "key")
+            with self.assertRaisesRegex(ValueError, "downloading"):
+                store.delete_pulled_issues(int(pulled["id"]))
+            self.assertEqual(self._numbers(self._request(store, pulled["id"])), ["3"])
+
+    def test_a_followed_run_is_not_deleted_this_way(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            followed = store.create_acquisition_request("series", run_id)
+            with self.assertRaisesRegex(ValueError, "unfollowing"):
+                store.delete_pulled_issues(int(followed["id"]))
+
+    def test_an_issue_outside_the_pull_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, run_id = self._run(Path(folder))
+            pulled = store.create_acquisition_request("series", run_id, issue_numbers=["3"])
+            with self.assertRaises(ValueError):
+                store.delete_pulled_issues(int(pulled["id"]), [self._issue_id(store, run_id, "2")])
+            with self.assertRaises(ValueError):
+                store.delete_pulled_issues(999)

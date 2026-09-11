@@ -54,6 +54,32 @@ export const hasSomethingToFind = (request) => Boolean(
 );
 
 /**
+ * Whether one issue of a pull can be deleted. Not while SABnzbd holds it or a
+ * search is out: the job is what imports the finished file, and deleting it
+ * would leave the download to land with nothing to claim it. The server
+ * refuses the same cases; this keeps the button from offering them.
+ */
+export const canDeleteJob = (job) => Boolean(job)
+  && !(job.downloadStatus && IN_FLIGHT_DOWNLOADS.has(job.downloadStatus))
+  && job.status !== "searching";
+
+/** Only a pull by name is deleted; a followed run is stopped by unfollowing. */
+export const canDeletePull = (request) =>
+  request?.coverage === "issues" && jobs(request).every(canDeleteJob);
+
+/**
+ * Issues pulled by name that have no job yet. Jobs exist only for released
+ * issues, so a comic pulled before it ships has nothing in `jobs` -- and a
+ * panel that lists jobs alone could not show it, let alone delete it.
+ */
+export function waitingIssues(request) {
+  if (request?.coverage !== "issues") return [];
+  const withJob = new Set(jobs(request).map((job) => String(job.issueId)));
+  return (request.issues || []).filter((issue) =>
+    !withJob.has(String(issue.id)) && issue.ownership === "unowned");
+}
+
+/**
  * When one issue landed. `importedAt` is the moment the file arrived;
  * `updatedAt` is the last time anything touched the job, which unfollowing a
  * run rewrites for all of them at once. Prefer the former and fall back only
