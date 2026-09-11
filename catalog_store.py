@@ -2788,6 +2788,22 @@ class CatalogStore:
         )
         return self.get_file_workbench(file_id)
 
+    def confirmed_series_provider_ids(self, series_run_id: int) -> dict[str, str]:
+        """A run's confirmed provider ids, by provider."""
+        with self._connect() as connection:
+            if not connection.execute(
+                "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone():
+                raise LookupError("Series run was not found")
+            return {
+                row["provider"]: str(row["provider_id"])
+                for row in connection.execute(
+                    """SELECT provider, provider_id FROM series_provider_ids
+                       WHERE series_run_id=? AND confirmed=1""",
+                    (series_run_id,),
+                )
+            }
+
     def get_series_sync_context(self, series_run_id: int) -> dict[str, Any]:
         with self._connect() as connection:
             series = connection.execute("SELECT * FROM series_runs WHERE id=?", (series_run_id,)).fetchone()

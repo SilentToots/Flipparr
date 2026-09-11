@@ -675,6 +675,11 @@ class HttpContractTests(unittest.TestCase):
     # the feature, because the directory it wrote to was inside a read-only
     # image. Nothing asked these routes anything, which is how that lasted.
 
+    def test_an_unknown_run_has_no_synopsis(self):
+        response = self.get("/api/v1/series/999999/synopsis")
+        self.assertEqual(response.status, 404)
+        self.assertIn("error", json.loads(response.body))
+
     def test_an_unknown_run_has_no_cover_workbench(self):
         response = self.get("/api/v1/series/999999/cover")
         self.assertEqual(response.status, 404)

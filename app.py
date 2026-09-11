@@ -5697,11 +5697,13 @@ def _provider_series_run_details(
                 if isinstance(publisher_value, dict) else publisher_value
             ),
             "endEvidence": _run_end_evidence(detail.get("year_end"), modelled="year_end" in detail),
+            "synopsis": _plain_text(detail.get("desc")),
         }
     context["comicVineVolumeId"] = str(provider_series_id)
     provider_id, source_url, entries = _comic_vine_issue_entries(context, credential)
     detail_url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
-        "api_key": credential, "format": "json", "field_list": "name,start_year,publisher",
+        "api_key": credential, "format": "json",
+        "field_list": "name,start_year,publisher,deck,description",
     })
     detail = (fetch_provider_json(provider, detail_url, credential).get("results")) or {}
     return {
@@ -5712,6 +5714,7 @@ def _provider_series_run_details(
         # Comic Vine volumes carry a start year and an issue count but no end
         # year at all, so this is silence rather than "still publishing".
         "endEvidence": _run_end_evidence(None, modelled=False),
+        "synopsis": _comic_vine_synopsis(detail),
     }
 
 
@@ -5808,9 +5811,63 @@ _PREVIEW_ORDER = ("metron", "comic_vine", "gcd")
 
 def _plain_text(value: Any) -> str | None:
     """Provider prose without its markup; Metron and Comic Vine both send HTML."""
-    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    # Block ends become spaces; inline tags vanish, so "<b>Knight</b>!" does
+    # not come out as "Knight !".
+    text = re.sub(r"<(?:br|/p|/div|/li|/h\d)\b[^>]*>", " ", str(value or ""), flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(re.sub(r"\s+", " ", text)).strip()
     return text or None
+
+
+def _comic_vine_synopsis(volume: dict[str, Any]) -> str | None:
+    """Comic Vine's one-line deck, else the opening paragraph of its article.
+
+    A volume's description is a wiki page -- headings, issue lists, credits --
+    and a drawer wants what the story is, which is the deck or the lead.
+    """
+    deck = _plain_text(volume.get("deck"))
+    if deck:
+        return deck
+    lead = re.search(r"<p[^>]*>(.*?)</p>", str(volume.get("description") or ""), re.S | re.I)
+    return _plain_text(lead.group(1)) if lead else None
+
+
+_SYNOPSIS_ORDER = ("metron", "comic_vine")
+
+
+def series_synopsis(series_run_id: int) -> dict[str, Any]:
+    """What a library run is about, from the first catalog that says.
+
+    Fetched when the drawer opens rather than stored: the series record is
+    cached for a day, and a blurb is not worth a migration and a re-sync of
+    every run to backfill. Only confirmed provider ids are asked -- a blurb for
+    the wrong comic is worse than none. GCD has publication notes, not a story.
+    """
+    ids = catalog_store().confirmed_series_provider_ids(series_run_id)
+    for provider in _SYNOPSIS_ORDER:
+        provider_id = str(ids.get(provider) or "")
+        if not re.fullmatch(r"\d+", provider_id):
+            continue
+        try:
+            credential = _provider_credential(provider)
+            if provider == "metron":
+                detail = fetch_provider_json(
+                    provider, f"{METRON_API_BASE}/series/{provider_id}/", credential
+                )
+                text = _plain_text(detail.get("desc"))
+            else:
+                url = f"{COMIC_VINE_API_BASE}/volume/4050-{provider_id}/?" + urllib.parse.urlencode({
+                    "api_key": credential, "format": "json", "field_list": "deck,description",
+                })
+                text = _comic_vine_synopsis(
+                    fetch_provider_json(provider, url, credential).get("results") or {}
+                )
+        except Exception:  # noqa: BLE001 -- the blurb is extra; no source means no blurb
+            continue
+        if text:
+            return {"synopsis": text, "provider": provider,
+                    "providerName": _DISCOVERY_PROVIDERS.get(provider, provider)}
+    return {"synopsis": None, "provider": None, "providerName": None}
 
 
 def _gcd_run_preview(provider_series_id: str) -> dict[str, Any]:
@@ -5861,6 +5918,7 @@ def _shape_run_preview(provider: str, run: dict[str, Any], errors: list[dict[str
         "provider": provider, "providerName": _DISCOVERY_PROVIDERS.get(provider, provider),
         "providerSeriesId": str(run.get("providerSeriesId") or ""),
         "title": title, "year": year, "publisher": run.get("publisher"),
+        "synopsis": run.get("synopsis"),
         "publicationStatus": (
             "completed" if state == "ended" else "ongoing" if state == "ongoing" else "unknown"
         ),
@@ -7726,6 +7784,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(payload)
+            return
+        series_synopsis_match = re.fullmatch(r"/api/v1/series/(\d+)/synopsis", parsed_url.path)
+        if series_synopsis_match:
+            try:
+                payload = series_synopsis(int(series_synopsis_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
                 return
             self.send_json(payload)
             return

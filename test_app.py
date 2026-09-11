@@ -4379,3 +4379,63 @@ class DiscoverDrawerTests(unittest.TestCase):
     def test_a_bad_issue_id_is_refused(self):
         with self.assertRaises(ValueError):
             app.discovered_issue_detail("../etc")
+
+
+class RunSynopsisTests(unittest.TestCase):
+    """What a run is about, in its catalog's own words."""
+
+    def test_metron_desc_arrives_as_plain_text(self):
+        detail = {"name": "Absolute Batman", "year_began": 2024, "publisher": {"name": "DC"},
+                  "desc": "<p>Without the mansion&hellip; <b>the Dark Knight</b>!</p>"}
+        with patch("app._metron_issue_entries", return_value=("9", "https://m.invalid/9/", [], None)), \
+             patch("app.fetch_provider_json", return_value=detail):
+            run = app._provider_series_run_details("metron", "9", "Absolute Batman", "t")
+        self.assertEqual(run["synopsis"], "Without the mansion… the Dark Knight!")
+
+    def test_comic_vine_prefers_its_deck(self):
+        self.assertEqual(
+            app._comic_vine_synopsis({"deck": "A short one.", "description": "<p>Long</p>"}),
+            "A short one.")
+
+    def test_comic_vine_falls_back_to_the_lead_paragraph(self):
+        """The description is a wiki page; only its opening says what the story is."""
+        volume = {"deck": None, "description":
+                  "<h2>Overview</h2><p>Bruce <i>Wayne</i> returns.</p><p>Issue list</p>"}
+        self.assertEqual(app._comic_vine_synopsis(volume), "Bruce Wayne returns.")
+        self.assertIsNone(app._comic_vine_synopsis({}))
+
+    def test_the_run_drawer_carries_it(self):
+        with patch("app._library_relevance", return_value={}):
+            run = app._shape_run_preview(
+                "metron", {"title": "X", "entries": [], "synopsis": "A story."}, [])
+        self.assertEqual(run["synopsis"], "A story.")
+
+    def synopsis(self, ids, responses):
+        store = Mock()
+        store.confirmed_series_provider_ids.return_value = ids
+
+        def fetch(provider, url, credential):
+            value = responses[provider]
+            if isinstance(value, Exception):
+                raise value
+            return value
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._provider_credential", return_value="t"), \
+             patch("app.fetch_provider_json", side_effect=fetch):
+            return app.series_synopsis(7)
+
+    def test_a_library_run_reads_metron_first(self):
+        result = self.synopsis({"metron": "9", "comic_vine": "5"}, {
+            "metron": {"desc": "From Metron."}, "comic_vine": {"results": {"deck": "From CV."}}})
+        self.assertEqual((result["synopsis"], result["provider"]), ("From Metron.", "metron"))
+
+    def test_it_falls_through_to_comic_vine(self):
+        for metron in ({"desc": ""}, RuntimeError("Metron is down")):
+            with self.subTest(metron=metron):
+                result = self.synopsis({"metron": "9", "comic_vine": "5"}, {
+                    "metron": metron, "comic_vine": {"results": {"deck": "From CV."}}})
+                self.assertEqual((result["synopsis"], result["provider"]), ("From CV.", "comic_vine"))
+
+    def test_no_source_is_no_synopsis_not_an_error(self):
+        """GCD has publication notes, not a story, so it is not asked."""
+        self.assertIsNone(self.synopsis({"gcd": "3"}, {})["synopsis"])
