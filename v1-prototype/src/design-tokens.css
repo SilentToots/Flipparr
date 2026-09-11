@@ -198,6 +198,14 @@
   --button-danger-border: var(--red-border);
   --button-danger-text: var(--red-text);
   --button-disabled-opacity: .64;
+  /* Pressed: one step darker than hover, and a slight press-in. */
+  --button-primary-bg-pressed: var(--color-purple-700);
+  --button-secondary-bg-pressed: var(--color-neutral-700);
+  --button-ghost-bg-pressed: var(--surface-sunken);
+  --button-danger-bg-hover: color-mix(in srgb, var(--red-text) 18%, transparent);
+  --button-danger-bg-pressed: color-mix(in srgb, var(--red-text) 26%, transparent);
+  --button-press-scale: .97;
+  --card-press-scale: .99;
 
   /* Status component tokens */
   --status-height: 23px;
