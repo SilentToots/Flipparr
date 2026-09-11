@@ -3041,16 +3041,51 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     candidates = search.get("candidates") if isinstance(search, dict) else []
     if not isinstance(candidates, list) or not candidates:
         return None
-    best = candidates[0]
+    # The same release is usually posted on several indexers, and one of them
+    # handing back something that is not an NZB says nothing about the others.
+    # Once & Future #30 sat at "4 release candidates found": Indexer A's copy
+    # was ranked first, its NZB was broken, and the three good copies were never
+    # tried. The release itself is not marked unusable -- that goes by title,
+    # and would take the good copies down with the broken one.
+    problems: list[str] = []
+    for candidate in candidates[:MAX_AUTOMATIC_RELEASE_FAILURES]:
+        try:
+            grabbed = send_release_to_sabnzbd(job_id, str(candidate["id"]))
+        except ReleaseDownloadError as exc:
+            problems.append(f"{candidate.get('indexer') or 'an indexer'}: {exc}")
+            log_event(
+                "retry_release_fetch_failed", level="warning",
+                job_id=job_id, release=str(candidate.get("title") or ""),
+                indexer=str(candidate.get("indexer") or ""), error=str(exc),
+            )
+            continue
+        except Exception as exc:
+            # SABnzbd itself refusing is not the release's fault, and the next
+            # candidate would meet the same refusal.
+            log_event(
+                "retry_release_send_failed", level="warning",
+                job_id=job_id, release=str(candidate.get("title") or ""), error=str(exc),
+            )
+            _say_on_the_row(job_id, f"Found a release but could not send it to SABnzbd: {exc}")
+            return None
+        return {**grabbed, "release": candidate}
+    # Said on the row, so "4 release candidates found" no longer stands for a
+    # grab that failed without a word.
+    _say_on_the_row(
+        job_id,
+        f"Found {len(candidates)} release{'s' if len(candidates) != 1 else ''} but none "
+        f"could be fetched ({problems[0]}); it will be tried again",
+    )
+    return None
+
+
+def _say_on_the_row(job_id: int, reason: str) -> None:
+    """Put why a grab stopped on the job's row -- a courtesy that must never
+    turn "nothing was grabbed" into a crash, whatever happened to the job."""
     try:
-        grabbed = send_release_to_sabnzbd(job_id, str(best["id"]))
-    except Exception as exc:
-        log_event(
-            "retry_release_send_failed", level="warning",
-            job_id=job_id, release=str(best.get("title") or ""), error=str(exc),
-        )
-        return None
-    return {**grabbed, "release": best}
+        catalog_store().update_acquisition_job(job_id, "queued", reason)
+    except Exception as exc:  # noqa: BLE001 -- the grab's answer stands either way
+        log_exception("grab_reason_not_recorded", exc, level="warning")
 
 
 def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = False) -> None:

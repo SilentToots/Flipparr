@@ -4947,3 +4947,50 @@ class SabCleanupTests(unittest.TestCase):
         with patch("app.fetch_json_with_headers") as fetch:
             app._sab_remove_job({})
         fetch.assert_not_called()
+
+
+class OneBrokenIndexerTests(unittest.TestCase):
+    """Once & Future #30: four copies of one release, and the first one's NZB
+    was broken. The automatic grab tried only that one, and the row went on
+    saying "4 release candidates found"."""
+
+    candidates = [
+        {"id": "a", "title": "Once  Future 030 (2022)", "indexer": "Indexer A"},
+        {"id": "b", "title": "Once & Future 030 (2022)", "indexer": "Indexer B"},
+        {"id": "c", "title": "Once & Future 030 (2022)", "indexer": "Indexer C"},
+    ]
+
+    def grab(self, send):
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.search_prowlarr_releases", return_value={"candidates": self.candidates}), \
+             patch("app.send_release_to_sabnzbd", side_effect=send) as sent:
+            result = app._auto_grab_release(621)
+        return result, sent, store
+
+    def test_a_broken_nzb_moves_on_to_the_next_indexer(self):
+        def send(job_id, candidate_id):
+            if candidate_id == "a":
+                raise app.ReleaseDownloadError("Prowlarr returned a response that is not a valid NZB")
+            return {"status": "grabbed"}
+        result, sent, _ = self.grab(send)
+        self.assertEqual([call.args[1] for call in sent.call_args_list], ["a", "b"])
+        self.assertEqual(result["release"]["indexer"], "Indexer B")
+
+    def test_when_none_can_be_fetched_the_row_says_so(self):
+        def send(job_id, candidate_id):
+            raise app.ReleaseDownloadError("Prowlarr returned a response that is not a valid NZB")
+        result, sent, store = self.grab(send)
+        self.assertIsNone(result)
+        self.assertEqual(sent.call_count, 3)
+        reason = store.update_acquisition_job.call_args.args[2]
+        self.assertIn("none could be fetched", reason)
+        self.assertIn("Indexer A", reason)
+
+    def test_sabnzbd_refusing_stops_rather_than_trying_every_copy(self):
+        def send(job_id, candidate_id):
+            raise app.SABSubmissionError("SABnzbd is not accepting jobs")
+        result, sent, store = self.grab(send)
+        self.assertIsNone(result)
+        self.assertEqual(sent.call_count, 1)
+        self.assertIn("could not send it to SABnzbd", store.update_acquisition_job.call_args.args[2])
