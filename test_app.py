@@ -4994,3 +4994,27 @@ class OneBrokenIndexerTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(sent.call_count, 1)
         self.assertIn("could not send it to SABnzbd", store.update_acquisition_job.call_args.args[2])
+
+
+class MangaFiledUnderAnimeTests(unittest.TestCase):
+    """Blue Lock v02 and v24 are posted only under TV/Anime; the other 35
+    volumes were found, so those two looked as though nobody had posted them."""
+
+    def score(self, title, number, year, categories=(5000, 105000, 5070)):
+        context = {"seriesTitle": "Blue Lock", "issueNumber": number, "publicationYear": year,
+                   "publisher": "Kodansha Comics USA", "format": "manga", "preferredLanguage": "en"}
+        release = {"title": title, "categories": [{"id": c} for c in categories]}
+        return app._release_candidate_score(release, context)[0]
+
+    def test_a_volume_filed_under_anime_is_found_and_taken(self):
+        self.assertGreaterEqual(self.score("Blue Lock v02 (2021) (Digital) (F) (danke-Empire)", "2", 2021), 85)
+        self.assertGreaterEqual(self.score("Blue Lock v24 (2024) (Digital) (Stick)", "24", 2024), 85)
+        self.assertIn("5070", app.MANGA_CATEGORIES)
+
+    def test_the_anime_itself_is_never_taken_for_the_book(self):
+        for title in ("Blue.Lock.Vol.2.2022.ANiME.DUAL.COMPLETE.BLURAY-iFPD",
+                      "Blue Lock v02 1080p WEB-DL x265",
+                      "Blue Lock Vol 2 (2022) [BD][1080p Multi Opus AV1][Multi-subs]",
+                      "Blue Lock S01E02 1080p"):
+            with self.subTest(title=title):
+                self.assertLess(self.score(title, "2", 2021), 85)

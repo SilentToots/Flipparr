@@ -1771,8 +1771,10 @@ def manga_edition(publisher: Any) -> str | None:
     return None
 
 
-# Manga is posted in Comics and in EBook, where comics are only in Comics.
-MANGA_CATEGORIES = ("7030", "7020")
+# Manga is posted in Comics and in EBook, where comics are only in Comics --
+# and some of it under TV/Anime: Blue Lock v02 and v24 exist only there, and
+# every other volume was found, so those two looked unposted.
+MANGA_CATEGORIES = ("7030", "7020", "5070")
 # CBZ and CBR only: the library reads comic archives, and an EPUB would sit
 # there looking like the volume without being one it can show.
 MANGA_FILE_TYPES = frozenset({".cbz", ".cbr"})
@@ -1790,6 +1792,12 @@ _MANGA_CHAPTER = re.compile(r"(?<![A-Za-z0-9])(?:c|ch|chapter)\.?\s*\d{1,4}(?![\
 # named after the series, or an untranslated scan.
 _MANGA_REFUSED = re.compile(
     r"\b(?:mobi|azw3?|hentai|doujin(?:shi)?|porn|xxx|nsfw|erotic|parody|raw)\b", re.I
+)
+_MANGA_VIDEO = re.compile(
+    r"\b(?:blu-?ray|bd(?:rip|remux)?|web-?(?:dl|rip)|hdtv|remux|x26[45]|h\s?26[45]|hevc|avc|av1"
+    r"|\d{3,4}p|dual|dub(?:bed)?|subs?|multi-?subs?|anime|episodes?|season|s\d{1,2}e\d{1,3}"
+    r"|mkv|mp4|avi|aac|ddp?\d?|flac|opus)\b",
+    re.I,
 )
 # Publishers that lead a scene name: "VIZ.Media.-.Spy.X.Family.Vol.03",
 # "Kodansha-Blue.Lock.Vol.03". Longest first, so "Viz Media" goes whole.
@@ -2167,6 +2175,10 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     name = _manga_release_name(release.get("title"))
     if _MANGA_REFUSED.search(name):
         return 0, ["Not a comic-archive volume of this book"]
+    # Searching TV/Anime brings the anime back too, numbered the same way:
+    # "Blue.Lock.Vol.2.2022.ANiME.DUAL.COMPLETE.BLURAY" scored as volume 2.
+    if _MANGA_VIDEO.search(name):
+        return 0, ["A video release, not a book"]
     # "Chainsaw Man - 13 (cbz)", 974 MB, is thirteen chapters' worth of
     # something, not volume 13; "v01-v11" is eleven volumes in one file.
     if _MANGA_RANGE.search(name) or _MANGA_CHAPTER.search(name):
