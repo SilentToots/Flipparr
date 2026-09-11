@@ -4644,6 +4644,20 @@ class MangaVolumeTests(unittest.TestCase):
                 self.assertLess(app._download_candidate_score(path, self.manga_job(format="comic"))[0], 180,
                                 "a comic still does not read v18 as issue 18")
 
+    def test_a_viz_release_name_verifies_despite_its_tags(self):
+        """The library reads the title from the name, tags and all."""
+        read = {"file_health": {"status": "ok"}, "embedded_metadata": {},
+                "lookup_identity": {"title": "VIZ Media Chainsaw Man HYBRiD MANGA eBook-PNLS"}}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "VIZ.Media.Chainsaw.Man.Vol.01.2020.HYBRiD.MANGA.eBook-PNLS.cbz"
+            path.write_bytes(b"x")
+            with patch("app.inventory_file", return_value=read):
+                score, detail = app._download_candidate_score(path, self.manga_job(issueNumber="1"))
+                self.assertTrue(detail["issueMatch"])
+                self.assertGreaterEqual(detail["titleRatio"], 0.55)
+                self.assertGreaterEqual(score, 180)
+                self.assertLess(app._download_candidate_score(path, self.manga_job(issueNumber="2"))[0], 180)
+
     def test_an_ebook_that_is_not_page_images_is_refused_so_the_next_release_is_tried(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()

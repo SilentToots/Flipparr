@@ -2530,9 +2530,12 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
         # The series is what comes before the volume, as in the release name:
         # "VIZ Media Chainsaw Man Vol 01 2020 HYBRiD MANGA eBook-PNLS" is
         # Chainsaw Man, and the tags after it only drag the likeness down.
+        # Preferred even over the title the library read from the name, which
+        # keeps those tags: "VIZ Media Chainsaw Man HYBRiD MANGA eBook-PNLS"
+        # scored 0.52 against "Chainsaw Man" and refused the right volume.
         name = _manga_release_name(path.stem)
         marker = _MANGA_VOLUME.search(name)
-        if marker and not lookup.get("title") and not embedded.get("series"):
+        if marker and not embedded.get("series"):
             candidate_title = name[: marker.start()]
         else:
             candidate_title = _MANGA_VOLUME.sub(" ", str(candidate_title or ""))
