@@ -2217,6 +2217,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .appbar .search-field > svg { flex: none; color: var(--color-neutral-0); }
   .appbar .search-field input { padding: 4px 0; font-size: var(--text-md); white-space: nowrap; }
   .appbar .search-field input::placeholder { color: rgb(255 255 255 / .6); font-size: var(--text-md); white-space: nowrap; }
+  /* Over the frosted bar, a darker see-through well; where the bar stays
+     solid, so does the field. */
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .appbar .search-field {
+      background: var(--appbar-search-bg-translucent);
+      transition: background var(--motion-duration-fast) var(--motion-ease-standard);
+    }
+    @media (hover: hover) {
+      .appbar .search-field:hover { background: var(--appbar-search-bg-hover); }
+    }
+  }
 }
 
 /* Settings is in the rail at every size, under Pull List, and carries

@@ -114,6 +114,10 @@
      match the bar, and for browsers that cannot blur. */
   --appbar-bg-translucent: rgb(126 34 206 / .85);
   --appbar-blur: 16px;
+  /* The search field over it: a dark wash rather than a second violet, so it
+     reads as a well in the bar and the blur still shows through. */
+  --appbar-search-bg-translucent: rgb(0 0 0 / .3);
+  --appbar-search-bg-hover: rgb(0 0 0 / .38);
   /* The unread count beside the bell. Its own rung because it is the one red
      that sits under white text rather than on a dark tint. */
   --badge-alert-bg: var(--color-red-700);

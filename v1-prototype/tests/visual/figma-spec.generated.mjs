@@ -26,7 +26,6 @@ export const spec = [
     "sel": ".appbar .search-field",
     "node": "1:108",
     "props": {
-      "backgroundColor": "rgb(100, 27, 163)",
       "borderRadius": "100px",
       "paddingBottom": "8px",
       "paddingTop": "8px",
