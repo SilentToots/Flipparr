@@ -914,7 +914,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .advanced-card strong { display: block; font-size: var(--text-md); font-weight: 650; color: var(--text); }
 .advanced-card p { margin: 4px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.45; }
 .advanced-card .rebuild-result { display: block; margin-top: 6px; color: var(--violet-text); font-size: var(--text-sm); }
-.advanced-card button { min-height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 650; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; transition: background var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard); }
+/* One width for every tool's button, so the column of actions lines up. */
+.advanced-card button { width: 148px; min-height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 650; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; transition: background var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard); }
 @media (hover: hover) { .advanced-card button:not(:disabled):hover { background: var(--button-ghost-bg-hover); } }
 .advanced-card button:not(:disabled):active { transform: scale(.97); }
 .advanced-card button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
