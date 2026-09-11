@@ -6942,7 +6942,9 @@ class CatalogStore:
                 "publisher": run["publisher"] or "Publisher unknown",
                 "acquisitionPreference": run["acquisition_preference"],
                 "monitoringStatus": run["monitoring_status"],
-                "format": run["format"] or "comic",
+                # "medium", not "format": the series payload already uses
+                # "format" for the shape of its files ("Single issues").
+                "medium": run["format"] or "comic",
                 "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
                 "updatedAt": run["updated_at"], "addedAt": None,
@@ -7148,7 +7150,7 @@ class CatalogStore:
                     "publisher": group["publisher"], "run": run,
                     "acquisitionPreference": group["acquisitionPreference"],
                     "monitoringStatus": group["monitoringStatus"],
-                    "format": group.get("format") or "comic",
+                    "medium": group.get("medium") or "comic",
                     "monitorRefresh": {
                         "status": group["monitorRefresh"]["status"],
                         "lastCheckedAt": group["monitorRefresh"]["last_checked_at"],
@@ -7418,7 +7420,7 @@ class CatalogStore:
                 # issues is open until those comics arrive and then done; it
                 # was never watching the run, so it must not report that it is.
                 "coverage": row["coverage"],
-                "format": scope_item.get("format") or "comic",
+                "medium": scope_item.get("medium") or "comic",
                 "monitoringStatus": (
                     "monitored" if row["status"] == "open" and row["coverage"] == "run"
                     else "stopped"

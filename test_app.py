@@ -4625,7 +4625,7 @@ class MangaVolumeTests(unittest.TestCase):
         with patch("app.fetch_provider_json", return_value=payload), \
              patch("app.preferred_language", return_value="en"):
             result = app.discover_comic_vine_series("Chainsaw Man", "k", {"keys": set()})
-        self.assertEqual([(row["publisher"], row["format"]) for row in result["results"]],
+        self.assertEqual([(row["publisher"], row["medium"]) for row in result["results"]],
                          [("Viz", "manga")])
 
     def manga_job(self, **kw):
@@ -4679,3 +4679,11 @@ class MangaVolumeTests(unittest.TestCase):
             result = app.enrich_catalog_series(7)
         metron.assert_not_called()
         self.assertEqual(result["provider"], "comic_vine")
+
+    def test_a_comic_archive_goes_before_an_ebook_post(self):
+        """The first live pull grabbed Viz's HYBRID eBook posts over LuCaZ's CBZ."""
+        cbz = self.score("Chainsaw Man v01 (2020) (Digital) (LuCaZ) (cbz)", number="1", year=2020)
+        ebook = self.score("VIZ.Media.Chainsaw.Man.Vol.01.2020.HYBRiD.MANGA.eBook-PNLS",
+                           number="1", year=2020)
+        self.assertGreater(cbz, ebook)
+        self.assertGreaterEqual(ebook, 85, "still a fallback when nothing else is posted")

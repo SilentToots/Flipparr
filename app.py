@@ -1895,7 +1895,16 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     if category_ids & set(MANGA_CATEGORIES):
         score += 5
         reasons.append("Listed as a comic or book")
-    return min(score, 100), reasons
+    score = min(score, 100)
+    # Viz's own "HYBRID.MANGA.eBook" posts can hold an EPUB, which import
+    # refuses -- and its reposts ("-FTP") hold the same file, so each refusal
+    # spends one of the three automatic fallbacks on a copy of the last. A
+    # release that says it is a comic archive goes first; these stay behind
+    # it as a fallback.
+    if re.search(r"\b(?:ebook|hybrid)\b", name, re.I) and not re.search(r"\bcb[zr]\b", name, re.I):
+        score -= 10
+        reasons.append("Posted as an ebook, which may not be a comic archive")
+    return score, reasons
 
 
 def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
@@ -4918,7 +4927,7 @@ def discover_comic_vine_series(
             "providerSeriesId": str(row["id"]), "title": title,
             "yearBegan": year, "yearEnded": None, "yearLabel": str(year or "Unknown"),
             "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
-            "format": "manga" if edition == "manga" else "comic",
+            "medium": "manga" if edition == "manga" else "comic",
             "cover": image.get("medium_url") or image.get("small_url"),
             "url": row.get("site_detail_url"),
             "description": row.get("description"),
@@ -4956,7 +4965,7 @@ _DISCOVERY_PROVIDERS = {
 # week. `yearLabel` is derived from it and goes with it.
 _DISCOVERY_FILLABLE = (
     "cover", "publisher", "status", "issueCount",
-    "creators", "creatorCreditsSource", "coverProvider", "format",
+    "creators", "creatorCreditsSource", "coverProvider", "medium",
 )
 
 
@@ -6260,7 +6269,7 @@ def _shape_run_preview(provider: str, run: dict[str, Any], errors: list[dict[str
         "providerSeriesId": str(run.get("providerSeriesId") or ""),
         "title": title, "year": year, "publisher": run.get("publisher"),
         "synopsis": run.get("synopsis"),
-        "format": run.get("format") or "comic",
+        "medium": run.get("format") or "comic",
         "publicationStatus": (
             "completed" if state == "ended" else "ongoing" if state == "ongoing" else "unknown"
         ),
