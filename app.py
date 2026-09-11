@@ -5573,7 +5573,7 @@ def _merge_discovered_runs(
     return results
 
 
-def discover_series(query: str) -> dict[str, Any]:
+def discover_series(query: str, *, extended: bool = False) -> dict[str, Any]:
     """Search every configured catalog and merge what they know.
 
     This used to stop at the first provider that answered. With Metron
@@ -5589,18 +5589,89 @@ def discover_series(query: str) -> dict[str, Any]:
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
     config = load_provider_config()
+    metron = config.get("metron") or {}
+    # Claimed before the library view is built, so a creator lookup that
+    # arrived alongside this search cannot take Metron's next turn first.
+    turn = _MetronTitleTurn() if metron.get("enabled") and metron.get("token") else None
+    try:
+        return _discover_series_with(cleaned, title_query, year_hint, config, turn, extended)
+    finally:
+        if turn:
+            turn.release()
+
+
+class _MetronTitleTurn:
+    """A title search's claim on Metron's next request.
+
+    Metron serves one request every 3.2s to everyone. A creator lookup fired
+    alongside a title search could put its requests first and hold up the
+    titles the reader is waiting on, so it waits for this -- the title
+    search's one Metron request -- rather than for the whole search, whose
+    Comic Vine and GCD halves have nothing to do with Metron.
+    """
+
+    def __init__(self) -> None:
+        self._held = True
+        with _METRON_TITLE_TURNS:
+            _METRON_TITLE_WAITING[0] += 1
+
+    def after(self, work: Callable[[], Any]) -> Any:
+        try:
+            return work()
+        finally:
+            self.release()
+
+    def release(self) -> None:
+        with _METRON_TITLE_TURNS:
+            if self._held:
+                self._held = False
+                _METRON_TITLE_WAITING[0] -= 1
+                _METRON_TITLE_TURNS.notify_all()
+
+
+_METRON_TITLE_TURNS = threading.Condition()
+_METRON_TITLE_WAITING = [0]
+
+
+def _after_metron_title_searches(timeout: float = 10.0) -> None:
+    """Let any title search in flight have Metron first, for up to `timeout`."""
+    deadline = time.monotonic() + timeout
+    with _METRON_TITLE_TURNS:
+        while _METRON_TITLE_WAITING[0]:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            _METRON_TITLE_TURNS.wait(remaining)
+
+
+def _discover_series_with(
+    cleaned: str, title_query: str, year_hint: int | None, config: dict[str, Any],
+    turn: _MetronTitleTurn | None, extended: bool = False,
+) -> dict[str, Any]:
+    """`extended` also asks whether the query names a creator or a publisher,
+    and ranks those runs in with the titles. Discover wants that; Fix Match,
+    which is looking for one run by its title, does not pay for it."""
     library = _discovery_library_view()
     searches: list[tuple[str, str, Any]] = []
     metron = config.get("metron") or {}
     if metron.get("enabled") and metron.get("token"):
-        searches.append(("metron", "Metron", functools.partial(
-            discover_metron_series, cleaned, str(metron["token"]), library, hydrate=False)))
+        metron_search = functools.partial(
+            discover_metron_series, cleaned, str(metron["token"]), library, hydrate=False)
+        searches.append(("metron", "Metron", (
+            functools.partial(turn.after, metron_search) if turn else metron_search)))
     comic_vine = config.get("comic_vine") or {}
     if comic_vine.get("enabled") and comic_vine.get("apiKey"):
         searches.append(("comic_vine", "Comic Vine", functools.partial(
             discover_comic_vine_series, cleaned, str(comic_vine["apiKey"]), library)))
     searches.append(("gcd", "Grand Comics Database", functools.partial(
         discover_gcd_series, cleaned, library)))
+
+    # Asked at the same time as the titles, so one answer holds everything;
+    # its Metron requests wait for the title search's own (_MetronTitleTurn).
+    people_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1) if extended else None
+    people_future = people_pool.submit(
+        _people_and_publishers, cleaned, title_query, year_hint, config, library,
+    ) if people_pool else None
 
     by_provider: dict[str, list[dict[str, Any]]] = {}
     errors: list[dict[str, Any]] = []
@@ -5616,6 +5687,15 @@ def discover_series(query: str) -> dict[str, Any]:
                 errors.append({"provider": name, "error": str(exc)})
 
     results = _merge_discovered_runs(by_provider, title_query, year_hint)
+    people: dict[str, Any] = {}
+    if people_future is not None:
+        try:
+            people = people_future.result() or {}
+        except Exception as exc:
+            people = {"errors": [{"lookup": "creators and publishers", "error": str(exc)}]}
+        finally:
+            people_pool.shutdown(wait=False)
+        results = _rank_discovered(results, people, title_query, year_hint)
     if not results and len(errors) == len(searches):
         raise RuntimeError(
             errors[0]["error"] if len(errors) == 1
@@ -5636,9 +5716,71 @@ def discover_series(query: str) -> dict[str, Any]:
         "providersChecked": [name for _, name, _ in searches],
         "providersAnswered": answered,
     }
+    if extended:
+        result["creatorMatches"] = [match["name"] for match in people.get("creatorMatches") or []]
+        result["publisherMatches"] = [
+            {"name": match["name"], "year": match.get("year")}
+            for match in people.get("publisherMatches") or []
+        ]
+        result["didYouMean"] = people.get("didYouMean") or []
+        result["stillLooking"] = bool(people.get("stillLooking"))
     if errors:
         result["fallbacks"] = errors
     return result
+
+
+def _rank_discovered(
+    results: list[dict[str, Any]], people: dict[str, Any], title_query: str, year_hint: int | None,
+) -> list[dict[str, Any]]:
+    """Titles, a creator's runs and a publisher's, as one list most relevant first.
+
+    An exact title leads; then the creator's runs, most credited first; then
+    the publisher's that year; then titles that only resemble the query. A run
+    found more than one way appears once, with every provider's id, and a run
+    found through a person or a publisher says which, so a card whose title
+    looks nothing like the query explains itself.
+    """
+    wanted = normalized_title(title_query)
+    ranked: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[dict[str, Any]] = []
+
+    def identity(run: dict[str, Any]) -> tuple[str, str]:
+        return normalized_title(run.get("title")), str(run.get("yearBegan") or "")
+
+    for run in results:
+        title = normalized_title(run.get("title"))
+        score = 100.0 if title == wanted else 70.0 * difflib.SequenceMatcher(None, title, wanted).ratio()
+        if year_hint and run.get("yearBegan"):
+            score -= min(abs(int(run["yearBegan"]) - year_hint), 25)
+        item = dict(run, relevance=score, matchedBy=None)
+        ranked.setdefault(identity(run), item)
+        order.append(item)
+
+    def add(runs: list[dict[str, Any]], best: float, floor: float, reason: str) -> None:
+        for rank, run in enumerate(runs):
+            score = max(floor, best - 2 * rank)
+            existing = ranked.get(identity(run))
+            if existing is None:
+                item = dict(run, relevance=score, matchedBy=reason)
+                item["providerIds"] = dict(run.get("providerIds") or {run.get("provider"): run.get("providerSeriesId")})
+                ranked[identity(run)] = item
+                order.append(item)
+                continue
+            if score > existing["relevance"]:
+                existing["relevance"] = score
+                existing["matchedBy"] = existing.get("matchedBy") or reason
+            existing["providerIds"] = {**(run.get("providerIds") or {}), **(existing.get("providerIds") or {})}
+            existing["inLibrary"] = existing.get("inLibrary") or run.get("inLibrary")
+            for field in ("cover", "publisher", "issueCount", "medium"):
+                if not existing.get(field) and run.get(field):
+                    existing[field] = run[field]
+
+    for match in people.get("creatorMatches") or []:
+        add(match.get("runs") or [], 90, 60, f"By {match['name']}")
+    for match in people.get("publisherMatches") or []:
+        add(match.get("runs") or [], 75, 45, f"{match['name']}, {match['year']}" if match.get("year") else match["name"])
+    # Stable, so equally relevant titles keep the order the merge gave them.
+    return sorted(order, key=lambda item: -item["relevance"])
 
 
 # ---------------------------------------------------------------------------
@@ -5688,6 +5830,7 @@ def _metron_creator_runs(
     query: str, year_hint: int | None, token: str, library: dict[str, Any], deadline: float,
 ) -> dict[str, Any]:
     """A creator's runs, from the issues Metron credits them on."""
+    _after_metron_title_searches()
     url = f"{METRON_API_BASE}/creator/?" + urllib.parse.urlencode({"name": query})
     creator, suggestions = _named_match(fetch_provider_json("metron", url, token).get("results") or [], query)
     if not creator:
@@ -5769,6 +5912,7 @@ def _metron_publisher_runs(
     A publisher's whole list is thousands of runs in alphabetical order, which
     answers nothing. A year makes it a question worth asking.
     """
+    _after_metron_title_searches()
     url = f"{METRON_API_BASE}/publisher/?" + urllib.parse.urlencode({"name": query})
     publisher, suggestions = _named_match(
         fetch_provider_json("metron", url, token).get("results") or [], query, company=True,
@@ -5811,15 +5955,24 @@ def _merge_creator_runs(primary: list[dict[str, Any]], extra: list[dict[str, Any
 def discover_people_and_publishers(query: str) -> dict[str, Any]:
     """The runs a query names as a creator or a publisher rather than a title.
 
-    Its own endpoint, asked after the title search settles: Metron takes one
-    request every 3.2s from everyone, so asking in parallel would put these
-    lookups in front of the title results the reader is waiting on.
+    Discover asks this inside the title search (discover_series with
+    `extended`), so one answer ranks everything together. Metron takes one
+    request every 3.2s from everyone, so the Metron lookups here wait for the
+    title search's own Metron request (_MetronTitleTurn); Comic Vine's starts
+    at once.
     """
     cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
-    config = load_provider_config()
-    library = _discovery_library_view()
+    return _people_and_publishers(
+        cleaned, title_query, year_hint, load_provider_config(), _discovery_library_view(),
+    )
+
+
+def _people_and_publishers(
+    cleaned: str, title_query: str, year_hint: int | None,
+    config: dict[str, Any], library: dict[str, Any],
+) -> dict[str, Any]:
     started = time.monotonic()
     lookups: list[tuple[str, Any]] = []
     metron = config.get("metron") or {}
@@ -9000,19 +9153,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_json({"error": f"Release dates are temporarily unavailable: {exc}"}, 502)
             return
-        if parsed_url.path == "/api/v1/discover/people":
-            query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]
-            try:
-                self.send_json(discover_people_and_publishers(query))
-            except ValueError as exc:
-                self.send_json({"error": str(exc)}, 400)
-            except Exception as exc:
-                self.send_json({"error": f"Creator and publisher search is temporarily unavailable: {exc}"}, 502)
-            return
         if parsed_url.path == "/api/v1/discover":
             query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]
             try:
-                self.send_json(discover_series(query))
+                self.send_json(discover_series(query, extended=True))
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:

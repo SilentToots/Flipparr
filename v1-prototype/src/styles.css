@@ -179,6 +179,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    Its own class, not .discover-note: that one is how the design check knows the
    library half of a search has answered, and these arrive before it can. */
 .discover-people-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+/* "By Brian K. Vaughan" on a card found through its creator: one line, cut short. */
+.discover-chip.matched-by { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .did-you-mean { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .did-you-mean button { min-height: var(--control-height-sm); padding: 0 var(--control-padding-sm); border: 1px solid var(--button-secondary-border); border-radius: var(--radius-pill); background: var(--button-secondary-bg); color: var(--button-secondary-text); font: inherit; font-size: var(--control-font-sm); cursor: pointer; transition: background var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard); }
 @media (hover: hover) { .did-you-mean button:hover { background: var(--button-secondary-bg-hover); color: var(--text); } }

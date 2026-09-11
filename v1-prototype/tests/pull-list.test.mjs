@@ -87,7 +87,7 @@ test("replacements are classified the same way as runs", () => {
   assert.deepEqual(ids(buckets.failed), [3]);
 });
 
-test("nothing is ever in two buckets", () => {
+test("a run is on a second tab only for issues of its own there", () => {
   const catalog = { requests: [
     req({ id: 1, jobs: [{ id: 1, status: "failed" }, arrived(2, daysAgo(1))], wantedIssueCount: 5 }),
     req({ id: 2, jobs: [{ id: 3, downloadStatus: "importing" }], wantedIssueCount: 2 }),
@@ -196,20 +196,39 @@ test("a followed run waiting on unreleased issues is still not work", () => {
   assert.equal(classifyRequest(request, NOW), null);
 });
 
-test("on Failed a run lists what failed, not the issues still on their way", () => {
-  // American Vampire #19 failed while #21 was still waiting for a release, and
-  // #21 was listed under Failed beside it as though it had failed too.
-  const request = { jobs: [
-    { id: 1, issueNumber: "18", status: "fulfilled", downloadStatus: "imported" },
-    { id: 2, issueNumber: "19", status: "failed", downloadStatus: "failed" },
-    { id: 3, issueNumber: "20", status: "grabbed", downloadStatus: "downloading" },
-    { id: 4, issueNumber: "21", status: "queued" },
-  ] };
-  const failed = jobsForTab(request, "failed");
+// American Vampire, a finished run: #19 failed, #20 downloading, and #21 has
+// had no release found for it yet.
+const vampire = () => req({ id: 36, wantedIssueCount: 2, jobs: [
+  { id: 1, issueNumber: "18", status: "fulfilled", downloadStatus: "imported", importedAt: daysAgo(1) },
+  { id: 2, issueNumber: "19", status: "failed", downloadStatus: "failed" },
+  { id: 3, issueNumber: "20", status: "grabbed", downloadStatus: "downloading" },
+  { id: 4, issueNumber: "21", status: "queued" },
+] });
+
+test("a run is on every tab it has an issue for, so one failure hides nothing", () => {
+  // #19 failing put the whole run on Failed, and #21 -- still to find -- was
+  // on no tab anywhere.
+  const buckets = groupPullList({ requests: [vampire()] }, NOW);
+  assert.deepEqual(ids(buckets.failed), [36]);
+  assert.deepEqual(ids(buckets.downloading), [36]);
+  assert.deepEqual(ids(buckets.wanted), [36]);
+  assert.deepEqual(ids(buckets.acquired), [], "arrivals only count when nothing is outstanding");
+  assert.equal(classifyRequest(vampire(), NOW), "failed", "the most urgent tab still comes first");
+});
+
+test("each tab lists only its own issues and says where the rest are", () => {
+  const failed = jobsForTab(vampire(), "failed");
   assert.deepEqual(failed.jobs.map((job) => job.issueNumber), ["19"]);
-  assert.equal(failed.others, 2);
-  const wanted = jobsForTab(request, "wanted");
-  assert.deepEqual(wanted.jobs.map((job) => job.issueNumber), ["19", "20", "21"]);
-  assert.equal(wanted.others, 0);
-  assert.deepEqual(jobsForTab(null, "failed"), { jobs: [], others: 0 });
+  assert.deepEqual(failed.elsewhere, { downloading: 1, wanted: 1 });
+  assert.deepEqual(jobsForTab(vampire(), "downloading").jobs.map((job) => job.issueNumber), ["20"]);
+  const wanted = jobsForTab(vampire(), "wanted");
+  assert.deepEqual(wanted.jobs.map((job) => job.issueNumber), ["21"]);
+  assert.deepEqual(wanted.elsewhere, { failed: 1, downloading: 1 });
+  assert.deepEqual(jobsForTab(vampire(), "acquired").jobs.map((job) => job.issueNumber), ["19", "20", "21"]);
+  assert.deepEqual(jobsForTab(null, "failed"), { jobs: [], elsewhere: {} });
+});
+
+test("a run whose only open issue is failing is not also wanted", () => {
+  const request = req({ wantedIssueCount: 1, jobs: [{ id: 1, status: "failed", downloadStatus: "failed" }] });
+  assert.deepEqual(groupPullList({ requests: [request] }, NOW).wanted, []);
 });

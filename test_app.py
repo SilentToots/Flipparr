@@ -804,6 +804,64 @@ class FilenameParserTests(unittest.TestCase):
         self.assertTrue(result["stillLooking"])
         self.assertEqual((result["publisherMatches"][0]["name"], result["publisherMatches"][0]["year"]), ("Image Comics", 2012))
 
+    def test_one_search_ranks_titles_creators_and_publishers_together(self):
+        title = {"results": [{"provider": "metron", "providerName": "Metron", "providerSeriesId": "40",
+                              "title": "Brian's Song", "yearBegan": 1999}]}
+        people = {"creatorMatches": [{"name": "Brian K. Vaughan", "runs": [
+            {"provider": "metron", "providerSeriesId": "5", "providerIds": {"metron": "5"},
+             "title": "Saga", "yearBegan": 2012, "inLibrary": True},
+            {"provider": "metron", "providerSeriesId": "7", "providerIds": {"metron": "7"},
+             "title": "Y: The Last Man", "yearBegan": 2002},
+        ]}], "publisherMatches": [], "didYouMean": [], "stillLooking": False}
+        with patch("app.load_provider_config", return_value={"metron": {"enabled": True, "token": "token"}}), \
+                patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+                patch("app.discover_metron_series", return_value=title), \
+                patch("app.discover_gcd_series", return_value={"results": []}), \
+                patch("app._people_and_publishers", return_value=people) as lookup:
+            result = app.discover_series("Brian K. Vaughan", extended=True)
+            lookup.assert_called_once()
+            plain = app.discover_series("Brian K. Vaughan")
+        self.assertEqual([run["title"] for run in result["results"]], ["Saga", "Y: The Last Man", "Brian's Song"])
+        self.assertEqual(result["results"][1]["matchedBy"], "By Brian K. Vaughan")
+        self.assertEqual(result["creatorMatches"], ["Brian K. Vaughan"])
+        self.assertEqual(lookup.call_count, 1, "Fix Match's plain title search does not ask about people")
+        self.assertNotIn("creatorMatches", plain)
+
+    def test_an_exact_title_outranks_a_run_found_another_way(self):
+        ranked = app._rank_discovered(
+            [{"title": "Saga", "yearBegan": 2012, "provider": "metron", "providerSeriesId": "1",
+              "providerIds": {"metron": "1"}}],
+            {"publisherMatches": [{"name": "Image Comics", "year": 2012, "runs": [
+                {"title": "Revival", "yearBegan": 2012, "provider": "metron", "providerSeriesId": "2"},
+                {"title": "Saga", "yearBegan": 2012, "provider": "comic_vine", "providerSeriesId": "9",
+                 "providerIds": {"comic_vine": "9"}, "cover": "saga.jpg"},
+            ]}]},
+            "Saga", None,
+        )
+        self.assertEqual([run["title"] for run in ranked], ["Saga", "Revival"])
+        self.assertIsNone(ranked[0]["matchedBy"], "a title match speaks for itself")
+        self.assertEqual(ranked[0]["providerIds"], {"metron": "1", "comic_vine": "9"})
+        self.assertEqual(ranked[0]["cover"], "saga.jpg")
+        self.assertEqual(ranked[1]["matchedBy"], "Image Comics, 2012")
+
+    def test_a_creator_lookup_lets_the_title_search_have_metron_first(self):
+        import threading
+        import time
+        turn = app._MetronTitleTurn()
+        waited = threading.Event()
+        worker = threading.Thread(target=lambda: (app._after_metron_title_searches(5), waited.set()))
+        worker.start()
+        time.sleep(0.1)
+        self.assertFalse(waited.is_set(), "held while the title search's Metron request is out")
+        self.assertEqual(turn.after(lambda: "titles"), "titles")
+        worker.join(2)
+        self.assertTrue(waited.is_set(), "and let go the moment it is answered")
+        turn.release()  # releasing twice is harmless
+        self.assertEqual(app._METRON_TITLE_WAITING[0], 0)
+        started = time.monotonic()
+        app._after_metron_title_searches(5)
+        self.assertLess(time.monotonic() - started, 0.1, "with no title search out, no wait at all")
+
     def test_idle_worker_fills_a_runs_creators_from_one_metron_issue(self):
         from unittest.mock import Mock
         store = Mock()

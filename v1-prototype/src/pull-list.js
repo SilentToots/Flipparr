@@ -8,9 +8,14 @@
 // collapsed row. Sonarr keeps monitoring on the series and splits activity
 // into what is in flight and what happened, which is the shape this follows.
 //
-// Every request lands in exactly one bucket, or none. None is a real answer: a
-// run that is fully acquired and has nothing outstanding is not activity, and
-// belongs on the Comics grid where its ownership already shows.
+// A request lands on every tab it has issues for, showing only those issues
+// there, or on none. It used to land on one -- the most urgent -- and so a run
+// with one failed issue hid every other one: American Vampire #21, which no
+// search had found a release for yet, was on no tab at all because #19 had
+// failed. None is
+// still a real answer: a run that is fully acquired and has nothing
+// outstanding is not activity, and belongs on the Comics grid where its
+// ownership already shows.
 
 import { jobHasFailed } from "./nav-counts.js";
 
@@ -28,9 +33,17 @@ const jobs = (request) => request?.jobs || [];
 
 export const hasFailure = (request) => jobs(request).some(jobHasFailed);
 
-export const isDownloading = (request) => jobs(request).some((job) =>
+const settled = (job) => ["fulfilled", "cancelled"].includes(job.status);
+
+/** Out searching, or somewhere between SABnzbd and the library. */
+const jobInFlight = (job) =>
   (job.downloadStatus && IN_FLIGHT_DOWNLOADS.has(job.downloadStatus))
-  || (!job.downloadStatus && IN_FLIGHT_JOBS.has(job.status)));
+  || (!job.downloadStatus && IN_FLIGHT_JOBS.has(job.status));
+
+/** Still to be found: not here, not failed, and nothing under way for it. */
+const jobWanted = (job) => !settled(job) && !jobHasFailed(job) && !jobInFlight(job);
+
+export const isDownloading = (request) => jobs(request).some(jobInFlight);
 
 /**
  * Work that will change the screen on its own, so the page should keep looking.
@@ -63,20 +76,28 @@ export const canDeleteJob = (job) => Boolean(job)
   && !(job.downloadStatus && IN_FLIGHT_DOWNLOADS.has(job.downloadStatus))
   && job.status !== "searching";
 
+const TAB_JOBS = { failed: jobHasFailed, downloading: jobInFlight, wanted: jobWanted };
+
 /**
- * The issues a row lists on a tab, and how many more of the run it leaves out.
+ * The issues a row lists on a tab, and where the rest of the run's are.
  *
- * A run goes to Failed when any one of its issues fails, and the rest of it is
- * still on its way. Listed there, an issue still waiting for a release read as
- * failed too -- American Vampire #21 did, beside the #19 that had. So Failed
- * lists the failures and counts the others; every other tab lists all that is
- * outstanding.
+ * Each outstanding issue belongs to one tab. Listing all of them on every tab
+ * made an issue still to find read as failed beside one that had --
+ * American Vampire #21 beside #19. `elsewhere` counts the outstanding issues
+ * on the other tabs, so the row can say where they went. Acquired, and any
+ * tab not named, lists everything outstanding.
  */
 export function jobsForTab(request, tab) {
-  const outstanding = jobs(request).filter((job) => !["fulfilled", "cancelled"].includes(job.status));
-  if (tab !== "failed") return { jobs: outstanding, others: 0 };
-  const failed = outstanding.filter(jobHasFailed);
-  return { jobs: failed, others: outstanding.length - failed.length };
+  const outstanding = jobs(request).filter((job) => !settled(job));
+  const belongs = TAB_JOBS[tab];
+  if (!belongs) return { jobs: outstanding, elsewhere: {} };
+  const elsewhere = {};
+  for (const [other, test] of Object.entries(TAB_JOBS)) {
+    if (other === tab) continue;
+    const count = outstanding.filter(test).length;
+    if (count) elsewhere[other] = count;
+  }
+  return { jobs: outstanding.filter(belongs), elsewhere };
 }
 
 /** Only a pull by name is deleted; a followed run is stopped by unfollowing. */
@@ -111,33 +132,41 @@ export function lastArrivalAt(request) {
 }
 
 /**
- * The one tab this request belongs on, or null for none.
+ * Every tab this request has issues on, most urgent first; empty for none.
  *
- * Order is the point: a run can be several of these at once -- half imported,
- * one issue still downloading, another failed -- and the most urgent reading
- * wins, so nothing is ever counted twice.
+ * A run can be several of these at once -- one issue failed, another
+ * downloading, another still to find -- and each of those issues is listed on
+ * its own tab. An issue is only ever on one.
  */
-export function classifyRequest(request, now = new Date()) {
-  if (!request) return null;
+export function requestTabs(request, now = new Date()) {
+  if (!request) return [];
   // An unfollowed run has nothing in progress and nothing waiting on anyone,
   // so it is not Wanted, Downloading or Failed. It can still be Acquired:
   // "what turned up lately" is a matter of record, and unfollowing a run an
   // hour after thirty issues landed should not erase that they landed.
   const live = request.status !== "cancelled";
-  if (live && hasFailure(request)) return "failed";
-  if (live && isDownloading(request)) return "downloading";
-  // A comic pulled by name is wanted from the moment it is asked for, even
-  // before it ships and has nothing to search for. A followed run with only
-  // unreleased issues left is different -- it is just being watched, and it
-  // lives on Comics. Without this, pulling next week's issue put it on no
-  // tab at all.
-  if (request.status === "open"
-    && (hasSomethingToFind(request) || request.coverage === "issues")) return "wanted";
+  const tabs = [];
+  if (live && hasFailure(request)) tabs.push("failed");
+  if (live && isDownloading(request)) tabs.push("downloading");
+  if (request.status === "open") {
+    // An issue with a job is wanted when nothing is under way for it. One
+    // without a job yet counts only while nothing else is outstanding: a comic
+    // pulled by name is wanted from the moment it is asked for, even before it
+    // ships. A followed run with only unreleased issues left is different --
+    // it is just being watched, and it lives on Comics.
+    const outstanding = jobs(request).filter((job) => !settled(job));
+    if (jobs(request).some(jobWanted) || (!outstanding.length
+      && (hasSomethingToFind(request) || request.coverage === "issues"))) tabs.push("wanted");
+  }
+  if (tabs.length) return tabs;
   const arrived = lastArrivalAt(request);
-  if (!arrived) return null;
+  if (!arrived) return [];
   const cutoff = new Date(now.getTime() - RECENT_ARRIVAL_DAYS * 24 * 60 * 60 * 1000);
-  return Date.parse(arrived) >= cutoff.getTime() ? "acquired" : null;
+  return Date.parse(arrived) >= cutoff.getTime() ? ["acquired"] : [];
 }
+
+/** The most urgent tab this request is on, or null for none. */
+export const classifyRequest = (request, now = new Date()) => requestTabs(request, now)[0] ?? null;
 
 /**
  * Both request kinds, split into the four tabs, each already in the order it
@@ -155,8 +184,7 @@ export function classifyRequest(request, now = new Date()) {
 export function groupPullList(catalog, now = new Date()) {
   const buckets = { wanted: [], downloading: [], acquired: [], failed: [] };
   const place = (request, kind) => {
-    const tab = classifyRequest(request, now);
-    if (tab) buckets[tab].push({ kind, request });
+    for (const tab of requestTabs(request, now)) buckets[tab].push({ kind, request });
   };
   for (const request of catalog?.requests || []) place(request, "series");
   for (const request of catalog?.replacementRequests || []) place(request, "replacement");
