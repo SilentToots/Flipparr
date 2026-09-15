@@ -6831,6 +6831,25 @@ class CatalogStore:
                 (issue_id, provider, provider_id, api_url, updated_at),
             )
 
+    def scan_schedule(self) -> dict[str, Any]:
+        """What the background scan needs to decide: the folders, when the
+        least recently scanned was last scanned, and any scan still running."""
+        with self._connect() as connection:
+            roots = connection.execute(
+                "SELECT path, recursive, last_scan_at FROM library_roots ORDER BY id"
+            ).fetchall()
+            running = connection.execute(
+                """SELECT started_at FROM scan_runs WHERE status IN ('queued', 'scanning')
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        stamps = [row["last_scan_at"] for row in roots if row["last_scan_at"]]
+        return {
+            "roots": [{"path": row["path"], "recursive": bool(row["recursive"])} for row in roots],
+            # A folder never scanned makes the whole library due.
+            "lastScanAt": min(stamps) if stamps and len(stamps) == len(roots) else None,
+            "activeSince": running["started_at"] if running else None,
+        }
+
     def begin_scan(self, folder: str, recursive: bool) -> int:
         root_id = self.register_root(folder, recursive)
         with self._connect() as connection:

@@ -813,7 +813,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-library-folders > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .settings-library-folders > header h2 { margin-bottom: 6px; }
 .settings-library-folders > header p { margin: 0; color: var(--muted); font-size: var(--text-md); }
-.settings-library-folders > header .secondary-button { flex: 0 0 auto; margin-top: 0; }.settings-root-list { display: grid; gap: 8px; margin-top: 18px; }
+.settings-library-folders > header .secondary-button { flex: 0 0 auto; margin-top: 0; }
+/* Manage folders and Scan library. On a phone the rail's scan button is
+   hidden, so this one is the scan there. */
+.settings-library-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.settings-library-actions .primary-button { margin-top: 0; }
+.settings-library-folders > header p.settings-last-scan { margin-top: 4px; color: var(--muted-weak); font-size: var(--text-sm); }
+.settings-library-folders .scan-progress, .settings-library-folders .success-banner { position: relative; overflow: hidden; margin: 16px 0 0; }
+/* Scan automatically, and how often. */
+.settings-auto-scan { display: grid; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.settings-auto-scan .settings-scan-interval { margin: 0; }
+@media (max-width: 620px) {
+  .settings-library-folders > header { flex-direction: column; }
+  .settings-library-actions { justify-content: flex-start; }
+}.settings-root-list { display: grid; gap: 8px; margin-top: 18px; }
 .settings-root-list > span { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--color-violet-400); }
 .settings-root-list strong { overflow: hidden; color: var(--text); font-size: var(--text-md); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .settings-root-list small { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }

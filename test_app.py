@@ -1386,6 +1386,41 @@ class FilenameParserTests(unittest.TestCase):
             app.save_app_settings({"collectedEditionsEnabled": False})
             self.assertFalse(app.collected_editions_enabled())
 
+    def test_auto_scan_defaults_on_and_saves_only_an_offered_interval(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
+        ):
+            settings = app.load_app_settings()
+            self.assertIs(settings["autoScanEnabled"], True, "on unless someone turns it off")
+            self.assertEqual(settings["autoScanIntervalMinutes"], 60)
+            self.assertEqual(app.save_app_settings({"autoScanIntervalMinutes": 360})["autoScanIntervalMinutes"], 360)
+            self.assertEqual(app.load_app_settings()["autoScanIntervalMinutes"], 360)
+            for offered_nowhere in (7, "60", True):
+                with self.subTest(interval=offered_nowhere), self.assertRaises(ValueError):
+                    app.save_app_settings({"autoScanIntervalMinutes": offered_nowhere})
+            app.save_app_settings({"autoScanEnabled": False})
+            self.assertIs(app.load_app_settings()["autoScanEnabled"], False)
+
+    def test_an_automatic_scan_is_due_when_its_interval_has_passed_and_none_is_running(self):
+        now = dt.datetime(2026, 9, 15, 12, 0, tzinfo=dt.timezone.utc)
+
+        def ago(minutes):
+            return (now - dt.timedelta(minutes=minutes)).isoformat()
+        on = {"autoScanEnabled": True, "autoScanIntervalMinutes": 60}
+        roots = [{"path": "/comics", "recursive": True}]
+
+        def due(settings=on, roots=roots, last=None, running=None):
+            return app.auto_scan_due(settings, {"roots": roots, "lastScanAt": last, "activeSince": running}, now)
+        self.assertTrue(due(last=ago(61)))
+        self.assertFalse(due(last=ago(30)))
+        self.assertTrue(due(last=None), "a library never scanned")
+        self.assertFalse(due(settings={**on, "autoScanEnabled": False}, last=ago(600)))
+        self.assertFalse(due(roots=[], last=None), "no library folder yet")
+        self.assertFalse(due(last=ago(600), running=ago(10)), "a scan is already running")
+        self.assertTrue(due(last=ago(600), running=ago(180)),
+                        "a scan cut off by a restart must not hold every later one back")
+
     def test_a_saved_language_preference_is_read_back(self):
         """The loader used to copy only the boolean settings.
 

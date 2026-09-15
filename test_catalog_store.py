@@ -311,6 +311,28 @@ class CatalogStoreTests(unittest.TestCase):
         self.assertEqual(_trusted_recommendation(
             {"recommendation": {"title": "Supergirl"}}, {"seriesTitle": "Supergirl: Woman of Tomorrow"}), {})
 
+    def test_the_scan_schedule_waits_on_the_least_recently_scanned_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            comics, manga = base / "comics", base / "manga"
+            comics.mkdir()
+            manga.mkdir()
+            store = CatalogStore(base / "catalog.db")
+            comics_id = store.register_root(str(comics), True)
+            manga_id = store.register_root(str(manga), False)
+            schedule = store.scan_schedule()
+            self.assertEqual([root["recursive"] for root in schedule["roots"]], [True, False])
+            self.assertIsNone(schedule["lastScanAt"], "a folder never scanned makes the library due")
+            self.assertIsNone(schedule["activeSince"])
+            with store._connect() as connection:
+                connection.execute("UPDATE library_roots SET last_scan_at=? WHERE id=?",
+                                   ("2026-09-15T10:00:00+00:00", comics_id))
+                connection.execute("UPDATE library_roots SET last_scan_at=? WHERE id=?",
+                                   ("2026-09-15T08:00:00+00:00", manga_id))
+            self.assertEqual(store.scan_schedule()["lastScanAt"], "2026-09-15T08:00:00+00:00")
+            store.begin_scan(str(comics), True)
+            self.assertIsNotNone(store.scan_schedule()["activeSince"], "a queued scan counts as running")
+
     def test_library_roots_reject_overlapping_folders(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "comics"

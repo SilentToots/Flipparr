@@ -219,8 +219,15 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # rather than filed silently under the issue it claims to be. Empty means
     # no preference, which accepts anything.
     "preferredLanguage": "en",
+    # Comics added outside Flipparr stay invisible until a library scan, so the
+    # library is scanned in the background unless this is turned off. The
+    # interval is one of AUTO_SCAN_INTERVALS, in minutes.
+    "autoScanEnabled": True,
+    "autoScanIntervalMinutes": 60,
 }
-_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted"})
+_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted", "autoScanEnabled"})
+# Every quarter hour, hour, six hours, or day.
+AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
 
 
 def load_app_settings() -> dict[str, Any]:
@@ -238,6 +245,9 @@ def load_app_settings() -> dict[str, Any]:
                 # reaching the rest of the app as the wrong type.
                 if key in _APP_SETTINGS_BOOL_KEYS:
                     if isinstance(value, bool):
+                        settings[key] = value
+                elif key == "autoScanIntervalMinutes":
+                    if isinstance(value, int) and not isinstance(value, bool) and value in AUTO_SCAN_INTERVALS:
                         settings[key] = value
                 elif isinstance(value, str):
                     settings[key] = value
@@ -257,6 +267,10 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             value = str(value or "").strip().casefold()
             if value and value not in LANGUAGE_NAMES:
                 raise ValueError("Choose a language Flipparr can recognise in a release")
+        if key == "autoScanIntervalMinutes" and (
+            not isinstance(value, int) or isinstance(value, bool) or value not in AUTO_SCAN_INTERVALS
+        ):
+            raise ValueError("Choose one of the scan intervals Flipparr offers")
         clean[key] = value
     with _SETTINGS_CONFIG_LOCK:
         current = dict(_APP_SETTINGS_DEFAULTS)
@@ -8234,6 +8248,82 @@ def metadata_enrichment_worker(stop_event: threading.Event = _ENRICHMENT_STOP) -
         stop_event.wait(1)
 
 
+# ---------------------------------------------------------------------------
+# Automatic library scans
+#
+# Comics added outside Flipparr stay invisible until a scan looks at the
+# folder: Supergirl: Woman of Tomorrow #2 sat unseen for two days because
+# nothing did. On by default; the interval is a setting.
+# ---------------------------------------------------------------------------
+
+AUTO_SCAN_POLL_SECONDS = 60
+# A scan still "running" after this long was cut off -- a restart does it --
+# and must not hold every automatic scan back for good.
+AUTO_SCAN_STALE_SECONDS = 2 * 60 * 60
+_AUTO_SCAN_STOP = threading.Event()
+_AUTO_SCAN_THREAD: threading.Thread | None = None
+
+
+def _auto_scan_time(value: Any) -> dt.datetime | None:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def auto_scan_due(settings: dict[str, Any], schedule: dict[str, Any], now: dt.datetime) -> bool:
+    """Whether the background library scan should start now."""
+    if not settings.get("autoScanEnabled") or not schedule.get("roots"):
+        return False
+    running_since = _auto_scan_time(schedule.get("activeSince"))
+    if running_since and (now - running_since).total_seconds() < AUTO_SCAN_STALE_SECONDS:
+        return False
+    last = _auto_scan_time(schedule.get("lastScanAt"))
+    if last is None:
+        return True
+    interval = int(settings.get("autoScanIntervalMinutes") or 60)
+    return (now - last).total_seconds() >= interval * 60
+
+
+def auto_scan_worker(stop_event: threading.Event = _AUTO_SCAN_STOP) -> None:
+    """Scan every library folder, one at a time, whenever a scan is due.
+
+    The same fast local scan the scan buttons start: filenames and the
+    metadata inside files, no online lookups, unchanged files reused.
+    """
+    while not stop_event.wait(AUTO_SCAN_POLL_SECONDS):
+        try:
+            store = catalog_store()
+            schedule = store.scan_schedule()
+            if not auto_scan_due(load_app_settings(), schedule, dt.datetime.now(dt.timezone.utc)):
+                continue
+            for root in schedule["roots"]:
+                scan_id = start_catalog_scan(root["path"], root["recursive"], "local")
+                waited = 0
+                while waited < AUTO_SCAN_STALE_SECONDS and not stop_event.wait(5):
+                    waited += 5
+                    if (store.get_scan(scan_id) or {}).get("status") not in {"queued", "scanning"}:
+                        break
+            log_event("auto_scan_finished", roots=len(schedule["roots"]))
+        except Exception as exc:
+            log_exception("auto_scan_failed", exc, level="warning")
+
+
+def start_auto_scan_worker() -> threading.Thread:
+    global _AUTO_SCAN_THREAD
+    if _AUTO_SCAN_THREAD and _AUTO_SCAN_THREAD.is_alive():
+        return _AUTO_SCAN_THREAD
+    _AUTO_SCAN_STOP.clear()
+    _AUTO_SCAN_THREAD = threading.Thread(
+        target=auto_scan_worker,
+        name="flipparr-auto-scan",
+        daemon=True,
+    )
+    _AUTO_SCAN_THREAD.start()
+    return _AUTO_SCAN_THREAD
+
+
 def start_metadata_enrichment_worker() -> threading.Thread:
     global _ENRICHMENT_THREAD
     if _ENRICHMENT_THREAD and _ENRICHMENT_THREAD.is_alive():
@@ -10684,6 +10774,7 @@ def main() -> None:
     start_metadata_enrichment_worker()
     start_acquisition_import_worker()
     start_release_research_worker()
+    start_auto_scan_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     log_event("server_started", host=args.host, port=args.port,
               version=APP_VERSION, build=APP_BUILD)
