@@ -42,13 +42,13 @@ import {
   buildNotifications, pruneDismissed, readDismissed, writeDismissed,
   readSeenUntil, writeSeenUntil,
 } from "./notifications.js";
-import { coverTint, creatorInitials, creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
+import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import {
   MenuIcon, SearchIcon, MobileSearchIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
   GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
-  PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon,
+  PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon,
 } from "./design-icons.jsx";
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
@@ -840,20 +840,7 @@ const SHELF_COPY = {
  * that moves 120px on a click reads as a twitch rather than as navigation.
  */
 function ReleaseShelf({ title, date, state, issues = [], error, pulled, onPull, onOpen, onRetry }) {
-  const scroller = useRef(null);
-  const [atStart, setAtStart] = useState(true);
-  const [atEnd, setAtEnd] = useState(false);
-  function measure() {
-    const node = scroller.current;
-    if (!node) return;
-    setAtStart(node.scrollLeft <= 1);
-    setAtEnd(node.scrollLeft + node.clientWidth >= node.scrollWidth - 1);
-  }
-  useEffect(measure, [issues.length, state]);
-  function page(direction) {
-    const node = scroller.current;
-    if (node) node.scrollBy({ left: direction * node.clientWidth, behavior: "smooth" });
-  }
+  const { scroller, atStart, atEnd, measure, page } = useShelfPaging([issues.length, state]);
   const heading = date ? `${title} - ${date}` : title;
   return <section className="release-shelf" aria-label={heading}>
     <header>
@@ -1440,7 +1427,7 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
  */
 // What a run is about, in its catalog's own words. Clamped: Comic Vine's lead
 // paragraph can run long, and in both drawers the issues are the point.
-function RunSynopsis({ text, source, loading = false }) {
+function RunSynopsis({ text, source, sourcePrefix = "From", loading = false }) {
   const [open, setOpen] = useState(false);
   if (loading) return <section className="run-synopsis" role="status" aria-busy="true" aria-label="Loading the story">
     <span className="discover-drawer-lines" aria-hidden="true"><i /><i /><i /></span>
@@ -1452,7 +1439,7 @@ function RunSynopsis({ text, source, loading = false }) {
     <p className={long && !open ? "clamped" : ""}>{text}</p>
     <footer>
       {long ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>{open ? "Show less" : "Read more"}</button> : null}
-      {source ? <small>From {source}</small> : null}
+      {source ? <small>{sourcePrefix} {source}</small> : null}
     </footer>
   </section>;
 }
@@ -2788,70 +2775,98 @@ function FollowSwitch({ following, busy = false, label, onChange }) {
   </label>;
 }
 
-// The run drawer's Plex-style pieces (a rough pass to react to). The cover's
-// colour is read from a small canvas; a cover from another site without CORS
-// cannot be read, and the drawer keeps its neutral ground.
-function useCoverTint(src) {
-  const [tint, setTint] = useState(null);
-  useEffect(() => {
-    setTint(null);
-    if (!src) return undefined;
-    let live = true;
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => {
-      if (!live) return;
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = 24;
-        canvas.height = 24;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        context.drawImage(image, 0, 0, 24, 24);
-        setTint(coverTint(context.getImageData(0, 0, 24, 24).data));
-      } catch {
-        setTint(null);
-      }
-    };
-    image.src = src;
-    return () => { live = false; };
-  }, [src]);
-  return tint;
+// The comic drawer's pieces (node-id=72-1306). A row pages by its own width,
+// the way Discover's release shelves do, and says when there is nowhere left
+// to go.
+function useShelfPaging(deps = []) {
+  const scroller = useRef(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
+  function measure() {
+    const node = scroller.current;
+    if (!node) return;
+    setAtStart(node.scrollLeft <= 1);
+    setAtEnd(node.scrollLeft + node.clientWidth >= node.scrollWidth - 1);
+  }
+  useEffect(measure, deps);
+  function page(direction) {
+    const node = scroller.current;
+    if (node) node.scrollBy({ left: direction * node.clientWidth, behavior: "smooth" });
+  }
+  return { scroller, atStart, atEnd, measure, page };
 }
 
-function DetailRow({ title, onSeeAll, list = false, children }) {
-  return <section className="run-row" aria-label={title}>
-    <header><h3>{title}</h3>{onSeeAll ? <button type="button" className="run-row-more" onClick={onSeeAll}>See all<ShelfNextIcon /></button> : null}</header>
-    {/* A strip of buttons is reachable by Tab; a strip of names is not, so that
-        one takes focus itself and the arrow keys scroll it. */}
-    <div className="run-strip" role={list ? "list" : undefined} tabIndex={list ? 0 : undefined} aria-label={list ? title : undefined}>{children}</div>
+// "#1 · The Dark Knight" -- the run's own title would say the same thing on
+// every card, so the number leads and the issue's title follows when it has
+// one worth showing.
+function issueCardLabel(issue, medium) {
+  const number = issueLabel(issue.number, medium);
+  const generic = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
+    || (medium === "manga" && identityKey(issue.title) === identityKey(`Volume ${issue.number}`));
+  return generic ? number : `${number} · ${issue.title}`;
+}
+
+function ComicDrawerRow({ title, count, children }) {
+  const { scroller, atStart, atEnd, measure, page } = useShelfPaging([count]);
+  return <section className="comic-drawer-row" aria-label={title}>
+    <header>
+      <h3>{title}</h3>
+      <div className="shelf-scroll">
+        <button type="button" onClick={() => page(-1)} disabled={atStart} aria-label={`Scroll ${title} back`}><ShelfBackIcon /></button>
+        <button type="button" onClick={() => page(1)} disabled={atEnd} aria-label={`Scroll ${title} forward`}><ShelfNextIcon /></button>
+      </div>
+    </header>
+    <div className="comic-drawer-shelf" ref={scroller} onScroll={measure}>{children}</div>
   </section>;
 }
 
-function IssueStripTile({ issue, runTitle, onOpen }) {
-  const owned = Boolean(issue.ownership && issue.ownership !== "unowned");
-  const src = (owned && issue.fileCover) || issue.cover || issue.fileCover;
-  const year = issue.publicationYear || issue.providerPublicationYear;
-  return <button type="button" className={`run-tile${owned ? "" : " unowned"}`} onClick={onOpen} aria-label={`${runTitle} #${issue.number}${owned ? "" : ", not owned"}`}>
-    <span className="run-tile-cover">{src ? <img src={src} alt="" loading="lazy" /> : <span className="cover-placeholder"><BookOpen size={20} weight="duotone" /></span>}</span>
-    <strong>#{issue.number}</strong>
-    <small>{owned ? year || "Owned" : "Not owned"}</small>
-  </button>;
+// An issue you do not own keeps its card, dimmed, with the same state badge
+// the Issues tab gives it -- a gap in a run should look like a gap.
+function ComicDrawerIssueCard({ issue, medium, onOpen }) {
+  const owned = issue.ownership !== "unowned";
+  const state = issue.ownership === "collection" ? "In volume"
+    : owned ? null
+    : issue.releaseState === "upcoming" ? "Upcoming"
+    : issue.releaseState === "unknown" ? "Date needed" : "Missing";
+  const label = issueCardLabel(issue, medium);
+  return <article className={`pull-card comic-drawer-card${owned ? "" : " unowned"}`}>
+    <button type="button" className="discover-open" onClick={onOpen} aria-label={`${label}${state ? `, ${state.toLowerCase()}` : ""}. Show all issues`}>
+      <span className="comic-drawer-card-art">
+        <DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={30} />
+        {state ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{state}</span> : null}
+      </span>
+    </button>
+    <div className="pull-card-body"><h3 title={label}>{label}</h3></div>
+  </article>;
 }
 
-function CreatorChip({ creator }) {
-  return <div className="creator-chip" role="listitem">
-    <span className="creator-avatar" aria-hidden="true">{creatorInitials(creator.name)}</span>
-    <strong>{creator.name}</strong>
-    <small>{creatorRoleLabel(creator.roles)}</small>
-  </div>;
+function ComicDrawerRunCard({ run, onOpen }) {
+  return <article className="pull-card comic-drawer-card">
+    <button type="button" className="discover-open" onClick={() => onOpen(run)} aria-label={`Open ${run.title}${run.year ? ` (${run.year})` : ""}`}>
+      <span className="comic-drawer-card-art"><span className="discover-cover"><SeriesCover series={run} decorative /></span></span>
+    </button>
+    <div className="pull-card-body"><h3 title={run.title}>{run.title}</h3></div>
+  </article>;
 }
 
-function RunTile({ run, onOpen }) {
-  return <button type="button" className="run-tile" onClick={() => onOpen(run)}>
-    <span className="run-tile-cover"><SeriesCover series={run} decorative /></span>
-    <strong>{run.title}</strong>
-    <small>{[run.year, run.total ? `${run.owned ?? 0} of ${run.total}` : null].filter(Boolean).join(" · ")}</small>
-  </button>;
+// Everyone credited, as the file writes it: one run of names. Past two lines
+// it folds, and opening it lists each person with what they did.
+function ComicDrawerCreators({ creators }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const namesRef = useRef(null);
+  useEffect(() => {
+    const node = namesRef.current;
+    if (!node || open) return;
+    setOverflows(node.scrollHeight > node.clientHeight + 1);
+  }, [creators, open]);
+  return <section className="comic-drawer-creators" aria-label="Creators">
+    <h3>Creators</h3>
+    {open
+      ? <ul className="comic-drawer-creator-list">{creators.map((creator) => <li key={creator.name}><strong>{creator.name}</strong><span>{creatorRoleLabel(creator.roles)}</span></li>)}</ul>
+      : <p ref={namesRef} className="comic-drawer-creator-names">{creators.map((creator) => creator.name).join(", ")}</p>}
+    {overflows || open ? <button type="button" className="comic-drawer-more" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? "Show less" : `Show all ${creators.length} creators`}</button> : null}
+  </section>;
 }
 
 function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries }) {
@@ -2894,13 +2909,12 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     syncIssues(true);
   }, [series?.id, catalogKnown, repairableIssueDetails, currentRepairKey]);
   useEffect(() => {
-    // The Volumes tab disappears when collected editions are turned off.
-    if (!editionsOn && tab === "editions") setTab("overview");
+    // Volumes and Collection disappear when collected editions are turned off.
+    if (!editionsOn && (tab === "editions" || tab === "family")) setTab("overview");
   }, [editionsOn, tab]);
-  // The Plex-style header and rows (rough pass): the cover behind the header,
-  // its colour down the page, and the runs here that share a maker.
+  // The comic drawer (node-id=72-1306): the cover behind the header, and the
+  // runs here that share a maker or a publisher.
   const heroArt = series?.coverCandidates?.[0] || series?.cover || null;
-  const tint = useCoverTint(heroArt);
   const related = useMemo(() => (series ? relatedRuns(series, allSeries || []) : null), [series, allSeries]);
   const creators = useMemo(() => orderedCreators(series?.creators), [series?.creators]);
   useEffect(() => { dialogRef.current?.scrollTo?.({ top: 0 }); }, [series?.id]);
@@ -2934,7 +2948,93 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   }));
   const isFollowing = series.monitoringStatus === "monitored";
   const wantedIssueCount = Math.max(0, Number(series.releaseSummary?.releasedMissing ?? series.unowned ?? Math.max(0, (series.total || 0) - (series.owned || 0))));
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer run-details ${closing ? "closing" : ""}`} style={tint ? { "--drawer-tint": tint } : undefined} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>{parentCollection ? <button className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}<button className="modal-close" onClick={requestClose} aria-label="Close series details"><X size={20} /></button><div className="drawer-hero">{heroArt ? <img className="drawer-hero-art" src={heroArt} alt="" aria-hidden="true" /> : null}<div className="drawer-identity"><div className="drawer-cover">{onChangeSeriesCover ? <button type="button" className="drawer-cover-button" onClick={() => onChangeSeriesCover(series)} aria-label={`Change the cover for ${series.title}`}><SeriesCover series={series} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <SeriesCover series={series} />}</div><div><h2 id="series-drawer-title">{series.title} <em>({series.year})</em></h2><p>{series.publisher}</p><div className="drawer-statuses"><PublicationStatus series={series} />{isFollowing ? <span className="status-chip green"><CheckCircle size={13} weight="fill" /> Following</span> : null}{series.family ? <button className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div></div></div></div><div className="drawer-facts"><span><strong>{series.fileDetails?.length ?? series.owned}</strong>Comic files</span><span><strong>{series.inventory?.directIssueFiles ?? 0}</strong>Single issues</span>{editionsOn ? <span><strong>{series.inventory?.editionCount ?? series.editions?.length ?? 0}</strong>Volumes</span> : null}<span><strong>{identityStrength}</strong>Match confidence</span></div><nav className="drawer-tabs" aria-label="Series details">{[["overview", "Overview"], ["issues", `Issues (${series.issues?.length ?? 0})`], ...(editionsOn ? [["editions", `Volumes (${series.editions?.length ?? 0})`]] : []), ["files", `Files (${series.fileDetails?.length ?? 0})`], ["aliases", "Aliases"], ["family", "Collection"], ["advanced", "Advanced"]].map(([id, label]) => <button className={tab === id ? "active" : ""} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav><div className="drawer-tab-content">{tab === "overview" ? <><RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} key={series.id} />{series.issues?.length ? <DetailRow title="Issues" onSeeAll={() => setTab("issues")}>{series.issues.slice(0, 24).map((issue) => <IssueStripTile issue={issue} runTitle={series.title} onOpen={() => setTab("issues")} key={issue.id || issue.number} />)}</DetailRow> : null}{creators.length ? <DetailRow title="Creators" list>{creators.map((creator) => <CreatorChip creator={creator} key={creator.name} />)}</DetailRow> : null}<h3>Your collection</h3><Ownership series={series} /><CollectionCoverage series={series} editionsOn={editionsOn} /><IssueCatalogCard series={series} catalogKnown={catalogKnown} syncing={syncingIssues} error={syncError} lastResult={lastSyncResult} onSync={syncIssues} onReviewFiles={() => setTab("files")} onFindRun={onFindRun} />{related?.moreBy ? <DetailRow title={`More by ${related.moreBy.name}`}>{related.moreBy.runs.map((run) => <RunTile run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</DetailRow> : null}{related?.publisher ? <DetailRow title={`More from ${related.publisher.name}`}>{related.publisher.runs.map((run) => <RunTile run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</DetailRow> : null}</> : null}{tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} medium={series.medium} /> : null}{tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}{tab === "files" ? <FileInventory files={series.fileDetails} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}{tab === "aliases" ? <><div className="alias-list">{series.aliases?.length ? series.aliases.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>) : <p>No alternate titles recorded.</p>}</div><form className="alias-form" onSubmit={saveAlias}><label><span>Add a title alias</span><div><input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="Alternate series title…" /><button disabled={savingAlias || !alias.trim()} aria-busy={savingAlias}>{savingAlias ? <LoadingSpinner size={18} /> : <Plus size={18} />} Add</button></div></label>{aliasError ? <small className="form-error" role="alert">{aliasError}</small> : <small>Confirmed aliases are used during future scans and searches.</small>}</form></> : null}{tab === "family" ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}{tab === "advanced" ? <div className="advanced-tools"><section className="advanced-card"><div><strong>Combine duplicate run</strong><p>One run split into two entries? Merge them. Files on disk aren't changed.</p></div><button type="button" onClick={() => onMergeRun(series)}><Books size={16} /> Combine</button></section><section className="advanced-card"><div><strong>Series cover</strong><p>Use another issue's art, a provider's cover, or your own image.</p></div><button type="button" onClick={() => onChangeSeriesCover(series)}><ImageSquare size={16} /> Change cover</button></section><section className="advanced-card"><div><strong>Fix series match</strong><p>Matched to the wrong comic? Pick the right run. Its issue list replaces this one; files aren't touched.</p></div><button type="button" onClick={() => onFixSeriesMatch(series)}><MagnifyingGlass size={16} /> Fix match</button></section><section className="advanced-card"><div><strong>{series.medium === "manga" ? "Filed as manga" : "Filed as a comic"}</strong><p>{series.medium === "manga" ? "Searched and filed by volume, in the Manga folder." : "Manga is searched and filed by volume, in the Manga folder."} Change it if the publisher misled Flipparr.</p></div><button type="button" onClick={() => onSetFormat?.(series, series.medium === "manga" ? "comic" : "manga")}><Books size={16} /> {series.medium === "manga" ? "File as comic" : "File as manga"}</button></section><section className="advanced-card"><div><strong>Rebuild this run</strong><p>Clear the titles, dates and covers Flipparr worked out, and work them out again from these files. Your corrections are kept.</p>{rebuildResult ? <small className="rebuild-result">{rebuildResult}</small> : null}</div><button type="button" onClick={() => onRebuildRun(series)} disabled={rebuilding}>{rebuilding ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {rebuilding ? "Rebuilding…" : "Rebuild"}</button></section><section className="advanced-card danger"><div><strong>Remove from library</strong><p>Removes the run and deletes its comic files from disk. You'll see what goes first. This can't be undone.</p></div><button type="button" onClick={() => onRemove?.(series)}><Trash size={16} /> Remove</button></section></div> : null}</div>{tab === "overview" ? <div className="drawer-actions"><FollowSwitch following={isFollowing} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : isFollowing ? "Following" : "Follow run"} onChange={(on) => (on ? onRequest() : onUnfollow(series))} />{isFollowing && wantedIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => setTab("files")}><Eye size={18} /> View files</button></div> : null}</aside></div>;
+  // Volumes and Collection belong to collected-edition support; the counts
+  // live on the tabs, so the header does not repeat them.
+  const tabs = [
+    ["overview", "Overview"],
+    ["issues", `Issues (${series.issues?.length ?? 0})`],
+    ...(editionsOn ? [["editions", `Volumes (${series.editions?.length ?? 0})`]] : []),
+    ["files", `Files (${series.fileDetails?.length ?? 0})`],
+    ...(editionsOn ? [["family", "Collection"]] : []),
+    ["advanced", "Advanced"],
+  ];
+  const alternateTitles = (series.aliases || []).filter((item) => identityKey(item.name) !== identityKey(series.title));
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+    <header className="comic-drawer-hero">
+      {heroArt ? <img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" /> : null}
+      <span className="comic-drawer-scrim" aria-hidden="true" />
+      <button type="button" className="comic-drawer-close" onClick={requestClose} aria-label="Close series details"><DrawerCloseIcon size={null} /></button>
+      {parentCollection ? <button type="button" className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}
+      <div className="comic-drawer-identity">
+        <div className="comic-drawer-cover">{onChangeSeriesCover ? <button type="button" className="drawer-cover-button" onClick={() => onChangeSeriesCover(series)} aria-label={`Change the cover for ${series.title}`}><SeriesCover series={series} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <SeriesCover series={series} />}</div>
+        <div className="comic-drawer-copy">
+          <div className="comic-drawer-titles">
+            <h2 id="series-drawer-title">{series.title}</h2>
+            <p>{[series.publisher, series.year].filter(Boolean).join(" • ")}</p>
+          </div>
+          <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
+          <Ownership series={series} compact />
+        </div>
+      </div>
+    </header>
+    <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details">{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
+    <div className="comic-drawer-body">
+      {tab === "overview" ? <>
+        <div className="comic-drawer-follow">
+          <FollowSwitch following={isFollowing} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : isFollowing ? "Following Run" : "Follow Run"} onChange={(on) => (on ? onRequest() : onUnfollow(series))} />
+          {isFollowing && wantedIssueCount ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
+        </div>
+        <RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} sourcePrefix="Source:" key={series.id} />
+        {series.issues?.length ? <ComicDrawerRow title="Issues" count={series.issues.length}>{series.issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium={series.medium} onOpen={() => setTab("issues")} key={issue.id || issue.number} />)}</ComicDrawerRow> : null}
+        {creators.length ? <ComicDrawerCreators creators={creators} key={`creators-${series.id}`} /> : null}
+        {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
+        {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
+      </> : null}
+      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} medium={series.medium} /> : null}
+      {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
+      {tab === "files" ? <FileInventory files={series.fileDetails} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
+      {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
+      {tab === "advanced" ? <div className="advanced-tools">
+        {/* Moved off the header: useful when repairing a run, noise when reading one. */}
+        <div className="drawer-facts"><span><strong>{series.fileDetails?.length ?? series.owned}</strong>Comic files</span><span><strong>{series.inventory?.directIssueFiles ?? 0}</strong>Single issues</span>{editionsOn ? <span><strong>{series.inventory?.editionCount ?? series.editions?.length ?? 0}</strong>Volumes</span> : null}<span><strong>{identityStrength}</strong>Match confidence</span></div>
+        {/* Single issues are already a fact above; the volume split only means something with editions on. */}
+        {editionsOn ? <CollectionCoverage series={series} editionsOn={editionsOn} /> : null}
+        <IssueCatalogCard series={series} catalogKnown={catalogKnown} syncing={syncingIssues} error={syncError} lastResult={lastSyncResult} onSync={syncIssues} onReviewFiles={() => setTab("files")} onFindRun={onFindRun} />
+        <section className="advanced-card advanced-aliases">
+          <div>
+            <strong>Alternate titles</strong>
+            <p>Other names this run&rsquo;s comics are filed under. Scans use them automatically; add one only if a scan keeps missing a file.</p>
+            {alternateTitles.length ? <div className="alias-list">{alternateTitles.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>)}</div> : null}
+            <form className="alias-form" onSubmit={saveAlias}><label><span>Add a title alias</span><div><input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="Alternate series title…" /><button disabled={savingAlias || !alias.trim()} aria-busy={savingAlias}>{savingAlias ? <LoadingSpinner size={18} /> : <Plus size={18} />} Add</button></div></label>{aliasError ? <small className="form-error" role="alert">{aliasError}</small> : null}</form>
+          </div>
+        </section>
+        <section className="advanced-card">
+          <div><strong>Combine duplicate run</strong><p>One run split into two entries? Merge them. Files on disk aren&rsquo;t changed.</p></div>
+          <button type="button" onClick={() => onMergeRun(series)}><Books size={16} /> Combine</button>
+        </section>
+        <section className="advanced-card">
+          <div><strong>Series cover</strong><p>Use another issue&rsquo;s art, a provider&rsquo;s cover, or your own image.</p></div>
+          <button type="button" onClick={() => onChangeSeriesCover(series)}><ImageSquare size={16} /> Change cover</button>
+        </section>
+        <section className="advanced-card">
+          <div><strong>Fix series match</strong><p>Matched to the wrong comic? Pick the right run. Its issue list replaces this one; files aren&rsquo;t touched.</p></div>
+          <button type="button" onClick={() => onFixSeriesMatch(series)}><MagnifyingGlass size={16} /> Fix match</button>
+        </section>
+        <section className="advanced-card">
+          <div><strong>{series.medium === "manga" ? "Filed as manga" : "Filed as a comic"}</strong><p>{series.medium === "manga" ? "Searched and filed by volume, in the Manga folder." : "Manga is searched and filed by volume, in the Manga folder."} Change it if the publisher misled Flipparr.</p></div>
+          <button type="button" onClick={() => onSetFormat?.(series, series.medium === "manga" ? "comic" : "manga")}><Books size={16} /> {series.medium === "manga" ? "File as comic" : "File as manga"}</button>
+        </section>
+        <section className="advanced-card">
+          <div><strong>Rebuild this run</strong><p>Clear the titles, dates and covers Flipparr worked out, and work them out again from these files. Your corrections are kept.</p>{rebuildResult ? <small className="rebuild-result">{rebuildResult}</small> : null}</div>
+          <button type="button" onClick={() => onRebuildRun(series)} disabled={rebuilding}>{rebuilding ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {rebuilding ? "Rebuilding…" : "Rebuild"}</button>
+        </section>
+        <section className="advanced-card danger">
+          <div><strong>Remove from library</strong><p>Removes the run and deletes its comic files from disk. You&rsquo;ll see what goes first. This can&rsquo;t be undone.</p></div>
+          <button type="button" onClick={() => onRemove?.(series)}><Trash size={16} /> Remove</button>
+        </section>
+      </div> : null}
+    </div>
+  </aside></div>;
 }
 
 function SeriesMergeWorkbench({ data, busy, error, onClose, onTargetChange, onConfirm }) {

@@ -21,6 +21,7 @@ import {
 } from "@heroicons/react/24/outline";
 import {
   MagnifyingGlassIcon, ListBulletIcon, ArrowPathRoundedSquareIcon,
+  XMarkIcon as XMarkSolidIcon,
 } from "@heroicons/react/24/solid";
 import {
   Bars3Icon, BookOpenIcon, Squares2X2Icon, ChevronDownIcon,
@@ -75,3 +76,6 @@ export const PullIcon = sized(CloudArrowDownIcon, 16);      // heroicons-micro/c
 export const ShelfBackIcon = sized(ChevronLeftIcon, 16);    // heroicons-micro/chevron-left
 export const ShelfNextIcon = sized(ChevronRightIcon, 16);   // heroicons-micro/chevron-right
 export const ClearSearchIcon = sized(XMarkIcon, 20);        // heroicons-mini/x-mark
+
+// Comic drawer (node-id=72-1306)
+export const DrawerCloseIcon = sized(XMarkSolidIcon, 60);   // heroicons-solid/x-mark

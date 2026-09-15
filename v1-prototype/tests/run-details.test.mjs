@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  coverTint, creatorInitials, creatorRoleLabel, normalizedPublisher, orderedCreators, relatedRuns,
+  creatorRoleLabel, normalizedPublisher, orderedCreators, relatedRuns,
 } from "../src/run-details.js";
 
 const run = (id, title, year, publisher, creators = []) => ({ id, title, year, publisher, creators });
@@ -16,13 +16,6 @@ test("creators are one entry per person, writers first", () => {
   assert.deepEqual(ordered.map((c) => c.name), ["Scott Snyder", "Nick Dragotta", "Dave McCaig"]);
   assert.deepEqual(ordered[1].roles, ["penciller", "inker"]);
   assert.equal(creatorRoleLabel(ordered[1].roles), "Pencils · Inks");
-});
-
-test("initials survive accents, suffixes and a single name", () => {
-  assert.equal(creatorInitials("Marcos Martín"), "MM");
-  assert.equal(creatorInitials("James Tynion IV"), "JT");
-  assert.equal(creatorInitials("Moebius"), "M");
-  assert.equal(creatorInitials(""), "?");
 });
 
 test("publisher names that differ only in a suffix are one publisher", () => {
@@ -62,14 +55,4 @@ test("the publisher row skips what More by already shows and matches suffix vari
   assert.deepEqual(moreBy.runs.map((r) => r.title), ["Nocterra"]);
   assert.deepEqual(publisher.runs.map((r) => r.title), ["Paper Girls", "Saga"], "closest in year first");
   assert.equal(relatedRuns(run(9, "Solo", 2000, "Nobody"), all).publisher, null);
-});
-
-test("the cover tint is the art's hue, dark enough for text on it", () => {
-  const red = new Uint8ClampedArray([220, 40, 30, 255, 200, 60, 40, 255, 250, 250, 250, 255]);
-  const [r, g, b] = coverTint(red).split(" ").map(Number);
-  assert.ok(r > g && r > b, "keeps the red");
-  const lum = (v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
-  const L = 0.2126 * lum(r) + 0.7152 * lum(g) + 0.0722 * lum(b);
-  assert.ok((1.05) / (L + 0.05) > 10, "white text on it is well past AA");
-  assert.equal(coverTint(new Uint8ClampedArray([0, 0, 0, 0])), null, "a fully transparent image has no tint");
 });
