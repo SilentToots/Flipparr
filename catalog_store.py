@@ -81,6 +81,32 @@ def _file_credits(result: dict[str, Any]) -> list[tuple[str, str]]:
     return credits
 
 
+def _trusted_recommendation(
+    result: dict[str, Any] | None, override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The lookup's match for a file, unless the file's own metadata names another series.
+
+    A file whose ComicInfo names its series is not overruled by a lookup that
+    matched it to a different one. "Supergirl Woman of Tomorrow #02.cbz", its
+    ComicInfo saying Supergirl: Woman of Tomorrow #2 (2021), was matched by
+    lookup to DC's 1972 "Supergirl": filed as a run of its own, beside the
+    right run in the same folder, and given that run's issue ids. A lookup that
+    agrees with the file is kept, for the provider ids it carries.
+    """
+    result = result or {}
+    override = override or {}
+    recommendation = result.get("recommendation") or {}
+    series = str((result.get("embedded_metadata") or {}).get("series") or "").strip()
+    if not recommendation or not series or override.get("title") or override.get("seriesTitle"):
+        return recommendation
+    matched = _normalized(_canonical_series_title(str(recommendation.get("title") or ""), True))
+    stated = _normalized(_canonical_series_title(series, True))
+    if not matched or not stated:
+        return recommendation
+    # "The Department of Truth" against "Department of Truth" still agrees.
+    return recommendation if difflib.SequenceMatcher(None, stated, matched).ratio() >= 0.8 else {}
+
+
 def _summarize_run_creators(rows: Iterable[Any]) -> list[dict[str, Any]]:
     """[{name, roles}] for one run: writers first, then by how often credited."""
     people: dict[str, dict[str, Any]] = {}
@@ -1501,8 +1527,17 @@ class CatalogStore:
     ) -> dict[str, Any]:
         override = override or {}
         identity = result.get("lookup_identity") or parsed
-        recommendation = result.get("recommendation") or {}
         embedded = result.get("embedded_metadata") or {}
+        recommendation = _trusted_recommendation(result, override)
+        # Overruled: the file's own ComicInfo names the series, issue and year.
+        overruled = bool(result.get("recommendation")) and not recommendation
+        if overruled:
+            stated_year = _valid_year(embedded.get("year"))
+            identity = {
+                **identity, "title": str(embedded.get("series")).strip(),
+                "issue": identity.get("issue") or embedded.get("number"),
+                "year": identity.get("year") or stated_year,
+            }
         issue = override.get("issueNumber") if "issueNumber" in override else recommendation.get("issue") or identity.get("issue")
         if override.get("recordType"):
             is_issue = override["recordType"] == "issue"
@@ -1516,7 +1551,7 @@ class CatalogStore:
         if assessed_confidence is not None:
             confidence = assessed_confidence
         elif not recommendation:
-            confidence = 25
+            confidence = 65 if overruled else 25
         elif any("exact ISBN" in str(reason) for reason in reasons):
             confidence = 90
         elif source in {"Grand Comics Database", "GCD"}:
@@ -1536,6 +1571,8 @@ class CatalogStore:
             basis.append(embedded["source"])
         if recommendation.get("source"):
             basis.append(recommendation["source"])
+        if overruled:
+            basis.append("ComicInfo series over a lookup that disagreed")
         if override:
             basis.append("Manual correction")
         provider_identity = (
@@ -2014,7 +2051,10 @@ class CatalogStore:
         *, connection: sqlite3.Connection | None = None,
     ) -> None:
         override = override or {}
-        recommendation = dict(result.get("recommendation") or {})
+        # The same match the file's run was chosen by: a lookup the file's own
+        # ComicInfo contradicts must not hand the right run another run's
+        # issue title, dates and provider ids.
+        recommendation = dict(_trusted_recommendation(result, override))
         embedded = result.get("embedded_metadata") or {}
         # The edition cover below prefers the cover inside the comic over the
         # provider's. A French edition would otherwise become the face of an

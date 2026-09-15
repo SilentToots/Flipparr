@@ -247,6 +247,60 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(jobs[813], ("queued", 0))
             self.assertEqual(jobs[14], ("fulfilled", 3))
 
+    def test_a_files_own_comicinfo_outranks_a_lookup_that_names_another_series(self):
+        """Supergirl: Woman of Tomorrow #2, dropped into its run's folder by hand.
+
+        Its ComicInfo named the series; a lookup matched it to DC's 1972
+        "Supergirl" instead, and the scan made that a run of its own.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = root / "Supergirl Woman of Tomorrow (2021) #001.cbr"
+            second = root / "Supergirl Woman of Tomorrow #02.cbz"
+            for comic in (first, second):
+                comic.write_bytes(comic.name.encode())
+            comicinfo = {"source": "ComicInfo.xml", "series": "Supergirl: Woman of Tomorrow",
+                         "year": "2021", "publisher": "DC Comics"}
+            results = {
+                first.name: {"recommendation": None,
+                             "embedded_metadata": {**comicinfo, "number": "1"}},
+                second.name: {"recommendation": {
+                                  "title": "Supergirl", "issue": "2", "record_type": "single_issue",
+                                  "publication_year": 1972, "source": "Grand Comics Database",
+                                  "publisher": "National Periodical Publications Inc.",
+                                  "identity_confidence": {"score": 50},
+                              },
+                              "embedded_metadata": {**comicinfo, "number": "2"}},
+            }
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [
+                ParsedFile(str(first), first.name, ".cbr", "Supergirl Woman of Tomorrow", issue="1", year=2021),
+                ParsedFile(str(second), second.name, ".cbz", "Supergirl Woman of Tomorrow", issue="2"),
+            ], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "file_health": {"status": "ok"}, "file_cover": None,
+                **results[Path(item.path).name],
+            })
+            series = store.catalog()["series"]
+            self.assertEqual(len(series), 1, [(item["title"], item["year"]) for item in series])
+            self.assertEqual(sorted(issue["number"] for issue in series[0]["issues"]), ["1", "2"])
+            self.assertNotIn("1972", [item["year"] for item in series])
+
+        # A lookup that agrees with the file is kept, for the provider ids it carries.
+        from catalog_store import _trusted_recommendation
+        agreeing = {"title": "Department of Truth", "issue": "4"}
+        self.assertEqual(_trusted_recommendation(
+            {"recommendation": agreeing, "embedded_metadata": {"series": "The Department of Truth"}}),
+            agreeing)
+        self.assertEqual(_trusted_recommendation(
+            {"recommendation": {"title": "Supergirl"}, "embedded_metadata": {"series": "Supergirl: Woman of Tomorrow"}}),
+            {})
+        self.assertEqual(_trusted_recommendation(
+            {"recommendation": {"title": "Supergirl"}, "embedded_metadata": {"series": "Supergirl: Woman of Tomorrow"}},
+            {"title": "Supergirl"}),
+            {"title": "Supergirl"}, "a manual correction is never second-guessed")
+
     def test_library_roots_reject_overlapping_folders(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "comics"
