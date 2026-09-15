@@ -2535,6 +2535,16 @@ class FilenameParserTests(unittest.TestCase):
             # No spread: a page a third of the way in.
             self.assertEqual(automatic_backdrop_page(portrait), "05.png")
 
+            # A scan group's credit image sorts last and is often wide; it is
+            # not the comic, so it is never the background.
+            credited = Path(folder) / "credited.cbz"
+            with zipfile.ZipFile(credited, "w") as archive:
+                for page in range(12):
+                    archive.writestr(f"American Vampire 001-{page:03d}.jpg", png(60, 90))
+                archive.writestr("zKizz.jpg", png(160, 120))
+                archive.writestr("z_GD-Pmack.jpg", png(160, 120))
+            self.assertEqual(automatic_backdrop_page(credited), "American Vampire 001-005.jpg")
+
     def test_flags_empty_corrupt_and_pageless_cbz_archives(self):
         with tempfile.TemporaryDirectory() as folder:
             empty = Path(folder) / "empty.cbz"

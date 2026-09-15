@@ -7663,6 +7663,24 @@ def _page_is_spread(image: bytes) -> bool:
     return bool(height) and width > height * 1.15
 
 
+_SCANNER_CREDIT_PAGE = re.compile(
+    r"(?:^|[_. -])(?:scan(?:ned|ner|s)?|tag|credits?|zzz+)(?:[_. -]|$)", re.I
+)
+
+
+def _is_scanner_credit(member: str) -> bool:
+    """A scan group's credit image rather than a page of the comic.
+
+    Groups name it to sort after the last page -- "zKizz.jpg", "z_GD-Pmack.jpg"
+    -- and it is often wide, so without this it is the "spread" a run's header
+    ends up showing.
+    """
+    stem = Path(member).stem
+    return (stem[:1].casefold() == "z" and not re.search(r"\d", stem)) or bool(
+        _SCANNER_CREDIT_PAGE.search(stem)
+    )
+
+
 def automatic_backdrop_page(path: Path) -> str | None:
     """The page an issue lends the drawer's header when nobody has chosen one.
 
@@ -7671,7 +7689,7 @@ def automatic_backdrop_page(path: Path) -> str | None:
     credits and the opening splash. The cover is only used when it is all
     there is -- the drawer already shows it beside the title.
     """
-    pages = archive_page_members(path)
+    pages = [member for member in archive_page_members(path) if not _is_scanner_credit(member)]
     if len(pages) < 2:
         return pages[0] if pages else None
     interior = pages[1:]
