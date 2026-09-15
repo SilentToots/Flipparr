@@ -2085,6 +2085,73 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-sheet-done { width: 100%; min-height: 48px; margin-top: 16px; border: 0; border-radius: var(--radius); background: var(--violet); color: var(--color-neutral-0); font-size: var(--text-base); font-weight: 700; cursor: pointer; }
 .library-sheet :is(.library-sheet-close, .library-sheet-segments button, .library-sheet-options button, .library-sheet-done):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
+/* ---------------------------------------------------------------------------
+   Consistency and tap-target pass (2026-09-15)
+   --------------------------------------------------------------------------- */
+/* Form selects drew as the browser's own grey box -- 21px tall on a desktop and
+   24 on a phone -- under 44px text fields in the same form. They take the
+   field's look and the settings switcher's chevron. :not([multiple]) lifts the
+   rule over the per-form select rules, whose background shorthand would
+   otherwise drop the chevron and leave no arrow at all. */
+.form-field select:not([multiple]) { width: 100%; min-height: 44px; padding: 0 40px 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23b8c0cc' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 12px center / 16px 16px; color: var(--text); -webkit-appearance: none; appearance: none; cursor: pointer; }
+.form-field select:not([multiple]):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* The scan toggle drew its own top rule inside a section that already has one. */
+.settings-auto-scan .toggle-row { border-top: 0; }
+/* A long file name widened the issue select past the page picker's edge. */
+.backdrop-workbench-tools select { width: 100%; min-width: 0; }
+
+@media (max-width: 640px) {
+  /* Pull List's two actions wrapped their labels onto two lines inside 44px
+     buttons, under a header held 100px tall for a title it no longer shows. */
+  .page-header { min-height: 0; padding-top: 12px; }
+  .page-actions { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .page-actions > button { flex: 1 1 auto; justify-content: center; white-space: nowrap; }
+
+  /* Discover: Pull Run and the run drawer's actions were 30px, its mode
+     choice 36, and the clear button a bare 20px icon. */
+  .pull-button-md, .new-run-skeleton .new-run-action i { min-height: 44px; }
+  .pull-mode button { min-height: 44px; }
+  .discover-search input { padding-block: 14px; margin-block: -10px; }
+  .discover-issue-list > header button { min-height: 44px; padding-inline: 8px; }
+  .discover-text-button { display: inline-block; padding-block: 10px; margin-block: -10px; }
+  .discover-search-clear { position: relative; }
+  .discover-search-clear::after { content: ""; position: absolute; inset: -12px; }
+  .library-search-flyout-bar .discover-search-clear::after { inset: -6px; }
+  /* Shelf arrows keep the file's 24px circle; a wider gap lets each hit area
+     reach 44 without meeting its neighbour's. */
+  .shelf-scroll { gap: 20px; }
+  .shelf-scroll button::after { inset: -10px; }
+
+  /* Comic drawer. */
+  .comic-drawer-follow .follow-switch, .comic-drawer-link, .comic-drawer-more { min-height: 44px; }
+  .issue-tile-edit { top: 4px; right: 4px; width: 36px; height: 36px; }
+  .issue-tile-edit::after { content: ""; position: absolute; inset: -4px; }
+  .file-actions-menu > summary { min-height: 44px; padding: 0 12px; font-size: var(--text-sm); }
+  .file-actions-menu > div button { min-height: 44px; }
+  .advanced-card button { min-height: 44px; }
+  .issue-catalog-card summary { line-height: 44px; }
+  /* Refresh details matched no other button: regular weight in violet. */
+  .issue-catalog-card button { font-size: var(--control-font-sm); font-weight: 650; }
+  .alias-form input { height: 44px; }
+  .alias-form button { min-height: 44px; }
+  .backdrop-workbench-tools label { flex-basis: 100%; min-width: 0; }
+  .backdrop-workbench-tools select { min-height: 44px; }
+  .backdrop-workbench-tools .secondary-button { width: 100%; justify-content: center; }
+
+  /* Settings: Manage folders and Scan library stacked at two different widths;
+     the provider rows' Manage was the only regular-weight button. */
+  .settings-library-actions { flex-direction: column; align-items: stretch; width: 100%; }
+  .settings-library-folders .settings-library-actions > button { width: 100%; justify-content: center; }
+  .provider-row button { font-weight: 650; }
+
+  /* Text under 12px that people read to decide something. The tab labels were
+     the file's 8px; 10 still fits four tabs across 375. */
+  .sidebar .nav-item { font-size: var(--text-3xs); }
+  /* The 8px label's line box, so the bar keeps the file's height. */
+  .sidebar .nav-item > span { line-height: 10px; }
+  .drawer-facts span, .issue-tile-title, .drawer-cover-hint { font-size: var(--text-xs); }
+}
+
 /* Drawer transition. The panel slides from the edge it is anchored to rather
    than appearing instantly. Durations come from the motion tokens, so a
    reduced-motion preference collapses them to 1ms and the drawer simply

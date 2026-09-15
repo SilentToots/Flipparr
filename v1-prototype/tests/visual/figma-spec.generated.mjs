@@ -1003,7 +1003,6 @@ export const spec = [
     "sel": ".sidebar .nav-item.active > span",
     "node": "69:815",
     "props": {
-      "fontSize": "8px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600",
       "whiteSpace": "nowrap"
@@ -1033,7 +1032,6 @@ export const spec = [
     "sel": ".sidebar [data-nav=\"discover\"] > span",
     "node": "69:820",
     "props": {
-      "fontSize": "8px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600",
       "whiteSpace": "nowrap"
@@ -1063,7 +1061,6 @@ export const spec = [
     "sel": ".sidebar [data-nav=\"requests\"] > span",
     "node": "69:823",
     "props": {
-      "fontSize": "8px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600",
       "whiteSpace": "nowrap"
@@ -1093,7 +1090,6 @@ export const spec = [
     "sel": ".sidebar [data-nav=\"settings\"] > span",
     "node": "69:826",
     "props": {
-      "fontSize": "8px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600",
       "whiteSpace": "nowrap"
