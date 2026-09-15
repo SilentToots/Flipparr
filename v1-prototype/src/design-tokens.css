@@ -142,9 +142,10 @@
 
   /* The text step below --muted, for secondary copy in about 67 places. */
   --muted-weak: var(--color-neutral-450);
-  /* The design's own label colour, for the page title and the toolbar
-     controls it specifies at #71717a. Named apart from --muted-weak because
-     it is deliberately the value that does not clear AA at 14px. */
+  /* The design's #71717a, for what it draws in that grey that is not text:
+     toolbar icons, dividers, the progress track. It does not clear AA as
+     text (4.35:1 on the page at 14px bold), so the toolbar's labels use
+     --muted-weak instead (4.95:1). */
   --chrome-label: var(--color-neutral-500);
   /* Behind a progress bar or a meter -- the one surface that sits below the
      card it is drawn on rather than above it. */

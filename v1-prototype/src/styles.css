@@ -106,7 +106,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    of the field and the results start higher. */
 .discover-hero { background: var(--color-neutral-950); border: 2px solid var(--color-violet-700); border-radius: 8px; padding: 80px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
 .discover-hero.searching { padding: 12px 80px; }
-.discover-hero h2 { margin: 0; width: 100%; font-size: 20px; font-weight: 600; line-height: normal; color: var(--color-neutral-0); text-align: center; }
+.discover-hero h2 { margin: 0; width: 100%; font-size: var(--text-xl); font-weight: 600; line-height: normal; color: var(--color-neutral-0); text-align: center; }
 .discover-search { width: 600px; max-width: 100%; display: flex; align-items: center; gap: 4px; padding: 8px 12px 8px 8px; border: 1px solid var(--color-neutral-500); border-radius: 100px; background: var(--color-black); }
 .discover-hero.searching .discover-search { background: var(--color-neutral-500); }
 .discover-search > svg { flex: none; margin: 4px; }
@@ -151,10 +151,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .pull-card-body { padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 /* Two lines, then ellipsis -- a fixed box, so a long title cannot push the
    button below the row and leave the shelf ragged. */
-.pull-card h3 { margin: 0; height: 32px; font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-neutral-0); text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pull-card h3 { margin: 0; height: 32px; font-size: var(--text-xs); font-weight: 500; line-height: 16px; color: var(--color-neutral-0); text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .pull-card-action { padding: 8px 0; }
 
-.pull-button { width: 100%; padding: 4px 8px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--pull-border); border-radius: var(--radius-sm); background: var(--pull-bg); box-shadow: inset 0 2px 0 0 rgb(255 255 255 / .15); color: var(--color-neutral-0); font-size: 12px; font-weight: 500; line-height: 16px; white-space: nowrap; cursor: pointer; }
+.pull-button { width: 100%; padding: 4px 8px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--pull-border); border-radius: var(--radius-sm); background: var(--pull-bg); box-shadow: inset 0 2px 0 0 rgb(255 255 255 / .15); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: 500; line-height: 16px; white-space: nowrap; cursor: pointer; }
 .pull-button-md { font-size: var(--text-md); line-height: 20px; }
 .pull-button:disabled { cursor: default; }
 .pull-button-pending { opacity: .75; }
@@ -275,22 +275,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-match { width: 120px; padding: 0; border: 0; background: transparent; text-align: center; cursor: pointer; display: flex; flex-direction: column; }
 .library-match-art { position: relative; display: block; }
 .library-match .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: 4px; }
-.library-match-art b { position: absolute; right: 4px; bottom: 4px; padding: 3px 8px; border-radius: 100px; background: var(--color-neutral-950); color: var(--color-neutral-0); font-size: 10px; font-weight: 700; }
-.library-match h3 { margin: 8px 0 0; height: 32px; font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-neutral-0); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.library-match-art b { position: absolute; right: 4px; bottom: 4px; padding: 3px 8px; border-radius: 100px; background: var(--color-neutral-950); color: var(--color-neutral-0); font-size: var(--text-3xs); font-weight: 700; }
+.library-match h3 { margin: 8px 0 0; height: 32px; font-size: var(--text-xs); font-weight: 500; line-height: 16px; color: var(--color-neutral-0); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 .new-run-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; }
 .new-run-card { display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; border: 1px solid var(--color-neutral-800); border-radius: 8px; background: var(--color-neutral-950); overflow: hidden; }
 .new-run-card .new-run-art { width: 100%; aspect-ratio: 240 / 336; }
 .new-run-copy { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
 .new-run-copy h3 { margin: 0; font-size: var(--text-md); font-weight: 700; color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.new-run-copy p { margin: 0; font-size: 12px; font-weight: 400; color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-run-copy p { margin: 0; font-size: var(--text-xs); font-weight: 400; color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-run-status { padding: 0 12px; min-height: 18px; }
 .new-run-card hr { width: 100%; height: 0; margin: 0; border: 0; border-top: 1px solid var(--color-neutral-800); }
 .new-run-action { padding: 0 12px; }
 
 /* The design's own status chip, smaller and more translucent than the one on a
    series card. */
-.run-status { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; white-space: nowrap; color: rgb(255 255 255 / .8); }
+.run-status { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px; border-radius: 100px; font-size: var(--text-3xs); font-weight: 700; white-space: nowrap; color: rgb(255 255 255 / .8); }
 .run-status.active { background: rgb(109 40 217 / .4); }
 .run-status.complete { background: rgb(113 113 122 / .4); }
 
@@ -400,7 +400,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .metadata-setup-copy .metadata-provider-help { margin-top: 4px; color: var(--amber); }
 .metadata-pause-detail { margin: 7px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.4; }
 .metadata-setup-copy details { margin-top: 2px; width: fit-content; max-width: 100%; }
-.metadata-setup-copy summary { color: var(--color-violet-400); cursor: pointer; font-size: var(--text-sm); list-style-position: inside; }
+.metadata-setup-copy summary { min-height: 24px; display: inline-flex; align-items: center; color: var(--color-violet-400); cursor: pointer; font-size: var(--text-sm); list-style-position: inside; }
 .metadata-progress-details { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 .metadata-progress-details span { padding: 5px 8px; border: 1px solid rgba(159,141,240,.22); border-radius: 6px; color: var(--muted); background: rgba(7,11,18,.3); font-size: var(--text-sm); }
 .metadata-progress-details b { margin-right: 3px; color: var(--text); font-size: inherit; }
@@ -452,7 +452,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sort-field { position: relative; display: flex; align-items: center; }
 /* The file's 200px control: label hard left, chevron hard right, 8px of
    padding holding both. */
-.sort-trigger { width: 200px; height: 38px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: transparent; color: var(--chrome-label); font-size: var(--text-md); font-weight: 700; white-space: nowrap; cursor: pointer; }
+.sort-trigger { width: 200px; height: 38px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: transparent; color: var(--muted-weak); font-size: var(--text-md); font-weight: 700; white-space: nowrap; cursor: pointer; }
 @media (hover: hover) { .sort-trigger:not(:disabled):hover { color: var(--muted-strong); } }
 /* Below the trigger, not over it -- which is the one thing a native select on
    this platform will not do. */
@@ -464,7 +464,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (hover: hover) { .sort-menu button:not(:disabled):hover { background: var(--surface-soft); color: var(--text); } }
 .sort-menu button.selected { background: var(--nav-active-bg); color: var(--text); }
 .sort-field { margin-left: auto; }
-.filter-button { height: 38px; min-height: 38px; gap: 4px; padding: 4px 8px; white-space: nowrap; font-size: var(--text-md); font-weight: 700; color: var(--chrome-label); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.filter-button { height: 38px; min-height: 38px; gap: 4px; padding: 4px 8px; white-space: nowrap; font-size: var(--text-md); font-weight: 700; color: var(--muted-weak); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius); }
 .filter-button.active { border-color: var(--violet); background: var(--nav-active-bg); color: var(--text); }
 .library-tools { gap: 8px; }
 
@@ -490,7 +490,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .publication-status svg, .monitoring-status svg { flex: none; }
 .publication-status.ongoing { background: var(--badge-violet-bg); }
 .publication-status.completed { background: var(--badge-muted-bg); }
-.monitoring-status { background: var(--badge-green-bg); }
+/* White at 80% on this green measured 3.81:1; solid white is 5.02:1. */
+.monitoring-status { background: var(--badge-green-bg); color: var(--color-neutral-0); }
 .ownership { display: grid; gap: 6px; width: min(150px, 100%); color: var(--green); }
 .ownership.partial { color: var(--amber); }
 .ownership.unknown { color: var(--amber); }
@@ -1551,7 +1552,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .review-actions { flex-wrap: wrap; }
   .request-row { grid-template-columns: 54px 1fr auto; }
   .request-row :is(.status-badge, .status-chip) { grid-column: 2; width: fit-content; }
-  .request-row .request-expand { grid-column: 3; grid-row: 1 / span 2; }
+  .request-row .request-expand { grid-column: 3; grid-row: 1 / span 2; min-width: 44px; min-height: 44px; justify-content: center; }
   .request-expand span { display: none; }
   .request-job-panel { margin-left: 0; }
   .request-job { grid-template-columns: 38px minmax(0, 1fr) auto; padding-inline: 11px; }
@@ -1758,7 +1759,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      which is fine to click and awkward to tap. Raised where it does not disturb
      the layout, rather than blanket-applied. */
   .metadata-setup-action { min-height: 44px; padding: 0 14px; }
-  .metadata-setup-copy summary { min-height: 44px; display: inline-flex; align-items: center; }
+  .metadata-setup-copy summary { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; }
   .metadata-setup-copy > button { min-height: 44px; }
   .search-field { min-height: 48px; }
   .search-field input { min-height: 44px; }
@@ -1891,6 +1892,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sidebar .nav-item.active > svg { width: 20px; height: 20px; }
   /* The confirmation toast sat at 24px from the bottom, under the tab bar. */
   .toast { right: 12px; left: 12px; bottom: calc(var(--mobile-nav-height) + 8px + env(safe-area-inset-bottom)); }
+  /* Tap targets from the accessibility pass. Each keeps the file's drawn size
+     and adds an invisible area around it, reaching 44px where the space
+     allows and never overlapping a neighbour's. */
+  .library-tools .view-toggle button:first-child::after { inset: -8px -4px -8px -8px; }
+  .library-tools .view-toggle button:last-child::after { inset: -8px -8px -8px -4px; }
+  .library-tools .sort-trigger { position: relative; }
+  .library-tools .sort-trigger::after { content: ""; position: absolute; inset: -4px 0; }
+  .sort-menu button { min-height: 44px; }
+  .shelf-scroll button { position: relative; }
+  .shelf-scroll button::after { content: ""; position: absolute; inset: -10px -6px; }
+  .discover-search input { padding-block: 12px; margin-block: -8px; }
+  .pull-card .pull-button { position: relative; }
+  .pull-card .pull-button::after { content: ""; position: absolute; inset: -9px 0; }
 }
 
 /* Drawer transition. The panel slides from the edge it is anchored to rather

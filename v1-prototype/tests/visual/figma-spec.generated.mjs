@@ -277,7 +277,6 @@ export const spec = [
     "node": "1:368",
     "props": {
       "fontSize": "14px",
-      "color": "rgb(113, 113, 122)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
@@ -921,7 +920,6 @@ export const spec = [
     "props": {
       "columnGap": "4px",
       "fontSize": "14px",
-      "color": "rgb(113, 113, 122)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
@@ -1037,7 +1035,6 @@ export const spec = [
     "node": "I69:928;69:892",
     "props": {
       "fontSize": "8px",
-      "color": "rgba(255, 255, 255, 0.8)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
