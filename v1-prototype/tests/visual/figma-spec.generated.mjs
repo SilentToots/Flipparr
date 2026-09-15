@@ -7,7 +7,7 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 365 nodes
-// accounted for, 111 style assertions, 26 frame assertions, 30 icons.
+// accounted for, 99 style assertions, 17 frame assertions, 27 icons.
 
 export const spec = [
   {
@@ -785,66 +785,11 @@ export const spec = [
     "route": "/discover?q=Batman"
   },
   {
-    "sel": ".mobile-library-counts",
-    "node": "70:1008",
-    "props": {
-      "backgroundColor": "rgb(126, 34, 206)",
-      "paddingRight": "4px",
-      "paddingLeft": "4px",
-      "paddingBottom": "2px",
-      "paddingTop": "2px",
-      "fontWeight": "400"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".mobile-library-counts > span:first-of-type",
-    "node": "70:1009",
-    "props": {
-      "color": "rgb(255, 255, 255)"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".mobile-library-counts > i",
-    "node": "70:1010",
-    "props": {
-      "fontSize": "12px",
-      "color": "rgb(113, 113, 122)",
-      "whiteSpace": "nowrap"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".mobile-library-counts > span:last-of-type",
-    "node": "70:1011",
-    "props": {
-      "color": "rgb(255, 255, 255)"
-    },
-    "route": "/library @375"
-  },
-  {
     "sel": ".main-content-flush",
     "node": "69:807",
     "props": {
       "paddingRight": "12px",
       "paddingLeft": "12px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".main-content-flush .dashboard-header",
-    "node": "69:953",
-    "props": {
-      "rowGap": "4px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".library-phone-header",
-    "node": "69:808",
-    "props": {
-      "columnGap": "8px"
     },
     "route": "/library @375"
   },
@@ -855,73 +800,6 @@ export const spec = [
       "fontSize": "20px",
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".dashboard-header > .library-tools",
-    "node": "69:848",
-    "props": {
-      "borderBottomWidth": "2px",
-      "borderBottomColor": "rgb(9, 9, 11)",
-      "paddingBottom": "12px",
-      "paddingTop": "12px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".library-tools .view-toggle",
-    "node": "69:851",
-    "props": {
-      "borderTopWidth": "1px",
-      "borderTopColor": "rgb(63, 63, 70)",
-      "borderRadius": "8px",
-      "padding": "4px",
-      "columnGap": "8px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".library-tools .view-toggle button.active",
-    "node": "69:852",
-    "props": {
-      "backgroundColor": "rgb(126, 34, 206)",
-      "borderRadius": "4px",
-      "padding": "4px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".library-tools .view-toggle button:not(.active)",
-    "node": "69:855",
-    "props": {
-      "borderRadius": "4px",
-      "padding": "4px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".library-tools .sort-trigger",
-    "node": "69:858",
-    "props": {
-      "borderTopWidth": "1px",
-      "borderTopColor": "rgb(63, 63, 70)",
-      "borderRadius": "8px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "4px",
-      "paddingTop": "4px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".library-tools .sort-trigger",
-    "node": "69:859",
-    "props": {
-      "columnGap": "4px",
-      "fontSize": "14px",
-      "fontWeight": "700",
-      "whiteSpace": "nowrap"
     },
     "route": "/library @375"
   },
@@ -1309,80 +1187,10 @@ export const frames = [
     "y": 80
   },
   {
-    "sel": ".mobile-library-counts",
-    "node": "70:1008",
-    "route": "/library @375",
-    "w": 375,
-    "h": 19,
-    "x": 0,
-    "within": null,
-    "y": 0
-  },
-  {
-    "sel": ".library-phone-header",
-    "node": "69:808",
-    "route": "/library @375",
-    "h": 24,
-    "y": 31,
-    "within": null
-  },
-  {
-    "sel": ".library-phone-search",
-    "node": "69:841",
-    "route": "/library @375",
-    "w": 24,
-    "h": 24
-  },
-  {
-    "sel": ".library-phone-header .appbar-bell",
-    "node": "69:809",
-    "route": "/library @375",
-    "w": 24,
-    "h": 24
-  },
-  {
-    "sel": ".dashboard-header > .library-tools",
-    "node": "69:848",
-    "route": "/library @375",
-    "h": 64,
-    "y": 59,
-    "within": null
-  },
-  {
-    "sel": ".library-tools .view-toggle",
-    "node": "69:851",
-    "route": "/library @375",
-    "w": 74,
-    "h": 38
-  },
-  {
-    "sel": ".library-tools .view-toggle button.active",
-    "node": "69:852",
-    "route": "/library @375",
-    "w": 28,
-    "h": 28
-  },
-  {
-    "sel": ".library-tools .view-toggle button:not(.active)",
-    "node": "69:855",
-    "route": "/library @375",
-    "w": 28,
-    "h": 28
-  },
-  {
-    "sel": ".library-tools .sort-trigger",
-    "node": "69:858",
-    "route": "/library @375",
-    "w": 200,
-    "h": 38
-  },
-  {
     "sel": ".series-grid",
     "node": "69:952",
     "route": "/library @375",
-    "w": 351,
-    "y": 135,
-    "within": null
+    "w": 351
   },
   {
     "sel": ".series-card",
@@ -1603,27 +1411,6 @@ export const icons = [
     "name": "heroicons-outline/bell",
     "size": 24,
     "where": ".library-phone-header .appbar-bell svg",
-    "route": "/library @375"
-  },
-  {
-    "node": "69:854",
-    "name": "heroicons-mini/squares-2x2",
-    "size": 20,
-    "where": ".library-tools .view-toggle button.active svg",
-    "route": "/library @375"
-  },
-  {
-    "node": "69:856",
-    "name": "heroicons-solid/list-bullet",
-    "size": 20,
-    "where": ".library-tools .view-toggle button:not(.active) svg",
-    "route": "/library @375"
-  },
-  {
-    "node": "69:862",
-    "name": "heroicons-mini/chevron-down",
-    "size": 20,
-    "where": ".library-tools .sort-trigger svg",
     "route": "/library @375"
   },
   {

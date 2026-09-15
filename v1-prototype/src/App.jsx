@@ -45,7 +45,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import {
-  MenuIcon, SearchIcon, MobileSearchIcon, NotificationsIcon,
+  MenuIcon, SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
   GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
@@ -1091,11 +1091,50 @@ const SORT_OPTIONS = [
   { value: "attention", label: "Sort: Needs attention" },
 ];
 
-function SortMenu({ value, onChange, filters = null }) {
+// Everything the phone's toolbar used to hold, in one sheet from the bottom of
+// the screen: grid or list, the sort, the Following filter, and Runs or
+// Collections when collected editions are on. Changes apply as they are made;
+// Done, the backdrop and Escape all close it.
+function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowingOnly, editionsOn, scope, onScope, onClose }) {
+  const dialogRef = useDialog(onClose);
+  return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
+    <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
+      <header>
+        <h2 id="library-sheet-title">View &amp; sort</h2>
+        <button type="button" className="library-sheet-close" onClick={onClose} aria-label="Close"><X size={20} /></button>
+      </header>
+      {editionsOn ? <fieldset>
+        <legend>Show</legend>
+        <div className="library-sheet-segments">
+          {[["runs", "Runs"], ["collections", "Collections"]].map(([id, label]) => <button type="button" aria-pressed={scope === id} onClick={() => onScope(id)} key={id}>{label}</button>)}
+        </div>
+      </fieldset> : null}
+      {scope === "runs" ? <fieldset>
+        <legend>View</legend>
+        <div className="library-sheet-segments">
+          <button type="button" aria-pressed={view === "grid"} onClick={() => onView("grid")}><GridViewIcon /> Grid</button>
+          <button type="button" aria-pressed={view === "list"} onClick={() => onView("list")}><ListViewIcon /> List</button>
+        </div>
+      </fieldset> : null}
+      <fieldset>
+        <legend>Sort by</legend>
+        <div className="library-sheet-options" role="radiogroup" aria-label="Sort by">
+          {SORT_OPTIONS.map((option) => <button type="button" role="radio" aria-checked={option.value === sort} onClick={() => onSort(option.value)} key={option.value}>
+            {option.label.replace(/^Sort:\s*/, "")}
+            {option.value === sort ? <CheckCircle size={20} weight="fill" aria-hidden="true" /> : null}
+          </button>)}
+        </div>
+      </fieldset>
+      {scope === "runs" ? <FollowSwitch following={followingOnly} label="Following only" onChange={onFollowingOnly} /> : null}
+      <button type="button" className="library-sheet-done" onClick={onClose}>Done</button>
+    </section>
+  </div>;
+}
+
+function SortMenu({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const current = SORT_OPTIONS.find((option) => option.value === value) || SORT_OPTIONS[0];
-  const filtered = Boolean(filters?.followingOnly && filters.scope === "runs");
   useEffect(() => {
     if (!open) return undefined;
     function onPointerDown(event) {
@@ -1129,8 +1168,8 @@ function SortMenu({ value, onChange, filters = null }) {
   }
   return <div className="sort-field" ref={rootRef}>
     <button
-      type="button" className={`sort-trigger${filtered ? " filtered" : ""}`} aria-haspopup="listbox" aria-expanded={open}
-      aria-label={`Sort by. ${current.label}${filtered ? ". Showing followed runs only" : ""}`} onClick={() => setOpen((value) => !value)}
+      type="button" className="sort-trigger" aria-haspopup="listbox" aria-expanded={open}
+      aria-label={`Sort by. ${current.label}`} onClick={() => setOpen((value) => !value)}
     >{current.label}<ChevronDown /></button>
     {open ? <div className="sort-menu">
       <ul className="sort-menu-options" role="listbox" aria-label="Sort by" onKeyDown={onListKeyDown}>
@@ -1144,16 +1183,6 @@ function SortMenu({ value, onChange, filters = null }) {
           </li>
         ))}
       </ul>
-      {/* A phone has no room beside Sort for the Following filter or the
-          Runs/Collections switch, so they live here. Hidden above 640px, where
-          the toolbar shows both. The menu stays open so the change is seen. */}
-      {filters ? <div className="sort-menu-filters" role="group" aria-label="Show">
-        {filters.scope === "runs" ? <button type="button" aria-pressed={filters.followingOnly} onClick={() => filters.onFollowingOnly(!filters.followingOnly)}>Following only</button> : null}
-        {filters.editionsOn ? <>
-          <button type="button" aria-pressed={filters.scope === "runs"} onClick={() => filters.onScope("runs")}>Runs</button>
-          <button type="button" aria-pressed={filters.scope === "collections"} onClick={() => filters.onScope("collections")}>Collections</button>
-        </> : null}
-      </div> : null}
     </div> : null}
   </div>;
 }
@@ -1163,6 +1192,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   // A phone opens search from the magnifier in its header (node 69:837). The
   // field takes focus as it appears, and Escape puts it away again.
   const [searchOpen, setSearchOpen] = useState(false);
+  const [viewSheetOpen, setViewSheetOpen] = useState(false);
   const searchRef = useRef(null);
   const searchToggleRef = useRef(null);
   useEffect(() => {
@@ -1189,29 +1219,41 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const scopedSeries = editionsOn ? series : series.filter((item) => !item.isCollectionSeries);
   const filteredSeries = followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries;
   const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort), [filteredSeries, sort]);
+  // The View & sort button marks when the library isn't showing its default.
+  const viewCustomized = view !== "grid" || sort !== "title" || followingOnly || effectiveScope !== "runs";
   const sortedFamilies = useMemo(() => sortLibrary(families, sort), [families, sort]);
   return (
     <>
-      {/* The phone's Comics screen (node-id=69-744): the library's size, then
-          a title row with search and the bell. Hidden above 640px, where the
-          rail's foot and the app bar carry all three. */}
-      <div className="mobile-library-counts">
-        <span><strong>{catalog?.stats?.files ?? 0}</strong> Files</span>
-        <i aria-hidden="true">|</i>
-        <span><strong>{logicalSeriesCount ?? 0}</strong> Series</span>
-      </div>
       <div className="dashboard-header">
+      {/* The phone's whole top in one row: the title with the library's size
+          under it, then search, View & sort and the bell as 44px buttons.
+          Hidden above 640px, where the rail's foot, the app bar and the
+          toolbar carry the same things. */}
       <div className="library-phone-header">
-        <h1>Comics</h1>
+        <div className="library-phone-title">
+          <h1>Comics</h1>
+          <small><strong>{Number(catalog?.stats?.files ?? 0).toLocaleString()}</strong> files · <strong>{Number(logicalSeriesCount ?? 0).toLocaleString()}</strong> series</small>
+        </div>
         <button
-          type="button" ref={searchToggleRef} className="library-phone-search"
+          type="button" ref={searchToggleRef} className="library-phone-action library-phone-search"
           aria-label="Search" aria-expanded={searchOpen} aria-controls="library-phone-search"
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
         ><MobileSearchIcon /></button>
+        <button
+          type="button" className="library-phone-action library-phone-view"
+          aria-label={viewCustomized ? "View and sort, changed from the default" : "View and sort"}
+          aria-haspopup="dialog" aria-expanded={viewSheetOpen} onClick={() => setViewSheetOpen(true)}
+        ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button>
         <NotificationsBell notifications={notifications} onOpen={onOpenNotification} onDismiss={onDismissNotification} />
       </div>
+      {viewSheetOpen ? <LibraryViewSheet
+        view={view} onView={setView} sort={sort} onSort={setSort}
+        followingOnly={followingOnly} onFollowingOnly={setFollowingOnly}
+        editionsOn={editionsOn} scope={effectiveScope} onScope={setScope}
+        onClose={() => setViewSheetOpen(false)}
+      /> : null}
       <div className={`topbar${searchOpen ? " open" : ""}`} id="library-phone-search" ref={searchRef} onKeyDown={(event) => { if (event.key === "Escape" && searchOpen) closeSearch(); }}><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} filters={{ followingOnly, onFollowingOnly: setFollowingOnly, scope: effectiveScope, onScope: setScope, editionsOn }} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
       </div>
       <div className="dashboard-body">
       {initialLoading ? <LibraryLoadingSkeleton /> : null}

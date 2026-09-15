@@ -1756,7 +1756,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    sizes, the mobile card, and a floating tab bar. figma-check.mjs measures
    them at 375x812.
    --------------------------------------------------------------------------- */
-.mobile-library-counts, .library-phone-header, .sort-menu-filters { display: none; }
+.library-phone-header { display: none; }
 /* The desktop rail marks its item with its own fill and bar. */
 .nav-glass { display: none; }
 
@@ -1765,47 +1765,34 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      and the body used to stack 16, 20 and 32. The bottom clears the tab bar,
      which floats over the grid rather than ending it. */
   .main-content.main-content-flush { padding: 0 12px calc(20px + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
-  .main-content-flush .dashboard-header { padding: 0; border-bottom: 0; gap: 4px; }
-  .main-content-flush .dashboard-body { padding: 0; margin-top: 12px; }
+  .main-content-flush .dashboard-header { padding: 8px 0 0; border-bottom: 0; gap: 4px; }
+  .main-content-flush .dashboard-body { padding: 0; margin-top: 8px; }
 
-  /* 70:1008: the library's size, which the rail's foot carries on a desktop.
-     Its scan button stays there: on a phone, scanning is in Settings > Library
-     folders. */
-  .mobile-library-counts { position: sticky; top: 0; z-index: 6; margin: 0 -12px 12px; padding: 2px 4px; display: flex; align-items: center; justify-content: space-between; background: var(--appbar-bg); color: var(--color-neutral-0); font-weight: 400; }
-  .mobile-library-counts > span { flex: 1 0 0; min-width: 0; text-align: center; font-size: var(--text-3xs); line-height: 1.4; }
-  .mobile-library-counts strong { font-weight: 700; }
-  .mobile-library-counts > i { flex: none; color: var(--chrome-label); font-size: var(--text-xs); font-style: normal; line-height: normal; white-space: nowrap; }
-
-  /* 69:808: the title, search and the bell. Both icons are the 24px the file
-     draws; the ::after around each is a 44px target that does not move them. */
-  .library-phone-header { display: flex; align-items: center; gap: 8px; }
-  .library-phone-header h1 { flex: 1 0 0; min-width: 0; margin: 0; color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: 600; line-height: normal; }
-  .library-phone-search { position: relative; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; }
-  .library-phone-search[aria-expanded="true"] { color: var(--violet-text); }
-  .library-phone-search:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .library-phone-search::after, .library-phone-header .appbar-action::after { content: ""; position: absolute; inset: -10px; }
-  /* 69:809 is the bell at 60%. The unread dot is not in the file and stays at
-     full strength -- a faded dot would read as nothing waiting. */
+  /* One row for the whole top of the screen (chosen 2026-09-15, replacing the
+     file's count strip, 24px icon row and toolbar -- 69:744 needs updating to
+     match): the title with the library's size under it, then search, View &
+     sort and the bell as real 44px buttons, so no target is smaller than
+     Apple's minimum and none share a tap area. */
+  .library-phone-header { display: flex; align-items: center; gap: 2px; min-height: 44px; }
+  .library-phone-title { flex: 1 1 0; min-width: 0; display: grid; gap: 1px; }
+  .library-phone-header h1 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: 600; line-height: 1.15; }
+  .library-phone-title small { overflow: hidden; color: var(--muted-strong); font-size: var(--text-xs); line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+  .library-phone-title small strong { color: var(--color-neutral-0); font-weight: 700; }
+  .library-phone-action, .library-phone-header .appbar-bell { position: relative; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; transition: background var(--motion-duration-fast) ease; }
+  .library-phone-action:active, .library-phone-header .appbar-bell:active { background: rgb(255 255 255 / .14); }
+  @media (hover: hover) { .library-phone-action:hover, .library-phone-header .appbar-bell:hover { background: rgb(255 255 255 / .08); } }
+  .library-phone-action:focus-visible, .library-phone-header .appbar-bell:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  .library-phone-action[aria-expanded="true"] { background: rgb(255 255 255 / .14); color: var(--violet-text); }
+  .library-phone-header .appbar-action::after { display: none; }
   .library-phone-header .appbar-bell > svg { opacity: .6; }
-  .library-phone-header .appbar-badge { box-shadow: 0 0 0 2px var(--bg); }
+  .library-phone-header .appbar-badge { top: 9px; right: 9px; box-shadow: 0 0 0 2px var(--bg); }
+  .library-view-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--violet-text); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
   .library-phone-header .notifications-menu { width: calc(100vw - 24px); }
   /* The field the magnifier opens; the file shows the screen with it shut. */
   .main-content-flush .topbar:not(.open) { display: none; }
 
-  /* 69:848: the desktop's own controls at the desktop's own sizes, undoing the
-     phone rules above that stretch them to 44px. The Following filter and the
-     Runs/Collections switch are in the Sort menu. */
-  .dashboard-header > .library-tools { min-height: 0; padding: 12px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 0; border-bottom: 2px solid var(--surface); }
-  .library-tools > .scope-toggle, .library-tools > .filter-button { display: none; }
-  .library-tools .view-toggle { padding: 4px; }
-  .library-tools .view-toggle button { position: relative; min-width: 0; min-height: 0; font-size: inherit; }
-  .library-tools .view-toggle button::after { content: ""; position: absolute; inset: -8px -4px; }
-  .library-tools .view-toggle button.active { background: var(--violet); }
-  .library-tools .sort-field { margin-left: auto; }
-  /* Not in the file: a filtered library must not look like the whole one. */
-  .library-tools .sort-trigger.filtered { border-color: var(--violet); color: var(--text); }
-  .sort-menu-filters { display: grid; gap: 2px; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line-strong); }
-  .sort-menu-filters button[aria-pressed="true"] { background: var(--nav-active-bg); color: var(--text); }
+  /* View, sort and the filters are in the View & sort sheet on a phone. */
+  .dashboard-header > .library-tools { display: none; }
 
   /* 69:903: the card's mobile variant. */
   .series-card { gap: 8px; padding-bottom: 12px; }
@@ -1862,11 +1849,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Tap targets from the accessibility pass. Each keeps the file's drawn size
      and adds an invisible area around it, reaching 44px where the space
      allows and never overlapping a neighbour's. */
-  .library-tools .view-toggle button:first-child::after { inset: -8px -4px -8px -8px; }
-  .library-tools .view-toggle button:last-child::after { inset: -8px -8px -8px -4px; }
-  .library-tools .sort-trigger { position: relative; }
-  .library-tools .sort-trigger::after { content: ""; position: absolute; inset: -4px 0; }
-  .sort-menu button { min-height: 44px; }
   .shelf-scroll button { position: relative; }
   .shelf-scroll button::after { content: ""; position: absolute; inset: -10px -6px; }
   .discover-search input { padding-block: 12px; margin-block: -8px; }
@@ -2062,6 +2044,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .comic-drawer-card .discover-cover { width: 104px; height: 146px; }
   .comic-drawer-creators { margin: 0 -16px; padding: 20px 16px; }
 }
+
+/* The phone's View & sort sheet: from the bottom edge, above the tab bar, with
+   every row at least 44px. */
+.library-sheet-backdrop { place-items: end stretch; padding: 0; }
+.library-sheet { width: 100%; max-height: min(85dvh, 640px); box-sizing: border-box; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line-strong); border-bottom: 0; border-radius: 18px 18px 0 0; background: var(--surface-raised); box-shadow: 0 -18px 44px var(--scrim); animation: library-sheet-in var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
+@keyframes library-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.library-sheet > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.library-sheet h2 { margin: 0; color: var(--text); font-size: var(--text-lg); }
+.library-sheet-close { width: 44px; height: 44px; margin-right: -8px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--muted-strong); cursor: pointer; }
+.library-sheet fieldset { margin: 12px 0 0; padding: 0; border: 0; }
+.library-sheet legend { margin-bottom: 8px; padding: 0; color: var(--muted-strong); font-size: var(--text-sm); font-weight: 700; }
+.library-sheet-segments { display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; gap: 4px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.library-sheet-segments button { min-height: 44px; border: 0; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: var(--muted-strong); font-size: var(--text-md); font-weight: 700; cursor: pointer; }
+.library-sheet-segments button[aria-pressed="true"] { background: var(--violet); color: var(--color-neutral-0); }
+.library-sheet-options { display: grid; gap: 2px; }
+.library-sheet-options button { min-height: 48px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: space-between; background: transparent; color: var(--text); font-size: var(--text-base); text-align: left; cursor: pointer; }
+.library-sheet-options button[aria-checked="true"] { background: var(--nav-active-bg); font-weight: 700; }
+.library-sheet-options button svg { color: var(--violet-text); }
+.library-sheet .follow-switch { width: 100%; min-height: 48px; margin-top: 16px; box-sizing: border-box; padding: 0 12px; flex-direction: row-reverse; justify-content: space-between; border-color: var(--line); color: var(--text); font-size: var(--text-base); }
+.library-sheet-done { width: 100%; min-height: 48px; margin-top: 16px; border: 0; border-radius: var(--radius); background: var(--violet); color: var(--color-neutral-0); font-size: var(--text-base); font-weight: 700; cursor: pointer; }
+.library-sheet :is(.library-sheet-close, .library-sheet-segments button, .library-sheet-options button, .library-sheet-done):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* Drawer transition. The panel slides from the edge it is anchored to rather
    than appearing instantly. Durations come from the motion tokens, so a

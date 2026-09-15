@@ -17,7 +17,7 @@
 // which is what `size` sets here.
 import {
   BellIcon, Cog6ToothIcon, DocumentPlusIcon, WalletIcon,
-  ClipboardDocumentListIcon, CheckCircleIcon,
+  ClipboardDocumentListIcon, CheckCircleIcon, AdjustmentsHorizontalIcon,
 } from "@heroicons/react/24/outline";
 import {
   MagnifyingGlassIcon, ListBulletIcon, ArrowPathRoundedSquareIcon,
@@ -47,6 +47,8 @@ export const MenuIcon = sized(Bars3Icon, 20);            // heroicons-mini/bars-
 export const SearchIcon = sized(MagnifyingGlassIcon, 16); // heroicons-solid/magnifying-glass
 // The phone's Comics header draws the same magnifier at 20 (node 69:837).
 export const MobileSearchIcon = sized(MagnifyingGlassIcon, 20); // heroicons-solid/magnifying-glass
+// The phone's View & sort button, which replaced its toolbar.
+export const ViewOptionsIcon = sized(AdjustmentsHorizontalIcon, 24); // heroicons-outline/adjustments-horizontal
 export const NotificationsIcon = sized(BellIcon, 24);     // heroicons-outline/bell
 export const SettingsIcon = sized(Cog6ToothIcon, 24);     // heroicons-outline/cog-6-tooth
 
