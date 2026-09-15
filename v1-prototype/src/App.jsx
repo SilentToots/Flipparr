@@ -141,12 +141,6 @@ const DOWNLOAD_STATUS_LABELS = {
   failed: "Import needs attention",
 };
 
-const METADATA_PROVIDER_LABELS = {
-  gcd: "Grand Comics Database",
-  metron: "Metron",
-  comic_vine: "Comic Vine",
-};
-
 function editionKindLabel(kind) {
   return EDITION_KIND_LABELS[kind] || "Volume";
 }
@@ -525,7 +519,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
 // trap, and adds the outside-click that a menu needs and a modal gets from
 // its backdrop. It must be mounted and unmounted rather than hidden: the
 // hook's effect runs once, on mount.
-const NOTIFICATION_KINDS = { download: "Download", file: "Comic file", metadata: "Metadata", acquired: "Added" };
+const NOTIFICATION_KINDS = { download: "Download", source: "Metadata source", file: "Comic file", metadata: "Metadata", acquired: "Added" };
 
 function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
   const dialogRef = useDialog(onClose);
@@ -646,84 +640,6 @@ const LoadingSpinner = LoadingIndicator;
 function PageHeader({ title, children }) {
   if (!children) return null;
   return <header className="page-header" aria-label={title}><div className="page-actions">{children}</div></header>;
-}
-
-function MetadataSetupStatus({ enrichment, lastScanAt, onNavigate }) {
-  const active = (enrichment?.active ?? 0) > 0;
-  const completionSignature = enrichment?.total && !active
-    ? [lastScanAt || "initial", enrichment.total, enrichment.complete, enrichment.review, enrichment.failed].join(":")
-    : "";
-  const [dismissedSignature, setDismissedSignature] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem("sonicboom.metadata-check-dismissed") || "";
-  });
-
-  useEffect(() => {
-    if (!active) return;
-    window.localStorage.removeItem("sonicboom.metadata-check-dismissed");
-    setDismissedSignature("");
-  }, [active]);
-
-  useEffect(() => {
-    if (!completionSignature || enrichment?.review || enrichment?.failed || dismissedSignature === completionSignature) return undefined;
-    const timer = window.setTimeout(() => {
-      window.localStorage.setItem("sonicboom.metadata-check-dismissed", completionSignature);
-      setDismissedSignature(completionSignature);
-    }, 8000);
-    return () => window.clearTimeout(timer);
-  }, [completionSignature, dismissedSignature, enrichment?.failed, enrichment?.review]);
-
-  if (!enrichment?.total || (!active && dismissedSignature === completionSignature)) return null;
-  const processed = enrichment.complete + enrichment.review + enrichment.failed;
-  const percent = active
-    ? Math.min(99, Math.round((processed / enrichment.total) * 100))
-    : 100;
-  const remaining = Math.max(0, enrichment.total - processed);
-  const current = enrichment.nextJobs?.find((job) => job.status === "running");
-  const next = enrichment.nextJobs?.find((job) => ["queued", "waiting"].includes(job.status));
-  const cooldowns = enrichment.providerCooldowns || [];
-  const cooldown = cooldowns[0];
-  const paused = active && !current && enrichment.waiting > 0 && enrichment.allProvidersCooling === true;
-  const degraded = active && !paused && cooldowns.length > 0;
-  const providerName = METADATA_PROVIDER_LABELS[cooldown?.provider] || cooldown?.provider || "The metadata service";
-  const retryTime = cooldown?.nextRetryAt
-    ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(cooldown.nextRetryAt))
-    : null;
-  const availableProviderNames = (enrichment.availableProviders || []).map((provider) => METADATA_PROVIDER_LABELS[provider] || provider);
-  const workingLabel = current ? `Checking ${current.title}` : degraded ? `Continuing with ${availableProviderNames.join(" and ") || "other available sources"}` : enrichment.waiting && !enrichment.queued ? "Retrying unresolved series automatically" : next ? `${next.title} is next` : "Preparing the next series";
-  const heading = paused
-    ? "Adding comic details in the background"
-    : active && remaining === 1
-      ? "Finishing your comic details"
-      : active
-        ? "Building your comic details in the background"
-        : enrichment.review || enrichment.failed
-          ? "Initial metadata check finished"
-          : "Comic details are ready";
-  const detail = paused
-    ? `${processed} of ${enrichment.total} series · ${providerName} paused${retryTime ? ` until ${retryTime}` : ""}`
-    : active
-    ? `${processed} of ${enrichment.total} series checked · ${workingLabel}`
-    : enrichment.review || enrichment.failed
-      ? [
-          `${enrichment.complete} series identified automatically`,
-          enrichment.review ? `${enrichment.review} need a match review` : null,
-          enrichment.failed ? `${enrichment.failed} need another metadata source or manual match` : null,
-        ].filter(Boolean).join(" · ")
-      : `${enrichment.complete} series identified automatically`;
-  const providerNotices = cooldowns.map((item) => {
-    const name = METADATA_PROVIDER_LABELS[item.provider] || item.provider;
-    const authenticationError = /(?:401|unauthori[sz]ed|authentication|credentials?)/i.test(item.error || "");
-    const time = item.nextRetryAt ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(item.nextRetryAt)) : null;
-    return authenticationError
-      ? `${name} rejected its saved credentials. Reconnect it under Settings → Metadata services.`
-      : `${name} is temporarily paused${time ? ` until ${time}` : ""}.`;
-  });
-  const dismiss = () => {
-    window.localStorage.setItem("sonicboom.metadata-check-dismissed", completionSignature);
-    setDismissedSignature(completionSignature);
-  };
-  return <section className={`metadata-setup-status ${paused ? "paused" : active ? "active" : enrichment.review || enrichment.failed ? "review settled" : "complete settled"}`} aria-live="polite"><span className={`metadata-setup-icon${active && !paused ? " active-loader" : ""}`}>{paused ? <ClockCounterClockwise size={21} weight="fill" /> : active ? <LoadingSpinner size={25} /> : enrichment.review || enrichment.failed ? <MagnifyingGlass size={21} /> : <CheckCircle size={21} weight="fill" />}</span><div className="metadata-setup-copy"><strong>{heading}</strong><small>{detail}</small><div className="metadata-setup-actions">{(paused || degraded) && onNavigate ? <button type="button" className="metadata-setup-action" onClick={() => onNavigate("settings", "metadata")}><Plus size={14} /> Add a source to speed this up</button> : null}<details><summary>Details</summary><div className="metadata-progress-details"><span><b>{enrichment.complete}</b> Matched</span><span><b>{enrichment.queued + enrichment.running}</b> Waiting</span><span><b>{enrichment.waiting}</b> Retrying later</span><span><b>{enrichment.review}</b> Need review</span>{enrichment.failed ? <span><b>{enrichment.failed}</b> Could not finish</span> : null}</div>{providerNotices.map((notice) => <p className="metadata-pause-detail" key={notice}>{notice}</p>)}<p className="metadata-pause-detail">Your comics, covers and folders are already available — this only fills in titles, dates and publication status.</p>{paused ? <p className="metadata-pause-detail">Flipparr retries on its own. Metron and Comic Vine are separate catalogs, so adding one lets intake carry on instead of waiting.</p> : degraded ? <p className="metadata-pause-detail">One source needs attention; Flipparr is continuing with the others.</p> : null}</details></div></div>{active ? <div className="metadata-setup-meter"><b>{percent}%</b><div className="metadata-setup-progress" aria-label={`${percent}% of initial metadata jobs processed`}><i style={{ width: `${percent}%` }} /></div></div> : <button type="button" className="metadata-setup-dismiss" onClick={dismiss} aria-label="Dismiss metadata check summary" title="Dismiss"><X size={17} /></button>}</section>;
 }
 
 function Ownership({ series, compact = false }) {
@@ -1025,18 +941,6 @@ function scanCounts(scan) {
   return { total, processed, percent: total ? Math.min(99, Math.round((processed / total) * 100)) : 0 };
 }
 
-function LibraryScanNotice({ scan }) {
-  const { total, processed, percent } = scanCounts(scan);
-  return <div className={`scan-progress ${total ? "determinate" : ""}`} aria-live="polite">
-    <span>
-      <strong>{total ? `Reading comic ${Math.min(processed + 1, total)} of ${total}` : "Finding your comic files…"}</strong>
-      <small>{total ? `${processed} read · titles, cover art and file health` : "Counting files before the scan begins"}</small>
-    </span>
-    <b>{total ? `${percent}%` : "Starting"}</b>
-    <i style={total ? { width: `${percent}%` } : undefined} />
-  </div>;
-}
-
 function LibraryLoadingSkeleton({ scan = null }) {
   const { total, processed } = scanCounts(scan);
   return <div className="library-loading" role="status" aria-live="polite" aria-busy="true">
@@ -1236,9 +1140,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
-      {activeScan ? <LibraryScanNotice scan={activeScan} /> : null}
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
-      <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </div>
@@ -3480,6 +3382,10 @@ export function App() {
     if (item.view === "requests") {
       setRequestFocus({ ...item.focus });
       navigate("requests");
+      return;
+    }
+    if (item.view === "settings") {
+      navigate("settings", item.focus?.section);
       return;
     }
     reviewProblem(item.focus);

@@ -383,34 +383,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .collected-editions-notice { margin-bottom: 14px; border-radius: var(--radius-sm); min-height: 38px; padding: 10px 13px; font-size: var(--text-md); display: flex; align-items: center; gap: 9px; background: var(--amber-soft); color: var(--amber-text); }
 @keyframes scanning { from { transform: translateX(-20%); } to { transform: translateX(190%); } }
 
-.metadata-setup-status { margin-bottom: 14px; min-height: 66px; padding: 13px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); display: grid; grid-template-columns: auto 1fr minmax(120px, 22%); align-items: center; gap: 12px; }
-.metadata-setup-status.active { border-color: var(--violet-border); background: var(--violet-soft); }
-/* Paused is still progress, not a fault, so it keeps the calm active
-   treatment rather than the amber used for states needing attention. */
-.metadata-setup-status.paused { border-color: var(--violet-border); background: var(--violet-soft); }
-.metadata-setup-status.review { border-color: var(--amber-border); background: var(--surface-raised); }
-.metadata-setup-status.complete { border-color: var(--green-border); background: var(--surface-raised); }
-.metadata-setup-status.settled { min-height: 52px; padding: 9px 12px; grid-template-columns: auto minmax(0, 1fr) auto; }
-.metadata-setup-status.settled .metadata-setup-icon { width: 32px; height: 32px; }
-.metadata-setup-icon { width: 36px; height: 36px; border-radius: 50%; color: var(--violet-text); background: rgba(139,92,246,.14); display: grid; place-items: center; }
-.metadata-setup-icon.active-loader { width: 44px; height: 44px; border: 4px solid rgba(188,169,255,.25); background: rgba(139,92,246,.06); }
-.metadata-setup-copy { min-width: 0; display: grid; gap: 4px; }
-.metadata-setup-status strong { color: var(--text); font-size: var(--text-base); }
-.metadata-setup-status small { color: var(--muted); line-height: 1.35; }
-.metadata-setup-copy .metadata-provider-help { margin-top: 4px; color: var(--amber); }
-.metadata-pause-detail { margin: 7px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.4; }
-.metadata-setup-copy details { margin-top: 2px; width: fit-content; max-width: 100%; }
-.metadata-setup-copy summary { min-height: 24px; display: inline-flex; align-items: center; color: var(--color-violet-400); cursor: pointer; font-size: var(--text-sm); list-style-position: inside; }
-.metadata-progress-details { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-.metadata-progress-details span { padding: 5px 8px; border: 1px solid rgba(159,141,240,.22); border-radius: 6px; color: var(--muted); background: rgba(7,11,18,.3); font-size: var(--text-sm); }
-.metadata-progress-details b { margin-right: 3px; color: var(--text); font-size: inherit; }
-.metadata-setup-meter { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 9px; }
-.metadata-setup-meter > b { min-width: 34px; color: var(--violet-text); font-size: var(--text-md); text-align: right; }
-.metadata-setup-progress { height: 6px; overflow: hidden; border-radius: 999px; background: var(--surface-sunken); }
-.metadata-setup-progress i { display: block; height: 100%; border-radius: inherit; background: var(--violet); transition: width var(--motion-duration-standard) ease; }
-.metadata-setup-dismiss { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
-@media (hover: hover) { .metadata-setup-dismiss:not(:disabled):hover { background: rgba(255,255,255,.06); color: var(--text); } }
-.metadata-setup-dismiss:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .library-loading { display: grid; gap: 14px; }
 .library-loading-message { min-height: 70px; padding: 13px 16px; border: 1px solid var(--violet-border); border-radius: var(--radius-sm); background: var(--violet-soft); display: flex; align-items: center; gap: 12px; }
 .library-loading-icon { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; background: rgba(139,92,246,.14); color: var(--violet-text); display: grid; place-items: center; }
@@ -1503,8 +1475,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .settings-root-list small { grid-column: 2; }
   .discovery-results { width: calc(100vw - 32px); }
   .page-header { align-items: flex-start; flex-direction: column; padding-top: 26px; min-height: 100px; }
-  .metadata-setup-status { grid-template-columns: auto 1fr; }
-  .metadata-setup-meter { grid-column: 1 / -1; width: 100%; }
   .library-loading-tools { flex-wrap: wrap; }
   .library-loading-tools i:last-child { margin-left: 0; }
   .library-loading-table article { grid-template-columns: 58px minmax(0, 1fr); min-height: 102px; }
@@ -1721,12 +1691,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sign-out-button { margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; min-height: var(--control-height-md); border: 1px solid var(--line); border-radius: var(--radius-sm); background: transparent; color: var(--muted-strong); font-size: var(--text-md); cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
 @media (hover: hover) { .sign-out-button:not(:disabled):hover { background: var(--surface); color: var(--text); } }
 
-/* Action row under the intake status: offer the fix, do not describe the path. */
-.metadata-setup-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
-.metadata-setup-actions details { margin: 0; }
-.metadata-setup-action { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 10px; border: 1px solid var(--violet-border); border-radius: 999px; background: transparent; color: var(--violet-text); font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background var(--motion-duration-fast) ease; }
-@media (hover: hover) { .metadata-setup-action:not(:disabled):hover { background: var(--violet-soft); } }
-
 /* ---------------------------------------------------------------------------
    Mobile refinements
    --------------------------------------------------------------------------- */
@@ -1758,9 +1722,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Touch targets. Apple's guideline is 44px; several controls sat at 16-30px,
      which is fine to click and awkward to tap. Raised where it does not disturb
      the layout, rather than blanket-applied. */
-  .metadata-setup-action { min-height: 44px; padding: 0 14px; }
-  .metadata-setup-copy summary { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; }
-  .metadata-setup-copy > button { min-height: 44px; }
   .search-field { min-height: 48px; }
   .search-field input { min-height: 44px; }
   .search-field button, .search-field .ui-button { min-height: 44px; }
@@ -1769,9 +1730,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      already was, so the row does not grow. */
   .view-toggle, .scope-toggle { padding: 0; }
   .view-toggle button, .scope-toggle button { min-height: 44px; min-width: 44px; }
-  /* The banner's dismiss "x" was 30x30 -- the smallest control in the app, and
-     an icon-only one, which is the hardest kind to hit accurately. */
-  .metadata-setup-dismiss { width: 44px; height: 44px; }
   /* Library health's per-problem actions sat at 38px, its inbox pager at 43. */
   .file-problem-actions button { min-height: 44px; }
   .mobile-inbox-nav button { min-height: 44px; }

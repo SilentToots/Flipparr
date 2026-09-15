@@ -1380,7 +1380,9 @@ export const frames = [
     "sel": ".series-grid",
     "node": "69:952",
     "route": "/library @375",
-    "w": 351
+    "w": 351,
+    "y": 135,
+    "within": null
   },
   {
     "sel": ".series-card",

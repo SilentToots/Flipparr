@@ -187,3 +187,43 @@ test("the watermark round-trips and survives hostile storage", () => {
   assert.equal(readSeenUntil(hostile), null);
   assert.doesNotThrow(() => writeSeenUntil(hostile, SINCE));
 });
+
+test("a metadata source that rejected its login reaches the bell, and opens its settings", () => {
+  const catalog = {
+    enrichment: {
+      active: 4,
+      providerCooldowns: [
+        { provider: "metron", error: "HTTP 401 Unauthorized", nextRetryAt: "2026-09-15T18:00:00Z" },
+        { provider: "comic_vine", error: "HTTP 429 Too Many Requests", nextRetryAt: "2026-09-15T18:00:00Z" },
+      ],
+    },
+  };
+  const items = buildNotifications(catalog);
+  assert.equal(items.length, 1, "a rate limit retries on its own and is not announced");
+  assert.equal(items[0].id, "metadata-source:metron");
+  assert.equal(items[0].title, "Metron rejected its saved login");
+  assert.equal(items[0].view, "settings");
+  assert.deepEqual(items[0].focus, { section: "metadata" });
+});
+
+test("series left without a match are announced once checking has finished", () => {
+  const running = { enrichment: { active: 2, review: 1, failed: 1 } };
+  assert.deepEqual(buildNotifications(running), [], "a count that is still climbing is not announced");
+  const settled = { enrichment: { active: 0, review: 2, failed: 1 } };
+  const [item] = buildNotifications(settled);
+  assert.equal(item.id, "metadata-match:2:1");
+  assert.equal(item.kind, "metadata");
+  assert.equal(item.title, "3 series need a match");
+  assert.equal(item.detail, "2 to review · 1 found no match");
+  assert.equal(item.view, "metadata");
+  assert.deepEqual(buildNotifications({ enrichment: { active: 0, review: 0, failed: 0, complete: 34 } }), [], "all matched is not news");
+});
+
+test("a stopped metadata source sorts between a failed download and a damaged file", () => {
+  const catalog = {
+    requests: [{ id: 1, jobs: [failedJob(3)] }],
+    inbox: [{ id: "f", category: "file", severity: "error", issue: "Damaged", file: "b.cbz" }],
+    enrichment: { active: 0, review: 1, failed: 0, providerCooldowns: [{ provider: "gcd", error: "authentication failed" }] },
+  };
+  assert.deepEqual(buildNotifications(catalog).map((item) => item.kind), ["download", "source", "file", "metadata"]);
+});

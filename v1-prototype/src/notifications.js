@@ -92,16 +92,64 @@ function acquisitionNotifications(catalog, since) {
   });
 }
 
-// Failures first: a stopped download and a damaged file are both blocking, an
-// uncertain match is a judgement call that can wait, and news that something
-// arrived needs nothing at all.
-const RANK = { download: 0, file: 1, metadata: 2, acquired: 3 };
+export const METADATA_PROVIDER_LABELS = {
+  gcd: "Grand Comics Database",
+  metron: "Metron",
+  comic_vine: "Comic Vine",
+};
+
+const CREDENTIAL_ERROR = /(?:401|unauthori[sz]ed|authentication|credentials?)/i;
+
+// What the dashboard's metadata banner used to say, reduced to the parts a
+// person has to act on. Progress ("checking 18 of 34") and "details are
+// ready" were never work for anyone, so they are not here.
+//
+// A source that rejected its saved login stops until someone reconnects it; a
+// source that is only rate-limited retries on its own and says nothing.
+// Series left needing a match are counted once the checking has finished --
+// while it runs the count climbs, and a row keyed on it would reappear after
+// every dismissal.
+function enrichmentNotifications(enrichment) {
+  if (!enrichment) return [];
+  const rejected = (enrichment.providerCooldowns || [])
+    .filter((cooldown) => CREDENTIAL_ERROR.test(cooldown?.error || ""))
+    .map((cooldown) => ({
+      id: `metadata-source:${cooldown.provider}`,
+      kind: "source",
+      severity: "error",
+      title: `${METADATA_PROVIDER_LABELS[cooldown.provider] || cooldown.provider || "A metadata source"} rejected its saved login`,
+      detail: "Reconnect it in Metadata sources",
+      view: "settings",
+      focus: { section: "metadata" },
+    }));
+  const review = Number(enrichment.review || 0);
+  const failed = Number(enrichment.failed || 0);
+  if (!(review + failed) || Number(enrichment.active || 0) > 0) return rejected;
+  const count = review + failed;
+  return [...rejected, {
+    // Keyed on the counts, so a later check that leaves different series
+    // unmatched is announced again rather than matched against an old dismissal.
+    id: `metadata-match:${review}:${failed}`,
+    kind: "metadata",
+    severity: "warning",
+    title: `${count} series ${count === 1 ? "needs" : "need"} a match`,
+    detail: [review ? `${review} to review` : null, failed ? `${failed} found no match` : null].filter(Boolean).join(" · "),
+    view: "metadata",
+    focus: {},
+  }];
+}
+
+// Failures first: a stopped download, a source that stopped, and a damaged
+// file are all blocking; an uncertain match is a judgement call that can wait,
+// and news that something arrived needs nothing at all.
+const RANK = { download: 0, source: 1, file: 2, metadata: 3, acquired: 4 };
 
 export function buildNotifications(catalog, dismissed = [], seenUntil = null) {
   const hidden = new Set(dismissed);
   return [
     ...requestJobNotifications(catalog?.requests, "series"),
     ...requestJobNotifications(catalog?.replacementRequests, "replacement"),
+    ...enrichmentNotifications(catalog?.enrichment),
     ...inboxNotifications(catalog?.inbox),
     ...acquisitionNotifications(catalog, seenUntil),
   ]
