@@ -464,14 +464,50 @@ async function apiRequest(path, options) {
   return payload;
 }
 
+// One glass pill that slides to whichever item is selected, as iOS does,
+// rather than each item lighting up on its own. It is measured before paint so
+// it never lands late, and only animates once it has a position to animate
+// from. The phone's tab bar and the comic drawer's tabs share it.
+function useGlassIndicator(selector, deps) {
+  const containerRef = useRef(null);
+  const [style, setStyle] = useState(null);
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    function place() {
+      const active = container.querySelector(selector);
+      if (!active || !active.offsetWidth) {
+        setStyle(null);
+        return;
+      }
+      setStyle({
+        transform: `translate(${active.offsetLeft}px, ${active.offsetTop}px)`,
+        width: `${active.offsetWidth}px`,
+        height: `${active.offsetHeight}px`,
+      });
+      if (!container.dataset.glassPlaced) requestAnimationFrame(() => { container.dataset.glassPlaced = "true"; });
+    }
+    place();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(place);
+    observer.observe(container);
+    [...container.children].filter((child) => !child.classList.contains("glass-indicator")).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, deps);
+  return [containerRef, style];
+}
+
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
+  const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active]);
   const counts = {
     requests: jobsNeedingAttention(catalog),
     settings: catalog?.stats?.needAttention ?? 0,
   };
   return (
     <aside className="sidebar">
-      <nav aria-label="Primary navigation">
+      <nav aria-label="Primary navigation" ref={navRef}>
+        {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}
+        <span className="nav-glass glass-indicator" aria-hidden="true" style={navGlass || { opacity: 0 }} />
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
           <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
             <Icon size={null} /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
@@ -2945,31 +2981,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   const heroArt = shownBackdrop ? pageArt || coverArt : null;
   const related = useMemo(() => (series ? relatedRuns(series, allSeries || []) : null), [series, allSeries]);
   const creators = useMemo(() => orderedCreators(series?.creators), [series?.creators]);
-  // One glass pill slides between tabs, as iOS does, rather than each tab
-  // lighting up on its own. It is measured before paint so it never lands
-  // late, and only animates once it has a position to animate from.
-  const tabsRef = useRef(null);
-  const [tabGlass, setTabGlass] = useState(null);
-  useLayoutEffect(() => {
-    const nav = tabsRef.current;
-    if (!nav) return undefined;
-    function place() {
-      const active = nav.querySelector("button.active");
-      if (!active) return;
-      setTabGlass({
-        transform: `translate(${active.offsetLeft}px, ${active.offsetTop}px)`,
-        width: `${active.offsetWidth}px`,
-        height: `${active.offsetHeight}px`,
-      });
-      if (!nav.dataset.glassPlaced) requestAnimationFrame(() => { nav.dataset.glassPlaced = "true"; });
-    }
-    place();
-    if (typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(place);
-    observer.observe(nav);
-    nav.querySelectorAll("button").forEach((button) => observer.observe(button));
-    return () => observer.disconnect();
-  }, [tab, series?.id, editionsOn]);
+  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, series?.id, editionsOn]);
   useEffect(() => { dialogRef.current?.scrollTo?.({ top: 0 }); }, [series?.id]);
   if (!series) return null;
   const identityStrength = series.identityConfidence == null ? "Unknown" : series.identityConfidence >= 85 ? "High" : series.identityConfidence >= 65 ? "Medium" : "Low";
@@ -3031,7 +3043,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         </div>
       </div>
     </header>
-    <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
+    <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body">
       {tab === "overview" ? <>
         <div className="comic-drawer-follow">

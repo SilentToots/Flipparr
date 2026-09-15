@@ -1757,6 +1757,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    them at 375x812.
    --------------------------------------------------------------------------- */
 .mobile-library-counts, .library-phone-header, .sort-menu-filters { display: none; }
+/* The desktop rail marks its item with its own fill and bar. */
+.nav-glass { display: none; }
 
 @media (max-width: 640px) {
   /* One inset for the whole screen (69:807), where the page, the header block
@@ -1834,20 +1836,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   @media (hover: hover) { .sidebar .nav-item:not(.active):not(:disabled):hover { background: rgb(255 255 255 / .08); } }
 
   /* 69:793: the active tab is the Comics variant -- a 20px icon and no gap --
-     under Figma's Glass effect, drawn from the --nav-glass-* tokens: a tint
-     brightest on the lit side, a rim light along the lit edge and a fainter
-     one opposite (splay softens both), an inner glow for depth, and frost as a
-     blur. Refraction and dispersion are not drawn; see design-tokens.css. */
-  .sidebar .nav-item.active {
-    height: auto; gap: 0;
-    background: linear-gradient(calc(var(--nav-glass-light-angle) + 180deg), rgb(255 255 255 / calc(var(--nav-glass-light) * .3)), rgb(255 255 255 / calc(var(--nav-glass-light) * .06)));
-    box-shadow:
-      inset calc(sin(var(--nav-glass-light-angle)) * -1px) calc(cos(var(--nav-glass-light-angle)) * 1px) var(--nav-glass-splay) rgb(255 255 255 / var(--nav-glass-light)),
-      inset calc(sin(var(--nav-glass-light-angle)) * 1px) calc(cos(var(--nav-glass-light-angle)) * -1px) var(--nav-glass-splay) rgb(255 255 255 / calc(var(--nav-glass-light) / 3)),
-      inset 0 0 var(--nav-glass-depth) rgb(255 255 255 / calc(var(--nav-glass-light) * .2));
-    -webkit-backdrop-filter: blur(var(--nav-glass-frost));
-    backdrop-filter: blur(var(--nav-glass-frost));
-  }
+     under Figma's Glass effect. The glass is one pill that slides between
+     tabs (.nav-glass, see .glass-indicator), not a fill on the tab itself. */
+  .sidebar nav { position: relative; isolation: isolate; }
+  .nav-glass { display: block; }
+  .sidebar .nav-item { z-index: 1; }
+  .sidebar .nav-item.active { height: auto; gap: 0; background: transparent; }
   .sidebar .nav-item.active::before { display: none; }
   .sidebar .nav-item.active > svg { width: 20px; height: 20px; }
   /* The confirmation toast sat at 24px from the bottom, under the tab bar. */
@@ -1914,10 +1908,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .comic-drawer-tabs.drawer-tabs { position: relative; isolation: isolate; }
 .comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; }
 .comic-drawer-tabs.drawer-tabs button.active { background: transparent; color: var(--color-neutral-0); font-weight: 700; }
-/* The indicator itself: absolutely placed at the selected tab's box by the
-   drawer, and eased there with an iOS-like curve once it has been placed.
-   Reduced motion collapses the duration token, so it simply moves. */
-.comic-drawer-tab-glass {
+/* The sliding glass pill (useGlassIndicator): absolutely placed at the
+   selected item's box, and eased there with an iOS-like curve once it has
+   been placed. Its look is the phone tab bar's glass, from the --nav-glass-*
+   tokens. Reduced motion collapses the duration token, so it simply moves. */
+.glass-indicator {
   position: absolute;
   top: 0;
   left: 0;
@@ -1932,7 +1927,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   -webkit-backdrop-filter: blur(var(--nav-glass-frost));
   backdrop-filter: blur(var(--nav-glass-frost));
 }
-.comic-drawer-tabs.drawer-tabs[data-glass-placed] .comic-drawer-tab-glass {
+[data-glass-placed] > .glass-indicator {
   transition:
     transform var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
     width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
