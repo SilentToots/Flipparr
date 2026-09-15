@@ -77,7 +77,9 @@ for (const [route, work] of byRoute) {
     failures.push({ sel: route, node: "-", bad: [`no entry in node-map.json "routes"`] });
     continue;
   }
-  const page = await browser.newPage({ viewport: { width, height } });
+  // A route may name its own viewport, and a path when the same screen is
+  // measured at two sizes ("/library" and "/library @375").
+  const page = await browser.newPage({ viewport: config.viewport || { width, height } });
   for (const name of config.stub || []) {
     const stub = STUBS[name];
     await page.route(stub.url, (r) =>
@@ -86,7 +88,7 @@ for (const [route, work] of byRoute) {
   // Not networkidle: Discover's shelves and the catalog poll keep a socket
   // busy, so "idle" never arrives. The screen is ready when the thing being
   // measured is on it.
-  await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.goto(`${origin}${config.path || route}`, { waitUntil: "domcontentloaded", timeout: 45000 });
   for (const selector of [config.ready].flat()) {
     await page.waitForSelector(selector, { timeout: 30000 });
   }

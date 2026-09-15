@@ -43,7 +43,7 @@ import {
   readSeenUntil, writeSeenUntil,
 } from "./notifications.js";
 import {
-  MenuIcon, SearchIcon, NotificationsIcon,
+  MenuIcon, SearchIcon, MobileSearchIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
   GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
@@ -479,7 +479,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
       <nav aria-label="Primary navigation">
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
           <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
-            <Icon /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
+            <Icon size={null} /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
           </button>
         ))}
       </nav>
@@ -569,10 +569,32 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
   </div>;
 }
 
+// The bell and its menu. The app bar carries it on a desktop and the Comics
+// header on a phone -- one control in two places, so one component.
+function NotificationsBell({ notifications, onOpen, onDismiss }) {
+  const [open, setOpen] = useState(false);
+  const items = notifications || [];
+  return <div className="appbar-notifications">
+    <button
+      type="button" className={`appbar-action appbar-bell ${open ? "active" : ""}`}
+      onClick={() => setOpen((value) => !value)}
+      aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
+      aria-expanded={open}
+    >
+      {items.length ? <b className="appbar-badge" aria-hidden="true" /> : null}
+      <NotificationsIcon />
+    </button>
+    {open ? <NotificationsMenu
+      items={items}
+      onClose={() => setOpen(false)}
+      onOpen={onOpen}
+      onDismiss={onDismiss}
+    /> : null}
+  </div>;
+}
+
 function AppBar({ query, collapsed, notifications, onToggleNav, onSearch, onNavigate, onOpenNotification, onDismissNotification }) {
   const [draft, setDraft] = useState(query || "");
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const items = notifications || [];
   // Reloading /search?q=… must not leave the field empty under its own results.
   useEffect(() => { setDraft(query || ""); }, [query]);
   return <header className="appbar">
@@ -591,23 +613,7 @@ function AppBar({ query, collapsed, notifications, onToggleNav, onSearch, onNavi
       />
     </div>
     <div className="appbar-actions">
-      <div className="appbar-notifications">
-        <button
-          type="button" className={`appbar-action appbar-bell ${notificationsOpen ? "active" : ""}`}
-          onClick={() => setNotificationsOpen((open) => !open)}
-          aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
-          aria-expanded={notificationsOpen}
-        >
-          {items.length ? <b className="appbar-badge" aria-hidden="true" /> : null}
-          <NotificationsIcon />
-        </button>
-        {notificationsOpen ? <NotificationsMenu
-          items={items}
-          onClose={() => setNotificationsOpen(false)}
-          onOpen={onOpenNotification}
-          onDismiss={onDismissNotification}
-        /> : null}
-      </div>
+      <NotificationsBell notifications={notifications} onOpen={onOpenNotification} onDismiss={onDismissNotification} />
     </div>
   </header>;
 }
@@ -833,11 +839,6 @@ function CollectionGroups({ families, onOpenCollection }) {
 
 function CollectionEmpty({ query }) {
   return <div className="empty-state"><Books size={35} weight="duotone" /><strong>{query ? `No collections match “${query}”` : "No collections created yet"}</strong><span>{query ? "Try another collection or run title." : "Open a run and use its Collection tab to group related publication runs."}</span></div>;
-}
-
-function AttentionPanel({ items, onOpen, onDismiss }) {
-  if (!items.length) return null;
-  return <section className="attention-panel"><header><WarningCircle size={24} weight="fill" /><strong>Needs attention ({items.length})</strong><button onClick={() => onOpen()}>Review problems <ArrowRight size={16} /></button></header><div className="attention-details">{items.slice(0, 2).map((item) => <div className="attention-detail" key={item.id}><button onClick={() => onOpen(item)}><span>{item.title}</span><small>{NOTIFICATION_KINDS[item.kind]}: {item.detail}</small><b>{item.kind === "download" ? "Open Pull List" : item.kind === "file" ? "Review comic file" : "Review metadata"}</b></button><button type="button" className="attention-dismiss" onClick={() => onDismiss(item)} aria-label={`Dismiss: ${item.title}`} title="Dismiss"><X size={14} /></button></div>)}</div></section>;
 }
 
 // A token rather than prose: RunStatusChip renders the label, and a function
@@ -1109,10 +1110,11 @@ const SORT_OPTIONS = [
   { value: "attention", label: "Sort: Needs attention" },
 ];
 
-function SortMenu({ value, onChange }) {
+function SortMenu({ value, onChange, filters = null }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const current = SORT_OPTIONS.find((option) => option.value === value) || SORT_OPTIONS[0];
+  const filtered = Boolean(filters?.followingOnly && filters.scope === "runs");
   useEffect(() => {
     if (!open) return undefined;
     function onPointerDown(event) {
@@ -1146,25 +1148,49 @@ function SortMenu({ value, onChange }) {
   }
   return <div className="sort-field" ref={rootRef}>
     <button
-      type="button" className="sort-trigger" aria-haspopup="listbox" aria-expanded={open}
-      aria-label={`Sort by. ${current.label}`} onClick={() => setOpen((value) => !value)}
+      type="button" className={`sort-trigger${filtered ? " filtered" : ""}`} aria-haspopup="listbox" aria-expanded={open}
+      aria-label={`Sort by. ${current.label}${filtered ? ". Showing followed runs only" : ""}`} onClick={() => setOpen((value) => !value)}
     >{current.label}<ChevronDown /></button>
-    {open ? <ul className="sort-menu" role="listbox" aria-label="Sort by" onKeyDown={onListKeyDown}>
-      {SORT_OPTIONS.map((option) => (
-        <li key={option.value}>
-          <button
-            type="button" role="option" aria-selected={option.value === value}
-            className={option.value === value ? "selected" : ""}
-            onClick={() => choose(option)}
-          >{option.label}</button>
-        </li>
-      ))}
-    </ul> : null}
+    {open ? <div className="sort-menu">
+      <ul className="sort-menu-options" role="listbox" aria-label="Sort by" onKeyDown={onListKeyDown}>
+        {SORT_OPTIONS.map((option) => (
+          <li key={option.value}>
+            <button
+              type="button" role="option" aria-selected={option.value === value}
+              className={option.value === value ? "selected" : ""}
+              onClick={() => choose(option)}
+            >{option.label}</button>
+          </li>
+        ))}
+      </ul>
+      {/* A phone has no room beside Sort for the Following filter or the
+          Runs/Collections switch, so they live here. Hidden above 640px, where
+          the toolbar shows both. The menu stays open so the change is seen. */}
+      {filters ? <div className="sort-menu-filters" role="group" aria-label="Show">
+        {filters.scope === "runs" ? <button type="button" aria-pressed={filters.followingOnly} onClick={() => filters.onFollowingOnly(!filters.followingOnly)}>Following only</button> : null}
+        {filters.editionsOn ? <>
+          <button type="button" aria-pressed={filters.scope === "runs"} onClick={() => filters.onScope("runs")}>Runs</button>
+          <button type="button" aria-pressed={filters.scope === "collections"} onClick={() => filters.onScope("collections")}>Collections</button>
+        </> : null}
+      </div> : null}
+    </div> : null}
   </div>;
 }
 
-function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus, notifications, onOpenNotification, onDismissNotification }) {
+function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus, logicalSeriesCount, notifications, onOpenNotification, onDismissNotification }) {
   const [query, setQuery] = useState("");
+  // A phone opens search from the magnifier in its header (node 69:837). The
+  // field takes focus as it appears, and Escape puts it away again.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef(null);
+  const searchToggleRef = useRef(null);
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.querySelector("input")?.focus();
+  }, [searchOpen]);
+  function closeSearch() {
+    setSearchOpen(false);
+    searchToggleRef.current?.focus();
+  }
   // Covers are the point of a comic library, so the grid leads.
   const [view, setView] = useState("grid");
   const [scope, setScope] = useState("runs");
@@ -1185,9 +1211,26 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const sortedFamilies = useMemo(() => sortLibrary(families, sort), [families, sort]);
   return (
     <>
+      {/* The phone's Comics screen (node-id=69-744): the library's size, then
+          a title row with search and the bell. Hidden above 640px, where the
+          rail's foot and the app bar carry all three. */}
+      <div className="mobile-library-counts">
+        <span><strong>{catalog?.stats?.files ?? 0}</strong> Files</span>
+        <i aria-hidden="true">|</i>
+        <span><strong>{logicalSeriesCount ?? 0}</strong> Series</span>
+      </div>
       <div className="dashboard-header">
-      <div className="topbar"><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
+      <div className="library-phone-header">
+        <h1>Comics</h1>
+        <button
+          type="button" ref={searchToggleRef} className="library-phone-search"
+          aria-label="Search" aria-expanded={searchOpen} aria-controls="library-phone-search"
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+        ><MobileSearchIcon /></button>
+        <NotificationsBell notifications={notifications} onOpen={onOpenNotification} onDismiss={onDismissNotification} />
+      </div>
+      <div className={`topbar${searchOpen ? " open" : ""}`} id="library-phone-search" ref={searchRef} onKeyDown={(event) => { if (event.key === "Escape" && searchOpen) closeSearch(); }}><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
+      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} filters={{ followingOnly, onFollowingOnly: setFollowingOnly, scope: effectiveScope, onScope: setScope, editionsOn }} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
       </div>
       <div className="dashboard-body">
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
@@ -1197,7 +1240,6 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       <MetadataSetupStatus enrichment={catalog?.enrichment} lastScanAt={catalog?.lastScan?.iso} onNavigate={onNavigate} />
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query="" />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
-      <AttentionPanel items={notifications} onOpen={onOpenNotification} onDismiss={onDismissNotification} />
       </> : null}
       </div>
     </>
@@ -4367,5 +4409,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={searchQuery} collapsed={navCollapsed} notifications={notifications} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className={`main-content${active === "library" ? " main-content-flush" : ""}`}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} notifications={notifications} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /> : null}{active === "discover" ? <DiscoverView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} focus={requestFocus} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={searchQuery} collapsed={navCollapsed} notifications={notifications} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className={`main-content${active === "library" ? " main-content-flush" : ""}`}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} notifications={notifications} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /> : null}{active === "discover" ? <DiscoverView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} focus={requestFocus} onCreateRequest={createAcquisitionRequest} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></CollectedEditionsContext.Provider>;
 }

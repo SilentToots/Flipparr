@@ -30,16 +30,22 @@ import {
 } from "@heroicons/react/16/solid";
 import { XMarkIcon } from "@heroicons/react/20/solid";
 
+// `size={null}` leaves the box to the stylesheet, for an icon whose size
+// depends on the layout it is in -- the nav's icons are 20 in the rail and 24
+// in the phone's tab bar, which an inline width would pin to one of them.
 function sized(Icon, defaultSize) {
   return function DesignIcon({ size = defaultSize, className = "", ...rest }) {
+    const box = size == null ? {} : { width: size, height: size };
     return <Icon aria-hidden="true" className={className}
-      style={{ width: size, height: size, flex: "none" }} {...rest} />;
+      style={{ ...box, flex: "none" }} {...rest} />;
   };
 }
 
 // Top bar
 export const MenuIcon = sized(Bars3Icon, 20);            // heroicons-mini/bars-3
 export const SearchIcon = sized(MagnifyingGlassIcon, 16); // heroicons-solid/magnifying-glass
+// The phone's Comics header draws the same magnifier at 20 (node 69:837).
+export const MobileSearchIcon = sized(MagnifyingGlassIcon, 20); // heroicons-solid/magnifying-glass
 export const NotificationsIcon = sized(BellIcon, 24);     // heroicons-outline/bell
 export const SettingsIcon = sized(Cog6ToothIcon, 24);     // heroicons-outline/cog-6-tooth
 
