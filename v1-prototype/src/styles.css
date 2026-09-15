@@ -262,10 +262,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .discover-drawer-actions small { min-width: 0; color: var(--muted); font-size: var(--text-sm); }
 .discover-drawer-actions .pull-button { width: auto; min-width: 180px; flex: none; }
 .discover-drawer-actions .pull-button-idle:disabled { opacity: var(--button-disabled-opacity); }
+/* The actions sit at the drawer's foot however short the content: sized to it,
+   a one-issue run left Pull floating mid-screen over a blank lower half. */
+.series-drawer.discover-drawer > .discover-drawer-actions { margin-top: auto; }
+.series-drawer.discover-drawer > :nth-last-child(2) { margin-bottom: 24px; }
+/* Section headings read as headings -- the drawer's default h3 is 14px muted,
+   smaller than the paragraph under it -- and the facts' margin no longer
+   stacks on the section's. */
+.series-drawer.discover-drawer :is(.discover-drawer-section, .discover-issue-list > header) h3 { margin-top: 0; color: var(--text); font-size: var(--text-lg); }
+.discover-drawer .drawer-facts { margin-bottom: 0; }
 @media (max-width: 640px) {
-  .discover-drawer-actions { margin: 20px -16px 0; padding-inline: 16px; flex-wrap: wrap; }
+  .discover-drawer-actions { margin: 20px -16px 0; padding-inline: 16px; flex-wrap: wrap; gap: 12px; }
   .discover-drawer-actions .pull-button { width: 100%; }
-  .pull-mode { grid-template-columns: 1fr; }
+  .discover-drawer-actions > span:empty { display: none; }
+  /* See the whole run and Pull stack as one pair: full width, one height, one
+     type size, instead of a half-width 16px bold button over a 14px one. */
+  .discover-drawer-actions .ghost-button { width: 100%; min-height: 44px; justify-content: center; font-size: var(--text-md); font-weight: 500; }
+  /* Four facts at a quarter of 375 wrapped every date onto two lines. */
+  .discover-drawer .drawer-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .discover-drawer .drawer-facts span { min-height: 0; padding: 10px 12px; }
+  /* Three modes share the row; "Pull all released" broke onto two lines. */
+  .pull-mode button { padding-inline: 4px; white-space: nowrap; }
 }
 
 .library-match-skeleton { width: 120px; display: flex; flex-direction: column; }

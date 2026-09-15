@@ -198,7 +198,7 @@ export function runPullSummary(mode, issues = [], selected = [], { following = f
   return count
     ? { label: `Pull ${count} issue${count === 1 ? "" : "s"}`,
         detail: "Only these. Issues not out yet are pulled when they ship.", disabled: false }
-    : { label: "Choose issues", detail: "Tick the issues you want below.", disabled: true };
+    : { label: "Choose issues", detail: "Tick the issues you want to pull.", disabled: true };
 }
 
 /** "Vol. 18" for manga, "#18" for a comic: a manga volume is the book, not an issue of it. */
