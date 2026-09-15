@@ -282,10 +282,17 @@ class CatalogStoreTests(unittest.TestCase):
                 "file_health": {"status": "ok"}, "file_cover": None,
                 **results[Path(item.path).name],
             })
-            series = store.catalog()["series"]
+            catalog = store.catalog()
+            series = catalog["series"]
             self.assertEqual(len(series), 1, [(item["title"], item["year"]) for item in series])
             self.assertEqual(sorted(issue["number"] for issue in series[0]["issues"]), ["1", "2"])
             self.assertNotIn("1972", [item["year"] for item in series])
+            # Nor is the 1972 match held up against #2 as a conflict, and with it
+            # set aside #2 is identified by its own metadata, not unmatched.
+            self.assertEqual([
+                item["code"] for item in catalog["inbox"]
+                if item.get("file") == second.name and item.get("code") in {"metadata_conflict", "no_match"}
+            ], [])
 
         # A lookup that agrees with the file is kept, for the provider ids it carries.
         from catalog_store import _trusted_recommendation
@@ -299,7 +306,10 @@ class CatalogStoreTests(unittest.TestCase):
         self.assertEqual(_trusted_recommendation(
             {"recommendation": {"title": "Supergirl"}, "embedded_metadata": {"series": "Supergirl: Woman of Tomorrow"}},
             {"title": "Supergirl"}),
-            {"title": "Supergirl"}, "a manual correction is never second-guessed")
+            {"title": "Supergirl"}, "a lookup agreeing with a confirmed identity is kept")
+        # #5, imported and confirmed, matched to 1973's "Supergirl" #5 anyway.
+        self.assertEqual(_trusted_recommendation(
+            {"recommendation": {"title": "Supergirl"}}, {"seriesTitle": "Supergirl: Woman of Tomorrow"}), {})
 
     def test_library_roots_reject_overlapping_folders(self):
         with tempfile.TemporaryDirectory() as folder:

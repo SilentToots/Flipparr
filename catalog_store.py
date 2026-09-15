@@ -92,12 +92,19 @@ def _trusted_recommendation(
     lookup to DC's 1972 "Supergirl": filed as a run of its own, beside the
     right run in the same folder, and given that run's issue ids. A lookup that
     agrees with the file is kept, for the provider ids it carries.
+
+    What the file is known to be is its confirmed identity when it has one --
+    #5 of the same run, imported by Flipparr and confirmed, was matched to
+    1973's "Supergirl" #5 all the same -- and otherwise what its ComicInfo says.
     """
     result = result or {}
     override = override or {}
     recommendation = result.get("recommendation") or {}
-    series = str((result.get("embedded_metadata") or {}).get("series") or "").strip()
-    if not recommendation or not series or override.get("title") or override.get("seriesTitle"):
+    series = str(
+        override.get("seriesTitle") or override.get("title")
+        or (result.get("embedded_metadata") or {}).get("series") or ""
+    ).strip()
+    if not recommendation or not series:
         return recommendation
     matched = _normalized(_canonical_series_title(str(recommendation.get("title") or ""), True))
     stated = _normalized(_canonical_series_title(series, True))
@@ -1531,7 +1538,7 @@ class CatalogStore:
         recommendation = _trusted_recommendation(result, override)
         # Overruled: the file's own ComicInfo names the series, issue and year.
         overruled = bool(result.get("recommendation")) and not recommendation
-        if overruled:
+        if overruled and str(embedded.get("series") or "").strip():
             stated_year = _valid_year(embedded.get("year"))
             identity = {
                 **identity, "title": str(embedded.get("series")).strip(),
@@ -7453,7 +7460,10 @@ class CatalogStore:
             parsed = _load_json(row["parsed_json"], {})
             result = _load_json(row["result_json"], {})
             identity = result.get("lookup_identity") or parsed
-            recommendation = result.get("recommendation") or {}
+            # A lookup the file's confirmed identity or ComicInfo contradicts is
+            # neither shown as its match nor held up against it as a conflict.
+            recommendation = _trusted_recommendation(result, _load_json(row["override_fields_json"], {}))
+            overruled = bool(result.get("recommendation")) and not recommendation
             embedded = result.get("embedded_metadata") or {}
             health = result.get("file_health") or {}
             title = row["canonical_title"] or recommendation.get("title") or identity.get("title") or parsed.get("title") or row["filename"]
@@ -7518,7 +7528,8 @@ class CatalogStore:
             metadata_deferred = bool((result.get("source_status") or {}).get("external_metadata"))
             group["hasProblem"] = (
                 group["hasProblem"] or health.get("status") == "error"
-                or (not recommendation and not metadata_deferred) or bool(file_review)
+                # Identified by its own metadata is not unmatched.
+                or (not recommendation and not metadata_deferred and not overruled) or bool(file_review)
             )
             if row["identity_confidence"] is not None:
                 group["identityConfidences"].append(int(row["identity_confidence"]))
@@ -8023,7 +8034,10 @@ class CatalogStore:
                 "error", category="file",
             )
         metadata_deferred = bool((result.get("source_status") or {}).get("external_metadata"))
-        if not recommendation and health.get("status") != "error" and not metadata_deferred:
+        # A lookup set aside because the file's own identity contradicts it is
+        # not a missing match: the file is identified, by itself.
+        overruled = bool(result.get("recommendation")) and not recommendation
+        if not recommendation and health.get("status") != "error" and not metadata_deferred and not overruled:
             add(
                 "no_match", "No confident metadata match",
                 "The filename and available sources did not produce a recommendation. Review the parsed identity before accepting a match.",
