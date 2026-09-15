@@ -43,6 +43,7 @@ import {
   readSeenUntil, writeSeenUntil,
 } from "./notifications.js";
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
+import { nextTabBarState } from "./tab-bar.js";
 import {
   MenuIcon, SearchIcon, MobileSearchIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
@@ -501,24 +502,28 @@ function useGlassIndicator(selector, deps) {
 // scrolling down tucks it into the current tab, and scrolling back up,
 // reaching the top of the page, changing screen, or tapping it brings it back.
 // The styling only applies at phone widths, so a desktop never sees the state.
-const TAB_BAR_SCROLL_SLACK = 6;
-const TAB_BAR_TOP_ZONE = 64;
-
+// The decision, including the iOS rubber-band case, is nextTabBarState.
 function useCollapsingTabBar(resetKey) {
   const [collapsed, setCollapsed] = useState(false);
+  // The listener's own record of where the page was and what it decided. A
+  // tap or a screen change opens the bar outside the listener, so they reset
+  // this too -- otherwise the next scroll frame would tuck the bar straight
+  // back from a stale "collapsed".
+  const stateRef = useRef({ collapsed: false, lastY: 0 });
   useEffect(() => {
-    let lastY = window.scrollY;
+    stateRef.current = { collapsed: false, lastY: window.scrollY };
     let frame = 0;
     function onScroll() {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        const y = window.scrollY;
-        const delta = y - lastY;
-        if (y < TAB_BAR_TOP_ZONE) setCollapsed(false);
-        else if (delta > TAB_BAR_SCROLL_SLACK) setCollapsed(true);
-        else if (delta < -TAB_BAR_SCROLL_SLACK) setCollapsed(false);
-        if (Math.abs(delta) > TAB_BAR_SCROLL_SLACK || y < TAB_BAR_TOP_ZONE) lastY = y;
+        stateRef.current = nextTabBarState({
+          scrollY: window.scrollY,
+          maxScroll: document.documentElement.scrollHeight - window.innerHeight,
+          lastY: stateRef.current.lastY,
+          collapsed: stateRef.current.collapsed,
+        });
+        setCollapsed(stateRef.current.collapsed);
       });
     }
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -527,8 +532,12 @@ function useCollapsingTabBar(resetKey) {
       cancelAnimationFrame(frame);
     };
   }, []);
-  useEffect(() => { setCollapsed(false); }, [resetKey]);
-  return [collapsed, setCollapsed];
+  function open() {
+    stateRef.current = { collapsed: false, lastY: window.scrollY };
+    setCollapsed(false);
+  }
+  useEffect(open, [resetKey]);
+  return [collapsed, open];
 }
 
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
