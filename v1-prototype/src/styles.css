@@ -1865,6 +1865,54 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .pull-card .pull-button::after { content: ""; position: absolute; inset: -9px 0; }
 }
 
+/* ---------------------------------------------------------------------------
+   Run details, Plex-style (a rough pass to react to)
+   The cover fills the header behind the identity, its colour runs down the
+   page (--drawer-tint, read from the cover), and Overview gains horizontal
+   rows: issues, creators, and the library's other runs by the same people
+   or publisher. The tabs are unchanged.
+   --------------------------------------------------------------------------- */
+.series-drawer.run-details {
+  --drawer-tint: 24 24 27;
+  background: linear-gradient(180deg, rgb(var(--drawer-tint)) 0, var(--surface) 620px) local, var(--surface);
+}
+.run-details > .modal-close { z-index: 3; }
+.run-details .drawer-back-link { position: relative; z-index: 3; }
+.run-details .drawer-hero { position: relative; isolation: isolate; margin: -28px -30px 0; padding: 150px 30px 6px; overflow: hidden; }
+.run-details .drawer-back-link ~ .drawer-hero { margin-top: 0; padding-top: 56px; }
+.run-details .drawer-hero-art { position: absolute; top: -30px; left: -30px; z-index: -2; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; object-position: center 25%; filter: blur(14px) saturate(1.15); opacity: .7; pointer-events: none; }
+.run-details .drawer-hero::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, rgb(var(--drawer-tint) / .05) 0%, rgb(var(--drawer-tint) / .7) 55%, rgb(var(--drawer-tint)) 100%); pointer-events: none; }
+.run-details .drawer-cover { box-shadow: 0 18px 40px rgb(0 0 0 / .5); }
+.run-details .drawer-identity p { color: var(--muted-strong); }
+
+.run-details .run-row { margin-top: 24px; }
+.run-details .run-row > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.run-details .run-row h3 { margin: 0; color: var(--text); font-size: var(--text-lg); }
+.run-row-more { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 4px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--violet-text); font-size: var(--text-sm); font-weight: 700; cursor: pointer; }
+.run-row-more:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.run-strip { display: flex; gap: 12px; margin: 0 -30px; padding: 2px 30px 8px; overflow-x: auto; scroll-snap-type: x proximity; scroll-padding-inline: 30px; scrollbar-width: none; }
+.run-strip::-webkit-scrollbar { display: none; }
+.run-strip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
+.run-strip > * { flex: 0 0 auto; scroll-snap-align: start; }
+.run-tile { width: 92px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; display: grid; gap: 5px; cursor: pointer; }
+.run-tile-cover { display: block; aspect-ratio: var(--cover-ratio); border-radius: 6px; overflow: hidden; background: var(--surface-soft); box-shadow: 0 6px 16px rgb(0 0 0 / .35); }
+.run-tile-cover img, .run-tile-cover .cover-placeholder { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
+.run-tile strong { overflow: hidden; color: var(--text); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.run-tile small { color: var(--muted-strong); font-size: var(--text-3xs); }
+.run-tile.unowned .run-tile-cover { opacity: .45; }
+.run-tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: 6px; }
+@media (hover: hover) { .run-tile:hover .run-tile-cover { box-shadow: 0 0 0 2px var(--violet), 0 6px 16px rgb(0 0 0 / .35); } }
+.creator-chip { width: 88px; display: grid; justify-items: center; align-content: start; gap: 3px; text-align: center; }
+.creator-avatar { width: 64px; height: 64px; margin-bottom: 5px; border: 1px solid rgb(255 255 255 / .14); border-radius: 50%; display: grid; place-items: center; background: rgb(255 255 255 / .08); color: var(--text); font-size: var(--text-lg); font-weight: 700; letter-spacing: .02em; }
+.creator-chip strong { color: var(--text); font-size: var(--text-xs); line-height: 1.25; }
+.creator-chip small { color: var(--muted-strong); font-size: var(--text-3xs); }
+
+@media (max-width: 640px) {
+  .run-details .drawer-hero { margin: -20px -16px 0; padding: 110px 16px 6px; }
+  .run-details .drawer-back-link ~ .drawer-hero { margin-top: 0; padding-top: 48px; }
+  .run-strip { margin: 0 -16px; padding-inline: 16px; scroll-padding-inline: 16px; }
+}
+
 /* Drawer transition. The panel slides from the edge it is anchored to rather
    than appearing instantly. Durations come from the motion tokens, so a
    reduced-motion preference collapses them to 1ms and the drawer simply
