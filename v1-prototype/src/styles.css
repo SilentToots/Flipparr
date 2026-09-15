@@ -1996,11 +1996,35 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .advanced-card.advanced-aliases { display: block; }
 .advanced-aliases .alias-list, .advanced-aliases .alias-form { margin-top: 12px; }
 
+/* The page fades in when it arrives rather than popping over the dark header. */
+.comic-drawer-backdrop { animation: comic-drawer-art-in var(--motion-duration-standard) ease both; }
+@keyframes comic-drawer-art-in { from { opacity: 0; } to { opacity: 1; } }
+/* Not in the file: the way to choose the header's page. */
+.comic-drawer-backdrop-button { position: absolute; top: 16px; right: 16px; z-index: 2; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgb(0 0 0 / .4); color: var(--color-neutral-0); cursor: pointer; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transition: background var(--motion-duration-fast) ease; }
+@media (hover: hover) { .comic-drawer-backdrop-button:hover { background: rgb(0 0 0 / .6); } }
+.comic-drawer-backdrop-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.backdrop-workbench { width: min(760px, 100%); }
+.backdrop-workbench h2 { margin: 0 44px 6px 0; }
+.backdrop-workbench-intro { margin: 0 0 16px; color: var(--muted); }
+.backdrop-workbench-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 16px; }
+.backdrop-workbench-tools label { flex: 1 1 240px; display: grid; gap: 6px; color: var(--muted); font-size: var(--text-sm); }
+.backdrop-workbench-tools select { min-height: 42px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font: inherit; }
+.backdrop-workbench-status { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--muted); }
+.backdrop-page-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px; max-height: min(56vh, 560px); padding: 2px; overflow-y: auto; }
+.backdrop-page { display: grid; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--muted-strong); font-size: var(--text-xs); text-align: center; cursor: pointer; }
+.backdrop-page img { width: 100%; aspect-ratio: 5 / 7; object-fit: contain; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg); }
+.backdrop-page.selected img { outline: 3px solid var(--violet); outline-offset: 1px; }
+.backdrop-page:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.backdrop-page:disabled { cursor: progress; opacity: .6; }
+@media (hover: hover) { .backdrop-page:not(:disabled):hover img { border-color: var(--violet); } }
+
 @media (max-width: 640px) {
   .series-drawer.comic-drawer { width: 100%; padding: 0 0 env(safe-area-inset-bottom); border-left: 0; }
   .comic-drawer-hero { min-height: 380px; padding: 64px 16px 16px; }
   .comic-drawer-close { top: 4px; left: 4px; width: 48px; height: 48px; }
   .comic-drawer-close svg { width: 48px; height: 48px; }
+  .comic-drawer-backdrop-button { top: 6px; right: 6px; }
   .comic-drawer-hero .drawer-back-link { top: 10px; left: 56px; }
   .comic-drawer-identity { gap: 4px; }
   .comic-drawer-cover { flex-basis: 120px; width: 120px; height: 168px; }

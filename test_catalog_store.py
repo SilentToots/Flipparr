@@ -3348,6 +3348,30 @@ class SeriesCoverPreferenceTests(unittest.TestCase):
     def _series(self, store):
         return store.catalog()["series"][0]
 
+    def test_a_header_background_can_only_come_from_this_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            files = store.series_backdrop_files(run)
+            self.assertEqual([item["filename"] for item in files],
+                             ["Example 001.cbz", "Example 002.cbz", "Example 003.cbz"])
+            self.assertIsNone(store.series_backdrop_preference(run))
+            store.set_series_backdrop(run, int(files[1]["id"]), "12.jpg", "chosen", "sig")
+            self.assertEqual(store.series_backdrop_preference(run), {
+                "fileId": files[1]["id"], "member": "12.jpg", "source": "chosen", "fileSignature": "sig",
+            })
+            with self.assertRaises(ValueError):
+                store.set_series_backdrop(run, 999999, "1.jpg", "chosen")
+            with self.assertRaises(ValueError):
+                store.set_series_backdrop(run, int(files[0]["id"]), "1.jpg", "sideways")
+            store.clear_series_backdrop(run)
+            self.assertIsNone(store.series_backdrop_preference(run))
+            with self.assertRaises(LookupError):
+                store.series_backdrop_files(run + 1000)
+            self.assertEqual(store.library_file_path(int(files[0]["id"])).name, "Example 001.cbz")
+            with self.assertRaises(LookupError):
+                store.library_file_path(999999)
+
     def _three_files(self, root, **kwargs):
         return self._library(root, [
             ("Example 001.cbz", "1", {}, "/api/file-cover?path=one.cbz"),

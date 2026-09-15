@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from app import _run_end_evidence, SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+from app import _run_end_evidence, SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, archive_page_members, automatic_backdrop_page, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -2497,6 +2497,43 @@ class FilenameParserTests(unittest.TestCase):
                 archive.writestr("2.jpg", b"two")
             self.assertEqual(find_archive_cover_member(pages), "2.jpg")
             self.assertEqual(file_cover_info(pages)["source"], "comic file")
+
+    def test_archive_pages_are_image_members_in_reading_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pages.cbz"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("10.jpg", b"ten")
+                archive.writestr("2.jpg", b"two")
+                archive.writestr("ComicInfo.xml", "<ComicInfo/>")
+                archive.writestr("__MACOSX/._2.jpg", b"fork")
+                archive.writestr(".hidden.jpg", b"hidden")
+            self.assertEqual(archive_page_members(path), ["2.jpg", "10.jpg"])
+
+    def test_automatic_backdrop_prefers_the_first_spread_after_the_cover(self):
+        import io
+        from PIL import Image
+
+        def png(width, height):
+            buffer = io.BytesIO()
+            Image.new("RGB", (width, height), "red").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as folder:
+            spread = Path(folder) / "spread.cbz"
+            with zipfile.ZipFile(spread, "w") as archive:
+                # A wraparound cover is wide too, but it is the cover.
+                archive.writestr("00.png", png(120, 80))
+                for page in range(1, 6):
+                    archive.writestr(f"{page:02d}.png", png(60, 90))
+                archive.writestr("06.png", png(180, 120))
+            self.assertEqual(automatic_backdrop_page(spread), "06.png")
+
+            portrait = Path(folder) / "portrait.cbz"
+            with zipfile.ZipFile(portrait, "w") as archive:
+                for page in range(12):
+                    archive.writestr(f"{page:02d}.png", png(60, 90))
+            # No spread: a page a third of the way in.
+            self.assertEqual(automatic_backdrop_page(portrait), "05.png")
 
     def test_flags_empty_corrupt_and_pageless_cbz_archives(self):
         with tempfile.TemporaryDirectory() as folder:

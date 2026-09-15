@@ -91,6 +91,11 @@ COVER_THUMBNAIL_MAX_DIMENSION = 600
 COVER_THUMBNAIL_QUALITY = 82
 COVER_SOURCE_MAX_BYTES = 50_000_000
 COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-v1"
+# The run drawer's header is 606px wide; a page behind it is drawn at twice
+# that for high-density screens.
+BACKDROP_MAX_DIMENSION = 1200
+# How far into an issue an automatic background looks for a double-page spread.
+BACKDROP_SPREAD_SCAN_LIMIT = 40
 _LEGACY_USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
 _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
 
@@ -4440,29 +4445,36 @@ def _natural_member_key(member: str) -> list[tuple[int, Any]]:
     ]
 
 
+def archive_page_members(path: Path) -> list[str]:
+    """The archive's image pages in reading order.
+
+    2.jpg before 10.jpg, and no macOS resource forks or hidden files. Both the
+    cover and a drawer background are chosen from this list, so they agree on
+    what page 1 is.
+    """
+    try:
+        names = archive_member_names(path)
+    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError,
+            subprocess.SubprocessError):
+        # An unreadable archive has no pages; it is reported as a file problem
+        # by the health check, not by failing this.
+        return []
+    images = [
+        member for member in names
+        if Path(member).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS
+        and "__MACOSX" not in Path(member).parts
+        and not any(part.startswith(".") for part in Path(member).parts)
+    ]
+    return sorted(images, key=_natural_member_key)
+
+
 def find_archive_cover_member(path: Path, embedded: dict[str, Any] | None = None) -> str | None:
     """Find the file's declared cover or its first plausible comic page."""
     if embedded and embedded.get("cover_member"):
         return str(embedded["cover_member"])
-    try:
-        images = []
-        for member in archive_member_names(path):
-            parts = Path(member).parts
-            if (
-                Path(member).suffix.lower() not in ARCHIVE_IMAGE_EXTENSIONS
-                or "__MACOSX" in parts
-                or any(part.startswith(".") for part in parts)
-            ):
-                continue
-            images.append(member)
-    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError,
-            subprocess.SubprocessError):
-        # An unreadable archive has no cover; it is reported as a file problem
-        # by the health check, not by failing this.
-        return None
+    images = archive_page_members(path)
     if not images:
         return None
-    images.sort(key=_natural_member_key)
     named_covers = [
         member for member in images
         if re.search(r"(?:^|[_. -])(?:front[_. -]*cover|cover)(?:[_. -]|$)", Path(member).stem, re.I)
@@ -4564,13 +4576,13 @@ def inspect_file_health(path: Path) -> dict[str, str]:
     return {"status": "ok", "code": "readable", "message": "File passed basic structural checks."}
 
 
-def render_file_cover_thumbnail(path: Path, member: str) -> bytes:
+def render_file_cover_thumbnail(path: Path, member: str, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION) -> bytes:
     """Extract and cache a web-sized JPEG without modifying the comic archive."""
     stat = path.stat()
     fingerprint = "\0".join(
         (
             str(path.resolve()), str(stat.st_mtime_ns), str(stat.st_size), member,
-            str(COVER_THUMBNAIL_MAX_DIMENSION), str(COVER_THUMBNAIL_QUALITY),
+            str(max_dimension), str(COVER_THUMBNAIL_QUALITY),
         )
     )
     cache_key = hashlib.sha256(fingerprint.encode()).hexdigest()
@@ -4582,7 +4594,7 @@ def render_file_cover_thumbnail(path: Path, member: str) -> bytes:
         pass
 
     source_bytes = read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
-    body = normalize_image_to_jpeg(source_bytes)
+    body = normalize_image_to_jpeg(source_bytes, max_dimension)
     try:
         COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_temp = COVER_CACHE_DIR / f".{cache_key}-{threading.get_ident()}.tmp"
@@ -4593,13 +4605,13 @@ def render_file_cover_thumbnail(path: Path, member: str) -> bytes:
     return body
 
 
-def normalize_image_to_jpeg(source_bytes: bytes) -> bytes:
+def normalize_image_to_jpeg(source_bytes: bytes, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION) -> bytes:
     """Create a bounded JPEG using Pillow on macOS, Linux, and Docker."""
     try:
         from PIL import Image, ImageOps, UnidentifiedImageError
         with Image.open(io.BytesIO(source_bytes)) as source:
             image = ImageOps.exif_transpose(source).convert("RGB")
-            image.thumbnail((COVER_THUMBNAIL_MAX_DIMENSION, COVER_THUMBNAIL_MAX_DIMENSION))
+            image.thumbnail((max_dimension, max_dimension))
             output = io.BytesIO()
             image.save(output, format="JPEG", quality=COVER_THUMBNAIL_QUALITY, optimize=True)
             body = output.getvalue()
@@ -7635,6 +7647,131 @@ def series_synopsis(series_run_id: int) -> dict[str, Any]:
     return {"synopsis": None, "provider": None, "providerName": None}
 
 
+def _file_signature(path: Path) -> str:
+    stat = path.stat()
+    return f"{stat.st_mtime_ns:x}-{stat.st_size:x}"
+
+
+def _page_is_spread(image: bytes) -> bool:
+    """A double-page spread: a page noticeably wider than it is tall."""
+    try:
+        from PIL import Image, UnidentifiedImageError
+        with Image.open(io.BytesIO(image)) as picture:
+            width, height = picture.size
+    except (OSError, ValueError, UnidentifiedImageError):
+        return False
+    return bool(height) and width > height * 1.15
+
+
+def automatic_backdrop_page(path: Path) -> str | None:
+    """The page an issue lends the drawer's header when nobody has chosen one.
+
+    The first double-page spread after the cover suits a header that is wider
+    than it is tall. Without one, a page a third of the way in is past the
+    credits and the opening splash. The cover is only used when it is all
+    there is -- the drawer already shows it beside the title.
+    """
+    pages = archive_page_members(path)
+    if len(pages) < 2:
+        return pages[0] if pages else None
+    interior = pages[1:]
+    for member in interior[:BACKDROP_SPREAD_SCAN_LIMIT]:
+        try:
+            image = read_archive_member(path, member)
+        except Exception:  # noqa: BLE001 -- one unreadable page is not a reason to stop looking
+            continue
+        if _page_is_spread(image):
+            return member
+    return interior[min(len(interior) - 1, len(pages) // 3)]
+
+
+def _page_url(file_id: str, index: int, path: Path, size: str = "") -> str:
+    query = {"v": _file_signature(path)}
+    if size:
+        query["size"] = size
+    return f"/api/v1/files/{file_id}/pages/{index}?" + urllib.parse.urlencode(query)
+
+
+def series_backdrop(series_run_id: int) -> dict[str, Any]:
+    """The page behind a run's drawer header: the one chosen, or one found."""
+    store = catalog_store()
+    files = store.series_backdrop_files(series_run_id)
+    by_id = {item["id"]: item for item in files}
+    preference = store.series_backdrop_preference(series_run_id)
+    if preference and preference["fileId"] in by_id:
+        path = Path(by_id[preference["fileId"]]["path"])
+        try:
+            signature = _file_signature(path)
+        except OSError:
+            signature = None
+        # A chosen page stands until it is changed; an automatic one is looked
+        # for again when its file changes underneath it.
+        if signature and (preference["source"] == "chosen" or preference["fileSignature"] == signature):
+            pages = archive_page_members(path)
+            if preference["member"] in pages:
+                index = pages.index(preference["member"])
+                return {
+                    "url": _page_url(preference["fileId"], index, path, "backdrop"),
+                    "source": preference["source"], "fileId": preference["fileId"], "page": index,
+                }
+    for item in files[:3]:
+        path = Path(item["path"])
+        try:
+            if not path.is_file() or archive_kind(path) is None:
+                continue
+            member = automatic_backdrop_page(path)
+            signature = _file_signature(path)
+        except OSError:
+            continue
+        if not member:
+            continue
+        store.set_series_backdrop(series_run_id, int(item["id"]), member, "auto", signature)
+        index = archive_page_members(path).index(member)
+        return {
+            "url": _page_url(item["id"], index, path, "backdrop"),
+            "source": "auto", "fileId": item["id"], "page": index,
+        }
+    return {"url": None, "source": "none", "fileId": None, "page": None}
+
+
+def choose_series_backdrop(series_run_id: int, file_id: str, page: int) -> dict[str, Any]:
+    store = catalog_store()
+    item = next(
+        (entry for entry in store.series_backdrop_files(series_run_id) if entry["id"] == str(file_id)),
+        None,
+    )
+    if item is None:
+        raise ValueError("That comic is not part of this run")
+    path = Path(item["path"])
+    pages = archive_page_members(path)
+    if not 0 <= page < len(pages):
+        raise ValueError("That page is not in this comic")
+    store.set_series_backdrop(series_run_id, int(item["id"]), pages[page], "chosen", _file_signature(path))
+    return series_backdrop(series_run_id)
+
+
+def file_pages(file_id: int) -> dict[str, Any]:
+    path = catalog_store().library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = archive_page_members(path)
+    return {
+        "fileId": str(file_id), "pageCount": len(pages),
+        "pages": [{"index": index, "url": _page_url(str(file_id), index, path)} for index in range(len(pages))],
+    }
+
+
+def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
+    path = catalog_store().library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = archive_page_members(path)
+    if not 0 <= index < len(pages):
+        raise LookupError("That page is not in this comic")
+    limit = BACKDROP_MAX_DIMENSION if size == "backdrop" else COVER_THUMBNAIL_MAX_DIMENSION
+    return render_file_cover_thumbnail(path, pages[index], limit)
+
+
 def _gcd_run_preview(provider_series_id: str) -> dict[str, Any]:
     """GCD's account of a run from one request: issue numbers, not details.
 
@@ -9650,6 +9787,47 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        file_page_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)", parsed_url.path)
+        if file_page_match:
+            try:
+                body = render_file_page(
+                    int(file_page_match.group(1)), int(file_page_match.group(2)),
+                    str(self.query(parsed_url).get("size") or ""),
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
+                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        file_pages_match = re.fullmatch(r"/api/v1/files/(\d+)/pages", parsed_url.path)
+        if file_pages_match:
+            try:
+                payload = file_pages(int(file_pages_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 422)
+                return
+            self.send_json(payload)
+            return
+        series_backdrop_match = re.fullmatch(r"/api/v1/series/(\d+)/backdrop", parsed_url.path)
+        if series_backdrop_match:
+            try:
+                payload = series_backdrop(int(series_backdrop_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
         series_synopsis_match = re.fullmatch(r"/api/v1/series/(\d+)/synopsis", parsed_url.path)
         if series_synopsis_match:
             try:
@@ -10175,6 +10353,26 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("providerSeriesId") or ""),
                     payload.get("query"),
                 )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        series_backdrop_post = re.fullmatch(r"/api/v1/series/(\d+)/backdrop", parsed_url.path)
+        if series_backdrop_post:
+            run_id = int(series_backdrop_post.group(1))
+            try:
+                if str(payload.get("source") or "") == "auto":
+                    catalog_store().clear_series_backdrop(run_id)
+                    result = series_backdrop(run_id)
+                else:
+                    page = payload.get("page")
+                    if not isinstance(page, int) or isinstance(page, bool):
+                        raise ValueError("Choose a page")
+                    result = choose_series_backdrop(run_id, str(payload.get("fileId") or ""), page)
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return

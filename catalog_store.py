@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -1074,6 +1074,18 @@ class CatalogStore:
                     source TEXT NOT NULL,
                     cover_url TEXT,
                     file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+                    updated_at TEXT NOT NULL
+                );
+                -- The page behind a run's drawer header (schema 36). "chosen" is
+                -- the reader's pick and stands until changed; "auto" is the one
+                -- found for them, kept with its file's signature so a changed
+                -- file is looked at again.
+                CREATE TABLE IF NOT EXISTS series_backdrop_preferences (
+                    series_run_id INTEGER PRIMARY KEY REFERENCES series_runs(id) ON DELETE CASCADE,
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    page_member TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    file_signature TEXT,
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
@@ -2896,6 +2908,94 @@ class CatalogStore:
                 (series_run_id, source, cover_url, file_id, _utc_now()),
             )
         return self.get_series_cover_workbench(series_run_id)
+
+    def library_file_path(self, file_id: int) -> Path:
+        """A present catalog file's path.
+
+        Page images are served by file id through this rather than by a path
+        in the request, so a request can only reach comics the library holds.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT path FROM files WHERE id=? AND present=1", (file_id,)
+            ).fetchone()
+        if row is None:
+            raise LookupError("That comic is not in the library")
+        return Path(row["path"])
+
+    def series_backdrop_files(self, series_run_id: int) -> list[dict[str, Any]]:
+        """A run's present comics, lowest issue first.
+
+        That is the order an automatic header background looks through, so
+        issue #1 lends its page before anything later in the run.
+        """
+        with self._connect() as connection:
+            if connection.execute(
+                "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone() is None:
+                raise LookupError("That series run is not in the catalog")
+            rows = list(connection.execute(
+                """SELECT files.id, files.path, files.filename, file_identities.issue_number
+                   FROM files
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE file_identities.series_run_id=? AND files.present=1""",
+                (series_run_id,),
+            ))
+
+        def order(row: sqlite3.Row) -> tuple[float, str]:
+            try:
+                number = float(str(row["issue_number"]))
+            except (TypeError, ValueError):
+                number = float("inf")
+            return (number, str(row["filename"]).casefold())
+
+        return [
+            {"id": str(row["id"]), "path": row["path"], "filename": row["filename"],
+             "issueNumber": row["issue_number"]}
+            for row in sorted(rows, key=order)
+        ]
+
+    def series_backdrop_preference(self, series_run_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM series_backdrop_preferences WHERE series_run_id=?",
+                (series_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fileId": str(row["file_id"]), "member": row["page_member"],
+            "source": row["source"], "fileSignature": row["file_signature"],
+        }
+
+    def set_series_backdrop(
+        self, series_run_id: int, file_id: int, member: str, source: str,
+        file_signature: str | None = None,
+    ) -> None:
+        if source not in {"chosen", "auto"}:
+            raise ValueError("Unsupported background source")
+        if not member:
+            raise ValueError("Choose a page")
+        # Only a comic in this run, so a chosen id cannot reach across runs.
+        if not any(item["id"] == str(file_id) for item in self.series_backdrop_files(series_run_id)):
+            raise ValueError("That comic is not part of this run")
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO series_backdrop_preferences(
+                       series_run_id, file_id, page_member, source, file_signature, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(series_run_id) DO UPDATE SET
+                       file_id=excluded.file_id, page_member=excluded.page_member,
+                       source=excluded.source, file_signature=excluded.file_signature,
+                       updated_at=excluded.updated_at""",
+                (series_run_id, int(file_id), member, source, file_signature, _utc_now()),
+            )
+
+    def clear_series_backdrop(self, series_run_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "DELETE FROM series_backdrop_preferences WHERE series_run_id=?", (series_run_id,)
+            )
 
     def set_file_cover_preference(
         self, file_id: int, source: str, cover_url: str | None = None
