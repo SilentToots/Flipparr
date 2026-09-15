@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FlipparrMark, FlipparrWordmark } from "./brand.jsx";
 import {
   ArrowsClockwise,
@@ -2789,6 +2789,14 @@ function useShelfPaging(deps = []) {
     setAtEnd(node.scrollLeft + node.clientWidth >= node.scrollWidth - 1);
   }
   useEffect(measure, deps);
+  // A drawer that changes width can bring a row into or out of overflow.
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   function page(direction) {
     const node = scroller.current;
     if (node) node.scrollBy({ left: direction * node.clientWidth, behavior: "smooth" });
@@ -2808,13 +2816,15 @@ function issueCardLabel(issue, medium) {
 
 function ComicDrawerRow({ title, count, children }) {
   const { scroller, atStart, atEnd, measure, page } = useShelfPaging([count]);
+  // When every card fits there is nothing to page through, so no arrows.
+  const fits = atStart && atEnd;
   return <section className="comic-drawer-row" aria-label={title}>
     <header>
       <h3>{title}</h3>
-      <div className="shelf-scroll">
+      {fits ? null : <div className="shelf-scroll">
         <button type="button" onClick={() => page(-1)} disabled={atStart} aria-label={`Scroll ${title} back`}><ShelfBackIcon /></button>
         <button type="button" onClick={() => page(1)} disabled={atEnd} aria-label={`Scroll ${title} forward`}><ShelfNextIcon /></button>
-      </div>
+      </div>}
     </header>
     <div className="comic-drawer-shelf" ref={scroller} onScroll={measure}>{children}</div>
   </section>;
@@ -2917,6 +2927,31 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   const heroArt = series?.coverCandidates?.[0] || series?.cover || null;
   const related = useMemo(() => (series ? relatedRuns(series, allSeries || []) : null), [series, allSeries]);
   const creators = useMemo(() => orderedCreators(series?.creators), [series?.creators]);
+  // One glass pill slides between tabs, as iOS does, rather than each tab
+  // lighting up on its own. It is measured before paint so it never lands
+  // late, and only animates once it has a position to animate from.
+  const tabsRef = useRef(null);
+  const [tabGlass, setTabGlass] = useState(null);
+  useLayoutEffect(() => {
+    const nav = tabsRef.current;
+    if (!nav) return undefined;
+    function place() {
+      const active = nav.querySelector("button.active");
+      if (!active) return;
+      setTabGlass({
+        transform: `translate(${active.offsetLeft}px, ${active.offsetTop}px)`,
+        width: `${active.offsetWidth}px`,
+        height: `${active.offsetHeight}px`,
+      });
+      if (!nav.dataset.glassPlaced) requestAnimationFrame(() => { nav.dataset.glassPlaced = "true"; });
+    }
+    place();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(place);
+    observer.observe(nav);
+    nav.querySelectorAll("button").forEach((button) => observer.observe(button));
+    return () => observer.disconnect();
+  }, [tab, series?.id, editionsOn]);
   useEffect(() => { dialogRef.current?.scrollTo?.({ top: 0 }); }, [series?.id]);
   if (!series) return null;
   const identityStrength = series.identityConfidence == null ? "Unknown" : series.identityConfidence >= 85 ? "High" : series.identityConfidence >= 65 ? "Medium" : "Low";
@@ -2961,7 +2996,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   const alternateTitles = (series.aliases || []).filter((item) => identityKey(item.name) !== identityKey(series.title));
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
     <header className="comic-drawer-hero">
-      {heroArt ? <img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" /> : null}
+      {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" /></> : null}
       <span className="comic-drawer-scrim" aria-hidden="true" />
       <button type="button" className="comic-drawer-close" onClick={requestClose} aria-label="Close series details"><DrawerCloseIcon size={null} /></button>
       {parentCollection ? <button type="button" className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}
@@ -2977,7 +3012,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         </div>
       </div>
     </header>
-    <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details">{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
+    <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body">
       {tab === "overview" ? <>
         <div className="comic-drawer-follow">

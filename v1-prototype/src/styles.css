@@ -534,7 +534,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    icon, no caption. The track is the file's contentSecondary grey. */
 .ownership.compact { display: grid; gap: 8px; width: 100%; padding: 0 12px; }
 .ownership.compact .ownership-label { min-width: 0; display: block; color: var(--color-neutral-0); font-size: var(--text-xs); line-height: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ownership.compact .ownership-label strong { font-weight: 700; }
+/* Bold, not bigger: the file sets the count at the label's own size, and the
+   general .ownership-label strong rule would make it 14px regardless. */
+.ownership.compact .ownership-label strong { font-size: inherit; font-weight: 700; }
 .ownership.compact .progress { display: block; height: 8px; border-radius: var(--radius-pill); background: var(--chrome-label); }
 
 
@@ -1877,9 +1879,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .comic-drawer-hero { position: relative; isolation: isolate; min-height: 524px; padding: 96px 24px 24px; display: flex; align-items: flex-end; overflow: hidden; }
 .comic-drawer-backdrop { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; object-position: center top; pointer-events: none; }
+/* The file's blur is progressive: the art is sharp at the top and fully
+   blurred where the scrim turns black. CSS has no progressive backdrop blur,
+   so a blurred copy of the cover sits over the sharp one and a gradient mask
+   fades it in. */
+.comic-drawer-backdrop.blurred { z-index: -2; filter: blur(20px); transform: scale(1.08); -webkit-mask-image: linear-gradient(180deg, transparent 8%, #000 81%); mask-image: linear-gradient(180deg, transparent 8%, #000 81%); }
 /* The file's Rectangle 1: #4c0bb2 at 40% to black by 81%, the whole layer at
-   80%, over a background blur of 40 (20px in CSS). */
-.comic-drawer-scrim { position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, rgb(76 11 178 / .32) 0%, rgb(0 0 0 / .8) 80.77%); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); pointer-events: none; }
+   80%. */
+.comic-drawer-scrim { position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, rgb(76 11 178 / .32) 0%, rgb(0 0 0 / .8) 80.77%); pointer-events: none; }
 .comic-drawer-close { position: absolute; top: 8px; left: 8px; z-index: 2; width: 60px; height: 60px; padding: 0; border: 0; border-radius: var(--radius); display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; }
 .comic-drawer-close svg { width: 60px; height: 60px; }
 .comic-drawer-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -4px; }
@@ -1898,12 +1905,39 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .comic-drawer-copy .ownership.compact .ownership-label { font-size: 1.125rem; }
 .comic-drawer-copy .ownership.compact .progress { height: 16px; }
 
-/* 73:1418. The file fills the selected tab with the bar's own violet, which
-   left its weight as the only sign of it; a darker well keeps the drawn pill
-   and makes the selection readable at a glance. */
+/* 73:1418. The selected tab is the same glass as the phone tab bar's active
+   item (69:793), drawn from the --nav-glass-* tokens, so the two read as one
+   control family. The file fills it with the bar's own violet, which left
+   its weight as the only sign of the selection. */
 .comic-drawer-tabs.drawer-tabs { gap: 0; justify-content: space-between; padding: 8px 20px; border-bottom: 0; background: var(--violet); }
 .comic-drawer-tabs.drawer-tabs button { min-height: 48px; padding: 12px 16px; border: 0; border-radius: var(--radius-pill); color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: 400; line-height: normal; }
-.comic-drawer-tabs.drawer-tabs button.active { background: rgb(0 0 0 / .28); color: var(--color-neutral-0); font-weight: 700; }
+.comic-drawer-tabs.drawer-tabs { position: relative; isolation: isolate; }
+.comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; }
+.comic-drawer-tabs.drawer-tabs button.active { background: transparent; color: var(--color-neutral-0); font-weight: 700; }
+/* The indicator itself: absolutely placed at the selected tab's box by the
+   drawer, and eased there with an iOS-like curve once it has been placed.
+   Reduced motion collapses the duration token, so it simply moves. */
+.comic-drawer-tab-glass {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  background: linear-gradient(calc(var(--nav-glass-light-angle) + 180deg), rgb(255 255 255 / calc(var(--nav-glass-light) * .3)), rgb(255 255 255 / calc(var(--nav-glass-light) * .06)));
+  box-shadow:
+    inset calc(sin(var(--nav-glass-light-angle)) * -1px) calc(cos(var(--nav-glass-light-angle)) * 1px) var(--nav-glass-splay) rgb(255 255 255 / var(--nav-glass-light)),
+    inset calc(sin(var(--nav-glass-light-angle)) * 1px) calc(cos(var(--nav-glass-light-angle)) * -1px) var(--nav-glass-splay) rgb(255 255 255 / calc(var(--nav-glass-light) / 3)),
+    inset 0 0 var(--nav-glass-depth) rgb(255 255 255 / calc(var(--nav-glass-light) * .2));
+  -webkit-backdrop-filter: blur(var(--nav-glass-frost));
+  backdrop-filter: blur(var(--nav-glass-frost));
+}
+.comic-drawer-tabs.drawer-tabs[data-glass-placed] .comic-drawer-tab-glass {
+  transition:
+    transform var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
+    width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
+    height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1);
+}
 .comic-drawer-tabs.drawer-tabs button:focus-visible { outline: 2px solid var(--color-neutral-0); outline-offset: -2px; }
 @media (hover: hover) { .comic-drawer-tabs.drawer-tabs button:not(.active):hover { background: rgb(0 0 0 / .14); color: var(--color-neutral-0); } }
 
