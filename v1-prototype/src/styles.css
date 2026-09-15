@@ -43,6 +43,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar-counts strong { font-weight: 700; }
 .sidebar-counts i { color: var(--chrome-label); font-style: normal; font-size: var(--text-lg); }
 .sidebar-mark { display: block; flex: none; color: var(--color-neutral-0); }
+/* The quick scan beside the counts: quiet until wanted, turning while any
+   scan runs. Its duration is the loader's, which slows under reduced motion. */
+.sidebar-scan { display: grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--chrome-label); cursor: pointer; transition: color var(--motion-duration-fast) ease, background var(--motion-duration-fast) ease, transform var(--motion-duration-fast) ease; }
+@media (hover: hover) { .sidebar-scan:not(:disabled):hover { background: var(--surface-raised); color: var(--text); } }
+.sidebar-scan:not(:disabled):active { transform: scale(var(--button-press-scale)); }
+.sidebar-scan:disabled { opacity: 1; }
+.sidebar-scan.scanning { color: var(--violet-text); cursor: progress; }
+.sidebar-scan.scanning svg { animation: sidebar-scan-turn var(--motion-duration-loader) linear infinite; }
+@keyframes sidebar-scan-turn { to { transform: rotate(360deg); } }
 .sidebar-session { display: grid; gap: 8px; padding-top: 8px; }
 .health-line { color: var(--muted-strong); display: flex; gap: 8px; align-items: center; }
 .health-line i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
@@ -804,8 +813,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-library-folders > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .settings-library-folders > header h2 { margin-bottom: 6px; }
 .settings-library-folders > header p { margin: 0; color: var(--muted); font-size: var(--text-md); }
-.settings-library-folders > header .secondary-button { flex: 0 0 auto; margin-top: 0; }
-.settings-root-list { display: grid; gap: 8px; margin-top: 18px; }
+.settings-library-folders > header .secondary-button { flex: 0 0 auto; margin-top: 0; }.settings-root-list { display: grid; gap: 8px; margin-top: 18px; }
 .settings-root-list > span { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--color-violet-400); }
 .settings-root-list strong { overflow: hidden; color: var(--text); font-size: var(--text-md); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .settings-root-list small { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
