@@ -1843,6 +1843,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sidebar .nav-item { z-index: 1; }
   .sidebar .nav-item.active { height: auto; gap: 0; background: transparent; }
   .sidebar .nav-item.active::before { display: none; }
+
+  /* Scrolling down tucks the bar into a 56px circle holding the current tab
+     (.tab-bar-collapsed, from useCollapsingTabBar); scrolling up, the top of
+     the page or a tap opens it again. The other tabs and the labels ease out
+     rather than vanish, on the glass's iOS curve. */
+  .sidebar nav { max-width: 100%; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
+  .sidebar .nav-item { max-width: 25%; overflow: hidden; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
+  .sidebar .nav-item > span { max-height: 12px; transition: max-height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
+  .sidebar.tab-bar-collapsed nav { max-width: 56px; padding: 0; }
+  .sidebar.tab-bar-collapsed .nav-item:not(.active) { max-width: 0; padding-inline: 0; opacity: 0; }
+  .sidebar.tab-bar-collapsed .nav-item.active { max-width: 56px; padding: 18px; }
+  .sidebar.tab-bar-collapsed .nav-item > :is(span, b) { max-height: 0; opacity: 0; }
+  .sidebar.tab-bar-collapsed .nav-glass { opacity: 0; }
   .sidebar .nav-item.active > svg { width: 20px; height: 20px; }
   /* The confirmation toast sat at 24px from the bottom, under the tab bar. */
   .toast { right: 12px; left: 12px; bottom: calc(var(--mobile-nav-height) + 8px + env(safe-area-inset-bottom)); }
@@ -1931,7 +1944,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   transition:
     transform var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
     width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
-    height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1);
+    height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
+    opacity var(--motion-duration-fast) ease;
 }
 .comic-drawer-tabs.drawer-tabs button:focus-visible { outline: 2px solid var(--color-neutral-0); outline-offset: -2px; }
 @media (hover: hover) { .comic-drawer-tabs.drawer-tabs button:not(.active):hover { background: rgb(0 0 0 / .14); color: var(--color-neutral-0); } }

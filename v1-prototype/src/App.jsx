@@ -497,15 +497,59 @@ function useGlassIndicator(selector, deps) {
   return [containerRef, style];
 }
 
+// The phone's tab bar gets out of the way while you read, as iOS apps do:
+// scrolling down tucks it into the current tab, and scrolling back up,
+// reaching the top of the page, changing screen, or tapping it brings it back.
+// The styling only applies at phone widths, so a desktop never sees the state.
+const TAB_BAR_SCROLL_SLACK = 6;
+const TAB_BAR_TOP_ZONE = 64;
+
+function useCollapsingTabBar(resetKey) {
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let frame = 0;
+    function onScroll() {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const y = window.scrollY;
+        const delta = y - lastY;
+        if (y < TAB_BAR_TOP_ZONE) setCollapsed(false);
+        else if (delta > TAB_BAR_SCROLL_SLACK) setCollapsed(true);
+        else if (delta < -TAB_BAR_SCROLL_SLACK) setCollapsed(false);
+        if (Math.abs(delta) > TAB_BAR_SCROLL_SLACK || y < TAB_BAR_TOP_ZONE) lastY = y;
+      });
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+  useEffect(() => { setCollapsed(false); }, [resetKey]);
+  return [collapsed, setCollapsed];
+}
+
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
-  const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active]);
+  const [collapsed, setCollapsed] = useCollapsingTabBar(active);
+  const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active, collapsed]);
+  // A tap on the tucked bar opens it rather than going anywhere, so the
+  // reader can see the other tabs before choosing one.
+  function expandInsteadOfNavigating(event) {
+    if (!collapsed || !window.matchMedia("(max-width: 640px)").matches) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setCollapsed(false);
+  }
   const counts = {
     requests: jobsNeedingAttention(catalog),
     settings: catalog?.stats?.needAttention ?? 0,
   };
   return (
-    <aside className="sidebar">
-      <nav aria-label="Primary navigation" ref={navRef}>
+    <aside className={`sidebar${collapsed ? " tab-bar-collapsed" : ""}`}>
+      <nav aria-label="Primary navigation" ref={navRef} onClickCapture={expandInsteadOfNavigating}
+        onFocusCapture={(event) => { if (event.target.matches?.(":focus-visible")) setCollapsed(false); }}>
         {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}
         <span className="nav-glass glass-indicator" aria-hidden="true" style={navGlass || { opacity: 0 }} />
         {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
