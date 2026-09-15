@@ -1788,8 +1788,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .library-phone-header .appbar-badge { top: 9px; right: 9px; box-shadow: 0 0 0 2px var(--bg); }
   .library-view-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--violet-text); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
   .library-phone-header .notifications-menu { width: calc(100vw - 24px); }
-  /* The field the magnifier opens; the file shows the screen with it shut. */
-  .main-content-flush .topbar:not(.open) { display: none; }
 
   /* View, sort and the filters are in the View & sort sheet on a phone. */
   .dashboard-header > .library-tools { display: none; }
@@ -2044,6 +2042,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .comic-drawer-card .discover-cover { width: 104px; height: 146px; }
   .comic-drawer-creators { margin: 0 -16px; padding: 20px 16px; }
 }
+
+/* The phone's search flyout: Discover's search field across the top of a
+   full-screen panel over Comics, with the library's matches under it. */
+.library-search-flyout { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; background: var(--bg); animation: library-search-in var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
+@keyframes library-search-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+.library-search-flyout-bar { display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; border-bottom: 2px solid var(--color-violet-700); background: var(--color-neutral-950); }
+.library-search-flyout-bar .discover-search { flex: 1 1 auto; width: auto; min-height: 44px; box-sizing: border-box; }
+.library-search-flyout-bar .discover-search:focus-within { border-color: var(--violet-text); }
+/* 16px, or iOS zooms the page when the field takes focus. */
+.library-search-flyout-bar .discover-search input { font-size: 16px; text-align: left; -webkit-appearance: none; appearance: none; }
+.library-search-flyout-bar .discover-search input::-webkit-search-cancel-button { display: none; }
+.library-search-flyout-bar .discover-search-clear { width: 32px; height: 32px; }
+.library-search-flyout-cancel { flex: none; min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--violet-text); font-size: var(--text-base); font-weight: 700; cursor: pointer; }
+.library-search-flyout-body { flex: 1 1 auto; min-height: 0; padding: 20px 12px calc(24px + env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 20px; }
+.library-search-flyout .discover-results h2 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-lg); }
+.library-search-flyout .library-match-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; margin-top: 12px; }
+.library-search-flyout .library-match { width: auto; min-width: 0; }
+.library-search-flyout .library-match .discover-cover { width: 100%; height: auto; aspect-ratio: 5 / 7; }
+.library-search-flyout-hint { margin: 0; padding: 32px 12px; color: var(--muted-strong); font-size: var(--text-md); line-height: 1.5; text-align: center; }
+.library-search-flyout-go { min-height: 48px; padding: 0 16px; border: 1px solid var(--pull-border); border-radius: var(--radius); background: var(--pull-bg); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: 700; cursor: pointer; }
+.library-search-flyout :is(.library-search-flyout-cancel, .library-search-flyout-go, .discover-search-clear):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* The phone's View & sort sheet: from the bottom edge, above the tab bar, with
    every row at least 44px. */

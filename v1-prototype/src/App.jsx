@@ -1187,17 +1187,62 @@ function SortMenu({ value, onChange }) {
   </div>;
 }
 
+// The phone's search: a full-screen flyout over Comics instead of a field
+// dropped into the page. It uses Discover's own search field, and shows the
+// library's matching runs as you type with Discover's Library Matches cards.
+// Search (Enter) looks through the comic catalogs on Discover, as the desktop
+// bar does.
+function LibrarySearchFlyout({ series, onSearch, onOpenSeries, onClose }) {
+  const dialogRef = useDialog(onClose);
+  const inputRef = useRef(null);
+  const [draft, setDraft] = useState("");
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  const trimmed = draft.trim();
+  const ready = trimmed.length >= 2;
+  const matches = useMemo(() => {
+    if (!ready) return [];
+    const parts = searchQueryParts(trimmed);
+    return series.filter((item) => libraryRunMatches(item, parts)).slice(0, 12);
+  }, [series, trimmed, ready]);
+  function searchCatalogs() {
+    if (!ready) return;
+    onClose();
+    onSearch(trimmed);
+  }
+  return <div className="library-search-flyout" role="dialog" aria-modal="true" aria-label="Search" ref={dialogRef}>
+    <div className="library-search-flyout-bar">
+      <form className="discover-search" role="search" onSubmit={(event) => { event.preventDefault(); searchCatalogs(); }}>
+        <SearchIcon />
+        <input
+          ref={inputRef} type="search" enterKeyHint="search" value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          aria-label="Search your library and comic catalogs"
+          placeholder="Title, creator or publisher…"
+        />
+        {draft ? <button type="button" className="discover-search-clear" onClick={() => { setDraft(""); inputRef.current?.focus(); }}
+          aria-label="Clear search"><ClearSearchIcon /></button> : null}
+        <button type="submit" className="sr-only">Search</button>
+      </form>
+      <button type="button" className="library-search-flyout-cancel" onClick={onClose}>Cancel</button>
+    </div>
+    <div className="library-search-flyout-body">
+      {ready ? <>
+        <section className="discover-results" aria-live="polite">
+          <header><h2>{matches.length ? <>{matches.length} <span>{matches.length === 1 ? "Library Match" : "Library Matches"}</span></> : <span>No runs in your library match</span>}</h2></header>
+          {matches.length ? <div className="library-match-row">{matches.map((item) => <LibraryMatchCard series={item} onOpen={(run) => { onClose(); onOpenSeries(run); }} key={item.id} />)}</div> : null}
+        </section>
+        <button type="button" className="library-search-flyout-go" onClick={searchCatalogs}>Search comic catalogs for &ldquo;{trimmed}&rdquo;</button>
+      </> : <p className="library-search-flyout-hint">Your runs appear as you type. Press Search to look through the comic catalogs for something new.</p>}
+    </div>
+  </div>;
+}
+
 function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus, logicalSeriesCount, notifications, onOpenNotification, onDismissNotification }) {
-  const [query, setQuery] = useState("");
-  // A phone opens search from the magnifier in its header (node 69:837). The
-  // field takes focus as it appears, and Escape puts it away again.
+  // A phone searches in a full-screen flyout from the magnifier in its header;
+  // closing it hands focus back to the magnifier.
   const [searchOpen, setSearchOpen] = useState(false);
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
-  const searchRef = useRef(null);
   const searchToggleRef = useRef(null);
-  useEffect(() => {
-    if (searchOpen) searchRef.current?.querySelector("input")?.focus();
-  }, [searchOpen]);
   function closeSearch() {
     setSearchOpen(false);
     searchToggleRef.current?.focus();
@@ -1236,8 +1281,8 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
         </div>
         <button
           type="button" ref={searchToggleRef} className="library-phone-action library-phone-search"
-          aria-label="Search" aria-expanded={searchOpen} aria-controls="library-phone-search"
-          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+          aria-label="Search" aria-haspopup="dialog" aria-expanded={searchOpen}
+          onClick={() => setSearchOpen(true)}
         ><MobileSearchIcon /></button>
         <button
           type="button" className="library-phone-action library-phone-view"
@@ -1252,7 +1297,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
         editionsOn={editionsOn} scope={effectiveScope} onScope={setScope}
         onClose={() => setViewSheetOpen(false)}
       /> : null}
-      <div className={`topbar${searchOpen ? " open" : ""}`} id="library-phone-search" ref={searchRef} onKeyDown={(event) => { if (event.key === "Escape" && searchOpen) closeSearch(); }}><div className="library-search"><SearchBar value={query} onChange={setQuery} onSubmit={() => onSearch(query)} actionLabel="Search" label="Search library and discover series" placeholder="Search your library or add a series…" /></div></div>
+      {searchOpen ? <LibrarySearchFlyout series={series} onSearch={onSearch} onOpenSeries={onOpenSeries} onClose={closeSearch} /> : null}
       <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
       </div>
       <div className="dashboard-body">
