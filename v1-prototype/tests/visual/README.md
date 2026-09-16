@@ -8,7 +8,7 @@ can be made without guessing at what it did to the rest of the app.
 Needs the UI dev loop up — the SSH tunnel to the backend and the Vite server:
 
 ```
-ssh -f -N -L 127.0.0.1:8795:100.64.0.10:8795 nas
+ssh -f -N -L 127.0.0.1:8795:<backend-address>:8795 <your-ssh-host>
 npm run dev:uiqa                      # or preview_start name flipparr-ui
 ```
 

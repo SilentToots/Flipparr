@@ -26,6 +26,10 @@ HIGH_CONFIDENCE = (
     re.compile(rb"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"),
     re.compile(rb"AKIA[0-9A-Z]{16}"),
     re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    # A tailnet address (the 100.64/10 range) names a machine on a private
+    # network. A tunnel command in a README published one; write a
+    # placeholder such as <backend-address> instead.
+    re.compile(rb"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?![\d.])"),
 )
 GENERIC_ASSIGNMENT = re.compile(
     rb"(?i)(?:api[_-]?key|apikey|access[_-]?token|authorization|bearer[_-]?token)"
