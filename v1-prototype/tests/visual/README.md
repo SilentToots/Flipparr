@@ -54,6 +54,22 @@ To diff one commit rather than the whole migration, stash the change, capture
 under any name, restore it, capture again — `*/` under `tests/visual/` is
 ignored, so a capture can be called whatever the comparison needs.
 
+## Two viewports
+
+Every state is captured at 1440×900 and again at 375×812 as `<name>@phone`,
+because most of the rules that differ between the two sit behind
+`max-width: 640px` and a desktop capture never exercises them. A state marks
+itself `phone: false` when the phone has no equivalent screen, and can give
+`phoneRequire` when its proof-of-content selectors differ there.
+
+The sweep records `fontSize`, `fontWeight` and `lineHeight` beside the
+colours, so a type change shows up in the report as exactly which elements
+moved and from what to what.
+
+`VISUAL_APP_ORIGIN` and `VISUAL_BACKEND_ORIGIN` point the run somewhere other
+than `dev:uiqa`. Against a live library, the Pull List changes between runs on
+its own; read its row in the report with that in mind.
+
 ## The guard that matters
 
 `dev:uiqa` proxies to a tunnelled backend. If that tunnel is down, every screen

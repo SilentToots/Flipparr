@@ -13,7 +13,13 @@ import { states, backendStates } from "./states.mjs";
 
 const APP = process.env.VISUAL_APP_ORIGIN || "http://localhost:4173";
 const BACKEND = process.env.VISUAL_BACKEND_ORIGIN || "http://127.0.0.1:8795";
-const VIEWPORT = { width: 1440, height: 900 };
+// Most of the type and spacing rules that differ between phone and desktop
+// sit behind max-width: 640px, so a desktop-only capture cannot see them.
+// Phone states are written as <name>@phone.
+const VIEWPORTS = [
+  { suffix: "", width: 1440, height: 900 },
+  { suffix: "@phone", width: 375, height: 812 },
+];
 
 const out = (() => {
   const flag = process.argv.indexOf("--out");
@@ -37,7 +43,8 @@ const SWEEP = `(() => {
     return parts.join(">");
   };
   const PROPS = ["color","backgroundColor","borderTopColor","borderRightColor",
-    "borderBottomColor","borderLeftColor","outlineColor","boxShadow","fill","stroke"];
+    "borderBottomColor","borderLeftColor","outlineColor","boxShadow","fill","stroke",
+    "fontSize","fontWeight","lineHeight"];
   const parse = (c) => {
     const m = String(c).match(/rgba?\\((\\d+)[,\\s]+(\\d+)[,\\s]+(\\d+)(?:[,\\s/]+([\\d.]+))?/);
     return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
@@ -78,6 +85,7 @@ const SWEEP = `(() => {
       const v = cs[p];
       if (!v || v === "none" || v === "rgba(0, 0, 0, 0)") continue;
       record[p] = v;
+      if (p.startsWith("font") || p === "lineHeight") continue;
       const c = parse(v);
       if (c && c.a > 0) colours.add(v);
     }
@@ -110,7 +118,7 @@ const SWEEP = `(() => {
   return { styles, colours: [...colours].sort(), contrast, borders, elements: document.querySelectorAll("*").length };
 })()`;
 
-async function capture(page, state, origin, dir) {
+async function capture(page, state, origin, dir, suffix) {
   const url = origin + state.path;
   await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
   if (state.setup) await state.setup(page);
@@ -121,7 +129,7 @@ async function capture(page, state, origin, dir) {
   // a dead backend. A dead backend renders empty forever and still fails here,
   // ten seconds later.
   const missing = [];
-  for (const selector of state.require) {
+  for (const selector of (suffix && state.phoneRequire) || state.require) {
     try {
       await page.waitForSelector(selector, { timeout: 10000 });
     } catch {
@@ -136,32 +144,38 @@ async function capture(page, state, origin, dir) {
   }
   await page.waitForTimeout(200);
 
-  await page.screenshot({ path: path.join(dir, `${state.name}.png`), fullPage: true });
+  const name = state.name + suffix;
+  await page.screenshot({ path: path.join(dir, `${name}.png`), fullPage: true });
   const data = await page.evaluate(SWEEP);
-  return { name: state.name, url, ...data };
+  return { name, url, ...data };
 }
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 1 });
-// Animations would make every screenshot differ from itself.
-await page.emulateMedia({ reducedMotion: "reduce" });
 
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 
 const results = [];
 const failures = [];
-for (const [state, origin] of [
-  ...states.map((s) => [s, APP]),
-  ...backendStates.map((s) => [s, BACKEND]),
-]) {
-  try {
-    results.push(await capture(page, state, origin, out));
-    process.stdout.write(`  ok   ${state.name}\n`);
-  } catch (error) {
-    failures.push(`${state.name}: ${error.message}`);
-    process.stdout.write(`  FAIL ${state.name}\n`);
+for (const { suffix, width, height } of VIEWPORTS) {
+  const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+  // Animations would make every screenshot differ from itself.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const work = [
+    ...states.map((s) => [s, APP]),
+    ...backendStates.map((s) => [s, BACKEND]),
+  ].filter(([state]) => !suffix || state.phone !== false);
+  for (const [state, origin] of work) {
+    const name = state.name + suffix;
+    try {
+      results.push(await capture(page, state, origin, out, suffix));
+      process.stdout.write(`  ok   ${name}\n`);
+    } catch (error) {
+      failures.push(`${name}: ${error.message}`);
+      process.stdout.write(`  FAIL ${name}\n`);
+    }
   }
+  await page.close();
 }
 await browser.close();
 
