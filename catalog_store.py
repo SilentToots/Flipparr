@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 38
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -995,6 +995,12 @@ class CatalogStore:
                     id INTEGER PRIMARY KEY,
                     job_id INTEGER NOT NULL UNIQUE REFERENCES acquisition_jobs(id) ON DELETE CASCADE,
                     sab_nzo_id TEXT NOT NULL UNIQUE,
+                    -- Where the comic came from. SABnzbd was the only answer
+                    -- once, and the column exists because it no longer is: a
+                    -- file handed over by the user does not pass through a
+                    -- downloader at all, and reconciliation has to know which
+                    -- of them to ask about a row.
+                    source TEXT NOT NULL DEFAULT 'sabnzbd',
                     release_title TEXT NOT NULL,
                     release_key TEXT,
                     status TEXT NOT NULL DEFAULT 'queued'
@@ -1192,6 +1198,13 @@ class CatalogStore:
                 )
             if "creators_synced_at" not in run_columns:
                 connection.execute("ALTER TABLE series_runs ADD COLUMN creators_synced_at TEXT")
+            download_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")
+            }
+            if "source" not in download_columns:
+                connection.execute(
+                    "ALTER TABLE acquisition_downloads ADD COLUMN source TEXT NOT NULL DEFAULT 'sabnzbd'"
+                )
             issue_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(issues)")
             }
@@ -5402,30 +5415,41 @@ class CatalogStore:
         sab_nzo_id: str,
         release_title: str,
         release_key: str | None = None,
+        source: str = "sabnzbd",
     ) -> dict[str, Any]:
-        """Persist the SAB identity needed to reconcile queue, history, and imports."""
+        """Persist the identity needed to reconcile a download and its import.
+
+        `sab_nzo_id` is SABnzbd's queue id for a download it is carrying, and
+        the source's own identity for anything else -- a file the user handed
+        over has no queue to be in. The column keeps its name because that is
+        what every existing row means.
+        """
         queue_id = str(sab_nzo_id or "").strip()
         title = str(release_title or "").strip()
         if not queue_id or not title:
-            raise ValueError("SABnzbd returned an incomplete download identity")
+            raise ValueError("The download identity is incomplete")
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
             if not connection.execute("SELECT id FROM acquisition_jobs WHERE id=?", (job_id,)).fetchone():
                 raise ValueError("Acquisition job was not found")
             connection.execute(
                 """INSERT INTO acquisition_downloads(
-                       job_id, sab_nzo_id, release_title, release_key,
+                       job_id, sab_nzo_id, source, release_title, release_key,
                        status, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+                   ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
                    ON CONFLICT(job_id) DO UPDATE SET
                        sab_nzo_id=excluded.sab_nzo_id,
+                       source=excluded.source,
                        release_title=excluded.release_title,
                        release_key=excluded.release_key,
                        status='queued', error=NULL, failure_stage=NULL,
                        sab_storage=NULL, local_source=NULL, destination=NULL,
                        source_size=NULL, source_sha256=NULL, imported_at=NULL,
                        updated_at=excluded.updated_at""",
-                (job_id, queue_id, title, str(release_key or "").strip() or None, now, now),
+                (
+                    job_id, queue_id, str(source or "sabnzbd").strip() or "sabnzbd", title,
+                    str(release_key or "").strip() or None, now, now,
+                ),
             )
             row = connection.execute(
                 "SELECT * FROM acquisition_downloads WHERE job_id=?", (job_id,)

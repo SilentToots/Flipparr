@@ -542,6 +542,22 @@ def user_cover_dir(kind: str = "files") -> Path:
     return configured / kind
 
 
+# A comic a person fetched themselves. Larger than any single issue needs, and
+# small enough that a mistyped upload cannot fill the config volume.
+MANUAL_IMPORT_MAX_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def acquisition_staging_dir(source: str = "manual") -> Path:
+    """Where a comic waits between arriving and being imported.
+
+    Beside the catalog, for the reason in `user_cover_dir`: the container's
+    root is read-only and only the config, comics and download directories are
+    mounted, so this is the one place a new file can be written.
+    """
+    staging = _configured_path("ACQUISITION_STAGING", catalog_database_path().parent / "downloads")
+    return staging / _safe_path_component(source, "manual")
+
+
 def _adopt_legacy_user_covers(destination: Path) -> None:
     """Carry covers over from the old in-image location, once.
 
@@ -3264,6 +3280,66 @@ def import_downloaded_comic(
         # A manga ebook is converted into a temporary CBZ. By now the library
         # holds its copy, or the import failed and the copy is of no use.
         _discard_converted(selected)
+
+
+def import_uploaded_comic(job_id: int, stream: Any, length: int, filename: str) -> dict[str, Any]:
+    """Take a comic the user fetched themselves and file it against a wanted issue.
+
+    Everything after the bytes land is the path an automatic download already
+    takes: the file has to prove it is the issue it is claimed for, the library
+    names and places it, and it is cataloged under the run the request named.
+    Only the way it arrived is different.
+
+    Until now there was no way to hand a file over. A comic found by hand had
+    to be dropped into the library folder and waited for, and nothing connected
+    it to the issue that was wanted.
+    """
+    store = catalog_store()
+    context = store.get_acquisition_job_context(job_id)
+    name = _safe_path_component(filename or "", "comic")
+    if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise ValueError("That file is not a comic Flipparr can read")
+    folder = acquisition_staging_dir("manual") / str(job_id)
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True, exist_ok=True)
+    staged = folder / name
+    selected: dict[str, Any] | None = None
+    try:
+        remaining = length
+        with staged.open("xb") as handle:
+            while remaining > 0:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError("The upload ended before the whole comic arrived")
+                handle.write(chunk)
+                remaining -= len(chunk)
+        # Refuses a comic that says it is something else, exactly as it would
+        # for a download: being handed the file is not evidence about it.
+        selected = select_downloaded_comic(folder, context, folder, release_title=name)
+        placed = _import_selected_comic(selected, context, {"job_id": job_id}, COMIC_LIBRARY_ROOT)
+        placed["fileId"] = _catalog_imported_issue(
+            Path(placed["destination"]), context, COMIC_LIBRARY_ROOT,
+        )
+        download = store.record_acquisition_download(
+            job_id, f"manual:{job_id}:{int(time.time())}", name, source="manual",
+        )
+        store.update_acquisition_download(
+            int(download["id"]), "imported", local_source=str(staged),
+            destination=placed["destination"], source_size=placed["size"],
+            source_sha256=placed["sha256"],
+        )
+        store.update_acquisition_job(
+            job_id, "fulfilled",
+            f"Imported from the file you uploaded, as {Path(placed['destination']).name}",
+        )
+        log_event(
+            "manual_import", job_id=job_id, file=name,
+            destination=placed["destination"], size=placed["size"],
+        )
+        return {"status": "imported", **placed}
+    finally:
+        _discard_converted(selected)
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def _discard_converted(selected: dict[str, Any] | None) -> None:
@@ -10372,6 +10448,12 @@ class Handler(BaseHTTPRequestHandler):
         if cover_upload_match:
             self.handle_cover_upload(int(cover_upload_match.group(1)))
             return
+        # A comic the user fetched themselves, sent as a raw body like the
+        # covers below and for the same reason: it is not JSON.
+        manual_import_match = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/import", parsed_url.path)
+        if manual_import_match:
+            self.handle_manual_import(int(manual_import_match.group(1)))
+            return
         # Both upload routes carry a raw image, so they are matched before the
         # body is read as JSON.
         series_upload_match = re.fullmatch(r"/api/v1/series/(\d+)/cover/upload", parsed_url.path)
@@ -11282,6 +11364,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "private, no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def handle_manual_import(self, job_id: int) -> None:
+        """Take a comic file for one wanted issue, streamed rather than buffered.
+
+        A cover is read whole into memory at 50MB; a comic can be twenty times
+        that, so the body goes to disk in chunks as it arrives.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length"}, 400)
+            return
+        if length <= 0 or length > MANUAL_IMPORT_MAX_BYTES:
+            self.send_json({"error": "Upload a comic file no larger than 2 GB"}, 413)
+            return
+        filename = str(self.headers.get("X-Filename") or "").strip()
+        if not filename:
+            self.send_json({"error": "Send the comic's filename in an X-Filename header"}, 400)
+            return
+        try:
+            result = import_uploaded_comic(job_id, self.rfile, length, filename)
+        except DownloadContentMismatch as exc:
+            # The file is readable and is not that issue. Worth its own status:
+            # nothing is wrong with the request, the comic is simply not it.
+            self.send_json({"error": str(exc)}, 422)
+            return
+        except (LookupError, ValueError) as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log_exception("manual_import_failed", exc, level="warning")
+            self.send_json({"error": f"The comic could not be imported: {exc}"}, 500)
+            return
+        self.send_json(result, 201)
 
     def handle_cover_upload(self, entity_id: int, kind: str = "files") -> None:
         """Take a raw image body for a comic file or for a series run.

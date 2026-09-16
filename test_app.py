@@ -3044,6 +3044,93 @@ class PackEligibilityTests(unittest.TestCase):
         self.assertEqual(note, "")
 
 
+class ManualImportTests(unittest.TestCase):
+    """A comic fetched by hand, handed to the issue that wanted it.
+
+    There was no way to do this: a comic found by hand had to be dropped in the
+    library folder and waited for, with nothing connecting it to the wanted
+    issue. Being handed the file is still not evidence about it -- it goes
+    through the same identity check as any download.
+    """
+
+    CONTEXT = {
+        "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+        "issueNumber": "2", "issueTitle": None, "publicationYear": 2012,
+        "requestId": "9", "existingDirectory": None, "format": "comic",
+    }
+
+    @staticmethod
+    def _comic_bytes():
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("001.png", b"\x89PNG\r\n\x1a\n" + b"0" * 128)
+        return buffer.getvalue()
+
+    @contextlib.contextmanager
+    def _library(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "comics"
+            library.mkdir()
+            staging = root / "staging"
+            store = Mock()
+            store.get_acquisition_job_context.return_value = dict(self.CONTEXT)
+            store.record_acquisition_download.return_value = {"id": "5"}
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.COMIC_LIBRARY_ROOT", library), \
+                 patch("app.acquisition_staging_dir", return_value=staging), \
+                 patch("app._catalog_imported_issue", return_value=7):
+                yield store, library, staging
+
+    def test_a_comic_is_filed_under_the_run_and_the_job_closes(self):
+        data = self._comic_bytes()
+        with self._library() as (store, library, staging):
+            result = app.import_uploaded_comic(
+                11, io.BytesIO(data), len(data), "Saga 002 (2012).cbz",
+            )
+            # Inside the fixture: the library lives in a temporary directory.
+            landed = Path(result["destination"])
+            self.assertTrue(landed.is_file())
+            self.assertEqual(landed.name, "Saga (2012) #002.cbz", "named by the library, not the upload")
+            # resolve(): the library path places it through a resolved root, and
+            # macOS temp directories are symlinks (/var -> /private/var).
+            self.assertEqual(landed.parent, (library / "Image Comics" / "Saga (2012)").resolve())
+            self.assertFalse(any(staging.rglob("*.cbz")), "nothing left in staging")
+        self.assertEqual(result["status"], "imported")
+        store.record_acquisition_download.assert_called_once()
+        self.assertEqual(store.record_acquisition_download.call_args.kwargs["source"], "manual")
+        store.update_acquisition_job.assert_called_once()
+        job_id, status, reason = store.update_acquisition_job.call_args.args
+        self.assertEqual((job_id, status), (11, "fulfilled"))
+        self.assertIn("uploaded", reason)
+
+    def test_a_comic_that_is_another_issue_is_refused(self):
+        data = self._comic_bytes()
+        with self._library() as (store, library, _staging):
+            with self.assertRaises(app.DownloadContentMismatch):
+                app.import_uploaded_comic(
+                    11, io.BytesIO(data), len(data), "Saga 004 (2012).cbz",
+                )
+        store.update_acquisition_job.assert_not_called()
+        self.assertEqual(list(library.rglob("*.cbz")), [])
+
+    def test_something_that_is_not_a_comic_is_refused_before_it_is_read(self):
+        with self._library() as (store, _library, _staging):
+            with self.assertRaisesRegex(ValueError, "not a comic"):
+                app.import_uploaded_comic(11, io.BytesIO(b"x"), 1, "notes.txt")
+        store.get_acquisition_job_context.assert_called_once()
+
+    def test_a_truncated_upload_does_not_reach_the_library(self):
+        data = self._comic_bytes()
+        with self._library() as (store, library, staging):
+            with self.assertRaisesRegex(ValueError, "ended before"):
+                app.import_uploaded_comic(
+                    11, io.BytesIO(data[:20]), len(data), "Saga 002 (2012).cbz",
+                )
+        self.assertEqual(list(library.rglob("*.cbz")), [])
+        self.assertFalse(staging.exists() and any(staging.rglob("*")))
+
+
 class RunPackPassTests(unittest.TestCase):
     """One search for the run, before asking for its issues one at a time.
 

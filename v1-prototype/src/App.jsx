@@ -2010,7 +2010,27 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
   const [deleting, setDeleting] = useState(null);
   const [retryingJobId, setRetryingJobId] = useState(null);
   const [retryError, setRetryError] = useState(null);
+  const [uploadingJobId, setUploadingJobId] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
   const jobs = request.jobs || [];
+  // A comic found by hand had nowhere to go: it had to be dropped in the
+  // library folder and waited for, with nothing tying it to the wanted issue.
+  async function uploadForJob(job, file) {
+    if (!file) return;
+    setUploadingJobId(job.id);
+    setUploadError(null);
+    try {
+      await apiRequest(`/api/v1/acquisition-jobs/${job.id}/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream", "X-Filename": file.name },
+        body: file,
+      });
+      onRefresh?.();
+    } catch (error) {
+      setUploadError({ jobId: job.id, message: error.message });
+    }
+    setUploadingJobId(null);
+  }
   // A run is on every tab it has issues for. On one, the row speaks for the
   // issues listed there, so its badge does not say Failed on Wanted.
   const tabJobs = jobsForTab(request, tab);
@@ -2098,8 +2118,8 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
         {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>
           <b>{issueLabel(job.issueNumber, request.medium)}</b>
-          <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{job.deliveredWithCount > 0 ? <span className="job-pack-note">{job.deliveredWithCount} more issue{job.deliveredWithCount === 1 ? "" : "s"} came from this download</span> : null}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : displayDetail ? <span className={retryMessage ? "job-error" : ""}>{displayDetail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div>
-          <span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {retryingJobId === job.id ? "Retrying…" : retryLabel}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}{perIssueDelete && canDeleteJob(job) ? deleteButton({ id: job.issueId, number: job.issueNumber }) : null}</span>
+          <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{job.deliveredWithCount > 0 ? <span className="job-pack-note">{job.deliveredWithCount} more issue{job.deliveredWithCount === 1 ? "" : "s"} came from this download</span> : null}{uploadError?.jobId === job.id ? <span className="job-error" role="alert">{uploadError.message}</span> : null}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : displayDetail ? <span className={retryMessage ? "job-error" : ""}>{displayDetail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div>
+          <span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{DOWNLOAD_STATUS_LABELS[job.downloadStatus] || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {retryingJobId === job.id ? "Retrying…" : retryLabel}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}{!imported ? <label className={`job-upload ${uploadingJobId === job.id ? "busy" : ""}`}><input type="file" accept=".cbz,.cbr,.cbt,.cb7,.pdf,.epub" disabled={uploadingJobId === job.id} onChange={(event) => { const [file] = event.target.files || []; event.target.value = ""; uploadForJob(job, file); }} />{uploadingJobId === job.id ? <LoadingSpinner size={14} /> : <UploadSimple size={14} />} {uploadingJobId === job.id ? "Adding…" : "Upload a file"}</label> : null}{perIssueDelete && canDeleteJob(job) ? deleteButton({ id: job.issueId, number: job.issueNumber }) : null}</span>
         </div>; })}
       </section>)}{waiting.length ? <section className="request-job-group">
         <header><span>Not out yet</span><strong>{request.title}</strong><b>{waiting.length} issue{waiting.length === 1 ? "" : "s"}</b></header>

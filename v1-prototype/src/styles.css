@@ -664,6 +664,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .job-state.fulfilled { background: var(--green-soft); color: var(--green-text); }
 .request-job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-job-actions button { min-height: 31px; border: 1px solid var(--violet-border); border-radius: 6px; background: var(--violet-soft); color: var(--violet-text); padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); font-weight: 700; cursor: pointer; white-space: nowrap; }
+/* A file the user already has. A label rather than a button, because it wraps
+   the file input, and quieter than Find release: handing a comic over is the
+   fallback when searching has not produced one. */
+.job-upload { min-height: 31px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--muted-strong); padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); font-weight: 700; cursor: pointer; white-space: nowrap; }
+.job-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.job-upload.busy { color: var(--violet-text); cursor: progress; }
+.job-upload:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (hover: hover) { .job-upload:hover { background: var(--surface-soft); color: var(--text); } }
+
 /* Quieter than the actions beside it: deleting is the way out, not the next step. */
 .request-job-actions button.request-job-delete { border-color: var(--line-strong); background: transparent; color: var(--muted-strong); }
 @media (hover: hover) { .request-job-actions button.request-job-delete:hover:not(:disabled) { background: var(--surface-soft); color: var(--text); } }
