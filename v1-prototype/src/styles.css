@@ -2182,6 +2182,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .settings-library-folders .settings-library-actions > button { width: 100%; justify-content: center; }
   .provider-row button { font-weight: 650; }
 
+  /* The workbench dialogs, held to the same floor as the screens behind them.
+     They are reached less often, so their controls had kept desktop sizes:
+     31px "Use cover" buttons, 39-40px fields, a 19px release search box. */
+  .cover-option-grid button { min-height: 44px; }
+  .metadata-edit-form input, .metadata-edit-form select { min-height: 44px; }
+  .match-search-form input { min-height: 44px; }
+  .run-assignment-form .form-field input, .run-assignment-form .form-field select { min-height: 44px; }
+  .modal :is(.danger-button, .secondary-button, .primary-button) { min-height: 44px; }
+  .release-query { min-height: 56px; }
+  .release-query :is(input, button) { min-height: 44px; }
+  /* A 13px checkbox, and a label that is the real target either way. */
+  .merge-warning label { min-height: 44px; align-items: center; }
+  /* flex: none, or the row's gap squeezes the box back to 14px wide. */
+  .merge-warning input { flex: none; width: 20px; height: 20px; margin-top: 0; }
+  /* An inline link in a sentence keeps its size and gains the room around it. */
+  .provider-credential-link { min-height: 44px; padding-block: 12px; margin-block: -12px; }
+
+  /* Dialog text under 12px. */
+  .series-match-providers, .series-merge-workbench small, .merge-warning label,
+  .issue-metadata-workbench dt, .modal .form-field small { font-size: var(--text-xs); }
+
   /* Text under 12px that people read to decide something. The tab labels were
      the file's 8px; 10 still fits four tabs across 375. */
   .sidebar .nav-item { font-size: var(--text-3xs); }
