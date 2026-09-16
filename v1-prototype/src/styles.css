@@ -1554,13 +1554,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .series-identity strong { font-size: var(--text-md); }
   .series-identity small { font-size: var(--text-sm); }
   .series-identity .tag-line { min-height: 18px; gap: var(--space-4); }
-  .mobile-list-ownership { display: block; min-width: 0; margin-top: 1px; }
-  .mobile-list-ownership .ownership.compact { width: 100%; grid-template-columns: auto minmax(54px, 1fr); grid-template-rows: auto auto; gap: var(--space-4) var(--space-8); align-items: center; }
-  .mobile-list-ownership .ownership-label { grid-column: 1; grid-row: 1; min-width: 0; gap: var(--space-4); }
-  .mobile-list-ownership .ownership-label svg { flex: 0 0 auto; width: 15px; height: 15px; }
-  .mobile-list-ownership .ownership-label strong { min-width: 0; font-size: var(--text-sm); white-space: nowrap; }
-  .mobile-list-ownership .ownership.compact > span { grid-column: 2; grid-row: 1; justify-self: end; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); }
-  .mobile-list-ownership .progress { grid-column: 1 / -1; grid-row: 2; height: 3px; }
+  /* The row's ownership, as the grid card shows it: the count on the left,
+     the bar under it. The rules this replaces were written for an older
+     ownership block; their `> span` selector caught both the label and the
+     bar, outranked their own rules, and pushed the label to the right of a
+     column whose width changed row to row. */
+  .mobile-list-ownership { display: block; min-width: 0; margin-top: var(--space-4); }
+  .series-row .series-identity-copy { flex: 1 1 auto; }
+  .mobile-list-ownership .ownership.compact { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); justify-items: stretch; padding: 0; }
+  .mobile-list-ownership .ownership.compact .ownership-label { justify-self: start; min-width: 0; font-size: var(--text-sm); white-space: nowrap; }
+  .mobile-list-ownership .ownership-label strong { font-size: var(--text-sm); }
+  .mobile-list-ownership .ownership.compact .progress { width: 100%; height: 6px; }
   .series-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
   .metadata-layout { grid-template-columns: 1fr; }
   .metadata-layout { height: auto; min-height: 0; overflow: visible; }
