@@ -3064,6 +3064,17 @@ def grab_direct_site_release(job_id: int, candidate_id: str) -> dict[str, Any]:
     return {"status": "grabbed", "source": "direct_site", "release": {"title": title}, "download": download}
 
 
+class DirectSiteNotAFile(ValueError):
+    """The post's link answered with a web page -- a file host's share page -- not a comic."""
+
+
+def _looks_like_a_page(content_type: str, first_bytes: bytes) -> bool:
+    if content_type.split(";")[0].strip().lower() in {"text/html", "application/xhtml+xml"}:
+        return True
+    head = first_bytes.lstrip()[:15].lower()
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html")
+
+
 def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, title: str) -> None:
     """Resolve a post's link and stream the file into staging.
 
@@ -3085,11 +3096,24 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             destination = folder / name
             fetched = 0
             marker = 0
+            content_type = str(response.headers.get("Content-Type") or "")
+            first = True
             with destination.open("xb") as handle:
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
+                    # Some posts link to a share page on a file host (WeTransfer,
+                    # say) rather than the file. Saved as a .cbz, the page came
+                    # back from the importer as a corrupt archive, and the same
+                    # page was fetched again on the next try.
+                    if first and _looks_like_a_page(content_type, chunk):
+                        host = urllib.parse.urlsplit(str(response.geturl() or link)).hostname or "another site"
+                        raise DirectSiteNotAFile(
+                            f"DirectSite' link for this release opens a page on {host}, not a file, "
+                            "so Flipparr can't fetch it. Download it there and use Upload a file."
+                        )
+                    first = False
                     fetched += len(chunk)
                     if fetched > DIRECT_SITE_DOWNLOAD_MAX_BYTES:
                         raise ValueError("The download is larger than Flipparr will fetch in one go")
@@ -3110,6 +3134,12 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             store.update_acquisition_download(
                 download_id, "failed", error=message, failure_stage="download",
             )
+            if isinstance(exc, DirectSiteNotAFile):
+                # The same link will lead to the same page, so this release is
+                # set aside for good rather than tried again.
+                store.record_acquisition_release_failure(
+                    job_id, post_url, title, str(exc), kind="not_a_file",
+                )
             # Wanted again rather than failed outright: another release, or the
             # same one later, is a normal way out of this.
             store.update_acquisition_job(job_id, "queued", message)

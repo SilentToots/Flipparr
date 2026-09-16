@@ -3283,6 +3283,36 @@ class DirectSiteDownloadTests(unittest.TestCase):
         self.assertEqual((job_id, status), (11, "queued"), "wanted again, not failed outright")
         self.assertIn("no direct download link", reason)
 
+    def test_a_share_page_is_refused_rather_than_saved_as_a_comic(self):
+        # A post for a whole run linked to a WeTransfer page; the page was saved
+        # as "Farmhand #1 - 20.cbz", reported as a corrupt archive, and fetched
+        # again on the next try.
+        page = b"<!DOCTYPE html><html lang=\"en\"><head><title>WeTransfer</title>"
+        response = Mock()
+        response.headers = {"Content-Type": "text/html; charset=utf-8", "Content-Length": str(len(page))}
+        response.geturl.return_value = "https://wetransfer.com/downloads/abc123"
+        chunks = [page, b""]
+        response.read.side_effect = lambda *_: chunks.pop(0)
+        store = Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.acquisition_staging_dir", return_value=Path(folder) / "direct_site"), \
+                 patch("app.direct_site_download_link", return_value="https://comics.example/dls/token"), \
+                 patch("app._safe_urlopen", return_value=contextlib.nullcontext(response)):
+                app._fetch_direct_site_download(5, 11, "https://comics.example/other-comics/farmhand-1-20/", "Farmhand #1 - 20")
+            self.assertFalse(list((Path(folder) / "direct_site").rglob("*.cbz")), "no page saved as a comic")
+        failed = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "failed"]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("wetransfer.com", failed[0].kwargs["error"])
+        store.record_acquisition_release_failure.assert_called_once()
+        args, kwargs = store.record_acquisition_release_failure.call_args
+        self.assertEqual(args[:2], (11, "https://comics.example/other-comics/farmhand-1-20/"))
+        self.assertEqual(kwargs["kind"], "not_a_file", "a hard refusal: the same link gives the same page")
+
+    def test_a_page_without_an_html_type_is_still_recognised(self):
+        self.assertTrue(app._looks_like_a_page("application/octet-stream", b"  <!doctype html><html>"))
+        self.assertFalse(app._looks_like_a_page("application/zip", b"PK\x03\x04rest"))
+
     def test_reconcile_waits_for_our_own_fetcher_rather_than_asking_sabnzbd(self):
         store = Mock()
         with patch("app.catalog_store", return_value=store), \
