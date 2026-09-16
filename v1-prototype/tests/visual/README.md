@@ -62,7 +62,8 @@ because most of the rules that differ between the two sit behind
 itself `phone: false` when the phone has no equivalent screen, and can give
 `phoneRequire` when its proof-of-content selectors differ there.
 
-The sweep records `fontSize`, `fontWeight` and `lineHeight` beside the
+The sweep records type (size, weight, line height), padding, margin, gap and
+corner radius beside the
 colours, so a type change shows up in the report as exactly which elements
 moved and from what to what.
 

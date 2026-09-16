@@ -73,10 +73,12 @@ for (const state of after) {
   for (const [key, props] of Object.entries(state.styles)) {
     const was = prior.styles[key];
     if (!was) { styleChanges.push({ state: state.name, key, property: "(new element)" }); continue; }
-    for (const [property, value] of Object.entries(props)) {
-      if (was[property] !== value) {
-        styleChanges.push({ state: state.name, key, property, from: was[property], to: value });
-      }
+    // Both sides: the sweep leaves out zero and default values, so a padding
+    // that became 0 is a property present before and absent after.
+    for (const property of new Set([...Object.keys(was), ...Object.keys(props)])) {
+      const from = was[property] ?? "0/none";
+      const to = props[property] ?? "0/none";
+      if (from !== to) styleChanges.push({ state: state.name, key, property, from, to });
     }
   }
   for (const key of Object.keys(prior.styles)) {

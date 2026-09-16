@@ -45,7 +45,9 @@ const SWEEP = `(() => {
   };
   const PROPS = ["color","backgroundColor","borderTopColor","borderRightColor",
     "borderBottomColor","borderLeftColor","outlineColor","boxShadow","fill","stroke",
-    "fontSize","fontWeight","lineHeight"];
+    "fontSize","fontWeight","lineHeight",
+    "paddingTop","paddingRight","paddingBottom","paddingLeft",
+    "marginTop","marginRight","marginBottom","marginLeft","rowGap","columnGap","borderTopLeftRadius"];
   const parse = (c) => {
     const m = String(c).match(/rgba?\\((\\d+)[,\\s]+(\\d+)[,\\s]+(\\d+)(?:[,\\s/]+([\\d.]+))?/);
     return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
@@ -84,9 +86,9 @@ const SWEEP = `(() => {
     const record = {};
     for (const p of PROPS) {
       const v = cs[p];
-      if (!v || v === "none" || v === "rgba(0, 0, 0, 0)") continue;
+      if (!v || v === "none" || v === "rgba(0, 0, 0, 0)" || v === "0px" || v === "normal") continue;
       record[p] = v;
-      if (p.startsWith("font") || p === "lineHeight") continue;
+      if (!/color|shadow|fill|stroke/i.test(p)) continue;
       const c = parse(v);
       if (c && c.a > 0) colours.add(v);
     }
@@ -123,7 +125,13 @@ async function capture(page, state, origin, dir, suffix) {
   const url = origin + state.path;
   await page.unrouteAll();
   await applyStubs(page, state.stub);
+  // A screen whose content comes from the catalog renders its empty state
+  // until the catalog arrives, which reads as real content to the guard.
+  const catalog = state.waitForCatalog
+    ? page.waitForResponse((r) => r.url().includes("/api/v1/catalog") && r.ok(), { timeout: 45000 })
+    : null;
   await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
+  if (catalog) await catalog;
   if (state.setup) await state.setup(page);
   await page.waitForTimeout(500);
 

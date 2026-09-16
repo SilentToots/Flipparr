@@ -96,7 +96,7 @@ export const states = [
   // and not the other buries anything a style change did under two thousand
   // elements. They are stubbed, as figma:check stubs them.
   { name: "discover", path: "/discover", stub: ["releases"], require: [".discover-hero", ".pull-card:not(.pull-card-skeleton)"] },
-  { name: "pull-list", path: "/pull-list", require: [".request-tabs"] },
+  { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".request-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings", require: [".settings-layout"] },
   // The folders panel only renders once the catalog has loaded; the header

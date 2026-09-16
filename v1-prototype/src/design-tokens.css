@@ -165,15 +165,29 @@
   --scrim-strong: rgb(0 0 0 / .74);
   --wash-subtle: rgb(255 255 255 / .02);
 
-  /* Spacing scale */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
+  /* Spacing scale. Named for its value, so a rule reads as what it draws and
+     a name can never drift from its number (the guard test holds them
+     equal). Every 2px up to 16 for the insides of controls, then a coarser
+     rhythm for layout. The tokens this replaced (--space-1 was 4px) were used
+     four times in about 1,150 spacing values; everything else was written by
+     hand, and a third of it on odd pixels. */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-28: 28px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-80: 80px;
+  --space-96: 96px;
 
   /* Every comic cover in the app is drawn at one ratio, and it was spelled
      out at fourteen sites -- so the design's 240x336 could not be adopted
@@ -228,9 +242,6 @@
 
   --control-height-sm: 32px;
   --control-height-md: 42px;
-  --control-gap: var(--space-2);
-  --control-padding-sm: 10px;
-  --control-padding-md: var(--space-4);
 
   /* Button component tokens */
   --button-primary-bg: var(--violet);
@@ -258,8 +269,6 @@
 
   /* Status component tokens */
   --status-height: 23px;
-  --status-padding-inline: var(--space-2);
-  --status-gap: var(--space-1);
   --status-amber-bg: var(--amber-soft);
   --status-amber-text: #fcd34d;
   --status-violet-bg: var(--violet-soft);
@@ -292,7 +301,6 @@
 @media (max-width: 620px) {
   :root {
     --control-height-md: 44px;
-    --control-gap: var(--space-2);
   }
 }
 
