@@ -145,3 +145,23 @@ test("every border-radius is a radius token, a circle, or none", () => {
     .map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+// Buttons have one corner: 8px, the design's for a control. The exceptions
+// are shapes, not sizes -- pills and circles -- and buttons nested inside
+// another control, which take 4px inside their 8px frame the way the
+// design's view toggle does.
+const NESTED_BUTTONS = new Set([
+  ".pull-mode button", ".scope-toggle button", ".view-toggle button", ".sort-menu button",
+  ".file-actions-menu > div button", ".library-sheet-segments button", ".library-sheet-options button",
+  ".notifications-open", ".notifications-dismiss",
+]);
+
+test("buttons take the 8px corner unless they are a pill, a circle, or nested", () => {
+  const isButton = (sel) => sel.split(",").some((s) => /(^|\s|>)button$|-button$|^\.(primary|secondary|ghost|danger|ui|filter)-button\b/.test(s.trim()));
+  const bad = styles()
+    .filter((d) => d.property === "border-radius" && isButton(d.selector.replace(/\s+/g, " ")))
+    .filter((d) => !/^var\(--radius-(8|pill)\)$|^50%$|^inherit$|^0$/.test(d.value))
+    .filter((d) => !(NESTED_BUTTONS.has(d.selector.replace(/\s+/g, " ")) && d.value === "var(--radius-4)"))
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});
