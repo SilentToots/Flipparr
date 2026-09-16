@@ -1748,8 +1748,13 @@ class CatalogStore:
                 ]
             return candidates
 
-        def catalog_places_issue(candidate: sqlite3.Row) -> bool:
-            """Whether this run's catalog lists the claimed issue in its own era.
+        def catalog_year_gap(candidate: sqlite3.Row) -> int | None:
+            """How far this run's catalog puts the claimed issue from the claim's year.
+
+            None when the run's catalog cannot place the issue in that era at
+            all. Both runs of a relaunched title can list the same number --
+            Nightwing ran to #30 in 2014 and the 2016 relaunch reached #30 in
+            2017 -- so nearness decides between them, not a yes or no.
 
             A year may not invent a run -- that is `_claim_run_anchor_year`'s
             rule and it stands -- but when two runs of one title already exist
@@ -1761,14 +1766,14 @@ class CatalogStore:
             `publication_year`, which such a file may already have overwritten.
             """
             if observed_year is None or claim.get("kind") != "issue" or not claim.get("issue"):
-                return False
+                return None
             numbers = {str(claim["issue"]).strip()}
             value = _issue_number_value(claim["issue"])
             if value is not None:
                 numbers.add(str(int(value)) if float(value).is_integer() else str(value))
             numbers = {number for number in numbers if number}
             if not numbers:
-                return False
+                return None
             placeholders = ",".join("?" for _ in numbers)
             catalogued = connection.execute(
                 f"""SELECT issues.publication_year, issues.publication_date
@@ -1779,12 +1784,14 @@ class CatalogStore:
                 (int(candidate["id"]), *sorted(numbers)),
             ).fetchone()
             if catalogued is None:
-                return False
+                return None
             year = (
                 _valid_year(catalogued["publication_date"])
                 or _valid_year(catalogued["publication_year"])
             )
-            return year is not None and _years_compatible(year, observed_year)
+            if year is None or not _years_compatible(year, observed_year):
+                return None
+            return abs(year - observed_year)
 
         def candidate_rank(candidate: sqlite3.Row) -> tuple[int, int, int, int, int, int]:
             start_year = _valid_year(candidate["start_year"])
@@ -1792,7 +1799,10 @@ class CatalogStore:
                 normalized_publisher
                 and _normalized_publisher(candidate["publisher"]) == normalized_publisher
             )
-            placed = 1 if catalog_places_issue(candidate) else 0
+            # Nearest catalog first; a run whose catalog cannot place the issue
+            # at all ranks below every run that can.
+            gap = catalog_year_gap(candidate)
+            placed = -gap if gap is not None else -10_000
             # An issue published in 2025 should prefer a known 2025 relaunch
             # over a 1940 run. It must not, however, create a new 2025 run merely
             # because the only known run began earlier.

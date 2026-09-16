@@ -598,6 +598,9 @@ class CatalogStoreTests(unittest.TestCase):
                 (2011, "1"): root / "Nightwing (2011) #001.cbz",
                 (2016, "1"): root / "Nightwing (2016) #001.cbz",
                 (2016, "23"): root / "Nightwing (2016) #023.cbz",
+                # A number both runs reached: the 2011 run ended at #30 in 2014
+                # and the relaunch passed #30 in 2017.
+                (2016, "27"): root / "Nightwing (2016) #027.cbz",
             }
             for comic in files.values():
                 comic.write_bytes(b"comic")
@@ -643,8 +646,10 @@ class CatalogStoreTests(unittest.TestCase):
                 run_2011, "metron", "987", "https://metron.cloud/api/series/987/",
                 [
                     {
-                        "number": str(number), "publication_year": 2011,
-                        "publication_date": "2011-09-21", "provider_id": f"2011-{number}",
+                        "number": str(number),
+                        "publication_year": 2011 + min(3, (number - 1) // 8),
+                        "publication_date": f"{2011 + min(3, (number - 1) // 8)}-03-01",
+                        "provider_id": f"2011-{number}",
                     }
                     for number in range(1, 31)
                 ],
@@ -657,16 +662,21 @@ class CatalogStoreTests(unittest.TestCase):
                 run_2016, "metron", "981", "https://metron.cloud/api/series/981/",
                 [
                     {
-                        "number": str(number), "publication_year": 2016,
-                        "publication_date": "2016-09-07", "provider_id": f"2016-{number}",
+                        "number": str(number),
+                        "publication_year": 2016 + (number - 1) // 14,
+                        "publication_date": f"{2016 + (number - 1) // 14}-08-16",
+                        "provider_id": f"2016-{number}",
                     }
                     for number in range(1, 144)
                 ],
             )
 
-            scan([(2011, "1"), (2016, "1"), (2016, "23")])
+            scan([(2011, "1"), (2016, "1"), (2016, "23"), (2016, "27")])
 
             self.assertEqual(run_of(files[(2016, "23")]), run_2016)
+            # #27 is in both catalogs, two years apart. The nearer one wins
+            # rather than the older run winning for being older.
+            self.assertEqual(run_of(files[(2016, "27")]), run_2016)
             self.assertEqual(run_of(files[(2011, "1")]), run_2011)
 
     def test_issue_rows_a_file_created_cannot_vouch_for_their_own_run(self):
