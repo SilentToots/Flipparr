@@ -3647,6 +3647,69 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     return None
 
 
+def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str, Any] | None:
+    """One search for the run, before asking for its issues one at a time.
+
+    Per-issue search cannot find a pack. A job for Batman #40 asks for
+    "Batman 040", and a release called "Batman 001-100" is not an answer to
+    that question -- it is an answer to the run's question, which nothing was
+    asking. So a run that is mostly missing gets one search for its title
+    first, and the packs that come back are judged against everything it wants.
+
+    Returns what was grabbed, or None to fan out into singles exactly as
+    before. The issues the pack holds are imported when it lands, by the sweep
+    in `_sweep_download_for_other_issues`.
+    """
+    try:
+        wanted = [
+            item for item in store.wanted_run_issues(request_id)
+            if int(item["jobId"]) in set(job_ids)
+        ]
+        numbers = [number for number in (_issue_number(item["issueNumber"]) for item in wanted)
+                   if number is not None]
+        if len(numbers) < PACK_MINIMUM_WANTED:
+            return None
+        # The issue the pack is grabbed against; the rest ride on its download.
+        lead = min(wanted, key=lambda item: _issue_number(item["issueNumber"]) or 10_000)
+        lead_job = int(lead["jobId"])
+        context = store.get_acquisition_job_context(lead_job)
+        title = str(context.get("seriesTitle") or "").strip()
+        if not title:
+            return None
+        search = search_prowlarr_releases(lead_job, title)
+    except Exception as exc:  # noqa: BLE001 -- singles are always the fallback
+        log_event("run_pack_search_failed", level="warning", request_id=request_id, error=str(exc))
+        return None
+    offers: list[tuple[int, int, dict[str, Any]]] = []
+    for candidate in search.get("candidates") or []:
+        if not candidate.get("pack"):
+            continue
+        worth, why = _pack_worth_taking(context, candidate, numbers)
+        if not worth:
+            log_event(
+                "run_pack_declined", level="info", request_id=request_id,
+                release=str(candidate.get("title") or ""), reason=why,
+            )
+            continue
+        pack = candidate["pack"]
+        covered = sum(1 for number in numbers if pack["first"] <= number <= pack["last"])
+        # Most of the run first, then the smaller download of two equals.
+        offers.append((-covered, int(candidate.get("sizeBytes") or 0), candidate))
+    if not offers:
+        return None
+    offers.sort(key=lambda item: (item[0], item[1]))
+    covered, _size, candidate = offers[0]
+    try:
+        send_release_to_sabnzbd(lead_job, str(candidate["id"]))
+    except Exception as exc:  # noqa: BLE001 -- a pack that cannot be sent is not a reason to stop
+        log_event(
+            "run_pack_grab_failed", level="warning", request_id=request_id,
+            release=str(candidate.get("title") or ""), error=str(exc),
+        )
+        return None
+    return {"title": str(candidate.get("title") or ""), "covers": -covered, "jobId": lead_job}
+
+
 def _automatic_grab_order(
     context: dict[str, Any], candidates: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], str]:
@@ -3737,6 +3800,20 @@ def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = F
         return
     if not job_ids:
         return
+    # A run that is mostly missing is one question -- "who has this run?" --
+    # and asking it once can answer every job at a stroke. Only for a named
+    # request: the whole-backlog sweep spans many runs, and each would need its
+    # own search.
+    if request_id is not None:
+        pack = _grab_run_pack(store, int(request_id), job_ids)
+        if pack:
+            log_event(
+                "run_pack_grabbed", request_id=int(request_id),
+                release=pack["title"], covers=pack["covers"], job_id=pack["jobId"],
+            )
+            # The rest of the run rides on this download; searching for each
+            # issue as well would grab the same comics twice over.
+            return
     grabbed = 0
     for job_id in job_ids:
         # Another pass may be on this issue, or have finished it since this one

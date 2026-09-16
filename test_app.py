@@ -3044,6 +3044,104 @@ class PackEligibilityTests(unittest.TestCase):
         self.assertEqual(note, "")
 
 
+class RunPackPassTests(unittest.TestCase):
+    """One search for the run, before asking for its issues one at a time.
+
+    A job for Batman #40 asks for "Batman 040", and "Batman 001-100" is not an
+    answer to that question. It is an answer to the run's, which per-issue
+    search never asks -- so following a 163-issue run took 163 singles.
+    """
+
+    @staticmethod
+    def _store(wanted=40):
+        store = Mock()
+        store.wanted_run_issues.return_value = [
+            {"jobId": 100 + n, "issueId": 200 + n, "issueNumber": str(n), "status": "queued"}
+            for n in range(1, wanted + 1)
+        ]
+        store.get_acquisition_job_context.return_value = {
+            "requestId": "48", "seriesTitle": "Batman", "issueNumber": "1", "runIssueCount": 163,
+        }
+        return store
+
+    @staticmethod
+    def _pack(title="Batman 001-100 (Digital)", size=20_000_000_000, first=1, last=100, cid="pack-1"):
+        return {"id": cid, "title": title, "sizeBytes": size, "matchScore": 82,
+                "pack": {"first": first, "last": last}}
+
+    def test_a_run_mostly_missing_is_searched_once_and_the_pack_taken(self):
+        store = self._store()
+        jobs = [100 + n for n in range(1, 41)]
+        with patch("app.search_prowlarr_releases", return_value={"candidates": [self._pack()]}) as search, \
+             patch("app.send_release_to_sabnzbd", return_value={"status": "grabbed"}) as send:
+            grabbed = app._grab_run_pack(store, 48, jobs)
+        self.assertEqual(grabbed["covers"], 40)
+        search.assert_called_once_with(101, "Batman")
+        send.assert_called_once_with(101, "pack-1")
+
+    def test_the_pack_covering_most_of_the_run_wins_then_the_smaller_one(self):
+        store = self._store()
+        jobs = [100 + n for n in range(1, 41)]
+        offers = [
+            self._pack(cid="small", first=1, last=20, size=5_000_000_000),
+            self._pack(cid="big-fat", first=1, last=100, size=30_000_000_000),
+            self._pack(cid="big-lean", first=1, last=100, size=18_000_000_000),
+        ]
+        with patch("app.search_prowlarr_releases", return_value={"candidates": offers}), \
+             patch("app.send_release_to_sabnzbd", return_value={"status": "grabbed"}) as send:
+            app._grab_run_pack(store, 48, jobs)
+        send.assert_called_once_with(101, "big-lean")
+
+    def test_no_pack_means_the_run_falls_back_to_singles(self):
+        store = self._store()
+        with patch("app.search_prowlarr_releases", return_value={"candidates": [
+            {"id": "single", "title": "Batman 001 (2016)", "matchScore": 95, "sizeBytes": 40_000_000},
+        ]}), patch("app.send_release_to_sabnzbd") as send:
+            self.assertIsNone(app._grab_run_pack(store, 48, [100 + n for n in range(1, 41)]))
+        send.assert_not_called()
+
+    def test_a_run_missing_only_a_few_issues_is_not_searched_at_all(self):
+        store = self._store(wanted=3)
+        with patch("app.search_prowlarr_releases") as search:
+            self.assertIsNone(app._grab_run_pack(store, 48, [101, 102, 103]))
+        search.assert_not_called()
+
+    def test_a_pack_that_cannot_be_sent_falls_back_rather_than_stopping(self):
+        store = self._store()
+        with patch("app.search_prowlarr_releases", return_value={"candidates": [self._pack()]}), \
+             patch("app.send_release_to_sabnzbd", side_effect=ReleaseDownloadError("nzb gone")):
+            self.assertIsNone(app._grab_run_pack(store, 48, [100 + n for n in range(1, 41)]))
+
+    def test_a_grabbed_pack_stops_the_per_issue_fan_out(self):
+        """Otherwise the run is taken twice: once as a pack, once as singles."""
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [101, 102, 103]
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._grab_run_pack", return_value={"title": "Batman 001-100", "covers": 40, "jobId": 101}), \
+             patch("app._auto_grab_release") as single:
+            app._automatic_release_grabs(48)
+        single.assert_not_called()
+
+    def test_without_a_pack_every_issue_is_searched_as_before(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [101, 102]
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._grab_run_pack", return_value=None), \
+             patch("app._auto_grab_release", return_value=None) as single:
+            app._automatic_release_grabs(48)
+        self.assertEqual([call.args[0] for call in single.call_args_list], [101, 102])
+
+    def test_the_whole_backlog_sweep_does_not_run_a_pack_search(self):
+        """It spans many runs; each would need its own search."""
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [101]
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._grab_run_pack") as pack, \
+             patch("app._auto_grab_release", return_value=None):
+            app._automatic_release_grabs(None)
+        pack.assert_not_called()
+
+
 class PackSweepTests(unittest.TestCase):
     """One download, many issues -- and the folder goes as soon as it is done."""
 
