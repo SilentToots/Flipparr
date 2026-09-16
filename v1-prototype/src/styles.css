@@ -174,7 +174,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .new-run-skeleton .new-run-status i, .new-run-skeleton .new-run-action i,
 .library-match-skeleton .discover-cover, .library-match-skeleton h3 i,
 .discover-drawer-lines i, .discover-issue-skeleton .discover-cover, .discover-issue-skeleton i {
-  display: block; border-radius: var(--radius-6); background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite;
+  display: block; border-radius: var(--radius-6); background: linear-gradient(90deg, var(--skeleton-base) 20%, var(--skeleton-highlight) 45%, var(--skeleton-base) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite;
 }
 .pull-card-skeleton h3 i { height: 12px; width: 80%; margin: var(--space-2) auto; }
 .pull-card-skeleton .pull-card-action i { height: 26px; }
@@ -419,7 +419,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-loading-message > span:last-child { display: grid; gap: var(--space-4); }
 .library-loading-message strong { color: var(--text); font-size: var(--text-md); }
 .library-loading-message small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
-.library-loading-tools i, .library-loading-table i, .library-loading-cover, .library-loading-cell { display: block; border-radius: var(--radius-6); background: linear-gradient(90deg, var(--surface-soft) 20%, var(--status-muted-bg) 45%, var(--surface-soft) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite; }
+.library-loading-tools i, .library-loading-table i, .library-loading-cover, .library-loading-cell { display: block; border-radius: var(--radius-6); background: linear-gradient(90deg, var(--skeleton-base) 20%, var(--skeleton-highlight) 45%, var(--skeleton-base) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite; }
 .library-loading-tools { min-height: 71px; display: flex; align-items: center; gap: var(--space-12); }
 .library-loading-tools i { width: 108px; height: 38px; }
 .library-loading-tools i:nth-child(2) { width: 76px; }

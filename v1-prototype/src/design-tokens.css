@@ -76,6 +76,11 @@
   --surface-raised: var(--color-ios-gray5);
   --surface-soft: var(--color-ios-gray5);
   --surface-hover: var(--color-ios-gray4);
+  /* A loading placeholder and the light that sweeps across it. Two tokens of
+     their own because they must differ: drawn from --surface-soft and
+     --status-muted-bg, the sweep vanished when both became gray 5. */
+  --skeleton-base: var(--color-ios-gray5);
+  --skeleton-highlight: var(--color-ios-gray4);
   --line: var(--color-ios-gray4);
   --line-strong: var(--color-ios-gray3);
   --text: var(--color-neutral-50);
