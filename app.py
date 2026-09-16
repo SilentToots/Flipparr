@@ -609,6 +609,12 @@ def _provider_cache_file() -> Path:
     )
 
 
+# Types the platform's table may not know. The slim Python image has no
+# /etc/mime.types, so the bundled Inter was served as octet-stream there while
+# a development machine labelled it correctly.
+WEB_ASSET_TYPES = {".woff2": "font/woff2", ".woff": "font/woff"}
+
+
 def web_root() -> Path | None:
     configured = _env("WEB_ROOT") or None
     return Path(configured).resolve() if configured else None
@@ -11735,7 +11741,11 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self.send_json({"error": "Web interface could not be read"}, 500)
             return
-        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        content_type = (
+            WEB_ASSET_TYPES.get(target.suffix.lower())
+            or mimetypes.guess_type(target.name)[0]
+            or "application/octet-stream"
+        )
         if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
             content_type += "; charset=utf-8"
         body, encoding = _gzip_if_worthwhile(

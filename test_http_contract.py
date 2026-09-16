@@ -31,6 +31,7 @@ _ROOT = Path(_TEMP.name)
 (_ROOT / "web").mkdir()
 (_ROOT / "web" / "index.html").write_text("<!doctype html><title>shell</title>")
 (_ROOT / "web" / "asset.js").write_text("console.log(1)")
+(_ROOT / "web" / "font.woff2").write_bytes(b"wOF2")
 os.environ["COMICARR_DATABASE"] = str(_ROOT / "contract.db")
 os.environ["COMICARR_WEB_ROOT"] = str(_ROOT / "web")
 os.environ["COMICARR_PROVIDER_CONFIG"] = str(_ROOT / "providers.json")
@@ -209,6 +210,13 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn(b"shell", response.body)
         self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
+
+    def test_a_bundled_font_is_served_as_a_font_without_the_platform_table(self):
+        # The slim image's mimetypes table has no .woff2; reproduce that.
+        with patch.object(app.mimetypes, "guess_type", return_value=(None, None)):
+            response = self.get("/font.woff2")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["Content-Type"], "font/woff2")
 
     def test_asset_traversal_outside_the_web_root_is_refused(self):
         self.assertEqual(self.get("/../app.py").status, 404)
