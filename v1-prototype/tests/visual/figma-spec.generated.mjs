@@ -15,7 +15,6 @@ export const spec = [
     "node": "1:87",
     "props": {
       "borderBottomWidth": "1px",
-      "borderBottomColor": "rgb(63, 63, 70)",
       "paddingBottom": "8px",
       "paddingTop": "8px",
       "paddingLeft": "24px",
@@ -60,7 +59,6 @@ export const spec = [
     "sel": ".sidebar",
     "node": "1:122",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
       "padding": "16px",
       "rowGap": "8px"
     },
@@ -133,7 +131,6 @@ export const spec = [
     "node": "I1:174;1:392",
     "props": {
       "fontSize": "12px",
-      "color": "rgb(161, 161, 170)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
@@ -206,7 +203,6 @@ export const spec = [
     "node": "1:269",
     "props": {
       "borderBottomWidth": "2px",
-      "borderBottomColor": "rgb(9, 9, 11)",
       "padding": "20px"
     },
     "route": "/library"
@@ -216,7 +212,6 @@ export const spec = [
     "node": "1:320",
     "props": {
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(63, 63, 70)",
       "borderRadius": "8px",
       "padding": "4px",
       "columnGap": "8px"
@@ -247,7 +242,6 @@ export const spec = [
     "node": "1:331",
     "props": {
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(63, 63, 70)",
       "borderRadius": "8px",
       "paddingRight": "8px",
       "paddingLeft": "8px",
@@ -261,7 +255,6 @@ export const spec = [
     "node": "1:366",
     "props": {
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(63, 63, 70)",
       "borderRadius": "8px",
       "paddingRight": "8px",
       "paddingLeft": "8px",
@@ -285,9 +278,7 @@ export const spec = [
     "sel": ".series-card",
     "node": "1:495",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(39, 39, 42)",
       "borderRadius": "8px",
       "paddingBottom": "20px",
       "rowGap": "12px"
@@ -409,9 +400,7 @@ export const spec = [
     "sel": ".series-card",
     "node": "1:523",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(39, 39, 42)",
       "borderRadius": "8px",
       "paddingBottom": "20px",
       "rowGap": "12px"
@@ -445,7 +434,6 @@ export const spec = [
     "sel": ".discover-hero",
     "node": "33:415",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
       "borderRadius": "8px",
       "padding": "80px",
       "rowGap": "20px"
@@ -598,7 +586,6 @@ export const spec = [
     "sel": ".discover-hero.searching",
     "node": "37:715",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
       "borderRadius": "8px",
       "paddingRight": "80px",
       "paddingLeft": "80px",
@@ -683,7 +670,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(9, 9, 11)",
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(39, 39, 42)",
       "borderRadius": "8px",
       "paddingBottom": "12px",
       "rowGap": "12px"
@@ -814,9 +800,7 @@ export const spec = [
     "sel": ".series-card",
     "node": "69:928",
     "props": {
-      "backgroundColor": "rgb(9, 9, 11)",
       "borderTopWidth": "1px",
-      "borderTopColor": "rgb(39, 39, 42)",
       "borderRadius": "8px",
       "paddingBottom": "12px",
       "rowGap": "8px"
@@ -968,7 +952,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgba(126, 34, 206, 0.88)",
       "borderBottomWidth": "1px",
-      "borderBottomColor": "rgb(63, 63, 70)",
       "borderRadius": "100px"
     },
     "route": "/library @375"

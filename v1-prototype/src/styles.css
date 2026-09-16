@@ -109,7 +109,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* The hero: one panel, two sizes. On the landing it carries the invitation and
    the field; in search it holds the query alone, so it collapses to the height
    of the field and the results start higher. */
-.discover-hero { background: var(--color-neutral-950); border: 2px solid var(--color-violet-700); border-radius: var(--radius-8); padding: var(--space-80); display: flex; flex-direction: column; align-items: center; gap: var(--space-20); }
+.discover-hero { background: var(--surface); border: 2px solid var(--color-violet-700); border-radius: var(--radius-8); padding: var(--space-80); display: flex; flex-direction: column; align-items: center; gap: var(--space-20); }
 .discover-hero.searching { padding: var(--space-12) var(--space-80); }
 .discover-hero h2 { margin: 0; width: 100%; font-size: var(--text-xl); font-weight: var(--weight-semibold); line-height: var(--leading-tight); color: var(--color-neutral-0); text-align: center; }
 .discover-search { width: 600px; max-width: 100%; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-8) var(--space-12) var(--space-8) var(--space-8); border: 1px solid var(--color-neutral-500); border-radius: var(--radius-pill); background: var(--color-black); }
@@ -124,7 +124,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* A shelf and a results block are the same container: the file gives both the
    same fill, radius and 20px padding. */
-.release-shelf, .discover-results { margin-top: var(--space-20); padding: var(--space-20); border-radius: var(--radius-8); background: var(--color-neutral-950); display: flex; flex-direction: column; gap: var(--space-20); }
+.release-shelf, .discover-results { margin-top: var(--space-20); padding: var(--space-20); border-radius: var(--radius-8); background: var(--surface); display: flex; flex-direction: column; gap: var(--space-20); }
 .release-shelf > header, .discover-results > header { display: flex; align-items: center; gap: var(--space-20); }
 .release-shelf h2, .discover-results h2 { margin: 0; flex: 1; min-width: 0; font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--color-neutral-0); }
 /* "2 Library Matches": the count is Black, the label is Regular. */
@@ -301,13 +301,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-match h3 { margin: var(--space-8) 0 0; height: 32px; font-size: var(--text-xs); font-weight: var(--weight-medium); line-height: var(--leading-snug); color: var(--color-neutral-0); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 .new-run-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-20); }
-.new-run-card { display: flex; flex-direction: column; gap: var(--space-12); padding-bottom: var(--space-12); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-8); background: var(--color-neutral-950); overflow: hidden; }
+.new-run-card { display: flex; flex-direction: column; gap: var(--space-12); padding-bottom: var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--color-neutral-950); overflow: hidden; }
 .new-run-card .new-run-art { width: 100%; aspect-ratio: 240 / 336; }
 .new-run-copy { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-12); }
 .new-run-copy h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-run-copy p { margin: 0; font-size: var(--text-xs); font-weight: var(--weight-regular); color: var(--color-neutral-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-run-status { padding: 0 var(--space-12); min-height: 18px; }
-.new-run-card hr { width: 100%; height: 0; margin: 0; border: 0; border-top: 1px solid var(--color-neutral-800); }
+.new-run-card hr { width: 100%; height: 0; margin: 0; border: 0; border-top: 1px solid var(--line); }
 .new-run-action { padding: 0 var(--space-12); }
 
 /* The design's own status chip, smaller and more translucent than the one on a
@@ -363,7 +363,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .secondary-button { color: var(--text); background: var(--status-muted-bg); border: 1px solid var(--line-strong); }
 @media (hover: hover) { .secondary-button:not(:disabled):hover { background: var(--surface-sunken); } }
 .ghost-button { background: transparent; border: 1px solid var(--line-strong); color: var(--muted-strong); }
-@media (hover: hover) { .ghost-button:not(:disabled):hover { background: var(--surface-soft); color: var(--text); } }
+@media (hover: hover) { .ghost-button:not(:disabled):hover { background: var(--surface-hover); color: var(--text); } }
 .ghost-button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 @media (hover: hover) { .ghost-button:disabled:hover { background: transparent; color: var(--muted-strong); } }
 .ui-button--sm { min-height: var(--control-height-sm); padding-inline: var(--space-10); font-size: var(--text-xs); }
@@ -454,8 +454,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sort-menu button { width: 100%; min-height: 32px; padding: var(--space-4) var(--space-8); border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-bold); text-align: left; white-space: nowrap; cursor: pointer; }
 /* The menu holds the sort list and, on a phone, the filters under it. */
 .sort-menu-options { margin: 0; padding: 0; list-style: none; }
-.sort-menu button:focus-visible { background: var(--surface-soft); color: var(--text); }
-@media (hover: hover) { .sort-menu button:not(:disabled):hover { background: var(--surface-soft); color: var(--text); } }
+.sort-menu button:focus-visible { background: var(--surface-hover); color: var(--text); }
+@media (hover: hover) { .sort-menu button:not(:disabled):hover { background: var(--surface-hover); color: var(--text); } }
 .sort-menu button.selected { background: var(--nav-active-bg); color: var(--text); }
 .sort-field { margin-left: auto; }
 .filter-button { height: 38px; min-height: 38px; gap: var(--space-4); padding: var(--space-4) var(--space-8); white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--muted-weak); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius-8); }
@@ -696,11 +696,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .job-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .job-upload.busy { color: var(--violet-text); cursor: progress; }
 .job-upload:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-@media (hover: hover) { .job-upload:hover { background: var(--surface-soft); color: var(--text); } }
+@media (hover: hover) { .job-upload:hover { background: var(--surface-hover); color: var(--text); } }
 
 /* Quieter than the actions beside it: deleting is the way out, not the next step. */
 .request-job-actions button.request-job-delete { border-color: var(--line-strong); background: transparent; color: var(--muted-strong); }
-@media (hover: hover) { .request-job-actions button.request-job-delete:hover:not(:disabled) { background: var(--surface-soft); color: var(--text); } }
+@media (hover: hover) { .request-job-actions button.request-job-delete:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); } }
 .request-job-actions button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 .request-job-empty { min-height: 72px; display: flex; align-items: center; gap: var(--space-12); padding: var(--space-14) var(--space-16); color: var(--muted); font-size: var(--text-sm); border-top: 1px solid var(--line); }
 .request-job-empty > div { display: grid; gap: var(--space-4); }
@@ -1008,9 +1008,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .arc-run-links { border-top: 1px solid var(--line); }
 .arc-run-links button, .collection-volume-list button { width: 100%; min-height: 48px; padding: var(--space-8) var(--space-12); border: 0; border-top: 1px solid var(--line); background: var(--surface); color: inherit; display: flex; justify-content: space-between; align-items: center; gap: var(--space-10); text-align: left; cursor: pointer; }
 .arc-run-links button:first-child, .collection-volume-list button:first-child { border-top: 0; }
-@media (hover: hover) { .arc-run-links button:not(:disabled):hover, .collection-volume-list button:not(:disabled):hover { background: var(--surface-soft); } }
+@media (hover: hover) { .arc-run-links button:not(:disabled):hover, .collection-volume-list button:not(:disabled):hover { background: var(--surface-hover); } }
 .collection-volume-list button.unplaced { border: 1px solid var(--amber-border); background: var(--surface-raised); }
-@media (hover: hover) { .collection-volume-list button.unplaced:not(:disabled):hover { background: var(--surface-soft); } }
+@media (hover: hover) { .collection-volume-list button.unplaced:not(:disabled):hover { background: var(--surface-hover); } }
 .arc-run-links button span { font-size: var(--text-sm); }
 .collection-volume-list { display: grid; padding-top: var(--space-12); }
 .collection-volume-list button { display: grid; grid-template-columns: 42px minmax(0, 1fr) 18px; }
@@ -2679,7 +2679,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notifications-open { min-height: 52px; width: 100%; padding: var(--space-8); border: 0; border-radius: var(--radius-4); background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-8); align-items: center; text-align: left; cursor: pointer; }
 .notifications-open > span { min-width: 0; display: grid; gap: var(--space-2); }
 .notifications-dismiss { flex: none; width: 26px; height: 26px; margin-right: var(--space-6); display: grid; place-items: center; border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-weak); cursor: pointer; }
-.notifications-dismiss:hover { background: var(--surface-soft); color: var(--text); }
+.notifications-dismiss:hover { background: var(--surface-hover); color: var(--text); }
 .notifications-open strong { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
 .notifications-open small { color: var(--muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notifications-open .severity-error { color: var(--red); }

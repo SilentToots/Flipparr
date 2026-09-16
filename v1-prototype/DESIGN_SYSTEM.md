@@ -84,11 +84,19 @@ washes and shadows). `styles.css` writes no colour of its own; the only
 literals the guard accepts there are black as a mask stencil and the tab
 glass's parametric white.
 
+Surfaces follow iOS's dark mode, because zinc greys close to black vanish on
+an iPhone's OLED screen: the page is black, a card or the rail is gray 6
+(`--surface`, #1c1c1e), anything raised off a card or tinted on it is gray 5
+(`--surface-raised`, `--surface-soft`, #2c2c2e), and hovers and lines are gray 4
+(`--surface-hover`, `--line`, #3a3a3c). Use `--surface-hover` for any hover or
+focus fill, never `--surface-soft`.
+
 Every text colour clears WCAG AA (4.5:1) on every surface it can sit on.
 
-- `--muted` and `--muted-weak` (#90909b, 4.72:1 at worst) are for text.
+- `--muted` (#b4b4bb) and `--muted-weak` (#9e9ea8, 4.82:1 at worst) are for
+  text; neither is held to AA on a hover fill.
 - `--chrome-label` (the design's #71717a) is **not** text: progress and switch
-  tracks, and icon-only buttons, which need 3:1 and get 4.12.
+  tracks, and icon-only buttons, which need 3:1 and get 3.52 on a card.
 
 Alpha layers have jobs, not values: `--wash-subtle` (a panel lifted off its
 background), `--wash-hover` and `--wash-active` (on dark chrome),
