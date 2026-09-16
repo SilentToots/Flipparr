@@ -1101,7 +1101,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .issue-run-group > header span { color: var(--color-violet-400); font-size: var(--text-xs); font-weight: var(--weight-bold); letter-spacing: .055em; text-transform: uppercase; }
 .issue-run-group > header h3 { margin: 0; color: var(--text); font-size: var(--text-md); }
 .issue-run-group > header small { color: var(--muted); font-size: var(--text-xs); }
-.issue-run-group > header > strong { flex: 0 0 auto; padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--status-muted-bg); color: var(--muted-strong); font-size: var(--text-xs); }
+/* Outranks `header > div`, which is the title block's rule. */
+.issue-run-group > header > .issue-run-group-aside { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-8); }
+.issue-run-group > header > .issue-run-group-aside > strong { flex: 0 0 auto; padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--status-muted-bg); color: var(--muted-strong); font-size: var(--text-xs); }
 .issue-run-group > div { padding: 0 var(--space-12); }
 .issue-run-group article { min-height: 55px; display: grid; grid-template-columns: 32px 40px minmax(0, 1fr) auto; gap: var(--space-12); align-items: center; border-bottom: 1px solid var(--line); }
 .issue-run-group article:last-child { border-bottom: 0; }
@@ -1123,7 +1125,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* Cover view. auto-fill means the same rule gives four across in the drawer
    and two on a phone, with no breakpoint of its own. */
-.issue-view-tools { display: flex; justify-content: flex-end; margin-bottom: calc(var(--space-4) * -1); }
 .issue-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: var(--space-14) var(--space-12); padding: var(--space-14) var(--space-12) var(--space-16) !important; }
 /* Scoped to beat `.issue-run-group article`, which still sets the list's
    column template and row height. */

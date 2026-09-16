@@ -28,7 +28,6 @@ import {
   Plus,
   ShieldCheck,
   SignOut,
-  SquaresFour,
   UploadSimple,
   WarningCircle,
   X,
@@ -2962,15 +2961,17 @@ function GroupedIssueInventory({ issues, onEditIssue, medium }) {
     }
     byRun.get(key).issues.push(issue);
   }
+  // The same toggle and icons as the Comics toolbar, in the first run's
+  // header rather than on a row of its own above it.
+  const viewToggle = <div className="view-toggle" aria-label="Choose issue view">
+    <button type="button" className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view" aria-pressed={view === "grid"}><GridViewIcon /></button>
+    <button type="button" className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view" aria-pressed={view === "list"}><ListViewIcon /></button>
+  </div>;
   return <div className={`grouped-issue-inventory ${view}`}>
-    <div className="issue-view-tools"><div className="view-toggle" aria-label="Choose issue view">
-      <button type="button" className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Cover view" aria-pressed={view === "grid"}><SquaresFour size={17} /></button>
-      <button type="button" className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view" aria-pressed={view === "list"}><ListBullets size={17} /></button>
-    </div></div>
-    {groups.map((group) => {
+    {groups.map((group, groupIndex) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
     return <section className="issue-run-group" key={group.key}>
-      <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><strong>{owned} of {group.issues.length} owned</strong></header>
+      <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong></div></header>
       <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
         // "Volume 5" under "Vol. 5" says it twice.
         const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
