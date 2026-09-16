@@ -585,6 +585,275 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(later_run_id, canonical_run_id)
             self.assertNotEqual(later_run_id, legacy_split_id)
 
+    def test_a_later_issue_joins_the_run_whose_catalog_lists_it(self):
+        """Nightwing #23 dated 2016 is the relaunch's, not the 2011 run's.
+
+        Only issues #1-#3 carry an era, so every later issue used to fall to the
+        oldest run of the title: 137 files of the 2016 relaunch landed in the
+        2011 run, which then read as complete.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            files = {
+                (2011, "1"): root / "Nightwing (2011) #001.cbz",
+                (2016, "1"): root / "Nightwing (2016) #001.cbz",
+                (2016, "23"): root / "Nightwing (2016) #023.cbz",
+            }
+            for comic in files.values():
+                comic.write_bytes(b"comic")
+
+            def parsed_for(keys):
+                return [
+                    ParsedFile(
+                        str(files[key]), files[key].name, ".cbz", "Nightwing",
+                        issue=key[1], year=key[0],
+                    )
+                    for key in keys
+                ]
+
+            def enrich(item):
+                return {
+                    "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "source": "ComicInfo.xml", "title": "Nightwing",
+                        "issue": item.issue, "publication_year": item.year,
+                        "record_type": "single_issue", "publisher": "DC Comics",
+                    },
+                    "file_cover": None,
+                }
+
+            def scan(keys):
+                run = store.begin_scan(str(root), True)
+                store.perform_scan(run, lambda *_: parsed_for(keys), enrich)
+
+            def run_of(path):
+                with store._connect() as connection:
+                    return int(connection.execute(
+                        """SELECT file_identities.series_run_id
+                           FROM file_identities JOIN files ON files.id=file_identities.file_id
+                           WHERE files.path=?""",
+                        (str(path),),
+                    ).fetchone()["series_run_id"])
+
+            store = CatalogStore(root / "catalog.db")
+            scan([(2011, "1")])
+            run_2011 = run_of(files[(2011, "1")])
+            store.apply_issue_list(
+                run_2011, "metron", "987", "https://metron.cloud/api/series/987/",
+                [
+                    {
+                        "number": str(number), "publication_year": 2011,
+                        "publication_date": "2011-09-21", "provider_id": f"2011-{number}",
+                    }
+                    for number in range(1, 31)
+                ],
+            )
+
+            scan([(2011, "1"), (2016, "1")])
+            run_2016 = run_of(files[(2016, "1")])
+            self.assertNotEqual(run_2016, run_2011, "an opening issue may still split an era")
+            store.apply_issue_list(
+                run_2016, "metron", "981", "https://metron.cloud/api/series/981/",
+                [
+                    {
+                        "number": str(number), "publication_year": 2016,
+                        "publication_date": "2016-09-07", "provider_id": f"2016-{number}",
+                    }
+                    for number in range(1, 144)
+                ],
+            )
+
+            scan([(2011, "1"), (2016, "1"), (2016, "23")])
+
+            self.assertEqual(run_of(files[(2016, "23")]), run_2016)
+            self.assertEqual(run_of(files[(2011, "1")]), run_2011)
+
+    def test_issue_rows_a_file_created_cannot_vouch_for_their_own_run(self):
+        """Only a provider's catalog may speak for a run's era.
+
+        Otherwise the rows a misfiled file wrote would confirm the run it was
+        misfiled into, and the mistake would keep itself alive.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = root / "Birthright 001 (2014).cbz"
+            later = root / "Birthright 031 (2021).cbz"
+            for comic in (first, later):
+                comic.write_bytes(b"comic")
+
+            def enrich(item):
+                return {
+                    "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "source": "ComicInfo.xml", "title": "Birthright",
+                        "issue": item.issue, "publication_year": item.year,
+                        "record_type": "single_issue", "publisher": "Image Comics",
+                    },
+                    "file_cover": None,
+                }
+
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(
+                scan,
+                lambda *_: [ParsedFile(str(first), first.name, ".cbz", "Birthright", issue="1", year=2014)],
+                enrich,
+            )
+            now = "2026-08-28T00:00:00+00:00"
+            with store._connect() as connection:
+                split_id = int(connection.execute(
+                    """INSERT INTO series_runs(
+                           canonical_title, canonical_key, start_year, publisher, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("Birthright", "birthright::year:2021", 2021, "Image Comics", now, now),
+                ).lastrowid)
+                # What a misfiled file leaves behind: an issue row with a
+                # matching year and no catalog behind it.
+                connection.execute(
+                    """INSERT INTO issues(
+                           series_run_id, issue_number, publication_year, publication_date,
+                           created_at, updated_at
+                       ) VALUES (?, '31', 2021, '2021-05-05', ?, ?)""",
+                    (split_id, now, now),
+                )
+
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(
+                scan,
+                lambda *_: [
+                    ParsedFile(str(first), first.name, ".cbz", "Birthright", issue="1", year=2014),
+                    ParsedFile(str(later), later.name, ".cbz", "Birthright", issue="31", year=2021),
+                ],
+                enrich,
+            )
+
+            with store._connect() as connection:
+                later_run_id = int(connection.execute(
+                    """SELECT file_identities.series_run_id
+                       FROM file_identities JOIN files ON files.id=file_identities.file_id
+                       WHERE files.path=?""",
+                    (str(later),),
+                ).fetchone()["series_run_id"])
+                canonical_run_id = int(connection.execute(
+                    "SELECT id FROM series_runs WHERE canonical_key='birthright'"
+                ).fetchone()["id"])
+            self.assertEqual(later_run_id, canonical_run_id)
+            self.assertNotEqual(later_run_id, split_id)
+
+    def test_an_import_is_filed_under_the_run_that_was_requested(self):
+        """The request knows which run it wanted; the filename cannot."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            opening_2011 = root / "Nightwing (2011) #001.cbz"
+            opening_2016 = root / "Nightwing (2016) #001.cbz"
+            imported = root / "Nightwing (2016) #023.cbz"
+            for comic in (opening_2011, opening_2016, imported):
+                comic.write_bytes(b"comic")
+
+            def enrich(item):
+                return {
+                    "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": {
+                        "source": "ComicInfo.xml", "title": "Nightwing",
+                        "issue": item.issue, "publication_year": item.year,
+                        "record_type": "single_issue", "publisher": "DC Comics",
+                    },
+                    "file_cover": None,
+                }
+
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(
+                scan,
+                lambda *_: [
+                    ParsedFile(str(opening_2011), opening_2011.name, ".cbz", "Nightwing", issue="1", year=2011),
+                    ParsedFile(str(opening_2016), opening_2016.name, ".cbz", "Nightwing", issue="1", year=2016),
+                ],
+                enrich,
+            )
+            runs = {int(item["year"]): int(item["id"]) for item in store.catalog()["series"]}
+            self.assertEqual(sorted(runs), [2011, 2016])
+
+            misparsed = ParsedFile(
+                str(imported), imported.name, ".cbz", "Nightwing", issue="23",
+            )
+            store.ingest_acquisition_import(
+                str(root), misparsed,
+                {
+                    "parsed": misparsed.__dict__, "lookup_identity": misparsed.__dict__,
+                    "embedded_metadata": {}, "file_health": {"status": "ok"},
+                    "recommendation": None, "file_cover": None,
+                },
+                {
+                    "seriesTitle": "Nightwing", "recordType": "issue",
+                    "issueNumber": "23", "publisher": "DC Comics",
+                },
+                series_run_id=runs[2016],
+            )
+
+            with store._connect() as connection:
+                filed = int(connection.execute(
+                    """SELECT file_identities.series_run_id
+                       FROM file_identities JOIN files ON files.id=file_identities.file_id
+                       WHERE files.path=?""",
+                    (str(imported),),
+                ).fetchone()["series_run_id"])
+            self.assertEqual(filed, runs[2016])
+
+    def test_rebuild_removes_issues_a_misfiled_file_invented(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            comic = root / "Nightwing (2011) #001.cbz"
+            comic.write_bytes(b"comic")
+            store = CatalogStore(root / "catalog.db")
+            scan = store.begin_scan(str(root), True)
+            store.perform_scan(scan, lambda *_: [
+                ParsedFile(str(comic), comic.name, ".cbz", "Nightwing", issue="1", year=2011),
+            ], lambda item: {
+                "parsed": item.__dict__, "lookup_identity": item.__dict__,
+                "embedded_metadata": {}, "file_health": {"status": "ok"},
+                "recommendation": {
+                    "source": "ComicInfo.xml", "title": "Nightwing", "issue": item.issue,
+                    "publication_year": item.year, "record_type": "single_issue",
+                    "publisher": "DC Comics",
+                },
+                "file_cover": None,
+            })
+            series_id = int(store.catalog()["series"][0]["id"])
+            store.apply_issue_list(
+                series_id, "metron", "987", "https://metron.cloud/api/series/987/",
+                [
+                    {
+                        "number": str(number), "publication_year": 2011,
+                        "publication_date": "2011-09-21", "provider_id": f"2011-{number}",
+                    }
+                    for number in range(1, 31)
+                ],
+            )
+            now = "2026-09-15T00:00:00+00:00"
+            with store._connect() as connection:
+                connection.execute(
+                    """INSERT INTO issues(
+                           series_run_id, issue_number, publication_year, created_at, updated_at
+                       ) VALUES (?, '104', 2022, ?, ?)""",
+                    (series_id, now, now),
+                )
+
+            outcome = store.rebuild_series_run(series_id)
+
+            self.assertEqual(outcome["prunedIssues"], 1)
+            with store._connect() as connection:
+                numbers = [
+                    row["issue_number"] for row in connection.execute(
+                        "SELECT issue_number FROM issues WHERE series_run_id=?", (series_id,)
+                    )
+                ]
+            self.assertNotIn("104", numbers)
+            self.assertEqual(len(numbers), 30)
+
     def test_collected_edition_year_does_not_create_a_second_run(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

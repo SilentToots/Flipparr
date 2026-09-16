@@ -3025,6 +3025,10 @@ def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_
     """Catalog an imported issue using the request's trusted canonical identity."""
     parsed = parse_filename(destination)
     result = inventory_file(parsed)
+    # The run this issue was requested for. Worked out again from the filename
+    # it would be the wrong one whenever a series has been relaunched under the
+    # same name, which is the ordinary case for a long-running character.
+    requested_run = str(context.get("seriesId") or "").strip()
     return catalog_store().ingest_acquisition_import(
         str(library_root.resolve()),
         parsed,
@@ -3036,6 +3040,7 @@ def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_
             "publisher": context.get("publisher"),
             "publicationYear": context.get("publicationYear"),
         },
+        series_run_id=int(requested_run) if requested_run.isdigit() else None,
     )
 
 
@@ -3361,6 +3366,88 @@ def acquisition_download_progress() -> dict[str, Any]:
     return {"downloads": downloads, "paused": bool((queue or {}).get("paused"))}
 
 
+# Runs already asked about in this sweep. A run whose catalogs simply have no
+# dates must not be re-synchronized once per issue.
+_YEAR_FILL_ATTEMPTED: set[int] = set()
+_YEAR_FILL_LOCK = threading.Lock()
+
+
+def _issue_year_gate(job_id: int) -> str | None:
+    """Fill a missing publication year before searching, or say why not to grab.
+
+    `_release_year_conflict` is the only thing keeping a relaunch's release out
+    of the original run's request, and it is inert when the issue's own year is
+    unknown -- silence reads as agreement. So an unknown year is worth one
+    provider refresh before any release is chosen.
+
+    If it is still unknown afterwards, whether to wait depends on what the year
+    would have decided. With one run of the title there is nothing to confuse
+    and the search goes ahead as before. With two, the year is the only thing
+    separating them, so the job waits for a person rather than guessing: the
+    wrong choice puts a file in the wrong run and fills a run that is already
+    complete.
+
+    Returns None to carry on, or the reason to show on the job's row.
+    """
+    store = catalog_store()
+    try:
+        context = store.get_acquisition_job_context(job_id)
+    except Exception as exc:  # noqa: BLE001 -- the grab decides, not this check
+        log_exception("issue_year_gate_unavailable", exc, level="warning")
+        return None
+
+    def stated_year(values: dict[str, Any]) -> int:
+        try:
+            return int(values.get("publicationYear") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    if stated_year(context):
+        return None
+    try:
+        series_run_id = int(str(context.get("seriesId") or "").strip() or 0)
+    except (TypeError, ValueError):
+        series_run_id = 0
+    # Nothing to ask, or nobody to ask: an install with no metadata provider
+    # must not stop acquiring.
+    if not series_run_id or not _series_enrichment_provider_order():
+        return None
+    with _YEAR_FILL_LOCK:
+        first_attempt = series_run_id not in _YEAR_FILL_ATTEMPTED
+        _YEAR_FILL_ATTEMPTED.add(series_run_id)
+    if first_attempt:
+        try:
+            sync_issue_catalog(series_run_id)
+        except Exception as exc:  # noqa: BLE001 -- a provider that cannot answer is not a failure here
+            log_event(
+                "issue_year_fill_failed", level="warning",
+                job_id=job_id, series_run_id=series_run_id, error=str(exc),
+            )
+        else:
+            try:
+                if stated_year(store.get_acquisition_job_context(job_id)):
+                    return None
+            except Exception as exc:  # noqa: BLE001
+                log_exception("issue_year_recheck_failed", exc, level="warning")
+                return None
+    try:
+        siblings = store.runs_sharing_title(series_run_id)
+    except Exception as exc:  # noqa: BLE001
+        log_exception("issue_year_siblings_unavailable", exc, level="warning")
+        return None
+    if not siblings:
+        return None
+    others = ", ".join(
+        f"{item['title']} ({item['year']})" if item.get("year") else str(item["title"])
+        for item in siblings[:3]
+    )
+    return (
+        "No release date is known for this issue yet, and this title has another run "
+        f"({others}). Without the date a release from the wrong run cannot be ruled out, "
+        "so nothing was grabbed. Find release still works."
+    )
+
+
 def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     """Send the strongest unused release for one job to SABnzbd.
 
@@ -3374,6 +3461,10 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     high enough, or a service could not answer -- and the job is left for the
     candidate list to handle.
     """
+    hold = _issue_year_gate(job_id)
+    if hold:
+        _say_on_the_row(job_id, hold)
+        return None
     try:
         search = search_prowlarr_releases(job_id)
     except Exception as exc:
@@ -3452,6 +3543,9 @@ def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = F
     Failures are per job. One issue with no usable release must not stop the
     rest, and it simply stays on the list where "Find release" still works.
     """
+    # One refresh per run per sweep, not per issue.
+    with _YEAR_FILL_LOCK:
+        _YEAR_FILL_ATTEMPTED.clear()
     try:
         store = catalog_store()
         # Align the jobs with what is actually on disk before acting on them.

@@ -2895,6 +2895,86 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
             self.assertIsNone(_auto_grab_release(7))
 
 
+class IssueYearBeforeGrabTests(unittest.TestCase):
+    """An unknown year silently disables the wrong-era check, so fill it first.
+
+    `_release_year_conflict` is what keeps a relaunch's release out of the
+    original run's request, and it only speaks when the issue's year is known.
+    """
+
+    def setUp(self):
+        app._YEAR_FILL_ATTEMPTED.clear()
+
+    @staticmethod
+    def _store(year=None, siblings=()):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {
+            "seriesId": "37", "seriesTitle": "Nightwing", "issueNumber": "23",
+            "publicationYear": year,
+        }
+        store.runs_sharing_title.return_value = list(siblings)
+        return store
+
+    def test_a_known_year_asks_the_providers_nothing(self):
+        with patch("app.catalog_store", return_value=self._store(year=2016)), patch(
+            "app.sync_issue_catalog"
+        ) as sync:
+            self.assertIsNone(app._issue_year_gate(7))
+        sync.assert_not_called()
+
+    def test_a_missing_year_is_filled_before_the_search(self):
+        store = Mock()
+        store.get_acquisition_job_context.side_effect = [
+            {"seriesId": "37", "publicationYear": None},
+            {"seriesId": "37", "publicationYear": 2016},
+        ]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order", return_value=[("metron", {})]
+        ), patch("app.sync_issue_catalog") as sync:
+            self.assertIsNone(app._issue_year_gate(7))
+        sync.assert_called_once_with(37)
+
+    def test_a_year_nobody_knows_holds_a_title_that_has_two_runs(self):
+        store = self._store(year=None, siblings=[{"id": "36", "title": "Nightwing", "year": 2011}])
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order", return_value=[("metron", {})]
+        ), patch("app.sync_issue_catalog"):
+            reason = app._issue_year_gate(7)
+        self.assertIn("Nightwing (2011)", reason)
+        self.assertIn("wrong run", reason)
+
+    def test_a_title_with_one_run_is_searched_as_before(self):
+        """Nothing to confuse it with, so an unknown date is no reason to wait."""
+        with patch("app.catalog_store", return_value=self._store(year=None)), patch(
+            "app._series_enrichment_provider_order", return_value=[("metron", {})]
+        ), patch("app.sync_issue_catalog"):
+            self.assertIsNone(app._issue_year_gate(7))
+
+    def test_one_refresh_per_run_however_many_issues_it_has(self):
+        store = self._store(year=None, siblings=[{"id": "36", "title": "Nightwing", "year": 2011}])
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._series_enrichment_provider_order", return_value=[("metron", {})]
+        ), patch("app.sync_issue_catalog") as sync:
+            for job_id in (7, 8, 9):
+                app._issue_year_gate(job_id)
+        sync.assert_called_once_with(37)
+
+    def test_an_install_with_no_metadata_provider_still_acquires(self):
+        with patch("app.catalog_store", return_value=self._store(year=None)), patch(
+            "app._series_enrichment_provider_order", return_value=[]
+        ), patch("app.sync_issue_catalog") as sync:
+            self.assertIsNone(app._issue_year_gate(7))
+        sync.assert_not_called()
+
+    def test_a_held_job_is_not_searched_and_says_why(self):
+        with patch("app._issue_year_gate", return_value="No release date is known yet."), patch(
+            "app.search_prowlarr_releases"
+        ) as search, patch("app._say_on_the_row") as say:
+            self.assertIsNone(_auto_grab_release(7))
+        search.assert_not_called()
+        say.assert_called_once_with(7, "No release date is known yet.")
+
+
 def _redirect(location, code=301):
     headers = email.message.Message()
     headers["Location"] = location

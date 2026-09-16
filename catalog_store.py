@@ -1722,7 +1722,10 @@ class CatalogStore:
             "cover": recommendation.get("cover"),
         }
 
-    def _resolve_series_run(self, connection: sqlite3.Connection, claim: dict[str, Any]) -> int:
+    def _resolve_series_run(
+        self, connection: sqlite3.Connection, claim: dict[str, Any],
+        pinned_run_id: int | None = None,
+    ) -> int:
         raw_key = _normalized(claim["raw_title"])
         canonical_key = _normalized(claim["series_title"])
         observed_year = _valid_year(claim.get("year"))
@@ -1745,12 +1748,51 @@ class CatalogStore:
                 ]
             return candidates
 
-        def candidate_rank(candidate: sqlite3.Row) -> tuple[int, int, int, int, int]:
+        def catalog_places_issue(candidate: sqlite3.Row) -> bool:
+            """Whether this run's catalog lists the claimed issue in its own era.
+
+            A year may not invent a run -- that is `_claim_run_anchor_year`'s
+            rule and it stands -- but when two runs of one title already exist
+            it is exactly what tells them apart: Nightwing #23 dated 2016 is the
+            2016 relaunch's, not the 2011 run's, whose catalog ends at #30.
+
+            Only provider-backed rows count, or a row a misfiled file created
+            would vouch for itself; and the provider's date outranks
+            `publication_year`, which such a file may already have overwritten.
+            """
+            if observed_year is None or claim.get("kind") != "issue" or not claim.get("issue"):
+                return False
+            numbers = {str(claim["issue"]).strip()}
+            value = _issue_number_value(claim["issue"])
+            if value is not None:
+                numbers.add(str(int(value)) if float(value).is_integer() else str(value))
+            numbers = {number for number in numbers if number}
+            if not numbers:
+                return False
+            placeholders = ",".join("?" for _ in numbers)
+            catalogued = connection.execute(
+                f"""SELECT issues.publication_year, issues.publication_date
+                    FROM issues
+                    JOIN issue_provider_ids ON issue_provider_ids.issue_id=issues.id
+                    WHERE issues.series_run_id=? AND issues.issue_number IN ({placeholders})
+                    LIMIT 1""",
+                (int(candidate["id"]), *sorted(numbers)),
+            ).fetchone()
+            if catalogued is None:
+                return False
+            year = (
+                _valid_year(catalogued["publication_date"])
+                or _valid_year(catalogued["publication_year"])
+            )
+            return year is not None and _years_compatible(year, observed_year)
+
+        def candidate_rank(candidate: sqlite3.Row) -> tuple[int, int, int, int, int, int]:
             start_year = _valid_year(candidate["start_year"])
             publisher_match = bool(
                 normalized_publisher
                 and _normalized_publisher(candidate["publisher"]) == normalized_publisher
             )
+            placed = 1 if catalog_places_issue(candidate) else 0
             # An issue published in 2025 should prefer a known 2025 relaunch
             # over a 1940 run. It must not, however, create a new 2025 run merely
             # because the only known run began earlier.
@@ -1765,6 +1807,7 @@ class CatalogStore:
                 base_identity = candidate["canonical_key"] == canonical_key
                 earliest = -(start_year if start_year is not None else 9999)
                 return (
+                    placed,
                     1 if publisher_match else 0,
                     1 if base_identity else 0,
                     1 if plausible else 0,
@@ -1772,6 +1815,7 @@ class CatalogStore:
                     -int(candidate["id"]),
                 )
             return (
+                placed,
                 1 if publisher_match else 0,
                 1,
                 1 if plausible else 0,
@@ -1784,7 +1828,15 @@ class CatalogStore:
         # without teaching the resolver that every issue year is a new run.
         row = None
         provider_anchored = False
-        if claim_provider and claim_provider_series_id:
+        # An acquisition import already knows which run was asked for. Two runs
+        # of a series share every word of the title, so nothing derived from the
+        # title may overrule the request that fetched the comic.
+        if pinned_run_id is not None and connection.execute(
+            "SELECT 1 FROM series_runs WHERE id=?", (int(pinned_run_id),)
+        ).fetchone():
+            row = {"series_run_id": int(pinned_run_id)}
+            provider_anchored = True
+        if row is None and claim_provider and claim_provider_series_id:
             provider_row = connection.execute(
                 """SELECT series_provider_ids.series_run_id
                    FROM series_provider_ids
@@ -1893,7 +1945,7 @@ class CatalogStore:
 
     def _reconcile_file_identity(
         self, file_id: int, parsed: dict[str, Any], result: dict[str, Any], override: dict[str, Any] | None = None,
-        *, connection: sqlite3.Connection | None = None,
+        *, connection: sqlite3.Connection | None = None, pinned_run_id: int | None = None,
     ) -> None:
         if override is None:
             with self._borrowed_read(connection) as read_connection:
@@ -1906,7 +1958,7 @@ class CatalogStore:
                 result = {**result, "recommendation": selected_candidate}
         claim = self._identity_claim(parsed, result, override)
         with self._borrowed_write(connection) as write_connection:
-            series_run_id = self._resolve_series_run(write_connection, claim)
+            series_run_id = self._resolve_series_run(write_connection, claim, pinned_run_id)
             write_connection.execute(
                 """INSERT INTO file_identities(
                        file_id, series_run_id, raw_title, normalized_title, identity_kind,
@@ -3438,6 +3490,40 @@ class CatalogStore:
                 "SELECT id FROM series_runs WHERE id=?", (series_run_id,)
             ).fetchone():
                 raise ValueError("Canonical series was not found")
+            # Issues a file invented by landing on the wrong run. Nothing points
+            # at them once it leaves: no catalog lists them, no file is theirs,
+            # no collection covers them and nobody has corrected them. Left in
+            # place they read as issues the run is missing for ever -- the 2011
+            # Nightwing grew from 31 to 141 that way. Jobs queued against them
+            # go with them through the cascade, which is the point: they want
+            # issues this run never had.
+            pruned = int(connection.execute(
+                """DELETE FROM issues
+                    WHERE series_run_id=?
+                      AND NOT EXISTS(
+                          SELECT 1 FROM issue_provider_ids
+                          WHERE issue_provider_ids.issue_id=issues.id
+                      )
+                      AND NOT EXISTS(
+                          SELECT 1 FROM file_issue_links
+                          JOIN files ON files.id=file_issue_links.file_id
+                          WHERE file_issue_links.issue_id=issues.id AND files.present=1
+                      )
+                      AND NOT EXISTS(
+                          SELECT 1 FROM edition_coverage_claims
+                          WHERE edition_coverage_claims.issue_id=issues.id
+                      )
+                      AND NOT EXISTS(
+                          SELECT 1 FROM edition_coverage_overrides
+                          WHERE edition_coverage_overrides.series_run_id=issues.series_run_id
+                            AND edition_coverage_overrides.issue_number=issues.issue_number
+                      )
+                      AND NOT EXISTS(
+                          SELECT 1 FROM issue_metadata_overrides
+                          WHERE issue_metadata_overrides.issue_id=issues.id
+                      )""",
+                (series_run_id,),
+            ).rowcount or 0)
             cleared = int(connection.execute(
                 """UPDATE issues SET title=NULL, publication_date=NULL, cover=NULL,
                           updated_at=?
@@ -3475,6 +3561,7 @@ class CatalogStore:
         return {
             "seriesRunId": str(series_run_id),
             "clearedIssues": cleared,
+            "prunedIssues": pruned,
             "rederivedFromFiles": rederived,
         }
 
@@ -4124,6 +4211,29 @@ class CatalogStore:
             "missingDateIssues": missing_dates, "titlePolicy": title_policy,
             "rawMissingTitleCount": len(raw_missing_titles),
         }
+
+    def runs_sharing_title(self, series_run_id: int) -> list[dict[str, Any]]:
+        """Other publication runs whose title is this one's.
+
+        Two runs of a title are the case where an unknown publication year
+        stops being a cosmetic gap: it is the only thing that separates a
+        relaunch's issues from the original's.
+        """
+        with self._connect() as connection:
+            series = connection.execute(
+                "SELECT canonical_title FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone()
+            if not series:
+                return []
+            wanted = _normalized(series["canonical_title"])
+            return [
+                {"id": str(row["id"]), "title": row["canonical_title"], "year": row["start_year"]}
+                for row in connection.execute(
+                    "SELECT id, canonical_title, start_year FROM series_runs WHERE id<>? ORDER BY id",
+                    (series_run_id,),
+                )
+                if _normalized(row["canonical_title"]) == wanted
+            ]
 
     def update_issue_catalog_detail(
         self, series_run_id: int, detail: str, title_policy: str | None = None
@@ -7076,6 +7186,7 @@ class CatalogStore:
         fingerprint: str,
         result: dict[str, Any],
         identity_override: dict[str, Any] | None = None,
+        series_run_id: int | None = None,
     ) -> int:
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
@@ -7116,7 +7227,9 @@ class CatalogStore:
                        ) VALUES (?, 'verified_acquisition_import', ?, ?)""",
                     (file_id, _json(identity_override), now),
                 )
-        self._reconcile_file_identity(file_id, asdict(parsed), result, identity_override)
+        self._reconcile_file_identity(
+            file_id, asdict(parsed), result, identity_override, pinned_run_id=series_run_id,
+        )
         return file_id
 
     def ingest_acquisition_import(
@@ -7125,8 +7238,15 @@ class CatalogStore:
         parsed: Any,
         result: dict[str, Any],
         identity_override: dict[str, Any],
+        series_run_id: int | None = None,
     ) -> int:
-        """Synchronously add a verified import without re-guessing its requested run."""
+        """Synchronously add a verified import without re-guessing its requested run.
+
+        `series_run_id` is the run the request named. Without it the run was
+        worked out again from the title, and a title is exactly what a series
+        and its relaunch have in common: every Nightwing (2016) issue past #3
+        was filed under the 2011 run that way.
+        """
         root = Path(library_root).resolve()
         path = Path(parsed.path).resolve()
         try:
@@ -7149,6 +7269,7 @@ class CatalogStore:
             fingerprint,
             result,
             identity_override,
+            series_run_id=int(series_run_id) if series_run_id else None,
         )
 
     def resolve_review(self, file_path: str, code: str, fingerprint: str) -> None:
