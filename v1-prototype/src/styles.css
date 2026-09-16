@@ -2077,12 +2077,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    still reaches 3:1 against the drawer. */
 .comic-drawer-follow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8) var(--space-16); }
 .comic-drawer-follow .follow-switch { min-height: 36px; padding: 0; border: 0; gap: var(--space-8); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
-.comic-drawer-follow .follow-switch > i { width: 64px; height: 36px; border-radius: var(--radius-pill); background: var(--chrome-label); }
-.comic-drawer-follow .follow-switch > i::after { top: 4px; left: 4px; width: 28px; height: 28px; box-shadow: 0 1.75px 3.5px var(--shadow-faint); }
+.comic-drawer-follow .follow-switch > i { width: 40px; height: 23px; border-radius: var(--radius-pill); background: var(--chrome-label); }
+/* Settings' switch, now that the label beside it is 16px: a 40x23 track and
+   a 17px knob that travels 17px and stretches by 4 while pressed. The track
+   keeps the chrome grey when off, which stands out on the drawer's surface. */
+.comic-drawer-follow .follow-switch > i::after { top: 3px; left: 3px; width: 17px; height: 17px; box-shadow: 0 1px 2px var(--shadow-faint); }
 .comic-drawer-follow .follow-switch input:checked + i { background: var(--violet); }
-.comic-drawer-follow .follow-switch input:checked + i::after { transform: translateX(28px); }
-.comic-drawer-follow .follow-switch:not(:has(input:disabled)):active > i::after { width: 32px; }
-.comic-drawer-follow .follow-switch:not(:has(input:disabled)):active input:checked + i::after { transform: translateX(24px); }
+.comic-drawer-follow .follow-switch input:checked + i::after { transform: translateX(17px); }
+.comic-drawer-follow .follow-switch:not(:has(input:disabled)):active > i::after { width: 21px; }
+.comic-drawer-follow .follow-switch:not(:has(input:disabled)):active input:checked + i::after { transform: translateX(13px); }
 @media (hover: hover) { .comic-drawer-follow .follow-switch:not(:has(input:disabled)):hover { background: transparent; } }
 .comic-drawer-link, .comic-drawer-more { min-height: 36px; padding: 0 var(--space-4); border: 0; border-radius: var(--radius-8); background: transparent; color: var(--violet-text); font-size: var(--text-sm); font-weight: var(--weight-bold); cursor: pointer; }
 .comic-drawer-more { padding: 0; }
@@ -2168,9 +2171,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--space-10); -webkit-mask-image: none; mask-image: none; }
   .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-6); }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--space-16); }
-  .comic-drawer-follow .follow-switch > i { width: 56px; height: 32px; }
-  .comic-drawer-follow .follow-switch > i::after { width: 24px; height: 24px; }
-  .comic-drawer-follow .follow-switch input:checked + i::after { transform: translateX(24px); }
   .comic-drawer-row { gap: var(--space-14); }
   .comic-drawer-shelf { gap: var(--space-12); }
   .comic-drawer-card.pull-card { width: 104px; }
