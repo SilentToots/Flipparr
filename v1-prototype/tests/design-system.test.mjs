@@ -137,3 +137,11 @@ test("every padding, margin and gap is on the spacing scale", () => {
   }
   assert.deepEqual(bad, []);
 });
+
+test("every border-radius is a radius token, a circle, or none", () => {
+  const ok = (part) => /^var\(--radius-(4|6|8|12|16|pill)\)$/.test(part) || ["0", "50%", "inherit"].includes(part);
+  const bad = styles()
+    .filter((d) => d.property === "border-radius" && !d.value.split(/\s+/).every(ok))
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});

@@ -203,9 +203,16 @@
   --cover-ratio: 5 / 7;
 
   /* Shape and control tokens */
-  --radius-sm: 4px;
-  --radius: 8px;
-  --radius-lg: 15px;
+  /* Corner radii, named for their value like the spacing scale. There were
+     25 in use, with four spellings of a pill (100px, 999px, the token and
+     50%); these five and the pill replace them, and 50% is kept only for
+     true circles. The design's own are 4px on covers and nested segments,
+     8px on cards and controls, and the pill. */
+  --radius-4: 4px;
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-12: 12px;
+  --radius-16: 16px;
   --radius-pill: 100px;
   /* Type scale: seven steps, each at least 2px from the next, so two sizes
      side by side read as a deliberate difference. The ladder it replaced had
@@ -300,7 +307,6 @@
   --loader-size-xl: 28px;
   --loader-mark-width: 14%;
   --loader-mark-height: 31%;
-  --loader-mark-radius: var(--radius-pill);
   --loader-muted-opacity: .18;
 }
 
