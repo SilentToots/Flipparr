@@ -1752,6 +1752,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      maximum-scale on the viewport, which would also block pinch zoom. */
   input, select, textarea { font-size: 16px; }
   .search-field input { font-size: 16px; }
+  /* ...and the fields that set their own size, which beat the rule above on
+     specificity and so kept zooming. Discover's search was the one that showed:
+     tapping it zoomed the page, and iOS stays zoomed -- so the page was wider
+     than the screen and scrolled sideways for the rest of the visit, which is
+     disorienting in a way a slightly larger font is not. */
+  .discover-search input, .release-query input, .structure-runs select { font-size: 16px; }
   /* Raising only the fields left them larger than the buttons beside them.
      Lift the control tokens to match so a row reads as one set of controls. */
   :root { --control-font-sm: 15px; --control-font-md: 16px; }
