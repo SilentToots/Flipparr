@@ -1353,21 +1353,21 @@ export const icons = [
   {
     "node": "69:775",
     "name": "heroicons-outline/document-plus",
-    "size": null,
+    "size": 24,
     "where": ".sidebar [data-nav=\"discover\"] svg",
     "route": "/library @375"
   },
   {
     "node": "69:786",
     "name": "heroicons-outline/wallet",
-    "size": null,
+    "size": 24,
     "where": ".sidebar [data-nav=\"requests\"] svg",
     "route": "/library @375"
   },
   {
     "node": "69:789",
     "name": "heroicons-outline/cog-6-tooth",
-    "size": null,
+    "size": 24,
     "where": ".sidebar [data-nav=\"settings\"] svg",
     "route": "/library @375"
   },
