@@ -67,3 +67,44 @@ test("every line-height is a leading token or a written exception", () => {
     .map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+const LADDER = ["2xs", "xs", "sm", "md", "lg", "xl", "2xl"];
+const tokenPx = (name) => {
+  const m = read("design-tokens.css").match(new RegExp(`^\\s*--text-${name}:\\s*([\\d.]+)(rem|px);`, "m"));
+  return m && (m[2] === "rem" ? +m[1] * 16 : +m[1]);
+};
+
+test("the type ladder is seven steps, 10px up, at least 2px apart", () => {
+  const px = LADDER.map(tokenPx);
+  assert.deepEqual(px, [10, 12, 14, 16, 18, 20, 24]);
+  const defined = [...read("design-tokens.css").matchAll(/^\s*--text-([a-z0-9]+):/gm)].map((m) => m[1]);
+  assert.deepEqual(defined.filter((n) => n !== "input"), LADDER, "a step was added or renamed");
+});
+
+// 10px is the floor, and it is for chips, not reading. These are the places
+// it is allowed: text inside a badge or chip, the phone's two-up card
+// metadata, where two cards share 375px, and the tab bar.
+const SMALLEST_TEXT = new Set([
+  ".library-match-art b",
+  ".run-status",
+  ".publication-status, .monitoring-status",
+  ".series-card :is(.publication-status, .monitoring-status)",
+  ".new-run-copy p",
+  ".series-card-byline",
+  ".ownership.compact .ownership-label",
+  ".sidebar .nav-item",
+  ".sidebar .nav-item > b",
+]);
+
+test("every font-size is a step on the ladder", () => {
+  const ok = (d) =>
+    /^var\(--text-(xs|sm|md|lg|xl|2xl)\)$/.test(d.value)
+    || (d.value === "var(--text-2xs)" && SMALLEST_TEXT.has(d.selector.replace(/\s+/g, " ")))
+    || (d.value === "var(--text-input)" && /\b(input|select|textarea)\b/.test(d.selector))
+    || /^clamp\(var\(--text-[a-z0-9]+\), [^,]+, var\(--text-[a-z0-9]+\)\)$/.test(d.value)
+    || d.value === "inherit"
+    // The setup step marker is a dot; its number is for screen readers.
+    || (d.value === "0" && d.selector === ".setup-step-marker");
+  const bad = styles().filter((d) => d.property === "font-size" && !ok(d)).map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});

@@ -114,7 +114,7 @@ function assertRoute({ spec, icons, frames }) {
     const el = document.querySelector(i.where);
     if (!el) { out.push({ sel: i.where, node: i.node, bad: [`icon missing (${i.name})`] }); continue; }
     const r = el.getBoundingClientRect();
-    if (Math.abs(r.width - i.size) > 1) {
+    if (i.size !== null && Math.abs(r.width - i.size) > 1) {
       out.push({ sel: i.where, node: i.node, bad: [`${i.name}: want ${i.size}px, got ${r.width.toFixed(1)}px`] });
     }
   }

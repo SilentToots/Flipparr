@@ -99,7 +99,9 @@ export const states = [
   { name: "pull-list", path: "/pull-list", require: [".request-tabs"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings", require: [".settings-layout"] },
-  { name: "import", path: "/import", require: [".page-header"], phone: false },
+  // The folders panel only renders once the catalog has loaded; the header
+  // alone let a capture land on "0 Files" and a page 120px shorter.
+  { name: "import", path: "/import", require: [".page-header", ".library-sources-panel"], phone: false },
 ];
 
 // A screen the Vite proxy cannot reach: it only forwards /api, so the intake

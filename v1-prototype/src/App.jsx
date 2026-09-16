@@ -338,14 +338,14 @@ function PublicationStatus({ series }) {
   // something to say, so a real Active run or Run complete stands out.
   if (!state.known) return null;
   return <span className={`publication-status ${state.tone}`}>
-    {state.tone === "ongoing" ? <ActiveRunIcon /> : null}
+    {state.tone === "ongoing" ? <ActiveRunIcon size={null} /> : null}
     {state.label}
   </span>;
 }
 
 function MonitoringStatus({ series }) {
   if (series.monitoringStatus !== "monitored") return null;
-  return <span className="monitoring-status"><FollowedIcon /> Following</span>;
+  return <span className="monitoring-status"><FollowedIcon size={null} /> Following</span>;
 }
 
 function seriesAttentionLabel(series) {

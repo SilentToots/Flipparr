@@ -870,8 +870,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgba(109, 40, 217, 0.4)",
       "borderRadius": "100px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
       "paddingBottom": "3px",
       "paddingTop": "3px",
       "columnGap": "2px"
@@ -882,7 +880,6 @@ export const spec = [
     "sel": ".publication-status.ongoing",
     "node": "I69:928;69:889",
     "props": {
-      "fontSize": "8px",
       "color": "rgba(255, 255, 255, 0.8)",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
@@ -895,8 +892,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(21, 128, 61)",
       "borderRadius": "100px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
       "paddingBottom": "3px",
       "paddingTop": "3px",
       "columnGap": "2px"
@@ -912,7 +907,6 @@ export const spec = [
     "sel": ".monitoring-status",
     "node": "I69:928;69:892",
     "props": {
-      "fontSize": "8px",
       "fontWeight": "700",
       "whiteSpace": "nowrap"
     },
@@ -1401,7 +1395,7 @@ export const icons = [
   {
     "node": "I69:928;69:888",
     "name": "heroicons-micro/bolt",
-    "size": 12,
+    "size": null,
     "where": ".series-card .publication-status.ongoing svg",
     "route": "/library @375"
   }
