@@ -108,3 +108,32 @@ test("every font-size is a step on the ladder", () => {
   const bad = styles().filter((d) => d.property === "font-size" && !ok(d)).map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+const SPACE_SCALE = [2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 64, 80, 96];
+const SPACING = /^((row-|column-)?gap|padding(-[a-z]+){0,2}|margin(-[a-z]+){0,2})$/;
+// The design's badge: 12px of icon and text centred in an 18px chip, which
+// puts 3px above and below. The one spacing value off the 2px grid.
+const BADGE_INSET = new Set([".publication-status, .monitoring-status", ".run-status", ".library-match-art b"]);
+
+test("every spacing token is named for its value, and the scale is the published one", () => {
+  const defined = [...read("design-tokens.css").matchAll(/^\s*--space-(\d+):\s*([^;]+);/gm)];
+  assert.deepEqual(defined.map((m) => +m[1]), SPACE_SCALE);
+  for (const [, n, value] of defined) assert.equal(value, `${n}px`, `--space-${n}`);
+});
+
+test("every padding, margin and gap is on the spacing scale", () => {
+  const bad = [];
+  for (const d of styles().filter((x) => SPACING.test(x.property))) {
+    const selector = d.selector.replace(/\s+/g, " ");
+    for (const [, px] of d.value.matchAll(/(?<![\w.#-])-?(\d*\.?\d+)px\b/g)) {
+      const n = +px;
+      if (n === 0 || n === 1) continue;                            // hairlines
+      if (n === 3 && BADGE_INSET.has(selector)) continue;
+      bad.push(`${where("styles.css", d)}  (${px}px: use a --space-* step)`);
+    }
+    if (/\b\d*\.?\d+(em|rem|vw|vh)\b/.test(d.value.replace(/var\([^)]*\)|env\([^)]*\)/g, ""))) {
+      bad.push(`${where("styles.css", d)}  (relative length)`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});

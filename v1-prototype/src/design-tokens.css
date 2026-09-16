@@ -128,6 +128,12 @@
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
   --mobile-nav-height: 83px;
+  /* The desktop frame: the app bar's height, and the rail beside the page at
+     full width and collapsed. Each is used by more than one rule -- the rail
+     and the page's margin -- so it is named once. */
+  --appbar-height: 58px;
+  --sidebar-width: 228px;
+  --sidebar-width-collapsed: 76px;
   /* The active tab's glass (node 69:793). Figma's Glass effect does not
      export, so these stand for its panel: light angle and intensity, splay,
      depth and frost (as a CSS blur, half Figma's value). The angle is where
@@ -298,7 +304,9 @@
   --loader-muted-opacity: .18;
 }
 
-@media (max-width: 620px) {
+/* The same width as the stylesheet's phone rules. This was 620px, so between
+   621 and 640px a control took its phone padding at its desktop height. */
+@media (max-width: 640px) {
   :root {
     --control-height-md: 44px;
   }
