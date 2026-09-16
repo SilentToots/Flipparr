@@ -44,6 +44,18 @@ jobs:
       # makes the web build reproducible.
       - run: npm ci
         working-directory: v1-prototype
+      # eslint is configured for no-undef above all: a build that succeeds
+      # while a page cannot mount is what it catches.
+      - name: Lint
+        run: npm run lint
+        working-directory: v1-prototype
+      # Includes tests/design-system.test.mjs, which fails on a font size,
+      # weight, line height, spacing, radius, colour or breakpoint that is not
+      # one of the design system's. It reads the stylesheets as text, so it
+      # needs no browser.
+      - name: Unit and design-system tests
+        run: npm test
+        working-directory: v1-prototype
       - run: npm run build
         working-directory: v1-prototype
 

@@ -191,3 +191,22 @@ test("the chrome grey is never text, except on icon-only buttons", () => {
     .map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+// Three widths, where the layout changes: a phone up to 640px, a tablet with
+// the icon rail up to 900px, and desktop, with one wide-content exception.
+// Each crossing is written as max-width on one side and min-width one pixel
+// later on the other. Container queries are components sizing themselves and
+// are not breakpoints.
+const BREAKPOINTS = new Set(["max-width: 640px", "min-width: 641px", "max-width: 900px", "min-width: 901px", "max-width: 1100px"]);
+
+for (const file of ["design-tokens.css", "styles.css"]) {
+  test(`${file}: every media query width is one of the breakpoints`, () => {
+    const bad = [];
+    read(file).split("\n").forEach((text, i) => {
+      for (const [, query] of text.matchAll(/@media\s*\(([^)]*width[^)]*)\)/g)) {
+        if (!BREAKPOINTS.has(query.trim())) bad.push(`${file}:${i + 1}  @media (${query})`);
+      }
+    });
+    assert.deepEqual(bad, []);
+  });
+}

@@ -117,18 +117,17 @@ desktop app**. Point it at another file and `1:86` silently resolves to
 something else entirely. So: open the Flipparr file, make it active, re-run the
 three tools, replace `figma/raw/`, then regenerate.
 
-## The older harness
+## What the Figma check enforces
 
-`figma-spec.mjs` holds what `node-id=1-86` says — 37 assertions, each tagged
-with the node it came from — and `figma-check.mjs` asserts the running app
-against it:
-
-```
-npm run figma:check
-```
-
-It fails on *any* difference, unlike `compare.mjs`. A palette migration is meant
-to move things; a specification is not, so there is no drift to tolerate.
+`figma-check.mjs` asserts the running app against `figma-spec.generated.mjs`
+(style properties, frame geometry within 1px, and icon names and sizes). It
+fails on *any* difference the node map has not recorded, unlike
+`compare.mjs`. A deliberate difference is recorded in `figma/node-map.json`
+with its reason — `ignoreProps` for a style, `ignoreSize` for an icon, a
+dimension set to `false` with a `_note` for a frame — and then
+`npm run figma:generate`. The Comics and Discover screens are checked at
+1440px and the phone's Comics screen at 375px; `stubs.mjs` holds the Metron
+responses both this and the capture use.
 
 Two rules this file exists to enforce, both learned the hard way:
 
