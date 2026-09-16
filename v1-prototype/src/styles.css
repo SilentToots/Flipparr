@@ -1247,7 +1247,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .series-match-providers { display: block; margin-bottom: 10px; color: var(--muted); font-size: var(--text-2xs); }
 .series-match-empty { min-height: 120px; display: grid; place-items: center; align-content: center; gap: 6px; color: var(--muted); text-align: center; }
 .series-match-empty strong { color: var(--text); font-size: var(--text-md); }
-.series-match-workbench .discovery-results { border: 0; padding: 0; background: transparent; }
+/* The candidate list is the app bar's search dropdown, reused. There it hangs
+   under the field on its own layer (position: absolute, its own width and
+   scroller); here it is the body of a dialog, so it has to sit in the flow.
+   Left absolute it anchored to the dialog box and painted over the title, the
+   intro and the search field, and the dialog itself collapsed to the height of
+   a header it no longer appeared to have. */
+.series-match-workbench .discovery-results {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
 
 .cover-workbench { width: min(820px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; }
 .cover-option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -2130,6 +2147,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .pull-mode button { min-height: 44px; }
   .discover-search input { padding-block: 14px; margin-block: -10px; }
   .discover-issue-list > header button { min-height: 44px; padding-inline: 8px; }
+  /* Cover, copy and action across 375px left the title as "Ni…" and its
+     publisher line three words deep. The action takes its own row instead. */
+  .discovery-result { grid-template-columns: 42px minmax(0, 1fr); row-gap: 10px; }
+  .discovery-result > button { grid-column: 1 / -1; min-height: 44px; justify-content: center; }
   .discover-text-button { display: inline-block; padding-block: 10px; margin-block: -10px; }
   .discover-search-clear { position: relative; }
   .discover-search-clear::after { content: ""; position: absolute; inset: -12px; }
