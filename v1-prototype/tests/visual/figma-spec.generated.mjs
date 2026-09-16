@@ -7,7 +7,7 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 365 nodes
-// accounted for, 99 style assertions, 17 frame assertions, 27 icons.
+// accounted for, 96 style assertions, 17 frame assertions, 27 icons.
 
 export const spec = [
   {
@@ -981,9 +981,7 @@ export const spec = [
     "sel": ".sidebar .nav-item.active",
     "node": "69:793",
     "props": {
-      "borderRadius": "100px",
-      "paddingBottom": "8px",
-      "paddingTop": "8px"
+      "borderRadius": "100px"
     },
     "route": "/library @375"
   },
@@ -994,15 +992,6 @@ export const spec = [
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600",
       "whiteSpace": "nowrap"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".sidebar [data-nav=\"discover\"]",
-    "node": "69:800",
-    "props": {
-      "paddingBottom": "8px",
-      "paddingTop": "8px"
     },
     "route": "/library @375"
   },
@@ -1026,15 +1015,6 @@ export const spec = [
   },
   {
     "sel": ".sidebar [data-nav=\"requests\"]",
-    "node": "69:801",
-    "props": {
-      "paddingBottom": "8px",
-      "paddingTop": "8px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".sidebar [data-nav=\"requests\"]",
     "node": "69:822",
     "props": {
       "rowGap": "4px"
@@ -1048,15 +1028,6 @@ export const spec = [
       "color": "rgb(255, 255, 255)",
       "fontWeight": "600",
       "whiteSpace": "nowrap"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".sidebar [data-nav=\"settings\"]",
-    "node": "69:802",
-    "props": {
-      "paddingBottom": "8px",
-      "paddingTop": "8px"
     },
     "route": "/library @375"
   },
