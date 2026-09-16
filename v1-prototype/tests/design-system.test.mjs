@@ -149,7 +149,7 @@ test("every border-radius is a radius token, a circle, or none", () => {
 // another control, which take 4px inside their 8px frame the way the
 // design's view toggle does.
 const NESTED_BUTTONS = new Set([
-  ".pull-mode button", ".scope-toggle button", ".view-toggle button", ".sort-menu button",
+  ".scope-toggle button", ".view-toggle button", ".sort-menu button",
   ".file-actions-menu > div button", ".library-sheet-segments button", ".library-sheet-options button",
   ".notifications-open", ".notifications-dismiss",
 ]);

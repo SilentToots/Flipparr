@@ -240,12 +240,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .discover-credits dd { margin: 0; color: var(--text); font-size: var(--text-sm); }
 .discover-chip { padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--muted-strong); font-size: var(--text-xs); }
 
-/* How much of the run: three ends, one control. */
-/* Columns by count: an ended run offers two choices, not three. */
-.pull-mode { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--space-4); margin: var(--space-24) 0 var(--space-12); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--surface-soft); }
-.pull-mode button { min-height: 36px; padding: 0 var(--space-8); border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-semibold); cursor: pointer; }
-.pull-mode button.active { background: var(--pull-bg); color: var(--color-neutral-0); box-shadow: inset 0 0 0 1px var(--pull-border); }
-.pull-mode button:disabled { cursor: default; opacity: var(--button-disabled-opacity); }
 
 .discover-issue-list { display: grid; margin-top: var(--space-8); }
 .discover-issue-list > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-12); min-height: 36px; }
@@ -277,7 +271,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    stacks on the section's. */
 .series-drawer.discover-drawer :is(.discover-drawer-section, .discover-issue-list > header) h3 { margin-top: 0; color: var(--text); font-size: var(--text-md); }
 .discover-drawer .drawer-facts { margin-bottom: 0; }
+/* In the run drawer's shell (2026-09-16): the body takes the room so the
+   actions stay at the foot, and the actions are a black band like the Follow
+   band, edge to edge without bleeding margins. */
+/* A flex column lets a child that scrolls sideways -- the mode bar -- shrink
+   to nothing; nothing in this drawer should shrink. */
+.series-drawer.comic-drawer.discover-drawer > * { flex-shrink: 0; }
+.series-drawer.comic-drawer.discover-drawer > .comic-drawer-body { flex: 1 0 auto; margin-bottom: 0; }
+.comic-drawer-cover .discover-cover { width: 100%; height: 100%; }
+/* Prose at the run drawer's size: 14px, like its story. */
+.comic-drawer.discover-drawer .discover-drawer-section p { font-size: var(--text-sm); line-height: var(--leading-normal); }
+.comic-drawer.discover-drawer .discover-story-titles { font-size: var(--text-sm); }
+.series-drawer.comic-drawer.discover-drawer > .discover-drawer-actions { margin: 0; padding: var(--space-16) var(--space-32) calc(var(--space-16) + env(safe-area-inset-bottom)); border-top: 0; background: var(--color-black); }
+.comic-drawer.discover-drawer .discover-drawer-section, .comic-drawer.discover-drawer .discover-issue-list { margin-top: 0; }
+.comic-drawer-tabs.drawer-tabs button:disabled { cursor: default; opacity: var(--button-disabled-opacity); }
 @media (max-width: 640px) {
+  .series-drawer.comic-drawer.discover-drawer > .discover-drawer-actions { padding-inline: var(--space-16); }
   .discover-drawer-actions { margin: var(--space-20) calc(var(--space-16) * -1) 0; padding-inline: var(--space-16); flex-wrap: wrap; gap: var(--space-12); }
   .discover-drawer-actions .pull-button { width: 100%; }
   .discover-drawer-actions > span:empty { display: none; }
@@ -287,8 +296,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Four facts at a quarter of 375 wrapped every date onto two lines. */
   .discover-drawer .drawer-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-8); }
   .discover-drawer .drawer-facts span { min-height: 0; padding: var(--space-10) var(--space-12); }
-  /* Three modes share the row; "Pull all released" broke onto two lines. */
-  .pull-mode button { padding-inline: var(--space-4); white-space: nowrap; }
 }
 
 .library-match-skeleton { width: 120px; display: flex; flex-direction: column; }
@@ -2025,7 +2032,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .series-drawer.comic-drawer h2 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .comic-drawer-titles p { margin: 0; overflow: hidden; color: var(--color-neutral-0); font-size: var(--text-sm); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
 .comic-drawer-statuses { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); padding: 0 var(--space-12); }
-.comic-drawer-statuses :is(.publication-status, .monitoring-status) { gap: var(--space-2); padding: var(--space-4) var(--space-10) var(--space-4) var(--space-6); font-size: var(--text-xs); }
+.comic-drawer-statuses :is(.publication-status, .monitoring-status, .run-status, .status-badge) { gap: var(--space-2); padding: var(--space-4) var(--space-10) var(--space-4) var(--space-6); font-size: var(--text-xs); }
 .series-drawer .comic-drawer-copy .ownership.compact { width: auto; gap: var(--space-8); padding: 0 var(--space-12); }
 .comic-drawer-copy .ownership.compact .ownership-label { font-size: var(--text-sm); }
 .comic-drawer-copy .ownership.compact .progress { height: 16px; }
@@ -2254,7 +2261,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Discover: Pull Run and the run drawer's actions were 30px, its mode
      choice 36, and the clear button a bare 20px icon. */
   .pull-button-md, .new-run-skeleton .new-run-action i { min-height: 44px; }
-  .pull-mode button { min-height: 44px; }
   .discover-search input { padding-block: var(--space-14); margin-block: calc(var(--space-10) * -1); }
   .discover-issue-list > header button { min-height: 44px; padding-inline: var(--space-8); }
   /* Cover, copy and action across 375px left the title as "Ni…" and its
@@ -2839,7 +2845,6 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 .advanced-card button:not(:disabled):active, .request-job-actions button:not(:disabled):active,
 .modal-close:active, .notifications-open:active,
 .view-toggle button:not(.active):active, .scope-toggle button:not(.active):active,
-.pull-mode button:not(.active):not(:disabled):active { background: var(--button-ghost-bg-pressed); }
 .danger-button:not(:disabled):active, .advanced-card.danger button:not(:disabled):active,
 .request-job-actions button.request-job-delete:not(:disabled):active { background: var(--button-danger-bg-pressed); }
 .pull-button:not(:disabled):active { filter: brightness(.92); }
@@ -2879,8 +2884,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .drawer-tabs button:not(.active):hover, .request-tabs button:not(.active):hover,
   .settings-tabs button:not(.active):hover { color: var(--text); }
   /* Segmented toggles. */
-  .view-toggle button:not(.active):hover, .scope-toggle button:not(.active):hover,
-  .pull-mode button:not(.active):not(:disabled):hover { background: var(--button-ghost-bg-hover); color: var(--text); }
+  .view-toggle button:not(.active):hover, .scope-toggle button:not(.active):hover { background: var(--button-ghost-bg-hover); color: var(--text); }
 }
 
 @media (prefers-reduced-motion: reduce) {

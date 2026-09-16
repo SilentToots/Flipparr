@@ -1655,6 +1655,30 @@ function formatLongDate(iso) {
 
 const PREVIEW_PROVIDER_NAMES = { metron: "Metron", comic_vine: "Comic Vine", gcd: "Grand Comics Database" };
 
+// The run drawer's header, for the Discover drawers: the cover as art behind a
+// violet-to-black scrim, the cover itself, the title, a byline and chips. The
+// same classes as the Comics drawer, so the two read as one kind of panel.
+function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, closeLabel, children }) {
+  return <header className="comic-drawer-hero">
+    {art ? <>
+      <img className="comic-drawer-backdrop" src={art} alt="" aria-hidden="true" key={art} />
+      <img className="comic-drawer-backdrop blurred" src={art} alt="" aria-hidden="true" key={`${art}-blurred`} />
+    </> : null}
+    <span className="comic-drawer-scrim" aria-hidden="true" />
+    <button type="button" className="comic-drawer-close" onClick={onClose} aria-label={closeLabel}><DrawerCloseIcon size={null} /></button>
+    <div className="comic-drawer-identity">
+      <div className="comic-drawer-cover">{cover}</div>
+      <div className="comic-drawer-copy">
+        <div className="comic-drawer-titles">
+          <h2 id={titleId}>{title}</h2>
+          {byline ? <p>{byline}</p> : null}
+        </div>
+        {children ? <div className="comic-drawer-statuses">{children}</div> : null}
+      </div>
+    </div>
+  </header>;
+}
+
 /**
  * One comic from a release shelf.
  *
@@ -1683,17 +1707,14 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
     ["Price", data.price ? `$${data.price}` : null],
   ].filter(([, value]) => value);
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer discover-drawer ${closing ? "closing" : ""}`} ref={dialogRef}
+    <aside className={`series-drawer comic-drawer discover-drawer ${closing ? "closing" : ""}`} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="discover-issue-title"
       onMouseDown={(event) => event.stopPropagation()}>
-      <button className="modal-close" onClick={requestClose} aria-label="Close issue details"><X size={20} /></button>
-      <div className="drawer-identity">
-        <div className="drawer-cover"><DiscoverCover src={issue.cover} alt={`${issue.title} cover`} glyph={30} /></div>
-        <div>
-          <h2 id="discover-issue-title">{issue.title}</h2>
-          <p>{[issue.publisher, issue.seriesTitle].filter(Boolean).join(" · ")}</p>
-        </div>
-      </div>
+      <DiscoverDrawerHero art={issue.cover} titleId="discover-issue-title" title={issue.title}
+        cover={<DiscoverCover src={issue.cover} alt={`${issue.title} cover`} glyph={30} />}
+        byline={[issue.publisher, issue.seriesTitle].filter(Boolean).join(" • ")}
+        onClose={requestClose} closeLabel="Close issue details" />
+      <div className="comic-drawer-body">
       {facts.length ? <div className="drawer-facts">
         {facts.map(([label, value]) => <span key={label}><strong>{value}</strong>{label}</span>)}
       </div> : null}
@@ -1711,6 +1732,7 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
           </dl> : null}
         </> : null}
       </section>
+      </div>
       <div className="discover-drawer-actions">
         {issue.providerSeriesId ? <button type="button" className="ghost-button"
           onClick={() => onOpenRun({
@@ -1783,6 +1805,7 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
   const activeMode = completed && (mode === "follow" || mode === "released") ? "complete"
     : !completed && mode === "complete" ? "released" : mode;
   const summary = runPullSummary(activeMode, issues, [...selected], { following: Boolean(run?.following) });
+  const [modesRef, modeGlass] = useGlassIndicator("button.active", [activeMode, preview.state]);
   function toggle(number) {
     setMode("choose");
     setDone("");
@@ -1813,29 +1836,29 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
     }
   }
   const yearLabel = item.yearLabel || run?.year || item.yearBegan;
+  const art = run?.cover || item.cover;
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer discover-drawer ${closing ? "closing" : ""}`} ref={dialogRef}
+    <aside className={`series-drawer comic-drawer discover-drawer ${closing ? "closing" : ""}`} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="discover-run-title"
       onMouseDown={(event) => event.stopPropagation()}>
-      <button className="modal-close" onClick={requestClose} aria-label="Close run details"><X size={20} /></button>
-      <div className="drawer-identity">
-        <div className="drawer-cover"><DiscoverCover src={run?.cover || item.cover} alt={`${item.title} cover`} glyph={30} /></div>
-        <div>
-          <h2 id="discover-run-title">{run?.title || item.title}</h2>
-          <p>{[run?.publisher || item.publisher, yearLabel].filter(Boolean).join(" • ")}</p>
-          <div className="drawer-statuses">
-            <RunStatusChip status={run?.publicationStatus || discoveryRunStatus(item)} />
-            {(run?.medium || item.medium) === "manga" ? <span className="discover-chip">Manga</span> : null}
-            {run ? <span className="discover-chip">{issues.length} issue{issues.length === 1 ? "" : "s"}</span> : null}
-          </div>
-        </div>
-      </div>
-      {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
-      <div className="pull-mode" role="radiogroup" aria-label="How much of this run to pull">
+      <DiscoverDrawerHero art={art} titleId="discover-run-title" title={run?.title || item.title}
+        cover={<DiscoverCover src={art} alt={`${item.title} cover`} glyph={30} />}
+        byline={[run?.publisher || item.publisher, yearLabel].filter(Boolean).join(" • ")}
+        onClose={requestClose} closeLabel="Close run details">
+        <RunStatusChip status={run?.publicationStatus || discoveryRunStatus(item)} />
+        {(run?.medium || item.medium) === "manga" ? <StatusBadge tone="muted">Manga</StatusBadge> : null}
+        {run ? <StatusBadge tone="muted">{issues.length} issue{issues.length === 1 ? "" : "s"}</StatusBadge> : null}
+      </DiscoverDrawerHero>
+      {/* How much to take, as the run drawer's tab bar: the same violet bar and
+          sliding glass, choosing one of three rather than a page. */}
+      <div className="drawer-tabs comic-drawer-tabs discover-mode-tabs" role="radiogroup" aria-label="How much of this run to pull" ref={modesRef}>
+        <span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={modeGlass || { opacity: 0 }} />
         {runModes(completed ? "completed" : status).map(([id, label]) =>
           <button type="button" role="radio" aria-checked={activeMode === id} className={activeMode === id ? "active" : ""}
             disabled={!run || busy} onClick={() => { setMode(id); setDone(""); }} key={id}>{label}</button>)}
       </div>
+      <div className="comic-drawer-body">
+      {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
       {run?.detailsLimited ? <p className="discover-note">The Grand Comics Database lists this run&rsquo;s issue numbers without titles, dates or covers.</p> : null}
       <section className="discover-issue-list" aria-label="Issues in this run">
         <header>
@@ -1873,6 +1896,7 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
           </label>;
         }) : null}
       </section>
+      </div>
       <div className="discover-drawer-actions">
         <small role="status" aria-live="polite">{done || summary.detail}</small>
         <button type="button" className="pull-button pull-button-md pull-button-idle"
