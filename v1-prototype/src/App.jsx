@@ -469,9 +469,72 @@ async function apiRequest(path, options) {
 // rather than each item lighting up on its own. It is measured before paint so
 // it never lands late, and only animates once it has a position to animate
 // from. The phone's tab bar and the comic drawer's tabs share it.
+// A damped spring, sampled into a CSS linear() curve.
+//
+// iOS's motion is spring based rather than bezier: it carries past its target
+// and settles back, which no cubic-bezier can say. linear() can, by naming
+// enough points along the real curve. Apple's own tab bar is quoted around
+// response 0.3 with a damping fraction near 0.6; this is a little stiffer, so
+// the pill settles rather than wobbles.
+const GLASS_SPRING_DURATION = 460;
+
+function springEasing(response = 0.3, damping = 0.66, samples = 40) {
+  const omega = (2 * Math.PI) / response;
+  const omegaDamped = omega * Math.sqrt(1 - damping * damping);
+  const seconds = GLASS_SPRING_DURATION / 1000;
+  const points = [];
+  for (let step = 0; step <= samples; step += 1) {
+    const time = (step / samples) * seconds;
+    const decay = Math.exp(-damping * omega * time);
+    const value = 1 - decay * (
+      Math.cos(omegaDamped * time) + ((damping * omega) / omegaDamped) * Math.sin(omegaDamped * time)
+    );
+    points.push(Number(value.toFixed(4)));
+  }
+  // The last point has to be exactly 1, or the pill settles slightly off.
+  points[points.length - 1] = 1;
+  return `linear(${points.join(",")})`;
+}
+
+const GLASS_TRAVEL_EASING = springEasing();
+
+// Something with weight, thrown: it stretches along the way it is going,
+// arrives compressed, and springs back. The stretch follows the distance
+// travelled, so a neighbouring tab barely deforms and a jump across the bar
+// does it visibly.
+function animateGlassIndicator(glass, from, to) {
+  if (!glass || typeof glass.animate !== "function") return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  const distance = Math.abs(to.left - from.left);
+  if (distance < 1) return;
+  const pull = Math.min(0.22, distance / Math.max(to.width * 4, 1));
+  const options = { duration: GLASS_SPRING_DURATION, fill: "none" };
+  // Two animations rather than one: position springs, and the squish runs on
+  // its own shorter curve. Separate properties, so they do not overwrite each
+  // other the way two transforms would.
+  glass.animate(
+    [
+      { translate: `${from.left}px ${from.top}px`, width: `${from.width}px`, height: `${from.height}px` },
+      { translate: `${to.left}px ${to.top}px`, width: `${to.width}px`, height: `${to.height}px` },
+    ],
+    { ...options, easing: GLASS_TRAVEL_EASING },
+  );
+  glass.animate(
+    [
+      { scale: "1 1", offset: 0 },
+      { scale: `${(1 + pull).toFixed(3)} ${(1 - pull * 0.55).toFixed(3)}`, offset: 0.35 },
+      { scale: `${(1 - pull * 0.42).toFixed(3)} ${(1 + pull * 0.32).toFixed(3)}`, offset: 0.68 },
+      { scale: "1 1", offset: 1 },
+    ],
+    { ...options, easing: "cubic-bezier(.33, .1, .24, 1)" },
+  );
+}
+
 function useGlassIndicator(selector, deps) {
   const containerRef = useRef(null);
   const [style, setStyle] = useState(null);
+  // Where the pill was last placed, so a move knows where it is coming from.
+  const placedRef = useRef(null);
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
@@ -479,13 +542,23 @@ function useGlassIndicator(selector, deps) {
       const active = container.querySelector(selector);
       if (!active || !active.offsetWidth) {
         setStyle(null);
+        placedRef.current = null;
         return;
       }
+      const next = {
+        left: active.offsetLeft, top: active.offsetTop,
+        width: active.offsetWidth, height: active.offsetHeight,
+      };
       setStyle({
-        transform: `translate(${active.offsetLeft}px, ${active.offsetTop}px)`,
-        width: `${active.offsetWidth}px`,
-        height: `${active.offsetHeight}px`,
+        translate: `${next.left}px ${next.top}px`,
+        width: `${next.width}px`,
+        height: `${next.height}px`,
       });
+      const previous = placedRef.current;
+      placedRef.current = next;
+      if (container.dataset.glassPlaced && previous) {
+        animateGlassIndicator(container.querySelector(".glass-indicator"), previous, next);
+      }
       if (!container.dataset.glassPlaced) requestAnimationFrame(() => { container.dataset.glassPlaced = "true"; });
     }
     place();

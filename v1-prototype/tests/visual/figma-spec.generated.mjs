@@ -980,8 +980,6 @@ export const spec = [
       "borderBottomWidth": "1px",
       "borderBottomColor": "rgb(63, 63, 70)",
       "borderRadius": "100px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
       "paddingBottom": "2px",
       "paddingTop": "2px"
     },
@@ -992,8 +990,6 @@ export const spec = [
     "node": "69:793",
     "props": {
       "borderRadius": "100px",
-      "paddingRight": "20px",
-      "paddingLeft": "20px",
       "paddingBottom": "8px",
       "paddingTop": "8px"
     },
@@ -1013,8 +1009,6 @@ export const spec = [
     "sel": ".sidebar [data-nav=\"discover\"]",
     "node": "69:800",
     "props": {
-      "paddingRight": "20px",
-      "paddingLeft": "20px",
       "paddingBottom": "8px",
       "paddingTop": "8px"
     },
@@ -1042,8 +1036,6 @@ export const spec = [
     "sel": ".sidebar [data-nav=\"requests\"]",
     "node": "69:801",
     "props": {
-      "paddingRight": "20px",
-      "paddingLeft": "20px",
       "paddingBottom": "8px",
       "paddingTop": "8px"
     },
@@ -1071,8 +1063,6 @@ export const spec = [
     "sel": ".sidebar [data-nav=\"settings\"]",
     "node": "69:802",
     "props": {
-      "paddingRight": "20px",
-      "paddingLeft": "20px",
       "paddingBottom": "8px",
       "paddingTop": "8px"
     },
@@ -1209,7 +1199,6 @@ export const frames = [
     "sel": ".sidebar nav",
     "node": "69:763",
     "route": "/library @375",
-    "w": 359,
     "h": 59
   },
   {

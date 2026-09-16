@@ -1821,7 +1821,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      which floats over the grid rather than ending it. */
   .main-content.main-content-flush { padding: 0 12px calc(20px + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
   .main-content-flush .dashboard-header { padding: 8px 0 0; border-bottom: 0; gap: 4px; }
-  .main-content-flush .dashboard-body { padding: 0; margin-top: 8px; }
+  /* The header's buttons are 44px and the cards beneath them are tappable, so
+     8px between the two put two different targets within a thumb's width of
+     each other. */
+  .main-content-flush .dashboard-body { padding: 0; margin-top: 20px; }
 
   /* One row for the whole top of the screen (chosen 2026-09-15, replacing the
      file's count strip, 24px icon row and toolbar -- 69:744 needs updating to
@@ -1881,11 +1884,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      blur, solid where the browser cannot blur. Sign out is in Settings. */
   .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: auto; box-sizing: border-box; padding: 12px 8px calc(12px + env(safe-area-inset-bottom)); border: 0; background: transparent; overflow: visible; pointer-events: none; }
   .sidebar-session { display: none; }
-  .sidebar nav { box-sizing: border-box; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 2px 8px; border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
+  /* A pill the width of its tabs, centred, rather than a bar the width of the
+     screen: the four tabs sit together where a thumb is, and the screen shows
+     through either side of them. */
+  .sidebar nav { box-sizing: border-box; width: fit-content; max-width: 100%; margin-inline: auto; display: flex; align-items: center; justify-content: center; gap: 2px; padding: 2px 6px; border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .sidebar nav { background: var(--mobile-nav-bg); -webkit-backdrop-filter: blur(var(--mobile-nav-blur)); backdrop-filter: blur(var(--mobile-nav-blur)); }
   }
-  .sidebar .nav-item { flex: none; width: auto; height: auto; max-height: none; padding: 8px 20px; border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--color-neutral-0); font-size: var(--text-4xs); font-weight: 600; line-height: normal; white-space: nowrap; }
+  .sidebar .nav-item { flex: none; width: auto; height: auto; max-height: none; padding: 8px 14px; border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--color-neutral-0); font-size: var(--text-4xs); font-weight: 600; line-height: normal; white-space: nowrap; }
   .sidebar .nav-item > svg { width: 24px; height: 24px; }
   .sidebar .nav-item > span { display: inline; }
   /* A count is a warning state the file does not draw; it rides the icon's
@@ -1907,7 +1913,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      the page or a tap opens it again. The other tabs and the labels ease out
      rather than vanish, on the glass's iOS curve. */
   .sidebar nav { max-width: 100%; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
-  .sidebar .nav-item { max-width: 25%; overflow: hidden; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
+  /* A length rather than a percentage, so collapsing still has something to
+     animate from now that the bar is only as wide as its tabs. */
+  .sidebar .nav-item { max-width: 120px; overflow: hidden; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
   .sidebar .nav-item > span { max-height: 12px; transition: max-height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
   .sidebar.tab-bar-collapsed nav { max-width: 56px; padding: 0; }
   .sidebar.tab-bar-collapsed .nav-item:not(.active) { max-width: 0; padding-inline: 0; opacity: 0; }
@@ -1993,9 +2001,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   -webkit-backdrop-filter: blur(var(--nav-glass-frost));
   backdrop-filter: blur(var(--nav-glass-frost));
 }
+/* The squish scales a pill, so it has to grow from the middle. */
+.glass-indicator { transform-origin: center; }
+/* The move itself is animated in script (animateGlassIndicator): a spring for
+   the travel and a second curve for the stretch, on separate properties so
+   neither overwrites the other. This transition is what a browser without the
+   Web Animations API falls back to, and what carries a resize. */
 [data-glass-placed] > .glass-indicator {
   transition:
-    transform var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
+    translate var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
     width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
     height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
     opacity var(--motion-duration-fast) ease;
