@@ -647,6 +647,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-job > div strong { color: var(--text); font-size: var(--text-md); }
 .request-job > div span { color: var(--muted); font-size: var(--text-sm); }
 .request-job > div .job-error { color: var(--red-text); }
+/* Twelve issues arriving from one download is the point of a pack; without a
+   word on the row they read as twelve unrelated fulfilments. */
+.request-job > div .job-pack-note { color: var(--violet-text); font-size: var(--text-xs); }
 .request-job > div .job-failure-copy { margin-top: 4px; display: grid; gap: 3px; }
 .request-job > div .job-failure-copy > strong { color: var(--red-text); font-size: var(--text-sm); }
 .request-job > div .job-failure-copy > small { color: var(--red-text); font-size: var(--text-xs); line-height: 1.4; }

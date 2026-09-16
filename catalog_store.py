@@ -8183,6 +8183,7 @@ class CatalogStore:
         acquisition_downloads_by_job = {
             int(row["job_id"]): row for row in acquisition_download_rows
         }
+        pack_delivery_counts = self.download_import_counts()
         for job_row in acquisition_job_rows:
             issue = request_issue_lookup.get(int(job_row["issue_id"]))
             if not issue:
@@ -8198,6 +8199,12 @@ class CatalogStore:
                 "attemptCount": int(job_row["attempt_count"]),
                 "lastAttemptAt": job_row["last_attempt_at"], "error": job_row["error"],
                 "downloadStatus": download["status"] if download else None,
+                # A pack answers several jobs at once. This is how many issues
+                # beyond this one its download delivered, so the row can say so
+                # rather than leaving twelve fulfilled issues looking unrelated.
+                "deliveredWithCount": (
+                    pack_delivery_counts.get(int(download["id"]), 0) if download else 0
+                ),
                 "downloadTitle": download["release_title"] if download else None,
                 "downloadDestination": download["destination"] if download else None,
                 "downloadError": download["error"] if download else None,
