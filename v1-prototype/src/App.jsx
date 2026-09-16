@@ -613,6 +613,10 @@ function useCollapsingTabBar(resetKey) {
   return [collapsed, open];
 }
 
+// Sized in place rather than in styles.css: an inline bar the width of a short
+// number, on the library skeleton's shimmer.
+const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAlign: "middle" };
+
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
   const [collapsed, setCollapsed] = useCollapsingTabBar(active);
   const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active, collapsed]);
@@ -646,11 +650,20 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
       <div className="sidebar-footer">
         <span className="sidebar-identity">
           <FlipparrMark size={21} decorative className="sidebar-mark" />
-          <span className="sidebar-counts">
-            <span><strong>{catalog?.stats?.files ?? 0}</strong> Files</span>
-            <i aria-hidden="true">|</i>
-            <span><strong>{logicalSeriesCount ?? 0}</strong> Series</span>
-          </span>
+          {/* Until the catalog answers there is no count to show, and a 0 reads
+              as an empty library -- so the numbers shimmer and the labels stay,
+              which keeps the row from shifting when they arrive. */}
+          {catalogPending(catalog, backendStatus)
+            ? <span className="sidebar-counts" role="status" aria-busy="true" aria-label="Loading library size">
+              <span aria-hidden="true"><span className="library-loading-cell" style={SIDEBAR_COUNT_SKELETON} /> Files</span>
+              <i aria-hidden="true">|</i>
+              <span aria-hidden="true"><span className="library-loading-cell" style={SIDEBAR_COUNT_SKELETON} /> Series</span>
+            </span>
+            : <span className="sidebar-counts">
+              <span><strong>{catalog?.stats?.files ?? 0}</strong> Files</span>
+              <i aria-hidden="true">|</i>
+              <span><strong>{logicalSeriesCount ?? 0}</strong> Series</span>
+            </span>}
           {/* A quick scan, for comics added outside Flipparr -- they stay
               invisible until one runs, and the only other way in was two
               clicks deep under Import library. It turns while any scan runs:
