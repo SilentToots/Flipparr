@@ -2960,6 +2960,27 @@ class PackScoringTests(unittest.TestCase):
         self.assertGreater(pack, 0, "but it is a real candidate, not discarded")
         self.assertIn("Issues #1-#60 include #4", reasons)
 
+    def test_a_range_end_is_not_the_issue_it_looks_like(self):
+        """"Chew 001-060" is not issue #60, though it ends in the number.
+
+        It scored as an exact single and would have been grabbed as one: a
+        whole-run download taken for one issue, with none of the pack rules
+        applied because nothing knew it was a pack.
+        """
+        # #60 shipped in 2016, the year both releases state; a mismatch there is
+        # a different refusal (_release_year_conflict) and would mask this one.
+        context = {**self.CONTEXT, "issueNumber": "60", "publicationYear": 2016, "runIssueCount": 60}
+        pack, reasons = app._release_candidate_score(
+            {"title": "Chew 001-060 (2009-2016) (Digital) (Zone-Empire)"}, context,
+        )
+        single, _ = app._release_candidate_score(
+            {"title": "Chew 060 (2016) (Digital) (Zone-Empire)"}, context,
+        )
+        self.assertIn("Series title matches", reasons, "the series is still read, before the range")
+        self.assertIn("Issues #1-#60 include #60", reasons)
+        self.assertLess(pack, single)
+        self.assertLess(pack, 85, "and it cannot be grabbed as though it were the issue")
+
     def test_a_pack_that_stops_short_of_the_issue_gets_nothing_for_it(self):
         covered, _ = self.judge("Chew 001-060 (2009-2016) (Digital)")
         missed, reasons = self.judge("Chew 010-060 (2009-2016) (Digital)")
@@ -3042,6 +3063,143 @@ class PackEligibilityTests(unittest.TestCase):
             grabbable, note = app._automatic_grab_order(self.CONTEXT, [self.pack()])
         self.assertEqual(grabbable, [])
         self.assertEqual(note, "")
+
+
+FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>You searched for Supergirl &#8211; DirectSite</title>
+  <item>
+    <title>Supergirl &#8211; Woman of Tomorrow #8 (2022)</title>
+    <link>https://comics.example/dc/supergirl-woman-of-tomorrow-8-2022/</link>
+    <pubDate>Wed, 16 Feb 2022 11:04:21 +0000</pubDate>
+    <description>Year : 2022 | Size : 55 MB | Language: English</description>
+  </item>
+  <item>
+    <title>Supergirl &#8211; Woman of Tomorrow #1 &#8211; 8 (2022)</title>
+    <link>https://comics.example/dc/supergirl-woman-of-tomorrow-1-8-2022/</link>
+    <pubDate>Wed, 16 Feb 2022 11:05:00 +0000</pubDate>
+    <description>Year : 2022 | Size : 1.2 GB</description>
+  </item>
+  <item>
+    <title>Batman &#8211; The Long Halloween #3 (1997)</title>
+    <link>https://comics.example/dc/batman-long-halloween-3/</link>
+    <description>Year : 1997 | Size : 40 MB</description>
+  </item>
+</channel></rss>"""
+
+
+class DirectSiteSearchTests(unittest.TestCase):
+    """Finding things on DirectSite is open; fetching them is not.
+
+    The feed answers a plain request (measured 2026-09-15) while the post pages
+    behind it are Cloudflare challenged, so results are listed and labelled but
+    cannot be grabbed until the solver work lands.
+    """
+
+    CONTEXT = {
+        "seriesTitle": "Supergirl Woman of Tomorrow", "issueNumber": "8",
+        "publicationYear": 2022, "runIssueCount": 8, "requestId": "9",
+    }
+
+    def test_the_feed_is_read_into_results(self):
+        with patch("app.fetch_bytes_with_headers", return_value=FEED) as fetch:
+            found = app.direct_site_search("Supergirl")
+        url = fetch.call_args.args[0]
+        self.assertIn("feed=rss2", url)
+        self.assertIn("s=Supergirl", url)
+        self.assertEqual(len(found), 3)
+        self.assertEqual(found[0]["title"], "Supergirl – Woman of Tomorrow #8 (2022)")
+        self.assertEqual(found[0]["sizeBytes"], 55 * 1024 * 1024)
+        self.assertEqual(found[1]["sizeBytes"], int(1.2 * 1024 ** 3))
+        self.assertTrue(found[0]["url"].startswith("https://comics.example/"))
+
+    def test_a_feed_that_is_not_a_feed_is_refused_clearly(self):
+        with patch("app.fetch_bytes_with_headers", return_value=b"<html>Just a moment...</html>"):
+            with self.assertRaisesRegex(ValueError, "not a feed"):
+                app.direct_site_search("Supergirl")
+
+    def test_results_are_scored_despite_the_en_dash(self):
+        """DirectSite writes "Supergirl – Woman of Tomorrow"; matchers expect a hyphen."""
+        with patch("app.fetch_bytes_with_headers", return_value=FEED):
+            candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
+        titles = [item["title"] for item in candidates]
+        self.assertIn("Supergirl – Woman of Tomorrow #8 (2022)", titles)
+        self.assertNotIn("Batman – The Long Halloween #3 (1997)", titles, "another series")
+        first = candidates[0]
+        self.assertEqual(first["source"], "direct_site")
+        self.assertEqual(first["indexer"], "DirectSite")
+        self.assertEqual(first["protocol"], "Direct download")
+        self.assertGreaterEqual(first["matchScore"], 85)
+
+    def test_a_result_is_a_sighting_not_an_offer(self):
+        with patch("app.fetch_bytes_with_headers", return_value=FEED):
+            candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
+        self.assertTrue(all(item["grabbable"] is False for item in candidates))
+        self.assertTrue(all("solver" in item["grabHint"] for item in candidates))
+
+    def test_grabbing_one_is_refused_in_so_many_words(self):
+        with patch("app.fetch_bytes_with_headers", return_value=FEED):
+            candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
+        with self.assertRaisesRegex(ValueError, "solver"):
+            app.send_release_to_sabnzbd(7, candidates[0]["id"])
+
+    def test_a_pack_from_direct_site_is_labelled_as_one(self):
+        with patch("app.fetch_bytes_with_headers", return_value=FEED):
+            candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
+        packs = [item for item in candidates if item.get("pack")]
+        self.assertTrue(packs, "#1 - 8 covers the wanted issue")
+        self.assertEqual(packs[0]["pack"], {"first": 1, "last": 8})
+
+    def test_a_search_that_fails_leaves_usenet_results_alone(self):
+        with patch("app.fetch_bytes_with_headers", side_effect=TimeoutError("slow")):
+            self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl"), [])
+
+    def test_the_two_sources_are_merged_best_first(self):
+        usenet = {
+            "job": self.CONTEXT, "query": "Supergirl", "candidateCount": 1,
+            "candidates": [{
+                "id": "usenet-1", "title": "Supergirl Woman of Tomorrow 008 (2022)",
+                "matchScore": 95, "sizeBytes": 45_000_000, "source": "usenet", "grabbable": True,
+            }],
+            "resultCount": 9, "nearMisses": [],
+        }
+        with patch("app.search_prowlarr_releases", return_value=usenet), \
+             patch("app.fetch_bytes_with_headers", return_value=FEED), \
+             patch("app.catalog_store"):
+            merged = app.search_release_candidates(7, "Supergirl")
+        sources = {item["source"] for item in merged["candidates"]}
+        self.assertEqual(sources, {"usenet", "direct_site"}, "both sources are offered")
+        scores = [item["matchScore"] for item in merged["candidates"]]
+        self.assertEqual(scores, sorted(scores, reverse=True), "best match first, whatever its source")
+        self.assertEqual(merged["candidateCount"], len(merged["candidates"]))
+
+    def test_no_indexer_still_shows_what_direct_site_has(self):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = dict(self.CONTEXT)
+        with patch("app.search_prowlarr_releases", side_effect=ValueError("Connect and enable Prowlarr in Settings first")), \
+             patch("app.fetch_bytes_with_headers", return_value=FEED), \
+             patch("app.catalog_store", return_value=store):
+            merged = app.search_release_candidates(7, "Supergirl")
+        self.assertTrue(merged["candidates"])
+        self.assertTrue(all(item["source"] == "direct_site" for item in merged["candidates"]))
+
+
+class KeylessServiceTests(unittest.TestCase):
+    """A public site has nothing to authenticate to."""
+
+    def test_a_keyless_service_can_be_enabled_without_a_key(self):
+        with patch("app.load_acquisition_service_config", return_value={
+            "direct_site": {"enabled": True, "url": "https://comics.example"},
+        }):
+            service = app._enabled_acquisition_service("direct_site")
+        self.assertEqual(service["url"], "https://comics.example")
+
+    def test_a_service_that_needs_a_key_still_does(self):
+        with patch("app.load_acquisition_service_config", return_value={
+            "prowlarr": {"enabled": True, "url": "http://localhost:9696"},
+        }):
+            with self.assertRaisesRegex(ValueError, "Prowlarr"):
+                app._enabled_acquisition_service("prowlarr")
 
 
 class ManualImportTests(unittest.TestCase):

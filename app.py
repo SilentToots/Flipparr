@@ -751,6 +751,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "description": "Search your configured indexers for wanted issues and volumes.",
         "setupSummary": "Searches your sources for issues you are missing.",
         "defaultUrl": "http://localhost:9696", "defaultEnabled": False,
+        "needsApiKey": True,
     },
     "sabnzbd": {
         "name": "SABnzbd", "kind": "Download client",
@@ -758,8 +759,24 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "description": "Download selected NZBs and report their progress back to Flipparr.",
         "setupSummary": "Downloads what you pick and reports progress back.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
+        "needsApiKey": True,
+    },
+    # A public site rather than a service of yours: nothing to authenticate to,
+    # which is why `needsApiKey` exists. Searching it is open; fetching from it
+    # is not, and that is a separate piece of work.
+    "direct_site": {
+        "name": "DirectSite", "kind": "Direct download site",
+        "capabilities": ["Search", "Direct download links"],
+        "description": "Search DirectSite for issues your indexers do not carry.",
+        "setupSummary": "Searches DirectSite and lists what it has.",
+        "defaultUrl": "https://comics.example", "defaultEnabled": False,
+        "needsApiKey": False,
     },
 }
+
+
+def _service_needs_api_key(service_id: str) -> bool:
+    return bool(ACQUISITION_SERVICE_DEFINITIONS.get(service_id, {}).get("needsApiKey", True))
 
 
 def _provider_defaults() -> dict[str, dict[str, Any]]:
@@ -1320,7 +1337,9 @@ def public_acquisition_service_config() -> dict[str, Any]:
     services = []
     for service_id, definition in ACQUISITION_SERVICE_DEFINITIONS.items():
         values = config[service_id]
-        configured = bool(values.get("url") and values.get("apiKey"))
+        configured = bool(values.get("url")) and (
+            bool(values.get("apiKey")) or not _service_needs_api_key(service_id)
+        )
         services.append({
             "id": service_id, "name": definition["name"], "kind": definition["kind"],
             "description": definition["description"],
@@ -1382,8 +1401,17 @@ def test_acquisition_service_connection(
     config = load_acquisition_service_config()[service_id]
     url = _normalize_service_url(payload.get("url") or config.get("url"))
     api_key = str(payload.get("apiKey") or config.get("apiKey") or "").strip()
-    if not api_key:
+    if not api_key and _service_needs_api_key(service_id):
         raise ValueError(f"Enter a {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} API key first")
+    if service_id == "direct_site":
+        found = direct_site_search("batman", limit=3, base_url=url)
+        detail = (
+            f"Reached DirectSite; its search answered with {len(found)} result"
+            f"{'' if len(found) == 1 else 's'}."
+            if found else
+            "Reached DirectSite, but its search returned nothing to read."
+        )
+        return {"service": service_id, "status": "connected", "detail": detail}
     if service_id == "prowlarr":
         data = fetch_json_with_headers(
             f"{url}/api/v1/system/status",
@@ -1403,7 +1431,7 @@ def test_acquisition_service_connection(
 
 def _enabled_acquisition_service(service_id: str) -> dict[str, Any]:
     config = load_acquisition_service_config().get(service_id) or {}
-    if not config.get("enabled") or not config.get("apiKey"):
+    if not config.get("enabled") or (_service_needs_api_key(service_id) and not config.get("apiKey")):
         name = ACQUISITION_SERVICE_DEFINITIONS[service_id]["name"]
         raise ValueError(f"Connect and enable {name} in Settings first")
     return {**config, "url": _normalize_service_url(config.get("url"))}
@@ -1449,6 +1477,10 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     cleaned = re.sub(r"\b(?:vol|volume|v)\.?\s*\d{1,4}\b", " ", cleaned, flags=re.I)
     # "02 of 04" counts the run; a year is never a count.
     cleaned = re.sub(r"\bof\s*\d{1,3}\b", " ", cleaned, flags=re.I)
+    # A stated range is a pack's bounds, not an issue number. "Chew 001-060"
+    # answered a job for #60, and DirectSite writes "#1 - 8" the same way -- in
+    # both the wanted number is only there as the end of a range.
+    cleaned = _ISSUE_RANGE.sub(" ", cleaned)
     return bool(re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", cleaned, re.I))
 
 
@@ -1647,9 +1679,18 @@ def _release_series_matches(
     wanted = normalized_title(str(series_title or ""))
     if not wanted:
         return False
+    # A release names its series before its number -- but a pack's number is a
+    # range, and the wanted issue is somewhere inside it. Read before the range
+    # as well, or "Supergirl - Woman of Tomorrow #1 - 8" reads as a series
+    # called "Supergirl - Woman of Tomorrow #1 -".
+    numbers = [issue_number]
+    stated = _release_issue_range(title)
+    if stated:
+        numbers.append(stated[0])
     return any(
         _release_lead_is_series(lead, wanted, series_title, publisher)
-        for lead in _release_series_leads(title, issue_number)
+        for number in numbers
+        for lead in _release_series_leads(title, number)
     )
 
 
@@ -1794,6 +1835,160 @@ def _pack_worth_taking(
     if size and size > cap:
         return False, f"{size / 1_000_000_000:.1f} GB for {len(covered)} issues"
     return True, f"covers {len(covered)} wanted issues"
+
+
+# A feed of search results, not a download: small, and capped so a redirect to
+# something enormous cannot be read into memory.
+DIRECT_SITE_FEED_MAX_BYTES = 4 * 1024 * 1024
+_DIRECT_SITE_SIZE = re.compile(r"size\s*:?\s*([0-9.]+)\s*(kb|mb|gb)", re.I)
+_SIZE_SCALE = {"kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
+
+
+def _plain_dashes(value: Any) -> str:
+    """En and em dashes as hyphens.
+
+    DirectSite writes "Supergirl – Woman of Tomorrow #8"; every matcher here was
+    written against Usenet names, which use a plain hyphen or nothing at all.
+    """
+    return str(value or "").replace("–", "-").replace("—", "-")
+
+
+def _direct_site_size_bytes(text: Any) -> int:
+    match = _DIRECT_SITE_SIZE.search(str(text or ""))
+    if not match:
+        return 0
+    return int(float(match.group(1)) * _SIZE_SCALE[match.group(2).lower()])
+
+
+def direct_site_search(query: str, limit: int = 20, base_url: str | None = None) -> list[dict[str, Any]]:
+    """What DirectSite lists for a query, read from its search feed.
+
+    The feed rather than the page: it parses without guessing at markup, and it
+    carries the size and year the scoring wants. Measured 2026-09-15, it also
+    answers a plain request, while the post pages behind it are Cloudflare
+    challenged -- so finding things needs nothing, and fetching them will.
+    """
+    base = str(base_url or "").strip() or str(
+        (load_acquisition_service_config().get("direct_site") or {}).get("url")
+        or ACQUISITION_SERVICE_DEFINITIONS["direct_site"]["defaultUrl"]
+    )
+    url = base.rstrip("/") + "/?" + urllib.parse.urlencode({"s": query, "feed": "rss2"})
+    body = fetch_bytes_with_headers(
+        url,
+        {"User-Agent": f"Flipparr/{APP_VERSION}", "Accept": "application/rss+xml, application/xml"},
+        timeout=20.0, max_bytes=DIRECT_SITE_FEED_MAX_BYTES,
+    )
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as exc:
+        raise ValueError(f"DirectSite returned something that is not a feed: {exc}") from exc
+    # A challenge page is often well-formed enough to parse, and would then read
+    # as a search that found nothing. An empty feed and a blocked one are not
+    # the same answer, so the root element has to actually be a feed.
+    if root.tag.lower() != "rss" and root.find("channel") is None:
+        raise ValueError("DirectSite answered with a page, not a feed")
+    found: list[dict[str, Any]] = []
+    for item in root.iter("item"):
+        title = html.unescape(str(item.findtext("title") or "")).strip()
+        link = str(item.findtext("link") or "").strip()
+        if not title or not link.startswith("http"):
+            continue
+        description = html.unescape(str(item.findtext("description") or ""))
+        found.append({
+            "title": title, "url": link,
+            "sizeBytes": _direct_site_size_bytes(description),
+            "publishDate": str(item.findtext("pubDate") or "").strip() or None,
+        })
+        if len(found) >= limit:
+            break
+    return found
+
+
+def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) -> list[dict[str, Any]]:
+    """DirectSite results for one wanted issue, judged the way any release is.
+
+    Listed, not grabbable: reading the post page a link lives on needs a
+    Cloudflare solver, which is its own piece of work. Knowing the issue is
+    there is worth having on its own -- it is what a person checks by hand.
+    """
+    try:
+        found = direct_site_search(query)
+    except ValueError as exc:
+        # Not enabled, or the feed was unreadable. Neither is a search failure.
+        log_event("direct_site_search_unavailable", level="info", job_id=job_id, reason=str(exc)[:120])
+        return []
+    except Exception as exc:  # noqa: BLE001 -- Usenet results still stand
+        log_event("direct_site_search_failed", level="warning", job_id=job_id, error=str(exc)[:160])
+        return []
+    now = time.time()
+    candidates: list[dict[str, Any]] = []
+    for item in found:
+        title = _plain_dashes(item["title"])
+        score, reasons = _release_candidate_score({"title": title}, context)
+        pack = _release_pack_coverage(title, context)
+        if score < 85 and not (pack and score >= 70):
+            continue
+        candidate_id = hashlib.sha256(f"gc:{job_id}:{item['url']}:{now}".encode()).hexdigest()[:24]
+        with _RELEASE_CANDIDATE_LOCK:
+            _RELEASE_CANDIDATES[candidate_id] = {
+                "jobId": int(job_id), "source": "direct_site", "postUrl": item["url"],
+                "title": item["title"], "releaseKey": item["url"],
+                "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
+            }
+        candidates.append({
+            "id": candidate_id, "title": item["title"],
+            "indexer": "DirectSite", "sizeBytes": int(item.get("sizeBytes") or 0),
+            "publishDate": item.get("publishDate"), "protocol": "Direct download",
+            "matchScore": score, "matchReasons": reasons,
+            "matchStrength": (
+                "Strong match" if score >= 85
+                else f"Pack, #{pack[0]}-#{pack[1]}" if pack else "Possible match"
+            ),
+            "formatTags": _release_format_tags(item["title"]),
+            "source": "direct_site", "postUrl": item["url"],
+            # Until the solver work lands, this is a sighting rather than an offer.
+            "grabbable": False,
+            "grabHint": "Downloading from DirectSite needs a Cloudflare solver, which is not set up yet.",
+            **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
+        })
+    return candidates
+
+
+def search_release_candidates(job_id: int, query: str | None = None) -> dict[str, Any]:
+    """Every source a person can choose from for one wanted issue.
+
+    The automatic grab still asks Prowlarr alone: what it may take without
+    asking is a narrower question than what is worth showing someone.
+    """
+    try:
+        result = search_prowlarr_releases(job_id, query)
+    except ValueError as exc:
+        # No indexer configured is not a reason to hide what DirectSite has.
+        context = catalog_store().get_acquisition_job_context(job_id)
+        result = {
+            "job": context, "query": str(query or context.get("seriesTitle") or ""),
+            "candidateCount": 0, "candidates": [], "resultCount": 0, "nearMisses": [],
+            "detail": str(exc),
+        }
+    context = result.get("job") or {}
+    wanted = str(query or "").strip() or str(context.get("seriesTitle") or "")
+    if not wanted:
+        return result
+    extra = _direct_site_candidates(job_id, context, wanted)
+    if not extra:
+        return result
+    candidates = list(result.get("candidates") or []) + extra
+    candidates.sort(key=lambda item: (-item["matchScore"], -int(item.get("sizeBytes") or 0), item["title"]))
+    candidates = candidates[:24]
+    # The row said how many Prowlarr found; it is now a different number.
+    try:
+        catalog_store().update_acquisition_job(
+            job_id, "queued",
+            f"{len(candidates)} release candidate{'s' if len(candidates) != 1 else ''} found",
+        )
+    except Exception as exc:  # noqa: BLE001 -- the list is the answer, not the row
+        log_exception("release_count_not_recorded", exc, level="warning")
+    return {**result, "candidates": candidates, "candidateCount": len(candidates)}
 
 
 def _release_pack_coverage(title: Any, context: dict[str, Any]) -> tuple[int, int] | None:
@@ -2662,6 +2857,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                     else f"Pack, #{pack[0]}-#{pack[1]}" if pack else "Possible match"
                 ),
                 "formatTags": _release_format_tags(title),
+                "source": "usenet", "grabbable": True,
                 **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
             })
         return candidates
@@ -2734,6 +2930,13 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
                 or float(candidate.get("expiresAt") or 0) <= now):
             _RELEASE_CANDIDATES.pop(candidate_id, None)
             raise ValueError("This release result expired; search again")
+    if str(candidate.get("source") or "usenet") != "usenet":
+        # Listed so you can see the issue exists somewhere; fetching it is a
+        # different path that is not built yet.
+        raise ValueError(
+            "That result is on DirectSite, and downloading from it needs a Cloudflare "
+            "solver that is not set up yet"
+        )
     nzb_payload = _fetch_selected_nzb(candidate)
     sab = _enabled_acquisition_service("sabnzbd")
     payload = _submit_nzb_to_sabnzbd(sab, str(candidate["title"]), nzb_payload)
@@ -10711,7 +10914,7 @@ class Handler(BaseHTTPRequestHandler):
         if acquisition_search:
             job_id = int(acquisition_search.group(1))
             try:
-                result = search_prowlarr_releases(
+                result = search_release_candidates(
                     job_id, str(payload.get("query") or "").strip() or None
                 )
             except ValueError as exc:

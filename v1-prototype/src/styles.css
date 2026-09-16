@@ -731,6 +731,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .release-candidates > header span { color: var(--muted); font-size: var(--text-sm); }
 .release-candidate { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 11px 16px; align-items: center; }
 .release-candidate-main { min-width: 0; }
+/* Why a result is listed but cannot be taken. Amber rather than red: nothing is
+   wrong with it, the way to fetch it simply is not built yet. */
+.release-candidate .release-candidate-hint { color: var(--amber); }
 .release-candidate h3 { margin: 7px 0 5px; font-size: var(--text-md); line-height: 1.35; overflow-wrap: anywhere; }
 .release-candidate p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 .release-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
