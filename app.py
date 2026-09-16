@@ -764,6 +764,17 @@ ACQUISITION_SERVICE_DEFINITIONS = {
     # A public site rather than a service of yours: nothing to authenticate to,
     # which is why `needsApiKey` exists. Searching it is open; fetching from it
     # is not, and that is a separate piece of work.
+    # Reading a DirectSite post means getting past a Cloudflare challenge, which
+    # takes a real browser. Rather than carry one in this image, Flipparr asks
+    # a solver the user runs -- the same answer Omnibus and Mylar3 arrived at.
+    "flaresolverr": {
+        "name": "FlareSolverr", "kind": "Cloudflare solver",
+        "capabilities": ["Solves Cloudflare challenges", "Reads DirectSite post pages"],
+        "description": "Lets Flipparr read pages that block scripted requests.",
+        "setupSummary": "Reads pages DirectSite protects, so links can be found.",
+        "defaultUrl": "http://flaresolverr:8191/v1", "defaultEnabled": False,
+        "needsApiKey": False,
+    },
     "direct_site": {
         "name": "DirectSite", "kind": "Direct download site",
         "capabilities": ["Search", "Direct download links"],
@@ -1403,6 +1414,17 @@ def test_acquisition_service_connection(
     api_key = str(payload.get("apiKey") or config.get("apiKey") or "").strip()
     if not api_key and _service_needs_api_key(service_id):
         raise ValueError(f"Enter a {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} API key first")
+    if service_id == "flaresolverr":
+        endpoint = _solver_endpoint(url)
+        answer = solver_request({"cmd": "sessions.list"}, url=url, timeout=30.0)
+        version = str(answer.get("version") or "").strip()
+        detail = f"Connected to the solver at {endpoint}"
+        detail += f" (version {version})." if version else "."
+        if not str(url or "").rstrip("/").endswith("/v1"):
+            # Saying so now rather than letting every grab fail in silence,
+            # which is the shape of mylar3's #1815.
+            detail += " Its API lives at /v1, so that is the address Flipparr will use."
+        return {"service": service_id, "status": "connected", "detail": detail}
     if service_id == "direct_site":
         found = direct_site_search("batman", limit=3, base_url=url)
         detail = (
@@ -1904,6 +1926,68 @@ def direct_site_search(query: str, limit: int = 20, base_url: str | None = None)
     return found
 
 
+SOLVER_TIMEOUT_MS = 60_000
+DIRECT_SITE_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
+_DIRECT_SITE_LINK = re.compile(r"href=.(https://[a-z0-9.-]*direct_site[a-z0-9.-]*/dls/[^\s\"'>]+)")
+
+
+def _solver_endpoint(url: Any) -> str:
+    """The solver's API address, with the path it actually answers on.
+
+    FlareSolverr serves its API at /v1 and returns 405 for a POST anywhere
+    else. Mylar3 logs that exact mistake: a URL without /v1 makes every DDL
+    grab fail, and fail silently, because the challenge step never runs.
+    """
+    address = str(url or "").strip().rstrip("/")
+    if not address:
+        raise ValueError("Enter the solver's address first")
+    return address if address.endswith("/v1") else address + "/v1"
+
+
+def solver_request(payload: dict[str, Any], *, url: str | None = None, timeout: float = 90.0) -> dict[str, Any]:
+    """Ask the solver for something, and fail with what it actually said."""
+    endpoint = _solver_endpoint(url or _enabled_acquisition_service("flaresolverr").get("url"))
+    request = urllib.request.Request(
+        endpoint, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"},
+    )
+    try:
+        with _safe_urlopen(request, timeout=timeout) as response:
+            answer = json.loads(response.read(4 * 1024 * 1024) or b"{}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 405:
+            raise ValueError(
+                f"{endpoint} refused a POST: the solver's API lives at /v1, so check the address"
+            ) from exc
+        raise ValueError(f"The solver answered {exc.code}") from exc
+    if str(answer.get("status") or "").casefold() != "ok":
+        raise ValueError(str(answer.get("message") or "The solver could not fetch that page"))
+    return answer
+
+
+def solver_fetch_html(url: str) -> str:
+    """One page, fetched through the solver's browser."""
+    answer = solver_request({"cmd": "request.get", "url": url, "maxTimeout": SOLVER_TIMEOUT_MS})
+    solution = answer.get("solution") or {}
+    html_text = str(solution.get("response") or "")
+    if "just a moment" in html_text[:4000].casefold():
+        raise ValueError("The solver came back with Cloudflare's challenge page")
+    return html_text
+
+
+def direct_site_download_link(post_url: str) -> str:
+    """The direct link a DirectSite post offers.
+
+    The post page is what Cloudflare protects, so the solver reads it; the link
+    it carries is then an ordinary URL that redirects to a file host, which
+    plain HTTP can fetch (measured 2026-09-15).
+    """
+    match = _DIRECT_SITE_LINK.search(solver_fetch_html(post_url))
+    if not match:
+        raise ValueError("That DirectSite post offers no direct download link")
+    return match.group(1)
+
+
 def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) -> list[dict[str, Any]]:
     """DirectSite results for one wanted issue, judged the way any release is.
 
@@ -1920,6 +2004,11 @@ def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) ->
     except Exception as exc:  # noqa: BLE001 -- Usenet results still stand
         log_event("direct_site_search_failed", level="warning", job_id=job_id, error=str(exc)[:160])
         return []
+    try:
+        _enabled_acquisition_service("flaresolverr")
+        solver_ready = True
+    except ValueError:
+        solver_ready = False
     now = time.time()
     candidates: list[dict[str, Any]] = []
     for item in found:
@@ -1946,9 +2035,12 @@ def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) ->
             ),
             "formatTags": _release_format_tags(item["title"]),
             "source": "direct_site", "postUrl": item["url"],
-            # Until the solver work lands, this is a sighting rather than an offer.
-            "grabbable": False,
-            "grabHint": "Downloading from DirectSite needs a Cloudflare solver, which is not set up yet.",
+            # Without a solver this is a sighting rather than an offer: the page
+            # the link lives on cannot be read at all.
+            "grabbable": solver_ready,
+            **({} if solver_ready else {
+                "grabHint": "Downloading from DirectSite needs a Cloudflare solver; add one in Settings.",
+            }),
             **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
         })
     return candidates
@@ -2921,6 +3013,121 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     }
 
 
+def grab_release_candidate(job_id: int, candidate_id: str) -> dict[str, Any]:
+    """Take the release a person chose, by whichever road it came down.
+
+    Usenet goes to SABnzbd as it always has. A direct download is Flipparr's
+    own job: there is no download client to hand it to.
+    """
+    with _RELEASE_CANDIDATE_LOCK:
+        candidate = _RELEASE_CANDIDATES.get(candidate_id)
+        source = str((candidate or {}).get("source") or "usenet")
+    if candidate and source == "direct_site":
+        return grab_direct_site_release(job_id, candidate_id)
+    return send_release_to_sabnzbd(job_id, candidate_id)
+
+
+def grab_direct_site_release(job_id: int, candidate_id: str) -> dict[str, Any]:
+    """Start fetching a DirectSite post, and let the row show it happening.
+
+    The bytes are fetched on a thread of their own: a comic is tens or hundreds
+    of megabytes, and the page that asked for it should not wait for them. The
+    import worker picks the download up when it lands, exactly as it does for
+    anything SABnzbd finishes.
+    """
+    now = time.time()
+    with _RELEASE_CANDIDATE_LOCK:
+        candidate = _RELEASE_CANDIDATES.get(candidate_id)
+        if (not candidate or int(candidate.get("jobId") or 0) != int(job_id)
+                or float(candidate.get("expiresAt") or 0) <= now):
+            _RELEASE_CANDIDATES.pop(candidate_id, None)
+            raise ValueError("This release result expired; search again")
+    _enabled_acquisition_service("flaresolverr")
+    post_url = str(candidate.get("postUrl") or "")
+    title = str(candidate.get("title") or "DirectSite download")
+    store = catalog_store()
+    download = store.record_acquisition_download(
+        job_id, f"direct_site:{hashlib.sha256(post_url.encode()).hexdigest()[:20]}",
+        title, release_key=post_url, source="direct_site",
+    )
+    store.update_acquisition_job(job_id, "grabbed", f"Downloading from DirectSite: {title}")
+    threading.Thread(
+        target=_fetch_direct_site_download, args=(int(download["id"]), int(job_id), post_url, title),
+        name=f"flipparr-direct_site-{job_id}", daemon=True,
+    ).start()
+    return {"status": "grabbed", "source": "direct_site", "release": {"title": title}, "download": download}
+
+
+def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, title: str) -> None:
+    """Resolve a post's link and stream the file into staging.
+
+    Only the page needs the solver. The link it carries redirects to a plain
+    file host that answers an ordinary request, so the transfer itself is
+    normal HTTP and its progress is real rather than a spinner.
+    """
+    store = catalog_store()
+    folder = acquisition_staging_dir("direct_site") / str(job_id)
+    try:
+        store.update_acquisition_download(download_id, "downloading")
+        link = direct_site_download_link(post_url)
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True, exist_ok=True)
+        request = urllib.request.Request(link, headers={"User-Agent": f"Flipparr/{APP_VERSION}"})
+        with _safe_urlopen(request, timeout=120.0) as response:
+            name = _download_filename(response, title)
+            total = int(response.headers.get("Content-Length") or 0)
+            destination = folder / name
+            fetched = 0
+            marker = 0
+            with destination.open("xb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    fetched += len(chunk)
+                    if fetched > DIRECT_SITE_DOWNLOAD_MAX_BYTES:
+                        raise ValueError("The download is larger than Flipparr will fetch in one go")
+                    handle.write(chunk)
+                    # Often enough to watch, seldom enough not to write a row
+                    # per megabyte of a two-gigabyte pack.
+                    if fetched - marker >= 8 * 1024 * 1024:
+                        marker = fetched
+                        store.update_download_progress(download_id, fetched, total)
+        store.update_download_progress(download_id, fetched, total or fetched)
+        store.update_acquisition_download(download_id, "completed", sab_storage=str(folder))
+        log_event("direct_site_download_complete", job_id=job_id, file=name, bytes=fetched)
+    except Exception as exc:  # noqa: BLE001 -- every failure belongs on the row
+        message = f"DirectSite download failed: {exc}"
+        log_event("direct_site_download_failed", level="warning", job_id=job_id, error=str(exc)[:200])
+        shutil.rmtree(folder, ignore_errors=True)
+        try:
+            store.update_acquisition_download(
+                download_id, "failed", error=message, failure_stage="download",
+            )
+            # Wanted again rather than failed outright: another release, or the
+            # same one later, is a normal way out of this.
+            store.update_acquisition_job(job_id, "queued", message)
+        except Exception as inner:  # noqa: BLE001
+            log_exception("direct_site_failure_not_recorded", inner, level="warning")
+
+
+def _download_filename(response: Any, fallback: str) -> str:
+    """What to call the file, from the server rather than from us.
+
+    The redirect lands on the real name -- "Supergirl - Woman of Tomorrow 08
+    (2022).cbz" -- and that name is what the identity check reads.
+    """
+    disposition = str(response.headers.get("Content-Disposition") or "")
+    stated = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', disposition)
+    name = stated.group(1) if stated else Path(urllib.parse.unquote(
+        urllib.parse.urlsplit(response.geturl()).path
+    )).name
+    name = _safe_path_component(urllib.parse.unquote(name), "")
+    if Path(name).suffix.lower() in SUPPORTED_EXTENSIONS:
+        return name
+    return _safe_path_component(f"{fallback}.cbz", "download.cbz")
+
+
 def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
     """Fetch a selected NZB privately, validate it, and upload the file to SABnzbd."""
     now = time.time()
@@ -2931,12 +3138,9 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
             _RELEASE_CANDIDATES.pop(candidate_id, None)
             raise ValueError("This release result expired; search again")
     if str(candidate.get("source") or "usenet") != "usenet":
-        # Listed so you can see the issue exists somewhere; fetching it is a
-        # different path that is not built yet.
-        raise ValueError(
-            "That result is on DirectSite, and downloading from it needs a Cloudflare "
-            "solver that is not set up yet"
-        )
+        # SABnzbd takes NZBs. A direct download has its own road, and
+        # grab_release_candidate is the fork that chooses between them.
+        raise ValueError("That result is not a Usenet release, so SABnzbd cannot take it")
     nzb_payload = _fetch_selected_nzb(candidate)
     sab = _enabled_acquisition_service("sabnzbd")
     payload = _submit_nzb_to_sabnzbd(sab, str(candidate["title"]), nzb_payload)
@@ -3469,10 +3673,16 @@ def import_downloaded_comic(
 ) -> dict[str, Any]:
     store = catalog_store()
     context = store.get_acquisition_job_context(int(download["job_id"]))
-    source_container = _resolve_sab_download_source(
-        str(download.get("sab_storage") or ""), str(download.get("release_title") or ""),
-        completed_root,
-    )
+    if str(download.get("source") or "sabnzbd") != "sabnzbd":
+        # Flipparr fetched this one into its own staging folder, so there is no
+        # SABnzbd path to translate and the containment root is staging's.
+        completed_root = acquisition_staging_dir("direct_site")
+        source_container = Path(str(download.get("sab_storage") or ""))
+    else:
+        source_container = _resolve_sab_download_source(
+            str(download.get("sab_storage") or ""), str(download.get("release_title") or ""),
+            completed_root,
+        )
     selected = select_downloaded_comic(
         source_container, context, completed_root,
         release_title=str(download.get("release_title") or "") or None,
@@ -3734,6 +3944,21 @@ def acquisition_download_progress() -> dict[str, Any]:
         ]
     except Exception:
         return empty
+    # A download Flipparr is fetching itself keeps its own figures: there is no
+    # queue elsewhere to ask, and the row is written as the bytes arrive.
+    ours: dict[str, Any] = {}
+    for row in active:
+        if str(row.get("source") or "sabnzbd") == "sabnzbd":
+            continue
+        fetched, total = int(row.get("bytes_fetched") or 0), int(row.get("bytes_total") or 0)
+        ours[str(row["job_id"])] = {
+            "percent": round(fetched * 100 / total, 1) if total else 0.0,
+            "sizeLeft": f"{max(0, total - fetched) / 1_000_000:.0f} MB" if total else "",
+            "timeLeft": "", "state": str(row.get("status") or "downloading"),
+        }
+    active = [row for row in active if str(row.get("source") or "sabnzbd") == "sabnzbd"]
+    if not active:
+        return {"downloads": ours, "paused": False}
     if not active:
         return empty
     try:
@@ -3769,7 +3994,7 @@ def acquisition_download_progress() -> dict[str, Any]:
             "timeLeft": str(slot.get("timeleft") or "").strip(),
             "state": str(slot.get("status") or "").strip().casefold(),
         }
-    return {"downloads": downloads, "paused": bool((queue or {}).get("paused"))}
+    return {"downloads": {**ours, **downloads}, "paused": bool((queue or {}).get("paused"))}
 
 
 # Runs already asked about in this sweep. A run whose catalogs simply have no
@@ -4302,6 +4527,30 @@ def _sab_lost_download(download: dict[str, Any]) -> bool:
 
 def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     store = catalog_store()
+    source = str(download.get("source") or "sabnzbd")
+    if source != "sabnzbd":
+        # Nobody to ask: Flipparr is fetching it, and the row says where it got
+        # to. Everything from the import onwards is shared with SABnzbd's path.
+        status = str(download.get("status") or "")
+        if status in {"queued", "downloading"}:
+            return {"status": "downloading"}
+        if status != "completed":
+            return {"status": status or "unknown"}
+        storage = str(download.get("sab_storage") or "")
+    else:
+        outcome = _sab_download_storage(store, download)
+        if isinstance(outcome, dict):
+            return outcome
+        storage = outcome
+    return _import_completed_download(store, download, storage)
+
+
+def _sab_download_storage(store: Any, download: dict[str, Any]) -> str | dict[str, Any]:
+    """Where SABnzbd put a finished download, or the answer for one that is not.
+
+    Split out so a download Flipparr fetched itself can reach the import below
+    without being asked about in SABnzbd's queue, where it has never been.
+    """
     slot = _sab_history_slot(download)
     if not slot:
         if _sab_lost_download(download):
@@ -4326,6 +4575,13 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         store.update_acquisition_download(int(download["id"]), "downloading", sab_storage=storage or None)
         return {"status": "downloading", "sabStatus": slot.get("status")}
     store.update_acquisition_download(int(download["id"]), "completed", sab_storage=storage)
+    return storage
+
+
+def _import_completed_download(
+    store: Any, download: dict[str, Any], storage: str,
+) -> dict[str, Any]:
+    """Put a finished download into the library, whoever fetched it."""
     imported: dict[str, Any] | None = None
     try:
         store.update_acquisition_download(int(download["id"]), "importing", sab_storage=storage)
@@ -4404,7 +4660,11 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             f"Imported and verified as {Path(imported['destination']).name}"
             f", with {len(swept)} more issue{'' if len(swept) == 1 else 's'} from the same download",
         )
-    _sab_remove_job({**download, "sab_storage": storage})
+    if str(download.get("source") or "sabnzbd") == "sabnzbd":
+        _sab_remove_job({**download, "sab_storage": storage})
+    else:
+        # Nothing in SABnzbd to forget; the staging folder is ours to clear.
+        shutil.rmtree(Path(storage), ignore_errors=True)
     # Refused downloads of this issue were kept as evidence; it is here now.
     _discard_kept_downloads(store, job_id=int(download["job_id"]))
     replacement = store.replacement_for_job(int(download["job_id"]))
@@ -4460,9 +4720,14 @@ def _sweep_download_for_other_issues(
         ]
         if not outstanding:
             return []
-        source = _resolve_sab_download_source(
-            storage, str(download.get("release_title") or ""), SAB_COMPLETE_ROOT,
-        )
+        if str(download.get("source") or "sabnzbd") != "sabnzbd":
+            completed_root = acquisition_staging_dir("direct_site")
+            source = Path(storage)
+        else:
+            completed_root = SAB_COMPLETE_ROOT
+            source = _resolve_sab_download_source(
+                storage, str(download.get("release_title") or ""), SAB_COMPLETE_ROOT,
+            )
     except Exception as exc:  # noqa: BLE001 -- the grabbed issue is already home
         log_exception("pack_sweep_setup_failed", exc, level="warning")
         return []
@@ -4473,7 +4738,7 @@ def _sweep_download_for_other_issues(
         try:
             job_context = store.get_acquisition_job_context(job_id)
             selected = select_downloaded_comic(
-                source, job_context, SAB_COMPLETE_ROOT,
+                source, job_context, completed_root,
                 release_title=str(download.get("release_title") or "") or None,
             )
             placed = _import_selected_comic(
@@ -10958,7 +11223,7 @@ class Handler(BaseHTTPRequestHandler):
         if acquisition_grab:
             job_id = int(acquisition_grab.group(1))
             try:
-                result = send_release_to_sabnzbd(
+                result = grab_release_candidate(
                     job_id, str(payload.get("candidateId") or "").strip()
                 )
             except ValueError as exc:

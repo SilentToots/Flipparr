@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 38
+SCHEMA_VERSION = 39
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -1010,6 +1010,11 @@ class CatalogStore:
                     destination TEXT,
                     source_size INTEGER,
                     source_sha256 TEXT,
+                    -- SABnzbd is asked how far along its own downloads are, so
+                    -- nothing is stored for them. A direct download has no one
+                    -- to ask: Flipparr is the one fetching it.
+                    bytes_fetched INTEGER NOT NULL DEFAULT 0,
+                    bytes_total INTEGER NOT NULL DEFAULT 0,
                     error TEXT,
                     failure_stage TEXT,
                     created_at TEXT NOT NULL,
@@ -1204,6 +1209,14 @@ class CatalogStore:
             if "source" not in download_columns:
                 connection.execute(
                     "ALTER TABLE acquisition_downloads ADD COLUMN source TEXT NOT NULL DEFAULT 'sabnzbd'"
+                )
+            if "bytes_fetched" not in download_columns:
+                connection.execute(
+                    "ALTER TABLE acquisition_downloads ADD COLUMN bytes_fetched INTEGER NOT NULL DEFAULT 0"
+                )
+            if "bytes_total" not in download_columns:
+                connection.execute(
+                    "ALTER TABLE acquisition_downloads ADD COLUMN bytes_total INTEGER NOT NULL DEFAULT 0"
                 )
             issue_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(issues)")
@@ -5358,6 +5371,20 @@ class CatalogStore:
             "replacementFilePath": row["replacement_file_path"],
             "existingDirectory": str(Path(existing_file["path"]).parent) if existing_file else None,
         }
+
+    def update_download_progress(self, download_id: int, fetched: int, total: int) -> None:
+        """How far a download Flipparr is fetching itself has got.
+
+        Written as it goes rather than asked for on demand, because unlike
+        SABnzbd's queue there is nobody else holding the number.
+        """
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE acquisition_downloads
+                   SET bytes_fetched=?, bytes_total=?, updated_at=?
+                   WHERE id=?""",
+                (max(0, int(fetched)), max(0, int(total)), _utc_now(), download_id),
+            )
 
     def record_download_import(
         self, download_id: int, job_id: int, issue_id: int, destination: str,

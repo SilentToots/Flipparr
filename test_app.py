@@ -3137,10 +3137,18 @@ class DirectSiteSearchTests(unittest.TestCase):
         self.assertTrue(all(item["grabbable"] is False for item in candidates))
         self.assertTrue(all("solver" in item["grabHint"] for item in candidates))
 
-    def test_grabbing_one_is_refused_in_so_many_words(self):
+    def test_grabbing_one_without_a_solver_says_which_is_missing(self):
+        with patch("app.fetch_bytes_with_headers", return_value=FEED), \
+             patch("app.load_acquisition_service_config", return_value={"direct_site": {"enabled": True, "url": "https://comics.example"}}):
+            candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
+            with self.assertRaisesRegex(ValueError, "FlareSolverr"):
+                app.grab_release_candidate(7, candidates[0]["id"])
+
+    def test_sabnzbd_is_never_handed_a_direct_download(self):
+        """It takes NZBs; a direct download has its own road."""
         with patch("app.fetch_bytes_with_headers", return_value=FEED):
             candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
-        with self.assertRaisesRegex(ValueError, "solver"):
+        with self.assertRaisesRegex(ValueError, "not a Usenet release"):
             app.send_release_to_sabnzbd(7, candidates[0]["id"])
 
     def test_a_pack_from_direct_site_is_labelled_as_one(self):
@@ -3182,6 +3190,121 @@ class DirectSiteSearchTests(unittest.TestCase):
             merged = app.search_release_candidates(7, "Supergirl")
         self.assertTrue(merged["candidates"])
         self.assertTrue(all(item["source"] == "direct_site" for item in merged["candidates"]))
+
+
+POST_PAGE = """<html><body>
+  <a href="https://comics.example/how-to-download/">How To Download</a>
+  <a class="aio-red" href="https://comics.example/dls/eB91xJSotuf6mP6lNsh">Download Now</a>
+  <a class="aio-red" href="https://readcomicsonline.ru/comic/supergirl/8">Read Online</a>
+</body></html>"""
+
+
+class SolverTests(unittest.TestCase):
+    """Reading the post page needs a browser; fetching the file does not."""
+
+    def test_the_api_path_is_added_rather_than_failing_silently(self):
+        """mylar3 #1815: without /v1 the solver 405s and every grab dies quietly."""
+        self.assertEqual(app._solver_endpoint("http://flaresolverr:8191"), "http://flaresolverr:8191/v1")
+        self.assertEqual(app._solver_endpoint("http://flaresolverr:8191/v1/"), "http://flaresolverr:8191/v1")
+        with self.assertRaises(ValueError):
+            app._solver_endpoint("")
+
+    def test_a_405_says_what_to_fix(self):
+        error = urllib.error.HTTPError("http://solver/v1", 405, "Method Not Allowed", None, None)
+        with patch("app._safe_urlopen", side_effect=error):
+            with self.assertRaisesRegex(ValueError, "/v1"):
+                app.solver_request({"cmd": "sessions.list"}, url="http://solver")
+
+    def test_a_solver_that_refuses_is_reported_not_swallowed(self):
+        answer = io.BytesIO(json.dumps({"status": "error", "message": "Challenge not solved!"}).encode())
+        answer.__enter__ = lambda: answer
+        with patch("app._safe_urlopen", return_value=contextlib.nullcontext(answer)):
+            with self.assertRaisesRegex(ValueError, "Challenge not solved"):
+                app.solver_request({"cmd": "request.get"}, url="http://solver/v1")
+
+    def test_the_download_link_is_read_from_the_post(self):
+        with patch("app.solver_fetch_html", return_value=POST_PAGE):
+            link = app.direct_site_download_link("https://comics.example/dc/supergirl-8/")
+        self.assertEqual(link, "https://comics.example/dls/eB91xJSotuf6mP6lNsh")
+
+    def test_a_post_with_no_link_is_refused(self):
+        with patch("app.solver_fetch_html", return_value="<html><body>nothing here</body></html>"):
+            with self.assertRaisesRegex(ValueError, "no direct download link"):
+                app.direct_site_download_link("https://comics.example/dc/supergirl-8/")
+
+    def test_a_challenge_page_is_not_mistaken_for_the_post(self):
+        with patch("app.solver_request", return_value={"solution": {"response": "<html><title>Just a moment...</title>"}}):
+            with self.assertRaisesRegex(ValueError, "challenge page"):
+                app.solver_fetch_html("https://comics.example/dc/supergirl-8/")
+
+
+class DirectSiteDownloadTests(unittest.TestCase):
+    """The file itself is ordinary HTTP, so it streams, resumes and reports."""
+
+    @staticmethod
+    def _response(body, *, name="Supergirl - Woman of Tomorrow 08 (2022).cbz"):
+        response = Mock()
+        response.headers = {"Content-Length": str(len(body)), "Content-Disposition": ""}
+        response.geturl.return_value = f"https://fs1.comicfiles.ru/2022.02.16/{urllib.parse.quote(name)}"
+        chunks = [body, b""]
+        response.read.side_effect = lambda *_: chunks.pop(0)
+        return contextlib.nullcontext(response)
+
+    def test_the_file_lands_in_staging_and_the_row_completes(self):
+        body = b"comic-bytes" * 1000
+        store = Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            staging = Path(folder) / "direct_site"
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.acquisition_staging_dir", return_value=staging), \
+                 patch("app.direct_site_download_link", return_value="https://comics.example/dls/token"), \
+                 patch("app._safe_urlopen", return_value=self._response(body)):
+                app._fetch_direct_site_download(5, 11, "https://comics.example/dc/supergirl-8/", "Supergirl #8")
+            landed = list(staging.rglob("*.cbz"))
+            self.assertEqual(len(landed), 1)
+            self.assertEqual(landed[0].name, "Supergirl - Woman of Tomorrow 08 (2022).cbz",
+                             "named by the server, which is what the identity check reads")
+            self.assertEqual(landed[0].read_bytes(), body)
+        final = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "completed"]
+        self.assertEqual(len(final), 1)
+        self.assertTrue(str(final[0].kwargs["sab_storage"]).endswith("/11"))
+
+    def test_a_failed_fetch_leaves_the_issue_wanted_and_says_why(self):
+        store = Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.acquisition_staging_dir", return_value=Path(folder) / "direct_site"), \
+                 patch("app.direct_site_download_link", side_effect=ValueError("no direct download link")):
+                app._fetch_direct_site_download(5, 11, "https://comics.example/dc/supergirl-8/", "Supergirl #8")
+            self.assertFalse(list((Path(folder) / "direct_site").rglob("*")), "staging is cleared")
+        failed = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "failed"]
+        self.assertEqual(len(failed), 1)
+        job_id, status, reason = store.update_acquisition_job.call_args.args
+        self.assertEqual((job_id, status), (11, "queued"), "wanted again, not failed outright")
+        self.assertIn("no direct download link", reason)
+
+    def test_reconcile_waits_for_our_own_fetcher_rather_than_asking_sabnzbd(self):
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._sab_history_slot") as sab:
+            result = app.reconcile_acquisition_download(
+                {"id": 5, "job_id": 11, "source": "direct_site", "status": "downloading"},
+            )
+        self.assertEqual(result["status"], "downloading")
+        sab.assert_not_called()
+
+    def test_a_completed_direct_download_goes_through_the_same_import(self):
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._sab_history_slot") as sab, \
+             patch("app._import_completed_download", return_value={"status": "imported"}) as importer:
+            result = app.reconcile_acquisition_download(
+                {"id": 5, "job_id": 11, "source": "direct_site", "status": "completed",
+                 "sab_storage": "/config/downloads/direct_site/11"},
+            )
+        self.assertEqual(result["status"], "imported")
+        sab.assert_not_called()
+        self.assertEqual(importer.call_args.args[2], "/config/downloads/direct_site/11")
 
 
 class KeylessServiceTests(unittest.TestCase):
