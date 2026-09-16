@@ -1877,13 +1877,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .series-card-identity > strong { font-size: var(--text-xs); }
   .series-card-byline { font-size: var(--text-2xs); }
   /* The file sets these badges at 8px with 8px padding and a 12px icon. At
-     the app's 10px floor that pair needs 153px of a 143.5px row, so the chip
-     scales with its text: a 10px icon and 0.6em of side padding, 141px for
-     the pair. Recorded in node-map.json as a deviation. */
+     the app's 10px floor the chip scales with its text -- a 10px icon and
+     0.6em of side padding -- and "Active Run" beside "Following" then needs
+     152px of row, which a card only has on a phone 402px or wider. Rather
+     than tune it for one width, the chips give ground in steps as the card
+     narrows, each step leaving about 2px spare in Inter (widths are the card's inside):
+       card over 177.5px   6px padding, 4px apart, icons      (402px+)
+       card 167-177.5px    4px padding, 2px apart, icons      (375-393px)
+       narrower            6px padding, 2px apart, no icons   (360px)
+     Below that (320px) a badge gives up its end rather than the row
+     doubling. Recorded in node-map.json as deviations. */
+  .series-card { container: series-card / inline-size; }
   .series-card :is(.publication-status, .monitoring-status) { padding-inline: 6px; font-size: var(--text-2xs); }
   .series-card :is(.publication-status, .monitoring-status) svg { width: 10px; height: 10px; }
-  /* One line: on a phone narrower than 375px a badge gives up its end rather
-     than the row doubling. */
+  @container series-card (max-width: 177.5px) {
+    .series-card-statuses { column-gap: 2px; }
+    .series-card :is(.publication-status, .monitoring-status) { padding-inline: 4px; }
+  }
+  @container series-card (max-width: 166.5px) {
+    .series-card :is(.publication-status, .monitoring-status) { padding-inline: 6px; }
+    .series-card :is(.publication-status, .monitoring-status) svg { display: none; }
+  }
   .series-card-statuses { flex-wrap: nowrap; }
   .series-card-statuses > * { flex-shrink: 1; min-width: 0; overflow: hidden; }
   .ownership.compact .ownership-label { font-size: var(--text-2xs); }
