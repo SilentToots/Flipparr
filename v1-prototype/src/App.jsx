@@ -1511,6 +1511,13 @@ function DiscoverView({
         issues={data.upcoming?.issues} error={data.upcoming?.error || data.error}
         pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
+      {/* The week before last: a comic is easy to miss by a few days, and by
+          the time you look the shelf it was on has moved up. */}
+      <ReleaseShelf title="Previous Releases" date={formatShelfDate(data.previous?.date)}
+        state={shelfState(data.previous, data.available, releases.state === "loading")}
+        issues={data.previous?.issues} error={data.previous?.error || data.error}
+        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
+        onRetry={loadReleases} />
     </>}
     {drawer?.kind === "issue" ? <DiscoverIssueDrawer issue={drawer.issue}
       state={pullState(drawer.issue, pulled)} onPull={pullIssue}

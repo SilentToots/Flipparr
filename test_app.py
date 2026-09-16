@@ -5485,6 +5485,43 @@ class ReleaseCalendarTests(unittest.TestCase):
         self.assertEqual(len(result["upcoming"]["issues"]), 1)
         self.assertEqual(result["upcoming"]["date"], "2026-09-09")
 
+    def test_the_week_before_last_is_offered_too(self):
+        """A comic is easy to miss by days; its shelf has already moved up."""
+        weeks = []
+
+        def fetch(start, end, token):
+            weeks.append(start)
+            return [app._release_entry(self.row("Wolverine", str(len(weeks))))]
+
+        catalog = types.SimpleNamespace(catalog=lambda: {"series": []})
+        with patch("app.load_provider_config",
+                   return_value={"metron": {"enabled": True, "token": "t"}}), \
+             patch("app.fetch_release_calendar", side_effect=fetch), \
+             patch("app.catalog_store", return_value=catalog):
+            result = app.release_calendar(dt.date(2026, 9, 9))
+        self.assertEqual(result["upcoming"]["date"], "2026-09-09")
+        self.assertEqual(result["latest"]["date"], "2026-09-02")
+        self.assertEqual(result["previous"]["date"], "2026-08-26", "the week before the latest")
+        self.assertEqual(len(result["previous"]["issues"]), 1)
+        # Wednesday to Wednesday, so no day belongs to two shelves.
+        self.assertEqual(sorted(weeks), [dt.date(2026, 8, 26), dt.date(2026, 9, 2), dt.date(2026, 9, 9)])
+
+    def test_the_older_shelf_failing_leaves_the_others_standing(self):
+        def flaky(start, end, token):
+            if start == dt.date(2026, 8, 26):
+                raise RuntimeError("Metron is busy")
+            return [app._release_entry(self.row("Wolverine", "27"))]
+
+        catalog = types.SimpleNamespace(catalog=lambda: {"series": []})
+        with patch("app.load_provider_config",
+                   return_value={"metron": {"enabled": True, "token": "t"}}), \
+             patch("app.fetch_release_calendar", side_effect=flaky), \
+             patch("app.catalog_store", return_value=catalog):
+            result = app.release_calendar(dt.date(2026, 9, 9))
+        self.assertIn("busy", result["previous"]["error"])
+        self.assertEqual(len(result["latest"]["issues"]), 1)
+        self.assertEqual(len(result["upcoming"]["issues"]), 1)
+
     def test_every_page_is_followed_and_a_loop_cannot_hang_it(self):
         pages = [
             {"results": [self.row("A", "1")], "next": "https://metron.invalid/2"},

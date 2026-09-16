@@ -7645,7 +7645,13 @@ def _issue_sort_key(number: str) -> tuple[int, float, str]:
 
 
 def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
-    """Both shelves: the week that shipped, and the week that is coming."""
+    """Three shelves: the week coming, the week that shipped, and the one before.
+
+    The week before last is there because a comic is easy to miss by a few
+    days: by the time you look, the shelf it was on has moved up. It costs no
+    more than the others after the first look -- a settled week is answered
+    from the provider cache, and a fortnight-old week never changes again.
+    """
     config = load_provider_config()
     metron = config.get("metron") or {}
     if not (metron.get("enabled") and metron.get("token")):
@@ -7657,6 +7663,7 @@ def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
     anchor = today or dt.datetime.now().astimezone().date()
     upcoming_start, upcoming_end = _ship_week(anchor)
     latest_start, latest_end = _ship_week(anchor, weeks_back=1)
+    previous_start, previous_end = _ship_week(anchor, weeks_back=2)
     token = str(metron["token"])
     # One projection for both shelves; building it is not free.
     relevance = _library_relevance()
@@ -7664,6 +7671,7 @@ def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
     for name, (start, end) in (
         ("latest", (latest_start, latest_end)),
         ("upcoming", (upcoming_start, upcoming_end)),
+        ("previous", (previous_start, previous_end)),
     ):
         try:
             issues = _rank_releases(fetch_release_calendar(start, end, token), relevance)
