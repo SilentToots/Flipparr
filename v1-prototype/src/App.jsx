@@ -167,6 +167,16 @@ const DIALOG_FOCUSABLE =
 // that mounted first, which is the one underneath.
 const openDialogs = [];
 
+// While any dialog or drawer is open the page behind it does not scroll: only
+// the dialog does, and there is one scroll bar. The gutter stays reserved so
+// the page does not shift sideways when its scroll bar goes.
+function lockPageScroll() {
+  document.documentElement.classList.add("page-scroll-locked");
+}
+function unlockPageScroll() {
+  if (!openDialogs.length) document.documentElement.classList.remove("page-scroll-locked");
+}
+
 // Shared modal keyboard behaviour. Without this a dialog opens with focus left
 // on <body>, so its first control sits behind every focusable element on the
 // page and there is no way to leave from the keyboard. Attach the returned ref
@@ -182,10 +192,12 @@ const openDialogs = [];
 // 220ms animation, cutting off the end of every close.
 function exitDurationMs() {
   const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue("--motion-duration-standard").trim();
+    .getPropertyValue("--motion-duration-exit").trim();
   const value = parseFloat(raw);
-  if (!Number.isFinite(value)) return 220;
-  return raw.endsWith("ms") ? value : value * 1000;
+  const ms = !Number.isFinite(value) ? 300 : raw.endsWith("ms") ? value : value * 1000;
+  // Two frames past the end, so the last frame of the slide is painted before
+  // the drawer leaves the tree rather than racing it.
+  return ms + 34;
 }
 
 function useDrawerExit(onClose) {
@@ -280,6 +292,7 @@ function useDialog(onClose) {
     if (initial === node && !node.hasAttribute("tabindex")) node.setAttribute("tabindex", "-1");
     initial.focus();
     openDialogs.push(node);
+    lockPageScroll();
     function handleKeyDown(event) {
       // Only the topmost dialog reacts, so Escape closes one layer at a time.
       if (openDialogs[openDialogs.length - 1] !== node) return;
@@ -311,6 +324,7 @@ function useDialog(onClose) {
       document.removeEventListener("keydown", handleKeyDown, true);
       const index = openDialogs.indexOf(node);
       if (index !== -1) openDialogs.splice(index, 1);
+      unlockPageScroll();
       // Return focus to whatever opened the dialog, not the top of the page.
       if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
         previouslyFocused.focus();

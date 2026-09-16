@@ -1,6 +1,7 @@
 @import "./design-tokens.css";
 
 * { box-sizing: border-box; }
+html.page-scroll-locked { overflow: hidden; scrollbar-gutter: stable; }
 html { background: var(--bg); }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--bg); -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; }
@@ -2323,9 +2324,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes drawer-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
 @keyframes drawer-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 .drawer-backdrop { animation: drawer-backdrop-in var(--motion-duration-standard) ease; }
-.drawer-backdrop.closing { animation: drawer-backdrop-in var(--motion-duration-standard) ease reverse forwards; }
+/* Closing slides the drawer back the way it came, fast first and settling off
+   the edge -- the iOS curve the tab bar's glass uses. The ease-in it replaced
+   had covered less than half the distance when the drawer was removed, which
+   read as the drawer vanishing rather than leaving. */
+.drawer-backdrop.closing { animation: drawer-backdrop-in var(--motion-duration-exit) ease reverse forwards; }
 .series-drawer { animation: drawer-slide-in var(--motion-duration-standard) cubic-bezier(.22,.61,.36,1); }
-.series-drawer.closing { animation: drawer-slide-out var(--motion-duration-standard) cubic-bezier(.55,.06,.68,.19) forwards; }
+.series-drawer.closing { animation: drawer-slide-out var(--motion-duration-exit) cubic-bezier(.32,.72,0,1) forwards; }
 
 /* Settings section switcher. Settings ran to ~3,600px of scrolling on a phone;
    one section at a time replaces that. Tabs where there is room, a select where

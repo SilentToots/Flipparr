@@ -334,6 +334,8 @@
   /* Motion tokens */
   --motion-duration-fast: 140ms;
   --motion-duration-standard: 220ms;
+  /* A drawer or sheet leaving: long enough to be seen going. */
+  --motion-duration-exit: 300ms;
   --motion-duration-loader: 880ms;
   --motion-ease-standard: cubic-bezier(.2, .8, .2, 1);
 
@@ -360,6 +362,7 @@
   :root {
     --motion-duration-fast: 1ms;
     --motion-duration-standard: 1ms;
+    --motion-duration-exit: 1ms;
     --motion-duration-loader: 1600ms;
   }
 }
