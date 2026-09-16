@@ -1183,27 +1183,22 @@ export const frames = [
     "node": "69:792",
     "route": "/library @375",
     "w": 375,
-    "h": 83,
-    "y": 729,
     "within": null
   },
   {
     "sel": ".sidebar nav",
     "node": "69:763",
-    "route": "/library @375",
-    "h": 59
+    "route": "/library @375"
   },
   {
     "sel": ".sidebar .nav-item.active",
     "node": "69:793",
-    "route": "/library @375",
-    "h": 46
+    "route": "/library @375"
   },
   {
     "sel": ".sidebar [data-nav=\"discover\"]",
     "node": "69:800",
-    "route": "/library @375",
-    "h": 54
+    "route": "/library @375"
   }
 ];
 
@@ -1351,28 +1346,28 @@ export const icons = [
   {
     "node": "69:782",
     "name": "heroicons-mini/book-open",
-    "size": 20,
+    "size": null,
     "where": ".sidebar .nav-item.active svg",
     "route": "/library @375"
   },
   {
     "node": "69:775",
     "name": "heroicons-outline/document-plus",
-    "size": 24,
+    "size": null,
     "where": ".sidebar [data-nav=\"discover\"] svg",
     "route": "/library @375"
   },
   {
     "node": "69:786",
     "name": "heroicons-outline/wallet",
-    "size": 24,
+    "size": null,
     "where": ".sidebar [data-nav=\"requests\"] svg",
     "route": "/library @375"
   },
   {
     "node": "69:789",
     "name": "heroicons-outline/cog-6-tooth",
-    "size": 24,
+    "size": null,
     "where": ".sidebar [data-nav=\"settings\"] svg",
     "route": "/library @375"
   },

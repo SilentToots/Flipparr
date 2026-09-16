@@ -12,14 +12,14 @@ button { color: inherit; }
 small { font-size: var(--text-xs); }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
-:is(.discovery-results, .request-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups) {
+:is(.discovery-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups) {
   scrollbar-width: thin;
   scrollbar-color: var(--surface-sunken) var(--surface);
 }
-:is(.discovery-results, .request-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar { width: 10px; height: 10px; }
-:is(.discovery-results, .request-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-track { background: var(--surface); }
-:is(.discovery-results, .request-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-thumb { background: var(--surface-sunken); border: 2px solid var(--line); border-radius: var(--radius-pill); }
-@media (hover: hover) { :is(.discovery-results, .request-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-thumb:not(:disabled):hover { background: var(--violet); } }
+:is(.discovery-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar { width: 10px; height: 10px; }
+:is(.discovery-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-track { background: var(--surface); }
+:is(.discovery-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-thumb { background: var(--surface-sunken); border: 2px solid var(--line); border-radius: var(--radius-pill); }
+@media (hover: hover) { :is(.discovery-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups)::-webkit-scrollbar-thumb:not(:disabled):hover { background: var(--violet); } }
 
 .app-shell { min-height: 100vh; background: var(--bg); }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; width: var(--sidebar-width); background: var(--sidebar); border-right: 1px solid var(--line); padding: var(--space-16); display: flex; flex-direction: column; gap: var(--space-8); }
@@ -565,7 +565,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 
 .empty-state { min-height: 300px; border: 1px dashed var(--line-strong); border-radius: var(--radius-8); display: grid; place-items: center; align-content: center; gap: var(--space-8); color: var(--muted); }
-.empty-state strong { color: var(--text); }
+.empty-state strong { padding-inline: var(--space-24); color: var(--text); text-align: center; }
+/* The message under the heading. Without a measure or alignment of its own,
+   one long enough to wrap ran the full width of the box, flush left against
+   the dashed border -- the Pull List's empty state had fixed it for itself. */
+.empty-state > span, .empty-state > p { width: 100%; max-width: 520px; margin: 0; padding-inline: var(--space-24); box-sizing: border-box; text-align: center; line-height: var(--leading-normal); }
 .empty-state .primary-button { margin-top: var(--space-10); }
 
 .focused-panel { max-width: 760px; margin-top: var(--space-16); margin-inline: auto; padding: var(--space-32); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface); }
@@ -628,8 +632,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-card { --request-cover: 62px; --request-gap: var(--space-16); }
 .request-row { display: grid; grid-template-columns: var(--request-cover) minmax(0, 1fr) auto minmax(132px, auto); gap: var(--request-gap); align-items: center; min-height: 105px; padding: var(--space-12) var(--space-4); }
 .request-row img { width: 62px; height: 93px; object-fit: contain; border-radius: var(--radius-4); }
-.request-cover, .request-result-cover { width: 62px; height: 93px; display: block; overflow: hidden; border-radius: var(--radius-4); background: var(--status-muted-bg); }
-.request-cover .cover-placeholder, .request-result-cover .cover-placeholder { width: 100%; height: 100%; display: grid; place-items: center; color: var(--muted-weak); }
+.request-cover { width: 62px; height: 93px; display: block; overflow: hidden; border-radius: var(--radius-4); background: var(--status-muted-bg); }
+.request-cover .cover-placeholder { width: 100%; height: 100%; display: grid; place-items: center; color: var(--muted-weak); }
 .request-row h3 { margin: 0 0 var(--space-4); font-size: var(--text-md); }
 .request-row p { margin: 0 0 var(--space-8); color: var(--muted-strong); font-size: var(--text-sm); }
 .request-row div span { color: var(--muted); font-size: var(--text-sm); }
@@ -703,18 +707,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .modal { width: min(620px, 100%); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-16); padding: var(--space-28); position: relative; box-shadow: 0 24px 90px var(--shadow-strong); }
 .modal-close { position: absolute; right: 18px; top: 18px; width: 34px; height: 34px; display: grid; place-items: center; }
 .modal h2 { margin: 0 0 var(--space-20); font-size: var(--text-2xl); }
-.request-result { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: var(--space-12); margin-top: var(--space-14); padding: var(--space-12); background: var(--surface); border-radius: var(--radius-4); border: 1px solid var(--line); }
-.request-result img { width: 52px; height: 68px; object-fit: cover; }
-.request-result-cover { width: 52px; height: 68px; }
-.request-result > div { display: grid; gap: var(--space-4); }
-.request-result span, .request-result small, .modal-hint { color: var(--muted); font-size: var(--text-sm); }
-.request-result button { border: 0; border-radius: var(--radius-8); background: var(--violet); color: var(--color-neutral-0); padding: var(--space-8) var(--space-12); cursor: pointer; }
-.request-result button:disabled { background: var(--surface-sunken); color: var(--muted-weak); cursor: not-allowed; }
-.request-results { max-height: 430px; overflow: auto; padding-right: var(--space-4); }
-.request-modal { width: min(680px, 100%); }
 .request-empty { margin-top: var(--space-24); }
-.request-empty > span { width: 100%; max-width: 520px; padding-inline: var(--space-24); box-sizing: border-box; text-align: center; line-height: var(--leading-normal); }
-.modal-hint { line-height: var(--leading-relaxed); margin: var(--space-16) 0 0; }
+.request-empty > span { line-height: var(--leading-normal); }
 .release-search-modal { width: min(900px, calc(100% - 32px)); max-height: calc(100vh - 44px); overflow: auto; }
 .release-search-modal h2 { margin-bottom: var(--space-8); }
 /* The query is a field, and now behaves like one: it looked editable long
@@ -1920,12 +1914,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .sidebar nav { background: var(--mobile-nav-bg); -webkit-backdrop-filter: blur(var(--mobile-nav-blur)); backdrop-filter: blur(var(--mobile-nav-blur)); }
   }
-  .sidebar .nav-item { flex: none; width: auto; height: auto; max-height: none; padding: var(--space-8) var(--space-14); border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); color: var(--color-neutral-0); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; }
-  .sidebar .nav-item > svg { width: 24px; height: 24px; }
+  .sidebar .nav-item { flex: none; width: auto; min-width: 72px; height: auto; max-height: none; padding: var(--space-8) var(--space-12); border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); color: var(--color-neutral-0); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; }
+  /* Bigger than the file's 24px icons and 8px labels, at the user's request
+     (2026-09-16): 28px icons, 12px labels and a 64px-tall tab, which is also
+     the size of the glass that marks the open one. */
+  .sidebar .nav-item > svg { width: 28px; height: 28px; }
   .sidebar .nav-item > span { display: inline; }
   /* A count is a warning state the file does not draw; it rides the icon's
      corner so the tabs keep the file's sizes. */
-  .sidebar .nav-item > b { display: grid; position: absolute; top: 4px; left: calc(50% + 6px); width: auto; min-width: 16px; padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); }
+  .sidebar .nav-item > b { display: grid; position: absolute; top: 4px; left: calc(50% + 8px); width: auto; min-width: 16px; padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); }
   @media (hover: hover) { .sidebar .nav-item:not(.active):not(:disabled):hover { background: var(--wash-hover); } }
 
   /* 69:793: the active tab is the Comics variant -- a 20px icon and no gap --
@@ -1934,10 +1931,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sidebar nav { position: relative; isolation: isolate; }
   .nav-glass { display: block; }
   .sidebar .nav-item { z-index: 1; }
-  .sidebar .nav-item.active { height: auto; gap: 0; background: transparent; }
+  .sidebar .nav-item.active { height: auto; background: transparent; }
   .sidebar .nav-item.active::before { display: none; }
 
-  /* Scrolling down tucks the bar into a 64px circle holding the current tab
+  /* Scrolling down tucks the bar into a 68px circle holding the current tab
      (.tab-bar-collapsed, from useCollapsingTabBar); scrolling up, the top of
      the page or a tap opens it again. The other tabs and the labels ease out
      rather than vanish, on the glass's iOS curve. */
@@ -1945,26 +1942,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* A length rather than a percentage, so collapsing still has something to
      animate from now that the bar is only as wide as its tabs. */
   .sidebar .nav-item { max-width: 120px; overflow: hidden; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
-  .sidebar .nav-item > span { max-height: 12px; transition: max-height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
+  .sidebar .nav-item > span { max-height: 16px; transition: max-height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
   /* The circle is the one thing left to tap, so it takes the 44px minimum with
      room to spare rather than sitting at it. The gap goes with the tabs it
      separated: three 2px gaps between four items, one of them now the only one
      with width, left the icon 3px off centre -- and which way depended on
      which tab was open. A pixel comes off the bottom padding instead, for the
-     1px border along that edge, which had the icon half a pixel high. */
-  .sidebar.tab-bar-collapsed nav { max-width: 64px; padding: 0; gap: 0; }
-  .sidebar.tab-bar-collapsed .nav-item:not(.active) { max-width: 0; padding-inline: 0; opacity: 0; }
-  .sidebar.tab-bar-collapsed .nav-item.active { max-width: 64px; padding: var(--space-20) var(--space-20) var(--space-20); }
+     1px border along that edge, which had the icon half a pixel high, so the
+     circle drops the border instead. */
+  .sidebar.tab-bar-collapsed nav { max-width: 68px; padding: 0; gap: 0; border-bottom-width: 0; }
+  .sidebar.tab-bar-collapsed .nav-item:not(.active) { min-width: 0; max-width: 0; padding-inline: 0; opacity: 0; }
+  .sidebar.tab-bar-collapsed .nav-item.active { max-width: 68px; min-width: 0; gap: 0; padding: var(--space-20); }
   .sidebar.tab-bar-collapsed .nav-item > :is(span, b) { max-height: 0; opacity: 0; }
   .sidebar.tab-bar-collapsed .nav-glass { opacity: 0; }
   /* Centred, the circle drifts into the middle of the page as it shrinks and
      lands over whatever is being read. It goes to the 12px gutter the cards
      and headers keep instead. Translating there, rather than dropping the auto
      margins, lets it travel on the same curve as the width instead of jumping
-     the moment the class lands: centred, the left edge sits at 50vw - 32px,
+     the moment the class lands: centred, the left edge sits at 50vw - 34px,
      and the gutter is 12px. */
-  .sidebar.tab-bar-collapsed nav { translate: calc(44px - 50vw) 0; }
-  .sidebar .nav-item.active > svg { width: 20px; height: 20px; }
+  .sidebar.tab-bar-collapsed nav { translate: calc(46px - 50vw) 0; }
   /* The confirmation toast sat at 24px from the bottom, under the tab bar. */
   .toast { right: 12px; left: 12px; bottom: calc(var(--mobile-nav-height) + 8px + env(safe-area-inset-bottom)); }
   /* Tap targets from the accessibility pass. Each keeps the file's drawn size
@@ -1973,8 +1970,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .shelf-scroll button { position: relative; }
   .shelf-scroll button::after { content: ""; position: absolute; inset: -10px -6px; }
   .discover-search input { padding-block: var(--space-12); margin-block: calc(var(--space-8) * -1); }
-  .pull-card .pull-button { position: relative; }
-  .pull-card .pull-button::after { content: ""; position: absolute; inset: -9px 0; }
+  /* The card's Pull button was 26px tall with an invisible 44px target
+     around it; on a phone it is simply that size, with type to match. */
+  .pull-card .pull-button { min-height: 44px; font-size: var(--text-sm); }
 }
 
 /* ---------------------------------------------------------------------------
@@ -2156,9 +2154,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .series-drawer .comic-drawer-copy .ownership.compact { gap: var(--space-6); padding: 0 var(--space-8); }
   .comic-drawer-copy .ownership.compact .ownership-label { font-size: var(--text-sm); }
   .comic-drawer-copy .ownership.compact .progress { height: 10px; }
-  /* Four tabs with 8px sides fit 375px. */
-  .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--space-4); -webkit-mask-image: none; mask-image: none; }
-  .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-8); }
+  /* The first and last labels sit on the drawer's 16px gutter -- 10px of
+     bar and 6px of tab -- instead of 4px from the screen's edge. The four
+     labels are 300px, so this fits a 375px phone. */
+  .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--space-10); -webkit-mask-image: none; mask-image: none; }
+  .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-6); }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--space-16); }
   .comic-drawer-follow .follow-switch { font-size: var(--text-2xl); }
   .comic-drawer-follow .follow-switch > i { width: 56px; height: 32px; }
@@ -2299,11 +2299,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .series-match-providers, .series-merge-workbench small, .merge-warning label,
   .issue-metadata-workbench dt, .modal .form-field small { font-size: var(--text-xs); }
 
-  /* Text under 12px that people read to decide something. The tab labels were
-     the file's 8px; 10 still fits four tabs across 375. */
-  .sidebar .nav-item { font-size: var(--text-2xs); }
-  /* The 8px label's line box, so the bar keeps the file's height. */
-  .sidebar .nav-item > span { line-height: 10px; }
+  /* The tab labels were the file's 8px, then 10px; at 12px on a 16px line
+     they read as labels rather than captions. */
+  .sidebar .nav-item { font-size: var(--text-xs); }
+  .sidebar .nav-item > span { line-height: var(--leading-snug); }
   .drawer-facts span, .issue-tile-title, .drawer-cover-hint { font-size: var(--text-xs); }
 }
 

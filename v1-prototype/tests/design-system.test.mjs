@@ -49,11 +49,8 @@ test("every font-weight is a weight token", () => {
   assert.deepEqual(bad, []);
 });
 
-// The two line boxes that are a length on purpose.
+// The line box that is a length on purpose.
 const LEADING_EXCEPTIONS = {
-  // The tab label's line box is what holds the phone tab bar at the design's
-  // height; three Figma frames (69:763, 69:793, 69:800) assert that height.
-  ".sidebar .nav-item > span": "10px",
   // A tap-target hack: the summary is made 44px tall by its line box. It
   // should become min-height plus centring, and then this entry can go.
   ".issue-catalog-card summary": "44px",
@@ -83,7 +80,7 @@ test("the type ladder is seven steps, 10px up, at least 2px apart", () => {
 
 // 10px is the floor, and it is for chips, not reading. These are the places
 // it is allowed: text inside a badge or chip, the phone's two-up card
-// metadata, where two cards share 375px, and the tab bar.
+// metadata, where two cards share 375px, and the tab bar's count.
 const SMALLEST_TEXT = new Set([
   ".library-match-art b",
   ".run-status",
@@ -92,7 +89,6 @@ const SMALLEST_TEXT = new Set([
   ".new-run-copy p",
   ".series-card-byline",
   ".ownership.compact .ownership-label",
-  ".sidebar .nav-item",
   ".sidebar .nav-item > b",
 ]);
 
