@@ -165,3 +165,31 @@ test("buttons take the 8px corner unless they are a pill, a circle, or nested", 
     .map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+// Colours live in design-tokens.css. Two literal forms are allowed here,
+// because neither is a colour choice: black as a mask stencil, where only
+// its opacity is read, and the tab glass, whose white is scaled by the
+// --nav-glass-* tokens inside calc().
+const COLOUR = /#[0-9a-f]{3,8}\b|\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(|\b(white|black|red|green|blue|gr[ae]y|silver|purple|violet|orange|yellow)\b/i;
+
+test("no colour is written in the stylesheet itself", () => {
+  const bad = [];
+  for (const d of styles()) {
+    if (d.property.startsWith("--")) continue;
+    let value = d.value;
+    for (let i = 0; i < 4; i += 1) value = value.replace(/var\([^()]*\)/g, "");
+    if (/mask-image$/.test(d.property)) value = value.replace(/#000\b/g, "");
+    if (d.selector === ".glass-indicator") value = value.replace(/rgb\(255 255 255 \/ [^;]*?\)\s*\)?/g, "");
+    if (COLOUR.test(value)) bad.push(where("styles.css", d));
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("the chrome grey is never text, except on icon-only buttons", () => {
+  const ICON_ONLY = new Set([".sidebar-scan", ".view-toggle button"]);
+  const bad = styles()
+    .filter((d) => d.property === "color" && d.value.includes("--chrome-label"))
+    .filter((d) => !ICON_ONLY.has(d.selector.replace(/\s+/g, " ")))
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});

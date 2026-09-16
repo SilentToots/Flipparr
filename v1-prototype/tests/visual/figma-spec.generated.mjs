@@ -197,8 +197,7 @@ export const spec = [
     "sel": ".sidebar-counts i",
     "node": "8:293",
     "props": {
-      "fontSize": "16px",
-      "color": "rgb(113, 113, 122)"
+      "fontSize": "16px"
     },
     "route": "/library"
   },

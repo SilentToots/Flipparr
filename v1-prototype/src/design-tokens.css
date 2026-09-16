@@ -19,11 +19,12 @@
   --color-neutral-300: #d4d4d8;
   --color-neutral-400: #a1a1aa;
   --color-neutral-500: #71717a;
-  /* #71717a is 4.12:1 on a card and fails AA, and this app uses that step for
-     real prose in some 37 places. So the ramp carries both: the design's value
-     for the chrome it specifies, and a lifted one for anything that is read. */
-  --color-neutral-450: #7a7a85;
-  --color-neutral-600: #52525b;   /* decoration only: 2.6:1, never text */
+  /* #71717a is 4.12:1 on a card and fails AA as text. So the ramp carries
+     both: the design's value for the chrome it specifies, and a lifted one for
+     anything that is read. The lifted step was #7a7a85, which passed only on
+     the black page -- 4.37 on a card, 3.51 on a --line fill. #90909b clears
+     4.5:1 on every surface the app draws, 4.72 at worst. */
+  --color-neutral-450: #90909b;
   --color-neutral-700: #3f3f46;
   --color-neutral-800: #27272a;
   --color-neutral-850: #202023;
@@ -146,12 +147,13 @@
   --nav-glass-depth: 10px;
   --nav-glass-frost: 4px;
 
-  /* The text step below --muted, for secondary copy in about 67 places. */
+  /* The text step below --muted, for secondary copy. At least 4.5:1 on every
+     surface, so it can be used on any of them. */
   --muted-weak: var(--color-neutral-450);
   /* The design's #71717a, for what it draws in that grey that is not text:
-     toolbar icons, dividers, the progress track. It does not clear AA as
-     text (4.35:1 on the page at 14px bold), so the toolbar's labels use
-     --muted-weak instead (4.95:1). */
+     toolbar icons, the progress track, a switch's track. Those need 3:1 and
+     get 4.12 on a card. It is never text (4.12:1 is under AA); the guard
+     test keeps it off `color`. */
   --chrome-label: var(--color-neutral-500);
   /* Behind a progress bar or a meter -- the one surface that sits below the
      card it is drawn on rather than above it. */
@@ -168,8 +170,31 @@
      to three intents: darken what is behind a modal, darken it more, or lift
      a panel a little off its background. */
   --scrim: rgb(0 0 0 / .45);
+  --scrim-medium: rgb(0 0 0 / .6);
   --scrim-strong: rgb(0 0 0 / .74);
   --wash-subtle: rgb(255 255 255 / .02);
+
+  /* The rest of the alpha layers, from the 43 colour literals still in the
+     stylesheet on 2026-09-16. Each is a job several values were doing:
+     .08, .1 and .14, .15 were two kinds of highlight on dark chrome; .35,
+     .45, .5 and .55 were two depths of shadow. */
+  --wash-hover: rgb(255 255 255 / .08);
+  --wash-active: rgb(255 255 255 / .14);
+  --shade-hover: rgb(0 0 0 / .14);
+  --shade-subtle: rgb(0 0 0 / .3);
+  --shadow-faint: rgb(0 0 0 / .05);
+  --shadow-soft: rgb(0 0 0 / .35);
+  --shadow-strong: rgb(0 0 0 / .5);
+  /* Placeholder text on a coloured or black field, as the design writes it. */
+  --placeholder-on-color: rgb(255 255 255 / .6);
+  /* A cover's caption fades up from the card's own colour. Its stops were
+     the old slate ramp's, a shade bluer than --surface. */
+  --surface-fade: rgb(9 9 11 / .94);
+  /* A small control laid over a cover, on --surface-raised. */
+  --overlay-control: rgb(19 19 22 / .82);
+  /* The run drawer's hero, from the design: violet at the top to near-black. */
+  --drawer-scrim-top: rgb(76 11 178 / .32);
+  --drawer-scrim-bottom: rgb(0 0 0 / .8);
 
   /* Spacing scale. Named for its value, so a rule reads as what it draws and
      a name can never drift from its number (the guard test holds them
