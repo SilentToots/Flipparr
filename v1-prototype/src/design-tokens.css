@@ -48,6 +48,7 @@
   --color-green-500: #4ed377;
   --color-green-700: #15803d;
   --color-amber-500: #f4b740;
+  --color-amber-700: #b45309;
   --color-red-500: #f06b62;
   --color-red-700: #b91c1c;
 
@@ -102,6 +103,10 @@
   --badge-violet-bg: rgb(109 40 217 / .4);
   --badge-green-bg: var(--color-green-700);
   --badge-muted-bg: rgb(113 113 122 / .4);
+  /* The amber and red a status can also be. Solid, like the green, so white
+     type on them clears AA: 5.02 and 6.47. */
+  --badge-amber-bg: var(--color-amber-700);
+  --badge-red-bg: var(--color-red-700);
   --badge-text: rgb(255 255 255 / .8);
   /* The nav marker's fill, the same construction at half the strength. */
   --nav-active-bg: rgb(109 40 217 / .2);
@@ -124,11 +129,11 @@
   --badge-alert-bg: var(--color-red-700);
 
   /* The phone's tab bar (node 69:792): the violet at 88% over a blur, floating
-     12px above the bottom edge. Its height is what every phone screen clears
+     8px above the bottom edge. Its height is what every phone screen clears
      at the bottom, so it is named once here. */
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
-  --mobile-nav-height: 96px;
+  --mobile-nav-height: 88px;
   /* The desktop frame: the app bar's height, and the rail beside the page at
      full width and collapsed. Each is used by more than one rule -- the rail
      and the page's margin -- so it is named once. */
@@ -306,14 +311,8 @@
   --card-press-scale: .99;
 
   /* Status component tokens */
-  --status-height: 23px;
-  --status-amber-bg: var(--amber-soft);
   --status-amber-text: #fcd34d;
-  --status-violet-bg: var(--violet-soft);
-  --status-violet-text: var(--color-purple-300);
-  --status-red-bg: var(--red-soft);
   --status-red-text: #fca5a5;
-  --status-green-bg: var(--green-soft);
   --status-green-text: #86efac;
   --status-muted-bg: var(--color-neutral-850);
   --status-muted-text: var(--color-neutral-400);

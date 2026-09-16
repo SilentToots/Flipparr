@@ -958,9 +958,7 @@ export const spec = [
     "node": "69:792",
     "props": {
       "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "12px",
-      "paddingTop": "12px"
+      "paddingLeft": "8px"
     },
     "route": "/library @375"
   },
