@@ -1908,20 +1908,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sidebar .nav-item.active { height: auto; gap: 0; background: transparent; }
   .sidebar .nav-item.active::before { display: none; }
 
-  /* Scrolling down tucks the bar into a 56px circle holding the current tab
+  /* Scrolling down tucks the bar into a 64px circle holding the current tab
      (.tab-bar-collapsed, from useCollapsingTabBar); scrolling up, the top of
      the page or a tap opens it again. The other tabs and the labels ease out
      rather than vanish, on the glass's iOS curve. */
-  .sidebar nav { max-width: 100%; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
+  .sidebar nav { max-width: 100%; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), gap var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), translate var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
   /* A length rather than a percentage, so collapsing still has something to
      animate from now that the bar is only as wide as its tabs. */
   .sidebar .nav-item { max-width: 120px; overflow: hidden; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
   .sidebar .nav-item > span { max-height: 12px; transition: max-height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
-  .sidebar.tab-bar-collapsed nav { max-width: 56px; padding: 0; }
+  /* The circle is the one thing left to tap, so it takes the 44px minimum with
+     room to spare rather than sitting at it. The gap goes with the tabs it
+     separated: three 2px gaps between four items, one of them now the only one
+     with width, left the icon 3px off centre -- and which way depended on
+     which tab was open. A pixel comes off the bottom padding instead, for the
+     1px border along that edge, which had the icon half a pixel high. */
+  .sidebar.tab-bar-collapsed nav { max-width: 64px; padding: 0; gap: 0; }
   .sidebar.tab-bar-collapsed .nav-item:not(.active) { max-width: 0; padding-inline: 0; opacity: 0; }
-  .sidebar.tab-bar-collapsed .nav-item.active { max-width: 56px; padding: 18px; }
+  .sidebar.tab-bar-collapsed .nav-item.active { max-width: 64px; padding: 22px 22px 21px; }
   .sidebar.tab-bar-collapsed .nav-item > :is(span, b) { max-height: 0; opacity: 0; }
   .sidebar.tab-bar-collapsed .nav-glass { opacity: 0; }
+  /* Centred, the circle drifts into the middle of the page as it shrinks and
+     lands over whatever is being read. It goes to the 12px gutter the cards
+     and headers keep instead. Translating there, rather than dropping the auto
+     margins, lets it travel on the same curve as the width instead of jumping
+     the moment the class lands: centred, the left edge sits at 50vw - 32px,
+     and the gutter is 12px. */
+  .sidebar.tab-bar-collapsed nav { translate: calc(44px - 50vw) 0; }
   .sidebar .nav-item.active > svg { width: 20px; height: 20px; }
   /* The confirmation toast sat at 24px from the bottom, under the tab bar. */
   .toast { right: 12px; left: 12px; bottom: calc(var(--mobile-nav-height) + 8px + env(safe-area-inset-bottom)); }
