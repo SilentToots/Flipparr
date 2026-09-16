@@ -977,8 +977,14 @@ function LibraryMatchSkeleton() {
 }
 
 function NewRunCard({ item, state, onPull, onOpen }) {
-  const byline = [item.publisher || "Publisher unknown", item.yearLabel || item.yearBegan]
-    .filter(Boolean).join(" • ");
+  // How long the run is, beside when it ran: "13 issues" is the difference
+  // between a one-shot and a decade, and deciding to pull turns on it.
+  const issues = Number(item.issueCount) || 0;
+  const byline = [
+    item.publisher || "Publisher unknown",
+    item.yearLabel || item.yearBegan,
+    issues ? `${issues} issue${issues === 1 ? "" : "s"}` : null,
+  ].filter(Boolean).join(" • ");
   return <article className="new-run-card">
     <button type="button" className="discover-open" onClick={() => onOpen(item)}
       aria-label={`Issues in ${item.title}`}>

@@ -1841,6 +1841,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* View, sort and the filters are in the View & sort sheet on a phone. */
   .dashboard-header > .library-tools { display: none; }
 
+  /* Discover's results, two to a row. One card per row made a phone a list of
+     posters: a 350px cover, then a scroll to see whether the next result was
+     any better. */
+  .new-run-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .new-run-card { gap: 8px; padding-bottom: 10px; }
+  .new-run-copy, .new-run-status, .new-run-action { padding-inline: 8px; }
+  .new-run-copy h3 { font-size: var(--text-xs); }
+  /* Publisher, year and issue count do not fit one line at half a phone's
+     width, and an ellipsis would hide the count this is here to show. */
+  .new-run-copy p {
+    font-size: var(--text-3xs); white-space: normal; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  /* One byline wraps and its neighbour's does not, so the two Pull Run buttons
+     in a row would sit at different heights. The action goes to the foot of
+     the card instead, where the pair line up. */
+  .new-run-card hr { margin-top: auto; }
+
   /* 69:903: the card's mobile variant. */
   .series-card { gap: 8px; padding-bottom: 12px; }
   .series-card-identity > strong { font-size: var(--text-xs); }
