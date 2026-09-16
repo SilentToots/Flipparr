@@ -4598,6 +4598,44 @@ def file_cover_info(path: Path, embedded: dict[str, Any] | None = None) -> dict[
     }
 
 
+def _cover_source_path(raw: Any) -> Path | None:
+    """The requested comic, when it is one the library actually holds.
+
+    The path arrives in the query string, and anything readable used to be
+    served: with the local-network bypass on, a NAS would hand any archive on
+    the host to anyone on the LAN. The answer is the same containment rule an
+    import already applies -- the file has to be inside a configured library
+    root -- and symlinks are resolved first, so a link inside the library
+    cannot reach outside it.
+
+    None when the path names nothing servable, whatever the reason. The caller
+    says only that; which of a missing file, a folder, or a file elsewhere on
+    the host it was is not a client's business.
+    """
+    requested = str(raw or "").strip()
+    if not requested:
+        return None
+    try:
+        resolved = Path(requested).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not resolved.is_file():
+        return None
+    roots: list[Path] = []
+    try:
+        roots.extend(Path(item) for item in catalog_store().library_root_paths())
+    except Exception as exc:  # noqa: BLE001 -- an unreadable catalog denies, never opens
+        log_exception("library_roots_unavailable", exc, level="warning")
+    roots.append(COMIC_LIBRARY_ROOT)
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve())
+        except (OSError, RuntimeError, ValueError):
+            continue
+        return resolved
+    return None
+
+
 def inspect_file_health(path: Path) -> dict[str, str]:
     """Perform cheap structural checks without reading every comic page."""
     try:
@@ -10856,12 +10894,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_file_cover(self, parsed_url: urllib.parse.ParseResult) -> None:
         query = self.query(parsed_url)
-        path = Path(query.get("path", ""))
+        path = _cover_source_path(query.get("path"))
+        if path is None:
+            self.send_json({"error": "That comic is not in the library"}, 403)
+            return
         # Whether a cover can be pulled is a question about the archive, which
         # archive_kind answers by reading it. Gating on the extension here kept
         # refusing every RAR comic after the rest of the app had learned to
         # read them: the cover was found and then could not be served.
-        if not path.is_file() or archive_kind(path) is None:
+        if archive_kind(path) is None:
             self.send_json({"error": "This comic format does not support local cover extraction yet"}, 400)
             return
         metadata = read_embedded_metadata(path)

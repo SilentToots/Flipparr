@@ -739,6 +739,8 @@ class HttpContractTests(unittest.TestCase):
                 info = tarfile.TarInfo("001.png")
                 info.size = len(png)
                 archive.addfile(info, io.BytesIO(png))
+            # The endpoint serves comics the library holds, so this one is in it.
+            app.catalog_store().register_root(str(folder), True)
             response = self.get(
                 "/api/file-cover?" + urllib.parse.urlencode({"path": str(path)})
             )
@@ -754,10 +756,32 @@ class HttpContractTests(unittest.TestCase):
         with tf.TemporaryDirectory() as folder:
             path = Path(folder) / "Example 001.cbz"
             path.write_bytes(b"not an archive at all")
+            app.catalog_store().register_root(str(folder), True)
             response = self.get(
                 "/api/file-cover?" + urllib.parse.urlencode({"path": str(path)})
             )
             self.assertEqual(response.status, 400)
+
+    def test_a_comic_outside_the_library_is_refused(self):
+        """The path comes from the query string, so it has to be contained.
+
+        Left open, an instance with the local-network bypass on served any
+        archive on the host to anyone who could reach it.
+        """
+        import zipfile, tempfile as tf
+        with tf.TemporaryDirectory() as folder:
+            library = Path(folder) / "comics"
+            library.mkdir()
+            app.catalog_store().register_root(str(library), True)
+            outside = Path(folder) / "elsewhere.cbz"
+            png = _png_bytes()
+            with zipfile.ZipFile(outside, "w") as archive:
+                archive.writestr("001.png", png)
+            response = self.get(
+                "/api/file-cover?" + urllib.parse.urlencode({"path": str(outside)})
+            )
+            self.assertEqual(response.status, 403)
+            self.assertNotIn(str(outside), response.body.decode())
 
     # ---- unfollowing --------------------------------------------------
 

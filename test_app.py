@@ -2895,6 +2895,69 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
             self.assertIsNone(_auto_grab_release(7))
 
 
+class CoverPathContainmentTests(unittest.TestCase):
+    """The cover endpoint may only reach comics the library holds.
+
+    It took a filesystem path from the query string and served any readable
+    archive on the host. Behind the session check, but `localBypass` exempts
+    local addresses, so on a NAS the whole LAN could read any comic on the box.
+    """
+
+    @staticmethod
+    def _store(*roots):
+        store = Mock()
+        store.library_root_paths.return_value = [str(root) for root in roots]
+        return store
+
+    def test_a_comic_inside_a_library_root_is_served(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "comics"
+            (root / "DC Comics").mkdir(parents=True)
+            comic = root / "DC Comics" / "Nightwing 001.cbz"
+            comic.write_bytes(b"comic")
+            with patch("app.catalog_store", return_value=self._store(root)):
+                self.assertEqual(app._cover_source_path(str(comic)), comic.resolve())
+
+    def test_a_comic_outside_every_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "comics"
+            root.mkdir()
+            elsewhere = Path(folder) / "private" / "diary.cbz"
+            elsewhere.parent.mkdir()
+            elsewhere.write_bytes(b"not yours")
+            with patch("app.catalog_store", return_value=self._store(root)):
+                self.assertIsNone(app._cover_source_path(str(elsewhere)))
+
+    def test_a_symlink_that_escapes_the_library_is_refused(self):
+        """Resolved first, or a link inside the library reaches outside it."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "comics"
+            root.mkdir()
+            outside = Path(folder) / "secret.cbz"
+            outside.write_bytes(b"not yours")
+            link = root / "Nightwing 001.cbz"
+            link.symlink_to(outside)
+            with patch("app.catalog_store", return_value=self._store(root)):
+                self.assertIsNone(app._cover_source_path(str(link)))
+
+    def test_a_folder_a_missing_file_and_an_empty_path_are_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "comics"
+            (root / "DC Comics").mkdir(parents=True)
+            with patch("app.catalog_store", return_value=self._store(root)):
+                self.assertIsNone(app._cover_source_path(str(root / "DC Comics")))
+                self.assertIsNone(app._cover_source_path(str(root / "gone.cbz")))
+                self.assertIsNone(app._cover_source_path(""))
+                self.assertIsNone(app._cover_source_path(None))
+
+    def test_an_unreadable_catalog_denies_rather_than_opens(self):
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "Nightwing 001.cbz"
+            comic.write_bytes(b"comic")
+            with patch("app.catalog_store", side_effect=RuntimeError("database is locked")):
+                self.assertIsNone(app._cover_source_path(str(comic)))
+
+
 class IssueYearBeforeGrabTests(unittest.TestCase):
     """An unknown year silently disables the wrong-era check, so fill it first.
 

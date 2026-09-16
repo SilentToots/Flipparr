@@ -7051,6 +7051,18 @@ class CatalogStore:
                 (issue_id, provider, provider_id, api_url, updated_at),
             )
 
+    def library_root_paths(self) -> list[str]:
+        """The folders the library is configured to hold comics in.
+
+        Used to decide whether a path in a request names a comic this library
+        actually holds, so a request cannot reach a file elsewhere on the host.
+        """
+        with self._connect() as connection:
+            return [
+                str(row["path"])
+                for row in connection.execute("SELECT path FROM library_roots ORDER BY id")
+            ]
+
     def scan_schedule(self) -> dict[str, Any]:
         """What the background scan needs to decide: the folders, when the
         least recently scanned was last scanned, and any scan still running."""
