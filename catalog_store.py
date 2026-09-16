@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -1012,6 +1012,20 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS acquisition_downloads_status
                     ON acquisition_downloads(status, updated_at);
+                -- One download belongs to the job that grabbed it, and a pack
+                -- answers many. Each extra issue it delivered is recorded here,
+                -- so a row can say "12 issues from one download" rather than
+                -- twelve rows showing no download at all.
+                CREATE TABLE IF NOT EXISTS acquisition_download_imports (
+                    id INTEGER PRIMARY KEY,
+                    download_id INTEGER NOT NULL
+                        REFERENCES acquisition_downloads(id) ON DELETE CASCADE,
+                    job_id INTEGER NOT NULL REFERENCES acquisition_jobs(id) ON DELETE CASCADE,
+                    issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+                    destination TEXT NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    UNIQUE(download_id, job_id)
+                );
                 CREATE TABLE IF NOT EXISTS acquisition_release_failures (
                     id INTEGER PRIMARY KEY,
                     job_id INTEGER NOT NULL REFERENCES acquisition_jobs(id) ON DELETE CASCADE,
@@ -5301,9 +5315,22 @@ class CatalogStore:
                    ORDER BY files.updated_at DESC, files.id DESC LIMIT 1""",
                 (row["series_id"],),
             ).fetchone()
+        # What a pack would be judged against: how long the run is, and how much
+        # of it is still wanted. A pack is only worth taking for a run that is
+        # mostly missing.
+        with self._connect() as connection:
+            run_issue_count = int(connection.execute(
+                "SELECT COUNT(*) AS count FROM issues WHERE series_run_id=?", (row["series_id"],)
+            ).fetchone()["count"])
+            wanted_issue_count = int(connection.execute(
+                """SELECT COUNT(*) AS count FROM acquisition_jobs
+                   WHERE request_id=? AND status IN ('queued', 'waiting', 'searching', 'failed')""",
+                (row["request_id"],),
+            ).fetchone()["count"])
         return {
             "id": str(row["id"]), "requestId": str(row["request_id"]),
             "status": row["status"], "issueId": str(row["issue_id"]),
+            "runIssueCount": run_issue_count, "wantedIssueCount": wanted_issue_count,
             "issueNumber": row["issue_number"], "issueTitle": row["issue_title"],
             "publicationYear": row["publication_year"],
             "publicationDate": row["publication_date"],
@@ -5318,6 +5345,56 @@ class CatalogStore:
             "replacementFilePath": row["replacement_file_path"],
             "existingDirectory": str(Path(existing_file["path"]).parent) if existing_file else None,
         }
+
+    def record_download_import(
+        self, download_id: int, job_id: int, issue_id: int, destination: str,
+    ) -> None:
+        """Note an issue that one download delivered beyond the job that grabbed it."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO acquisition_download_imports(
+                       download_id, job_id, issue_id, destination, imported_at
+                   ) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(download_id, job_id) DO UPDATE SET
+                       destination=excluded.destination, imported_at=excluded.imported_at""",
+                (download_id, job_id, issue_id, str(destination), _utc_now()),
+            )
+
+    def download_import_counts(self) -> dict[int, int]:
+        """How many extra issues each download delivered, by download."""
+        with self._connect() as connection:
+            return {
+                int(row["download_id"]): int(row["count"])
+                for row in connection.execute(
+                    """SELECT download_id, COUNT(*) AS count
+                       FROM acquisition_download_imports GROUP BY download_id"""
+                )
+            }
+
+    def wanted_run_issues(self, request_id: int) -> list[dict[str, Any]]:
+        """The issues a request still wants, with the job waiting for each.
+
+        A pack answers many at once, so this is both how its worth is judged
+        before it is grabbed and what its download is swept for afterwards.
+        """
+        with self._connect() as connection:
+            return [
+                {
+                    "jobId": int(row["id"]), "issueId": int(row["issue_id"]),
+                    "issueNumber": row["issue_number"], "status": str(row["status"]),
+                }
+                for row in connection.execute(
+                    """SELECT acquisition_jobs.id, acquisition_jobs.issue_id,
+                              acquisition_jobs.status, issues.issue_number
+                       FROM acquisition_jobs
+                       JOIN issues ON issues.id=acquisition_jobs.issue_id
+                       WHERE acquisition_jobs.request_id=?
+                         AND acquisition_jobs.status IN
+                             ('queued', 'waiting', 'searching', 'grabbed', 'failed')
+                       ORDER BY acquisition_jobs.id""",
+                    (request_id,),
+                )
+            ]
 
     def record_acquisition_download(
         self,

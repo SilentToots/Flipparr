@@ -1440,6 +1440,60 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
 # release group "21A1" is not issue 21. A variant letter alone ("21a") still is.
 _NOT_GLUED_TO_A_TAG = r"(?!\d|[A-Za-z]\d)"
 
+# "001-060", "#1-60", "1 - 60". Not "2009-2016", which is when the run ran.
+_ISSUE_RANGE = re.compile(r"(?<![\d.])#?\s*(\d{1,4})\s*[-–—]\s*#?\s*(\d{1,4})(?![\d.])")
+_COMPLETE_RUN_WORDING = re.compile(
+    r"\b(?:complete(?:\s+(?:series|collection|run|set))?|full\s+run|entire\s+series)\b", re.I
+)
+# A collected edition says so. Its numbers count books, not issues.
+_COLLECTED_EDITION_WORDING = re.compile(
+    r"\bv(?:ol(?:ume)?)?\.?\s*\d{1,3}\b|\btpb\b|\bomnibus\b|\bhardcover\b|\bhc\b|\bdeluxe\b", re.I
+)
+
+
+def _release_issue_range(title: Any, run_issue_count: Any = None) -> tuple[int, int] | None:
+    """The issues a release says it holds, or None when it is not a pack.
+
+    A pack is the whole point of asking: one download that answers many wanted
+    issues. It is also the easiest thing to misread, so what is *not* a range
+    is most of this:
+
+    - `(2009-2016)` is when the run ran. Two years are never issue numbers.
+    - `v01-v12` counts collected editions, and editions are not an automatic
+      acquisition target. Answering a request for issue 4 with volume 4 is the
+      same mistake `_release_issue_matches` strips out.
+    - `02 of 04` counts the run's parts, and a Usenet subject's `[53/72]` and
+      date stamp carry numbers that are not issues either.
+
+    "Complete Series" names no numbers, so the run's own issue count supplies
+    them -- and only when nothing in the title says collected edition.
+    """
+    cleaned = re.sub(r"\b(?:19|20)\d{2}[.\-/_ ]\d{1,2}[.\-/_ ]\d{1,2}\b", " ", str(title or ""))
+    cleaned = re.sub(r"[\[(]\s*\d{1,4}\s*/\s*\d{1,4}\s*[\])]", " ", cleaned)
+    cleaned = re.sub(r"\bof\s*\d{1,3}\b", " ", cleaned, flags=re.I)
+    volumes = bool(_COLLECTED_EDITION_WORDING.search(cleaned))
+    # Take the volume range out before looking for an issue range, or "v01-v12"
+    # reads as issues 1 to 12.
+    cleaned = re.sub(
+        r"\bv(?:ol(?:ume)?)?\.?\s*\d{1,4}\s*[-–—]\s*(?:v(?:ol(?:ume)?)?\.?\s*)?\d{1,4}\b",
+        " ", cleaned, flags=re.I,
+    )
+    for match in _ISSUE_RANGE.finditer(cleaned):
+        first, last = int(match.group(1)), int(match.group(2))
+        if 1900 <= first <= 2099 and 1900 <= last <= 2099:
+            continue
+        if last <= first or last - first > 2000:
+            continue
+        return (first, last)
+    if not volumes and _COMPLETE_RUN_WORDING.search(cleaned):
+        try:
+            count = int(run_issue_count or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 1:
+            return (1, count)
+    return None
+
 
 # Usenet subjects wrap the real name in quotes; posts are often prefixed with a
 # date stamp, a part counter, or a poster's tag. None of that is the series, and
@@ -1659,6 +1713,17 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
     if _release_issue_matches(title, context.get("issueNumber")):
         score += 35
         reasons.append(f"Issue #{context.get('issueNumber')} matches")
+    else:
+        covered = _release_pack_coverage(title, context)
+        if covered:
+            # Deliberately below an exact single, so a release that is this
+            # issue always outranks a pack that merely contains it. On its own
+            # a pack therefore lands under the score an automatic grab needs;
+            # whether one may be taken anyway is decided per run, not here.
+            score += 22
+            reasons.append(
+                f"Issues #{covered[0]}-#{covered[1]} include #{context.get('issueNumber')}"
+            )
     year = str(context.get("publicationYear") or context.get("seriesYear") or "").strip()
     if year and year in title:
         score += 10
@@ -1671,6 +1736,60 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
         score += 5
         reasons.append("Listed as a comic")
     return min(score, 100), reasons
+
+
+# A pack is worth taking when it answers most of what a run is missing, not to
+# fill one gap -- the difference between one download and sixty, against the
+# risk of forty gigabytes for a single issue.
+PACK_MINIMUM_WANTED = 5
+PACK_BYTES_PER_COVERED_ISSUE = 1_500_000_000
+
+
+def _issue_number(value: Any) -> int | None:
+    match = re.match(r"^\s*#?\s*(\d+)", str(value or ""))
+    return int(match.group(1)) if match else None
+
+
+def _pack_worth_taking(
+    context: dict[str, Any], candidate: dict[str, Any], wanted: list[int],
+) -> tuple[bool, str]:
+    """Whether one pack may stand in for many wanted issues, and why not.
+
+    Deliberately separate from scoring: a pack always scores below the issue
+    itself, and this decides whether taking one anyway is proportionate for
+    *this* run. A person choosing a pack in Find release is never asked.
+    """
+    pack = candidate.get("pack") or {}
+    first, last = _issue_number(pack.get("first")), _issue_number(pack.get("last"))
+    if first is None or last is None:
+        return False, "not a pack"
+    covered = [number for number in wanted if first <= number <= last]
+    run_count = _issue_number(context.get("runIssueCount")) or 0
+    mostly_missing = (
+        len(wanted) >= PACK_MINIMUM_WANTED
+        or (run_count > 0 and len(wanted) * 2 >= run_count)
+    )
+    if not mostly_missing:
+        return False, f"only {len(wanted)} issue{'' if len(wanted) == 1 else 's'} wanted"
+    if len(covered) < min(PACK_MINIMUM_WANTED, len(wanted)):
+        return False, f"covers {len(covered)} of the {len(wanted)} wanted"
+    size = int(candidate.get("sizeBytes") or 0)
+    cap = PACK_BYTES_PER_COVERED_ISSUE * len(covered)
+    if size and size > cap:
+        return False, f"{size / 1_000_000_000:.1f} GB for {len(covered)} issues"
+    return True, f"covers {len(covered)} wanted issues"
+
+
+def _release_pack_coverage(title: Any, context: dict[str, Any]) -> tuple[int, int] | None:
+    """The pack's range, when it says it holds the issue this job wants."""
+    wanted = re.match(r"^\s*#?\s*(\d+)", str(context.get("issueNumber") or ""))
+    if not wanted:
+        return None
+    stated = _release_issue_range(title, context.get("runIssueCount"))
+    if not stated:
+        return None
+    number = int(wanted.group(1))
+    return stated if stated[0] <= number <= stated[1] else None
 
 
 def _release_format_tags(title: Any) -> list[str]:
@@ -2499,7 +2618,11 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                                     "reasons": [f"Refused before: {reason}" if reason else "Refused before for this issue"]})
                 continue
             score, reasons = _release_candidate_score(release, context)
-            if score < 85:
+            # A pack scores below an exact single by design, so it would never
+            # be offered at all under one threshold. It is listed as what it is
+            # and, for an automatic grab, judged against the run separately.
+            pack = _release_pack_coverage(title, context)
+            if score < 85 and not (pack and score >= 70):
                 near_misses.append({"title": title, "score": score, "reasons": reasons, "key": release_key})
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
@@ -2518,8 +2641,12 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 "sizeBytes": int(release.get("size") or 0),
                 "publishDate": release.get("publishDate"), "protocol": "Usenet",
                 "matchScore": score, "matchReasons": reasons,
-                "matchStrength": "Strong match" if score >= 85 else "Possible match",
+                "matchStrength": (
+                    "Strong match" if score >= 85
+                    else f"Pack, #{pack[0]}-#{pack[1]}" if pack else "Possible match"
+                ),
                 "formatTags": _release_format_tags(title),
+                **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
             })
         return candidates
 
@@ -3476,6 +3603,12 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     candidates = search.get("candidates") if isinstance(search, dict) else []
     if not isinstance(candidates, list) or not candidates:
         return None
+    context = (search.get("job") if isinstance(search, dict) else None) or {}
+    candidates, held_back = _automatic_grab_order(context, candidates)
+    if not candidates:
+        if held_back:
+            _say_on_the_row(job_id, held_back)
+        return None
     # The same release is usually posted on several indexers, and one of them
     # handing back something that is not an NZB says nothing about the others.
     # Once & Future #30 sat at "4 release candidates found": Indexer A's copy
@@ -3512,6 +3645,47 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
         f"could be fetched ({problems[0]}); it will be tried again",
     )
     return None
+
+
+def _automatic_grab_order(
+    context: dict[str, Any], candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    """What may be taken without asking, best first.
+
+    Singles behave exactly as they always have. A pack joins them only when it
+    answers most of what the run is missing; otherwise it stays in the list a
+    person chooses from, and the row says why it was not taken.
+    """
+    singles = [item for item in candidates if not item.get("pack")]
+    packs = [item for item in candidates if item.get("pack")]
+    if not packs:
+        return singles, ""
+    try:
+        request_id = int(str(context.get("requestId") or "").strip() or 0)
+        wanted = [
+            number for number in (
+                _issue_number(item.get("issueNumber"))
+                for item in (catalog_store().wanted_run_issues(request_id) if request_id else [])
+            ) if number is not None
+        ]
+    except Exception as exc:  # noqa: BLE001 -- unknown demand means singles only
+        log_exception("pack_demand_unavailable", exc, level="warning")
+        return singles, ""
+    eligible: list[dict[str, Any]] = []
+    refused = ""
+    for candidate in packs:
+        worth, why = _pack_worth_taking(context, candidate, wanted)
+        if worth:
+            eligible.append(candidate)
+        elif not refused:
+            refused = f"{candidate.get('title') or 'A pack'} — {why}"
+    note = ""
+    if not singles and not eligible and refused:
+        note = (
+            f"Found a pack but did not take it automatically: {refused}. "
+            "Find release lists it if you want it."
+        )
+    return singles + eligible, note
 
 
 def _say_on_the_row(job_id: int, reason: str) -> None:
@@ -3864,6 +4038,16 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         int(download["job_id"]), "fulfilled",
         f"Imported and verified as {Path(imported['destination']).name}",
     )
+    # Before the folder goes: a pack holds the run's other wanted issues, and
+    # _sab_remove_job is about to delete it.
+    swept = _sweep_download_for_other_issues(store, download, storage, context)
+    if swept:
+        imported["packImports"] = swept
+        store.update_acquisition_job(
+            int(download["job_id"]), "fulfilled",
+            f"Imported and verified as {Path(imported['destination']).name}"
+            f", with {len(swept)} more issue{'' if len(swept) == 1 else 's'} from the same download",
+        )
     _sab_remove_job({**download, "sab_storage": storage})
     # Refused downloads of this issue were kept as evidence; it is here now.
     _discard_kept_downloads(store, job_id=int(download["job_id"]))
@@ -3892,6 +4076,86 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             store.update_file_replacement_status(int(replacement["id"]), "failed", message)
             return {"status": "failed", "error": message, **imported}
     return {"status": "imported", **imported}
+
+
+def _sweep_download_for_other_issues(
+    store: Any, download: dict[str, Any], storage: str, context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Import the run's other wanted issues from a download that holds them.
+
+    This is what makes a pack worth grabbing: one download answering many jobs.
+    It runs before `_sab_remove_job`, which deletes the folder the moment the
+    grabbing job is done.
+
+    Every file goes through the same identity check as any other import --
+    `select_downloaded_comic` refuses a comic that says it is something else --
+    so a download cannot fulfil an issue it does not actually contain. Nothing
+    here may fail the import that already succeeded: the grabbing job keeps its
+    comic and anything not found stays wanted for the next pass.
+    """
+    try:
+        request_id = int(str(context.get("requestId") or "").strip() or 0)
+        grabbing_job = int(download["job_id"])
+        if not request_id:
+            return []
+        outstanding = [
+            item for item in store.wanted_run_issues(request_id)
+            if int(item["jobId"]) != grabbing_job and str(item["status"]) != "grabbed"
+        ]
+        if not outstanding:
+            return []
+        source = _resolve_sab_download_source(
+            storage, str(download.get("release_title") or ""), SAB_COMPLETE_ROOT,
+        )
+    except Exception as exc:  # noqa: BLE001 -- the grabbed issue is already home
+        log_exception("pack_sweep_setup_failed", exc, level="warning")
+        return []
+    imported: list[dict[str, Any]] = []
+    for item in outstanding:
+        job_id = int(item["jobId"])
+        selected = None
+        try:
+            job_context = store.get_acquisition_job_context(job_id)
+            selected = select_downloaded_comic(
+                source, job_context, SAB_COMPLETE_ROOT,
+                release_title=str(download.get("release_title") or "") or None,
+            )
+            placed = _import_selected_comic(
+                selected, job_context, {"job_id": job_id}, COMIC_LIBRARY_ROOT,
+            )
+            _catalog_imported_issue(
+                Path(placed["destination"]), job_context, COMIC_LIBRARY_ROOT,
+            )
+        except DownloadContentMismatch:
+            # This download simply does not hold that issue. Not a failure:
+            # the job stays wanted and is searched for as usual.
+            continue
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                "pack_sweep_issue_failed", level="warning", job_id=job_id,
+                release=str(download.get("release_title") or ""), error=str(exc),
+            )
+            continue
+        finally:
+            _discard_converted(selected)
+        try:
+            store.record_download_import(
+                int(download["id"]), job_id, int(item["issueId"]), placed["destination"],
+            )
+            store.update_acquisition_job(
+                job_id, "fulfilled",
+                f"Imported from {download.get('release_title') or 'the same download'}"
+                f" as {Path(placed['destination']).name}",
+            )
+        except Exception as exc:  # noqa: BLE001 -- the comic is in the library either way
+            log_exception("pack_sweep_record_failed", exc, level="warning")
+        imported.append({"jobId": str(job_id), "destination": placed["destination"]})
+    if imported:
+        log_event(
+            "pack_sweep_imported", release=str(download.get("release_title") or ""),
+            download_id=int(download["id"]), issues=len(imported),
+        )
+    return imported
 
 
 # How long a refused download is kept as evidence when its issue never arrives.

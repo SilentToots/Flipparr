@@ -864,6 +864,54 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertNotIn("104", numbers)
             self.assertEqual(len(numbers), 30)
 
+    def test_one_download_can_be_recorded_against_many_issues(self):
+        """A pack answers several jobs; the download still belongs to one."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                run_id = int(connection.execute(
+                    """INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at)
+                       VALUES ('Chew', 'chew', ?, ?)""", (now, now),
+                ).lastrowid)
+                request_id = int(connection.execute(
+                    """INSERT INTO acquisition_requests(
+                           scope_type, series_run_id, status, coverage,
+                           acquisition_preference, created_at, updated_at
+                       ) VALUES ('series', ?, 'open', 'run', 'either', ?, ?)""",
+                    (run_id, now, now),
+                ).lastrowid)
+                jobs = {}
+                for number in ("4", "5", "6"):
+                    issue_id = int(connection.execute(
+                        """INSERT INTO issues(series_run_id, issue_number, created_at, updated_at)
+                           VALUES (?, ?, ?, ?)""", (run_id, number, now, now),
+                    ).lastrowid)
+                    jobs[number] = (int(connection.execute(
+                        """INSERT INTO acquisition_jobs(request_id, issue_id, status, created_at, updated_at)
+                           VALUES (?, ?, 'queued', ?, ?)""", (request_id, issue_id, now, now),
+                    ).lastrowid), issue_id)
+                download_id = int(connection.execute(
+                    """INSERT INTO acquisition_downloads(
+                           job_id, sab_nzo_id, release_title, status, created_at, updated_at
+                       ) VALUES (?, 'nzo-1', 'Chew 001-060 (Digital)', 'completed', ?, ?)""",
+                    (jobs["4"][0], now, now),
+                ).lastrowid)
+
+            wanted = store.wanted_run_issues(request_id)
+            self.assertEqual([item["issueNumber"] for item in wanted], ["4", "5", "6"])
+
+            for number in ("5", "6"):
+                job_id, issue_id = jobs[number]
+                store.record_download_import(
+                    download_id, job_id, issue_id, f"/comics/Chew/Chew #{number}.cbz",
+                )
+            # Re-recording the same issue is the same row, not a second one.
+            store.record_download_import(
+                download_id, jobs["5"][0], jobs["5"][1], "/comics/Chew/Chew #5.cbz",
+            )
+            self.assertEqual(store.download_import_counts(), {download_id: 2})
+
     def test_collected_edition_year_does_not_create_a_second_run(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

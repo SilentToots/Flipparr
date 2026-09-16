@@ -1,3 +1,4 @@
+import contextlib
 import datetime as dt
 import json
 import email.message
@@ -2893,6 +2894,232 @@ class RetryChoosesItsOwnReleaseTests(unittest.TestCase):
             "app.send_release_to_sabnzbd", side_effect=ReleaseDownloadError("nzb gone")
         ):
             self.assertIsNone(_auto_grab_release(7))
+
+
+class ReleaseIssueRangeTests(unittest.TestCase):
+    """What a release says it holds, when it holds more than one issue."""
+
+    def test_a_stated_range_is_read(self):
+        for title, expected in (
+            ("Chew 001-060 (2009-2016) (Digital) (Zone-Empire)", (1, 60)),
+            ("Nightwing #1-30 (2011-2014)", (1, 30)),
+            ("Saga 001 - 072 (Digital)", (1, 72)),
+            ("Chew Complete Series (001-060) (2016) (Digital)", (1, 60)),
+        ):
+            with self.subTest(title=title):
+                self.assertEqual(app._release_issue_range(title), expected)
+
+    def test_the_years_a_run_ran_are_not_issue_numbers(self):
+        self.assertIsNone(app._release_issue_range("Chew (2009-2016) (Digital)"))
+
+    def test_a_volume_range_is_not_an_issue_range(self):
+        """Editions are not an automatic acquisition target, and v04 is not #4."""
+        for title in (
+            "Chew v01-v12 Complete (Digital) (Zone-Empire)",
+            "Saga Vol 1-9 (TPB) (Digital)",
+            "Chew Complete Collection v01-v12 (Digital)",
+        ):
+            with self.subTest(title=title):
+                self.assertIsNone(app._release_issue_range(title, run_issue_count=60))
+
+    def test_a_single_issue_is_not_a_pack(self):
+        for title in (
+            "Chew 004 (2009) (D) (Kingpin-Empire)",
+            "Saga 002 of 004 (2012)",
+            "Week of 2022.02.16 [53/72] - Supergirl Woman of Tomorrow 08 (2022)",
+        ):
+            with self.subTest(title=title):
+                self.assertIsNone(app._release_issue_range(title))
+
+    def test_complete_run_wording_uses_the_runs_own_count(self):
+        self.assertEqual(
+            app._release_issue_range("Chew Complete Series (Digital)", run_issue_count=60), (1, 60),
+        )
+        # Nothing names the bounds, so it claims nothing.
+        self.assertIsNone(app._release_issue_range("Chew Complete Series (Digital)"))
+        self.assertIsNone(app._release_issue_range("Chew Full Run", run_issue_count=1))
+
+
+class PackScoringTests(unittest.TestCase):
+    """A pack is offered for an issue, but never ahead of that issue itself."""
+
+    CONTEXT = {
+        "seriesTitle": "Chew", "issueNumber": "4",
+        "publicationYear": 2009, "runIssueCount": 60,
+    }
+
+    def judge(self, title, **overrides):
+        return app._release_candidate_score({"title": title}, {**self.CONTEXT, **overrides})
+
+    def test_a_single_issue_outranks_a_pack_that_contains_it(self):
+        single, _ = self.judge("Chew 004 (2009) (D) (Kingpin-Empire)")
+        pack, reasons = self.judge("Chew 001-060 (2009-2016) (Digital) (Zone-Empire)")
+        self.assertGreater(single, pack)
+        self.assertGreaterEqual(single, 85, "an exact single is still grabbable on its own")
+        self.assertLess(pack, 85, "a pack alone must not reach the automatic grab score")
+        self.assertGreater(pack, 0, "but it is a real candidate, not discarded")
+        self.assertIn("Issues #1-#60 include #4", reasons)
+
+    def test_a_pack_that_stops_short_of_the_issue_gets_nothing_for_it(self):
+        covered, _ = self.judge("Chew 001-060 (2009-2016) (Digital)")
+        missed, reasons = self.judge("Chew 010-060 (2009-2016) (Digital)")
+        self.assertGreater(covered, missed)
+        self.assertFalse([reason for reason in reasons if "include" in reason])
+
+    def test_a_volume_pack_is_never_offered_for_an_issue(self):
+        _score, reasons = self.judge("Chew v01-v12 Complete (Digital) (Zone-Empire)")
+        self.assertFalse([reason for reason in reasons if "include" in reason])
+
+    def test_a_pack_in_another_language_is_still_refused(self):
+        score, _ = self.judge(
+            "Chew 001-060 (2009-2016) (Spanish) (Digital)", preferredLanguage="en",
+        )
+        self.assertEqual(score, 0)
+
+
+class PackEligibilityTests(unittest.TestCase):
+    """One download instead of sixty, but never forty gigabytes for one issue."""
+
+    CONTEXT = {"requestId": "7", "runIssueCount": 60, "seriesTitle": "Chew"}
+
+    @staticmethod
+    def pack(size_bytes=20_000_000_000, first=1, last=60, title="Chew 001-060 (Digital)"):
+        return {
+            "id": "pack-1", "title": title, "sizeBytes": size_bytes,
+            "matchScore": 82, "pack": {"first": first, "last": last},
+        }
+
+    @staticmethod
+    def single(title="Chew 004 (2009)"):
+        return {"id": "single-1", "title": title, "sizeBytes": 40_000_000, "matchScore": 95}
+
+    @staticmethod
+    def _store(*numbers):
+        store = Mock()
+        store.wanted_run_issues.return_value = [
+            {"jobId": index, "issueId": index, "issueNumber": str(number), "status": "queued"}
+            for index, number in enumerate(numbers, 1)
+        ]
+        return store
+
+    def order(self, candidates, *wanted):
+        with patch("app.catalog_store", return_value=self._store(*wanted)):
+            return app._automatic_grab_order(self.CONTEXT, candidates)
+
+    def test_a_pack_is_taken_when_a_run_is_mostly_missing(self):
+        grabbable, note = self.order([self.pack()], *range(1, 41))
+        self.assertEqual([item["id"] for item in grabbable], ["pack-1"])
+        self.assertEqual(note, "")
+
+    def test_a_pack_is_not_taken_to_fill_one_gap(self):
+        grabbable, note = self.order([self.pack()], 4)
+        self.assertEqual(grabbable, [])
+        self.assertIn("did not take it automatically", note)
+        self.assertIn("only 1 issue wanted", note)
+
+    def test_a_pack_too_large_for_what_it_covers_is_refused(self):
+        grabbable, note = self.order([self.pack(size_bytes=40_000_000_000)], *range(1, 7))
+        self.assertEqual(grabbable, [])
+        self.assertIn("40.0 GB for 6 issues", note)
+
+    def test_a_pack_that_misses_most_of_what_is_wanted_is_refused(self):
+        grabbable, _ = self.order([self.pack(first=1, last=3)], *range(1, 41))
+        self.assertEqual(grabbable, [])
+
+    def test_a_single_is_always_tried_before_a_pack(self):
+        grabbable, note = self.order([self.single(), self.pack()], *range(1, 41))
+        self.assertEqual([item["id"] for item in grabbable], ["single-1", "pack-1"])
+        self.assertEqual(note, "", "nothing to explain while a single is available")
+
+    def test_half_a_run_counts_as_mostly_missing(self):
+        worth, why = app._pack_worth_taking(
+            {"runIssueCount": 8}, self.pack(size_bytes=1_000_000_000, last=8), [1, 2, 3, 4],
+        )
+        self.assertTrue(worth, why)
+
+    def test_an_unknown_demand_leaves_packs_alone(self):
+        with patch("app.catalog_store", side_effect=RuntimeError("database is locked")):
+            grabbable, note = app._automatic_grab_order(self.CONTEXT, [self.pack()])
+        self.assertEqual(grabbable, [])
+        self.assertEqual(note, "")
+
+
+class PackSweepTests(unittest.TestCase):
+    """One download, many issues -- and the folder goes as soon as it is done."""
+
+    DOWNLOAD = {"id": 31, "job_id": 7, "release_title": "Chew 001-060 (Digital)"}
+    CONTEXT = {"requestId": "9", "seriesTitle": "Chew", "issueNumber": "4"}
+
+    def _store(self, *outstanding):
+        store = Mock()
+        store.wanted_run_issues.return_value = list(outstanding)
+        store.get_acquisition_job_context.side_effect = lambda job_id: {
+            "requestId": "9", "seriesTitle": "Chew", "issueNumber": str(job_id),
+        }
+        return store
+
+    @staticmethod
+    def _job(job_id, status="queued"):
+        return {"jobId": job_id, "issueId": 100 + job_id, "issueNumber": str(job_id), "status": status}
+
+    @contextlib.contextmanager
+    def _pipeline(self, select=None, place=None):
+        with patch("app._resolve_sab_download_source", return_value=pathlib.Path("/downloads/chew")), \
+             patch("app.select_downloaded_comic", side_effect=select or (lambda *a, **k: {"path": "/downloads/chew/x.cbz"})), \
+             patch("app._import_selected_comic", side_effect=place or (lambda selected, context, download, root: {
+                 "destination": f"/comics/Chew/Chew #{context['issueNumber']}.cbz",
+             })), \
+             patch("app._catalog_imported_issue", return_value=1), \
+             patch("app._discard_converted"):
+            yield
+
+    def test_a_pack_fulfils_the_runs_other_wanted_issues(self):
+        store = self._store(self._job(7, "grabbed"), self._job(8), self._job(9))
+        with self._pipeline():
+            swept = app._sweep_download_for_other_issues(store, self.DOWNLOAD, "/downloads/chew", self.CONTEXT)
+        self.assertEqual([item["jobId"] for item in swept], ["8", "9"])
+        self.assertEqual(store.record_download_import.call_count, 2)
+        fulfilled = [call.args for call in store.update_acquisition_job.call_args_list]
+        self.assertEqual([args[0] for args in fulfilled], [8, 9])
+        self.assertTrue(all(args[1] == "fulfilled" for args in fulfilled))
+        self.assertIn("Chew 001-060", fulfilled[0][2])
+
+    def test_the_job_that_grabbed_it_is_not_imported_twice(self):
+        store = self._store(self._job(7, "grabbed"))
+        with self._pipeline():
+            self.assertEqual(app._sweep_download_for_other_issues(store, self.DOWNLOAD, "/d", self.CONTEXT), [])
+        store.update_acquisition_job.assert_not_called()
+
+    def test_an_issue_the_download_does_not_hold_stays_wanted(self):
+        store = self._store(self._job(8), self._job(9))
+
+        def select(source, context, *args, **kwargs):
+            if context["issueNumber"] == "9":
+                raise app.DownloadContentMismatch("no comic for #9", kind="content")
+            return {"path": "/downloads/chew/8.cbz"}
+
+        with self._pipeline(select=select):
+            swept = app._sweep_download_for_other_issues(store, self.DOWNLOAD, "/d", self.CONTEXT)
+        self.assertEqual([item["jobId"] for item in swept], ["8"])
+        self.assertEqual([call.args[0] for call in store.update_acquisition_job.call_args_list], [8])
+
+    def test_one_failure_does_not_stop_the_rest(self):
+        store = self._store(self._job(8), self._job(9))
+
+        def place(selected, context, download, root):
+            if context["issueNumber"] == "8":
+                raise OSError("library is not mounted")
+            return {"destination": "/comics/Chew/Chew #9.cbz"}
+
+        with self._pipeline(place=place):
+            swept = app._sweep_download_for_other_issues(store, self.DOWNLOAD, "/d", self.CONTEXT)
+        self.assertEqual([item["jobId"] for item in swept], ["9"])
+
+    def test_a_download_with_no_request_sweeps_nothing(self):
+        store = self._store(self._job(8))
+        with self._pipeline():
+            self.assertEqual(app._sweep_download_for_other_issues(store, self.DOWNLOAD, "/d", {}), [])
+        store.wanted_run_issues.assert_not_called()
 
 
 class CoverPathContainmentTests(unittest.TestCase):
