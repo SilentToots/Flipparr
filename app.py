@@ -1994,6 +1994,23 @@ def direct_site_download_link(post_url: str) -> str:
     return match.group(1)
 
 
+def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
+    """What to ask DirectSite for one wanted issue.
+
+    Its feed matches words literally and lists only its dozen newest matches,
+    so the series title alone buries an older single issue under recent posts:
+    "Farmhand" listed #18-#26 and a #1-20 pack, never "Farmhand #3 (2018)".
+    DirectSite titles a single issue "Series #N", so that is asked first, and
+    the title alone still finds the packs. A query someone typed is theirs.
+    """
+    series = str(context.get("seriesTitle") or "").strip()
+    number = re.match(r"^\s*#?\s*0*(\d+)", str(context.get("issueNumber") or ""))
+    queries = [str(query or "").strip()]
+    if series and number and queries[0].casefold() == series.casefold():
+        queries.insert(0, f"{series} #{number.group(1)}")
+    return [text for text in queries if text]
+
+
 def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) -> list[dict[str, Any]]:
     """DirectSite results for one wanted issue, judged the way any release is.
 
@@ -2001,15 +2018,22 @@ def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) ->
     Cloudflare solver, which is its own piece of work. Knowing the issue is
     there is worth having on its own -- it is what a person checks by hand.
     """
-    try:
-        found = direct_site_search(query)
-    except ValueError as exc:
-        # Not enabled, or the feed was unreadable. Neither is a search failure.
-        log_event("direct_site_search_unavailable", level="info", job_id=job_id, reason=str(exc)[:120])
-        return []
-    except Exception as exc:  # noqa: BLE001 -- Usenet results still stand
-        log_event("direct_site_search_failed", level="warning", job_id=job_id, error=str(exc)[:160])
-        return []
+    found: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for text in _direct_site_queries(context, query):
+        try:
+            results = direct_site_search(text)
+        except ValueError as exc:
+            # Not enabled, or the feed was unreadable. Neither is a search failure.
+            log_event("direct_site_search_unavailable", level="info", job_id=job_id, reason=str(exc)[:120])
+            return []
+        except Exception as exc:  # noqa: BLE001 -- Usenet results still stand
+            log_event("direct_site_search_failed", level="warning", job_id=job_id, error=str(exc)[:160])
+            continue
+        for item in results:
+            if item["url"] not in seen_urls:
+                seen_urls.add(item["url"])
+                found.append(item)
     try:
         _enabled_acquisition_service("flaresolverr")
         solver_ready = True

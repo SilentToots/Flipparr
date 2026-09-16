@@ -3158,6 +3158,34 @@ class DirectSiteSearchTests(unittest.TestCase):
         self.assertTrue(packs, "#1 - 8 covers the wanted issue")
         self.assertEqual(packs[0]["pack"], {"first": 1, "last": 8})
 
+    def test_an_older_single_issue_is_found_even_when_newer_posts_bury_it(self):
+        # DirectSite lists only its newest matches. "Farmhand" returned #18-#26
+        # and a #1-20 pack; only "Farmhand #3" found the single issue.
+        context = {"seriesTitle": "Farmhand", "issueNumber": "003", "publicationYear": 2018,
+                   "runIssueCount": 20, "requestId": "57"}
+        def feed(url, *_args, **_kwargs):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["s"][0]
+            items = {
+                "Farmhand #3": [("Farmhand #3 (2018)", "https://comics.example/image/farmhand-3-2018/")],
+                "Farmhand": [("Farmhand #26 (2025)", "https://comics.example/image/farmhand-26/"),
+                             ("Farmhand #1 – 20 (2018-2022)", "https://comics.example/other-comics/farmhand-1-20/")],
+            }[query]
+            body = "".join(f"<item><title>{title}</title><link>{link}</link><description>Size : 40 MB</description></item>"
+                           for title, link in items)
+            return f"<rss><channel>{body}</channel></rss>".encode()
+        with patch("app.fetch_bytes_with_headers", side_effect=feed) as fetch:
+            candidates = app._direct_site_candidates(57, context, "Farmhand")
+        asked = [urllib.parse.parse_qs(urllib.parse.urlsplit(c.args[0]).query)["s"][0] for c in fetch.call_args_list]
+        self.assertEqual(asked, ["Farmhand #3", "Farmhand"], "the issue first, then the title for packs")
+        titles = [item["title"] for item in candidates]
+        self.assertIn("Farmhand #3 (2018)", titles)
+        self.assertIn("Farmhand #1 – 20 (2018-2022)", titles, "the pack is still offered")
+        self.assertNotIn("Farmhand #26 (2025)", titles)
+
+    def test_a_typed_query_is_asked_as_typed(self):
+        self.assertEqual(app._direct_site_queries({"seriesTitle": "Farmhand", "issueNumber": "3"}, "farmhand deluxe"),
+                         ["farmhand deluxe"])
+
     def test_a_search_that_fails_leaves_usenet_results_alone(self):
         with patch("app.fetch_bytes_with_headers", side_effect=TimeoutError("slow")):
             self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl"), [])
