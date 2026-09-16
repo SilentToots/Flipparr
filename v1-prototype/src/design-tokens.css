@@ -128,7 +128,7 @@
      at the bottom, so it is named once here. */
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
-  --mobile-nav-height: 85px;
+  --mobile-nav-height: 96px;
   /* The desktop frame: the app bar's height, and the rail beside the page at
      full width and collapsed. Each is used by more than one rule -- the rail
      and the page's margin -- so it is named once. */

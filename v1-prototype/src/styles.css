@@ -1911,8 +1911,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      it: the four tabs sit together where a thumb is, and the screen shows
      through either side. The tabs share its 360px equally, so each is wider
      than it is tall -- the glass on the open one is a capsule, not a circle --
-     and the labels sit about 20px apart. */
-  .sidebar nav { box-sizing: border-box; width: 100%; max-width: min(100%, 360px); margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-2) var(--space-8); border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
+     and the labels sit about 20px apart. The glass is inset 8px on every side;
+     the bottom padding is a pixel short to leave room for the 1px border. */
+  .sidebar nav { box-sizing: border-box; width: 100%; max-width: min(100%, 360px); margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-8) var(--space-8) calc(var(--space-8) - 1px); border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .sidebar nav { background: var(--mobile-nav-bg); -webkit-backdrop-filter: blur(var(--mobile-nav-blur)); backdrop-filter: blur(var(--mobile-nav-blur)); }
   }

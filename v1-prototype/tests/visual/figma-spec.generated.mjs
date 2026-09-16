@@ -971,9 +971,7 @@ export const spec = [
       "backgroundColor": "rgba(126, 34, 206, 0.88)",
       "borderBottomWidth": "1px",
       "borderBottomColor": "rgb(63, 63, 70)",
-      "borderRadius": "100px",
-      "paddingBottom": "2px",
-      "paddingTop": "2px"
+      "borderRadius": "100px"
     },
     "route": "/library @375"
   },
