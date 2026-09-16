@@ -91,10 +91,11 @@ export const states = [
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Advanced"),
   },
-  // Wait for real release cards: the shelves load from Metron after the page,
-  // and a capture that lands before them differs from one that lands after by
-  // two thousand elements, which buries anything a style change did.
-  { name: "discover", path: "/discover", require: [".discover-hero", ".pull-card:not(.pull-card-skeleton)"] },
+  // The release shelves come from Metron, which answers differently -- or not
+  // at all -- from one run to the next, and a shelf that loads in one capture
+  // and not the other buries anything a style change did under two thousand
+  // elements. They are stubbed, as figma:check stubs them.
+  { name: "discover", path: "/discover", stub: ["releases"], require: [".discover-hero", ".pull-card:not(.pull-card-skeleton)"] },
   { name: "pull-list", path: "/pull-list", require: [".request-tabs"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings", require: [".settings-layout"] },

@@ -206,6 +206,25 @@
   --text-2xl: 1.5rem;     /* 24px */
   --text-3xl: 1.75rem;    /* 28px */
 
+  /* Weights. Inter is variable, so 620, 640 and 650 all rendered -- as three
+     weights doing one job, and 750 beside 780 the same. The design file only
+     ever uses these five. */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-black: 900;
+
+  /* Line heights, from sixteen values to five. `tight` also stands in for
+     `normal`, which Inter resolves to about 1.21. `snug` is exactly 4/3 so
+     12px text sits on a 16px line, which the design's fixed two-line title
+     boxes (32px tall) depend on. */
+  --leading-none: 1;
+  --leading-tight: 1.2;
+  --leading-snug: calc(4 / 3);
+  --leading-normal: 1.45;
+  --leading-relaxed: 1.55;
+
   --control-height-sm: 32px;
   --control-height-md: 42px;
   --control-gap: var(--space-2);

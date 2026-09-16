@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import { spec, icons, frames } from "./figma-spec.generated.mjs";
+import { applyStubs } from "./stubs.mjs";
 
 const origin = process.env.FLIPPARR_UI_ORIGIN || "http://localhost:4173";
 const width = 1440;
@@ -19,43 +20,6 @@ const height = 951;
 const nodeMap = JSON.parse(
   await readFile(path.join(import.meta.dirname, "figma", "node-map.json"), "utf8"),
 );
-
-// Screens that read a third-party API are stubbed. A design check that fails
-// because Metron is busy teaches nobody anything, and a search whose results
-// change week to week cannot pin a card's measurements.
-const shelfIssues = (shelf) => Array.from({ length: 14 }, (_, i) => ({
-  providerIssueId: `${shelf}-${i}`, providerSeriesId: "9",
-  seriesTitle: "Wolverine", number: String(i + 1),
-  title: `Wolverine #${i + 1}`, cover: null, storeDate: "2026-09-02",
-}));
-
-const STUBS = {
-  releases: {
-    url: "**/api/v1/discover/releases",
-    body: {
-      available: true,
-      // Enough to overflow the row: the forward chevron is only enabled when
-      // there is somewhere to scroll to, and it is one of the things measured.
-      latest: { date: "2026-09-02", issues: shelfIssues("latest") },
-      upcoming: { date: "2026-09-09", issues: shelfIssues("upcoming") },
-    },
-  },
-  search: {
-    url: "**/api/v1/discover?**",
-    body: {
-      query: "Batman", titleQuery: "Batman", yearHint: null,
-      provider: "Metron", providerId: "metron",
-      providersChecked: ["Metron"], providersAnswered: ["Metron"],
-      results: [{
-        provider: "metron", providerName: "Metron", providerSeriesId: "9",
-        title: "Comic Title Goes in This Space and truncates", yearBegan: 2026,
-        yearLabel: "2026", publisher: "Publisher", issueCount: 12,
-        cover: null, status: "Ongoing", inLibrary: false,
-        providerIds: { metron: "9" },
-      }],
-    },
-  },
-};
 
 const routes = nodeMap.routes || { "/library": { ready: ".series-card" } };
 const byRoute = new Map();
@@ -80,11 +44,7 @@ for (const [route, work] of byRoute) {
   // A route may name its own viewport, and a path when the same screen is
   // measured at two sizes ("/library" and "/library @375").
   const page = await browser.newPage({ viewport: config.viewport || { width, height } });
-  for (const name of config.stub || []) {
-    const stub = STUBS[name];
-    await page.route(stub.url, (r) =>
-      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(stub.body) }));
-  }
+  await applyStubs(page, config.stub);
   // Not networkidle: Discover's shelves and the catalog poll keep a socket
   // busy, so "idle" never arrives. The screen is ready when the thing being
   // measured is on it.

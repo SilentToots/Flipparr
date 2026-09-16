@@ -12,57 +12,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { declarations } from "./css-declarations.mjs";
 
 const SRC = path.join(import.meta.dirname, "..", "src");
 const read = (name) => readFileSync(path.join(SRC, name), "utf8");
-
-// Every declaration in a stylesheet, with the at-rules it sits inside. Not a
-// full CSS parser -- it only has to understand this project's two files --
-// but it keeps line numbers so a failure says where to look.
-export function declarations(css) {
-  const out = [];
-  const stack = [];
-  let line = 1;
-  let buffer = "";
-  let bufferLine = 1;
-  for (let i = 0; i < css.length; i += 1) {
-    const ch = css[i];
-    if (ch === "/" && css[i + 1] === "*") {
-      const end = css.indexOf("*/", i + 2);
-      const stop = end === -1 ? css.length : end + 2;
-      for (let j = i; j < stop; j += 1) if (css[j] === "\n") line += 1;
-      i = stop - 1;
-      continue;
-    }
-    if (ch === "\n") line += 1;
-    if (ch === "{") {
-      stack.push(buffer.trim());
-      buffer = "";
-      bufferLine = line;
-      continue;
-    }
-    if (ch === ";" || ch === "}") {
-      const text = buffer.trim();
-      const colon = text.indexOf(":");
-      if (colon > 0 && stack.length) {
-        out.push({
-          property: text.slice(0, colon).trim(),
-          value: text.slice(colon + 1).trim(),
-          line: bufferLine,
-          selector: stack[stack.length - 1],
-          media: stack.filter((s) => s.startsWith("@media")),
-        });
-      }
-      buffer = "";
-      bufferLine = line;
-      if (ch === "}") stack.pop();
-      continue;
-    }
-    if (!buffer.trim()) bufferLine = line;
-    buffer += ch;
-  }
-  return out;
-}
 
 const SIZE_TOKEN = /^--(text|space|radius)-|^--control-font-|^--status-font-size$/;
 const where = (file, d) => `${file}:${d.line}  ${d.selector} { ${d.property}: ${d.value} }`;
@@ -85,4 +38,32 @@ test("the parser sees declarations inside nested at-rules", () => {
   assert.equal(found.length, 2);
   assert.deepEqual(found[1].media, ["@media (x)"]);
   assert.equal(found[1].line, 2);
+});
+
+const styles = () => declarations(read("styles.css"));
+
+test("every font-weight is a weight token", () => {
+  const bad = styles()
+    .filter((d) => d.property === "font-weight" && !/^var\(--weight-(regular|medium|semibold|bold|black)\)$/.test(d.value))
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});
+
+// The two line boxes that are a length on purpose.
+const LEADING_EXCEPTIONS = {
+  // The tab label's line box is what holds the phone tab bar at the design's
+  // height; three Figma frames (69:763, 69:793, 69:800) assert that height.
+  ".sidebar .nav-item > span": "10px",
+  // A tap-target hack: the summary is made 44px tall by its line box. It
+  // should become min-height plus centring, and then this entry can go.
+  ".issue-catalog-card summary": "44px",
+};
+
+test("every line-height is a leading token or a written exception", () => {
+  const bad = styles()
+    .filter((d) => d.property === "line-height")
+    .filter((d) => !/^var\(--leading-(none|tight|snug|normal|relaxed)\)$/.test(d.value))
+    .filter((d) => LEADING_EXCEPTIONS[d.selector] !== d.value)
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
 });

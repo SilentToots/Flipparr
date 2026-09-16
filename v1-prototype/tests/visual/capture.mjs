@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { states, backendStates } from "./states.mjs";
+import { applyStubs } from "./stubs.mjs";
 
 const APP = process.env.VISUAL_APP_ORIGIN || "http://localhost:4173";
 const BACKEND = process.env.VISUAL_BACKEND_ORIGIN || "http://127.0.0.1:8795";
@@ -120,6 +121,8 @@ const SWEEP = `(() => {
 
 async function capture(page, state, origin, dir, suffix) {
   const url = origin + state.path;
+  await page.unrouteAll();
+  await applyStubs(page, state.stub);
   await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
   if (state.setup) await state.setup(page);
   await page.waitForTimeout(500);
