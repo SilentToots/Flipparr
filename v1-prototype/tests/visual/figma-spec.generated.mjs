@@ -1115,8 +1115,8 @@ export const icons = [
   {
     "node": "69:837",
     "name": "heroicons-solid/magnifying-glass",
-    "size": 20,
-    "where": ".page-header-search-button svg",
+    "size": null,
+    "where": ".page-header-search > svg",
     "route": "/library @375"
   },
   {

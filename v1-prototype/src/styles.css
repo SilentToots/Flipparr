@@ -440,7 +440,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header--search-page .page-header-search { width: 440px; }
 .page-header--search-page .page-header-search:focus-within { width: 520px; }
 .page-header-actions { grid-area: actions; display: flex; align-items: center; gap: var(--space-8); }
-.page-header .page-header-search-button, .page-header .library-phone-view { display: none; }
+.page-header .library-phone-view { display: none; }
 .page-header-tools { grid-area: tools; min-width: 0; margin-top: var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
 .page-header-tools > .library-tools { flex: 1 1 auto; min-width: 0; }
 
@@ -498,10 +498,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     column-gap: var(--space-8);
     margin-bottom: var(--space-8); padding-bottom: var(--space-8);
   }
-  .page-header--search-global .page-header-search, .page-header--search-desktop .page-header-search { display: none; }
+  .page-header--search-desktop .page-header-search { display: none; }
   .page-header--search-page .page-header-search, .page-header--search-page .page-header-search:focus-within { width: 100%; margin-top: var(--space-12); }
   .page-header .glass-field input { font-size: var(--text-input); }
-  .page-header .page-header-search-button, .page-header .library-phone-view { display: inline-flex; }
+  .page-header .library-phone-view { display: inline-flex; }
   .page-header-actions { gap: var(--space-6); }
   .page-header-tools.library-tools-row { display: none; }
 }
@@ -2305,27 +2305,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .comic-drawer-follow { margin: calc(var(--space-24) * -1) calc(var(--space-16) * -1) 0; padding: var(--space-12) var(--space-16); }
 }
 
-/* The phone's search flyout: Discover's search field across the top of a
-   full-screen panel over Comics, with the library's matches under it. */
-.library-search-flyout { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; background: var(--bg); animation: library-search-in var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
-@keyframes library-search-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
-.library-search-flyout-bar { display: flex; align-items: center; gap: var(--space-8); padding: calc(var(--space-10) + env(safe-area-inset-top)) var(--space-12) var(--space-10); border-bottom: 2px solid var(--color-violet-700); background: var(--color-neutral-950); }
-.library-search-flyout-bar .discover-search { flex: 1 1 auto; width: auto; min-height: 44px; box-sizing: border-box; }
-.library-search-flyout-bar .discover-search:focus-within { border-color: var(--violet-text); }
-/* 16px, or iOS zooms the page when the field takes focus. */
-.library-search-flyout-bar .discover-search input { font-size: var(--text-input); text-align: left; -webkit-appearance: none; appearance: none; }
-.library-search-flyout-bar .discover-search input::-webkit-search-cancel-button { display: none; }
-.library-search-flyout-bar .discover-search-clear { width: 32px; height: 32px; }
-.library-search-flyout-cancel { flex: none; min-height: 44px; padding: 0 var(--space-4); border: 0; background: transparent; color: var(--violet-text); font-size: var(--text-md); font-weight: var(--weight-bold); cursor: pointer; }
-.library-search-flyout-body { flex: 1 1 auto; min-height: 0; padding: var(--space-20) var(--space-12) calc(var(--space-24) + env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: var(--space-20); }
-.library-search-flyout .discover-results h2 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); }
-.library-search-flyout .library-match-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-16) var(--space-12); margin-top: var(--space-12); }
-.library-search-flyout .library-match { width: auto; min-width: 0; }
-.library-search-flyout .library-match .discover-cover { width: 100%; height: auto; aspect-ratio: 5 / 7; }
-.library-search-flyout-hint { margin: 0; padding: var(--space-32) var(--space-12); color: var(--muted-strong); font-size: var(--text-sm); line-height: var(--leading-relaxed); text-align: center; }
-.library-search-flyout-go { min-height: 48px; padding: 0 var(--space-16); border: 1px solid var(--pull-border); border-radius: var(--radius-8); background: var(--pull-bg); color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-bold); cursor: pointer; }
-.library-search-flyout :is(.library-search-flyout-cancel, .library-search-flyout-go, .discover-search-clear):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-
 /* The phone's View & sort sheet: from the bottom edge, above the tab bar, with
    every row at least 44px. */
 .library-sheet-backdrop { place-items: end stretch; padding: 0; }
@@ -2376,7 +2355,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .discover-text-button { display: inline-block; padding-block: var(--space-10); margin-block: calc(var(--space-10) * -1); }
   .discover-search-clear { position: relative; }
   .discover-search-clear::after { content: ""; position: absolute; inset: -12px; }
-  .library-search-flyout-bar .discover-search-clear::after { inset: -6px; }
   /* Shelf arrows keep the file's 24px circle; a wider gap lets each hit area
      reach 44 without meeting its neighbour's. */
   .shelf-scroll { gap: var(--space-20); }
@@ -2674,9 +2652,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    into its strokes at this size, and the exact figure did no work here, where
    the only question is whether anything is waiting. The button's aria-label
    still carries the count. Deliberately not what node 22:242 draws. */
-.appbar-bell.unread { border-color: var(--bell-unread-border); }
+.appbar-bell.unread { border-width: 2px; border-color: var(--bell-unread-border); }
 .appbar-bell.unread > svg { opacity: 1; }
-.appbar-bell.unread::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; animation: bell-pulse 2.4s var(--motion-ease-standard) infinite; }
+.appbar-bell.unread::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none; animation: bell-pulse 2.4s var(--motion-ease-standard) infinite; }
 @keyframes bell-pulse {
   0% { box-shadow: 0 0 0 0 var(--bell-unread-pulse); }
   70%, 100% { box-shadow: 0 0 0 8px transparent; }
@@ -2748,6 +2726,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm > span { display: flex; gap: var(--space-8); flex: none; }
 /* Failed is the only tab that appears because something is wrong, so its count
    carries the weight rather than the tab reading like the other three. */
+/* A set that must fit (Pull List's): on a phone the tabs share the row and a
+   count is a small raised number after its label, in the label's colour, with
+   no chip and none at all for zero -- labels and chips together ran ~400px on
+   a 296-406px row. On a 320px phone with Failed showing, the labels take the
+   tab bar's 12px. */
+@media (max-width: 640px) {
+  .page-header-tools { container: header-tools / inline-size; }
+  .segmented-tabs--fit { width: 100%; }
+  .segmented-tabs--fit .segmented-tab { flex: 1 1 auto; justify-content: center; gap: var(--space-2); padding-inline: var(--space-6); }
+  .segmented-tabs--fit .segmented-tab b { padding: 0; min-width: 0; background: none; color: inherit; translate: 0 -4px; }
+  .segmented-tabs--fit .segmented-tab.request-tab-failed b { background: none; color: var(--red-text); }
+  .segmented-tabs--fit .segmented-tab b.zero { display: none; }
+  @container header-tools (max-width: 330px) {
+    .segmented-tabs--fit .segmented-tab { padding-inline: var(--space-4); font-size: var(--text-xs); }
+  }
+}
 .segmented-tab.request-tab-failed b { background: var(--badge-red-bg); color: var(--color-neutral-0); }
 .segmented-tab.request-tab-failed.active { color: var(--red-text); }
 /* Arriving from the bell, so the reader can see which of a dozen rows the

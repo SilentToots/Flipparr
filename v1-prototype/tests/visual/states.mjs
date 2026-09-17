@@ -29,7 +29,7 @@ export const states = [
     path: "/library",
     require: [".series-card", ".page-header", ".sidebar"],
     // A phone has no app bar; its header is part of the Comics screen.
-    phoneRequire: [".series-card", ".page-header-search-button", ".sidebar"],
+    phoneRequire: [".series-card", ".page-header-search", ".sidebar"],
   },
   {
     name: "library-list",

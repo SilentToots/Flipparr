@@ -64,6 +64,12 @@ function audit({ page }) {
   near("rail toggle, centre", box(".sidebar-toggle")?.cy, row);
   near("rail mark, centre", box(".sidebar-mark-top")?.cy, row);
   near("rail wordmark, left", box(".sidebar-wordmark")?.l, box(".sidebar .nav-item > svg")?.l);
+  // A tab set that must fit never scrolls.
+  for (const tabs of document.querySelectorAll(".segmented-tabs--fit")) {
+    if (tabs.scrollWidth > tabs.clientWidth + 0.5) issues.push(`tabs overflow: need ${tabs.scrollWidth}px, have ${tabs.clientWidth}px`);
+    const rb = tabs.getBoundingClientRect();
+    if (window.innerWidth <= 640) { near("fitted tabs, left", rb.left, left); near("fitted tabs, right", rb.right, right); }
+  }
   // The phone's tab bar sits on the page's edges.
   if (window.innerWidth <= 640 && !document.querySelector(".tab-bar-collapsed")) {
     near("tab bar, left", box(".sidebar nav")?.l, left);
@@ -98,20 +104,6 @@ for (const width of WIDTHS) {
     }
     await tab.waitForTimeout(600);
     const issues = await tab.evaluate(audit, { page });
-    // The phone's search sheet has a field of its own.
-    if (name === "library" && width <= 640) {
-      await tab.click(".page-header-search-button");
-      await tab.waitForSelector(".library-search-flyout");
-      issues.push(...await tab.evaluate(() => {
-        const field = document.querySelector(".library-search-flyout input");
-        const fs = getComputedStyle(field);
-        const ctx = document.createElement("canvas").getContext("2d");
-        ctx.font = fs.font;
-        const room = field.clientWidth - parseFloat(fs.paddingLeft) - parseFloat(fs.paddingRight);
-        const need = ctx.measureText(field.placeholder).width;
-        return need > room ? [`search sheet placeholder "${field.placeholder}" needs ${Math.ceil(need)}px, has ${Math.floor(room)}px`] : [];
-      }));
-    }
     console.log(`  ${issues.length ? "✗" : "ok"} ${name}@${width}${issues.map((line) => `\n      ${line}`).join("")}`);
     failures += issues.length;
   }

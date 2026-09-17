@@ -114,6 +114,10 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   tall inside a 4px inset, and the glass thumb (`.glass-indicator`) sliding to
   the open one. A row wider than the screen scrolls inside the pill and the
   open tab is scrolled into view. A count rides the tab as a badge.
+  A set that must never scroll (`fit`, Pull List's) shares the row on a phone.
+  There, a count is a small raised number after the label, in the label's
+  colour (red on Failed), and zero shows nothing. On a 320px phone its labels
+  drop to 12px.
 - **Drawer tabs** keep the underline look (16px regular, 44px tall); the run
   drawer's are the same glass on a violet bar. Selecting a tab never changes
   its size or weight.
@@ -129,11 +133,11 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   Its height never changes, so nothing under a scroll jumps. Content under it
   meets a scroll edge: solid to the header's bottom, then a 24px blurred fade.
   The header itself is never a glass panel.
-  - `search="global"`: a field above 640px, a button that opens the search
-    sheet on a phone (Comics).
-  - `search="desktop"`: the field above 640px only (Pull List, Settings).
+  - `search="desktop"`: the app's search, a field above 640px only, which
+    takes a query to Discover (Pull List, Settings).
   - `search="page"`: the page's own field at every width, on a row of its own
-    on a phone (Discover).
+    on a phone. On Comics it filters your comics as you type, and a query with
+    no match offers Discover. On Discover it searches the catalogs.
   - `narrow`: a form page's column (`--page-narrow`, 920px), so the header
     stops where its content does.
   - `leading`: a back button, before the title in the same cell.
