@@ -4329,7 +4329,7 @@ def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = F
 
     `backoff` is for the scheduled sweep, which must not ask the indexer about
     the same unfindable issue every quarter of an hour. A person pressing
-    "Search for missing" means now, and passes it off.
+    "Manual find" means now, and passes it off.
 
     With a request id this covers one newly created request. Without one it
     covers the whole backlog, which is the "search for missing" pass Radarr
@@ -4911,7 +4911,7 @@ def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> Non
     """Look again, on a schedule, for issues no release was found for.
 
     Nothing re-searched. An issue whose search came up empty sat at queued
-    until somebody pressed "Search for missing" by hand -- and a #1 that ships
+    until somebody pressed "Manual find" by hand -- and a #1 that ships
     on Wednesday is often not posted until the weekend, so the common case was
     a comic that would have been found by simply asking again.
 

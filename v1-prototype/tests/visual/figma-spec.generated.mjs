@@ -7,7 +7,7 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 365 nodes
-// accounted for, 84 style assertions, 12 frame assertions, 25 icons.
+// accounted for, 83 style assertions, 12 frame assertions, 25 icons.
 
 export const spec = [
   {
@@ -793,15 +793,6 @@ export const spec = [
     "props": {
       "backgroundColor": "rgb(244, 183, 64)",
       "borderRadius": "100px"
-    },
-    "route": "/library @375"
-  },
-  {
-    "sel": ".sidebar",
-    "node": "69:792",
-    "props": {
-      "paddingRight": "8px",
-      "paddingLeft": "8px"
     },
     "route": "/library @375"
   },

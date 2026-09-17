@@ -410,7 +410,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header--narrow::before { right: -100vw; }
 .main-content { overflow-x: clip; }
 /* Content starts at the header's own spacing, not a margin of its own. */
-.page-header + :is(.release-shelf, .discover-results, .library-sources-panel, .focused-panel, .request-tab-description) { margin-top: 0; }
+.page-header + :is(.release-shelf, .discover-results, .library-sources-panel, .focused-panel, .request-list-bar) { margin-top: 0; }
 .page-header--condensed { translate: 0 calc(var(--page-header-lift) * -1); }
 
 /* A back button, when there is one, sits before the title in the same cell,
@@ -425,13 +425,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   transform-origin: left center;
   transition: scale var(--motion-duration-morph) var(--motion-ease-morph), translate var(--motion-duration-morph) var(--motion-ease-morph);
 }
-.page-header-title p { margin: 0; overflow: hidden; color: var(--muted-strong); font-size: var(--text-xs); line-height: var(--leading-snug); text-overflow: ellipsis; white-space: nowrap; transition: opacity var(--motion-duration-standard) ease; }
-.page-header-title p strong { color: var(--text); font-weight: var(--weight-bold); }
-/* Condensed, the title is the section title's size and sits where the pair
-   was centred; the meta line has done its job. */
+/* Condensed, the title is the section title's size. */
 .page-header--condensed h1 { scale: .75; }
-.page-header--condensed .page-header-title p { opacity: 0; }
-.page-header--condensed .page-header-title:has(p) h1 { translate: 0 var(--space-8); }
 
 .page-header-search { grid-area: search; justify-self: end; width: 280px; max-width: 100%; transition: width var(--motion-duration-standard) var(--motion-ease-standard), border-color var(--motion-duration-fast) ease; }
 .page-header-search:focus-within { width: 400px; }
@@ -503,7 +498,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .page-header .page-header-search-button, .page-header .library-phone-view { display: inline-flex; }
   .page-header-actions { gap: var(--space-6); }
   .page-header-tools.library-tools-row { display: none; }
-  .search-missing-button { padding-inline: var(--space-14); }
 }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: var(--weight-bold); margin-bottom: var(--space-10); }
 /* The four-card stat strip was 98px of chrome to say two numbers. It says
@@ -758,7 +752,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .segmented-tab { position: relative; z-index: 1; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-6); min-height: 36px; padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; cursor: pointer; transition: color var(--motion-duration-fast) ease; }
 .segmented-tab.active { color: var(--text); }
 .segmented-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.request-tab-description { margin: var(--space-12) 0 var(--space-16); color: var(--muted); font-size: var(--text-sm); }
+/* The head of the Wanted list: how much is missing, and the search for it. */
+.request-list-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-12); margin-bottom: var(--space-12); }
+.request-list-bar > span { color: var(--muted); font-size: var(--text-sm); }
+.request-list-bar > span strong { color: var(--text); font-weight: var(--weight-semibold); }
+.request-list-bar .search-missing-button { position: relative; flex: none; min-height: var(--control-height-sm); padding-inline: var(--space-12); }
+/* 32px drawn, 44px to a thumb. */
+.request-list-bar .search-missing-button::after { content: ""; position: absolute; inset: -6px 0; }
+/* The search's question and answer sit between the bar and the list. */
+.request-list-bar ~ :is(.request-search-confirm, .request-search-result) { margin: 0 0 var(--space-12); }
 /* A pull is the Comics list's card (.series-row): cover, title and year,
    publisher, the run's badges and its ownership bar, with the whole row the
    button that opens its issues underneath. */
@@ -970,6 +972,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    hidden, so this one is the scan there. */
 .settings-library-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8); }
 .settings-library-actions .primary-button { margin-top: 0; }
+.settings-library-folders > header p.settings-library-size { margin-top: var(--space-4); color: var(--muted); font-size: var(--text-sm); }
+.settings-library-folders > header p.settings-library-size strong { color: var(--text); font-weight: var(--weight-semibold); }
 .settings-library-folders > header p.settings-last-scan { margin-top: var(--space-4); color: var(--muted-weak); font-size: var(--text-sm); }
 .settings-library-folders .scan-progress, .settings-library-folders .success-banner { position: relative; overflow: hidden; margin: var(--space-16) 0 0; }
 /* Scan automatically, and how often. */
@@ -2017,15 +2021,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* 69:792: the tab bar floats -- a clear strip holding a violet pill over a
      blur, solid where the browser cannot blur. Sign out is in Settings. The
      strip is 8px above and below the pill, not the file's 12px. */
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: auto; box-sizing: border-box; padding: var(--space-8) var(--space-8) calc(var(--space-8) + env(safe-area-inset-bottom)); border: 0; background: transparent; overflow: visible; pointer-events: none; }
+  .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: auto; box-sizing: border-box; padding: var(--space-8) var(--page-inset) calc(var(--space-8) + env(safe-area-inset-bottom)); border: 0; background: transparent; overflow: visible; pointer-events: none; }
   .sidebar-session { display: none; }
-  /* A pill narrower than the screen, centred, rather than a bar the width of
-     it: the four tabs sit together where a thumb is, and the screen shows
-     through either side. The tabs share its 360px equally, so each is wider
-     than it is tall -- the glass on the open one is a capsule, not a circle --
-     and the labels sit about 20px apart. The glass is inset 8px on every side;
-     the bottom padding is a pixel short to leave room for the 1px border. */
-  .sidebar nav { box-sizing: border-box; width: 100%; max-width: min(100%, 360px); margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-8) var(--space-8) calc(var(--space-8) - 1px); border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
+  /* A pill on the page's own edges, so it lines up with the cards above it
+     at every phone width. It was 360px and centred, which on a 390-430px
+     iPhone left it narrower than the content. The tabs share its width, so
+     each is wider than it is tall -- the glass on the open one is a capsule,
+     not a circle. The glass is inset 8px on every side; the bottom padding is
+     a pixel short to leave room for the 1px border. */
+  .sidebar nav { box-sizing: border-box; width: 100%; max-width: 100%; margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-8) var(--space-8) calc(var(--space-8) - 1px); border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .sidebar nav { background: var(--mobile-nav-bg); -webkit-backdrop-filter: blur(var(--mobile-nav-blur)); backdrop-filter: blur(var(--mobile-nav-blur)); }
   }
@@ -2055,7 +2059,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      rather than vanish. The glass's iOS curve was tried here first; it does
      most of its travel in the first fifth, so the bar was a circle within
      about 50ms and the other tabs read as removed, not folded away. */
-  .sidebar nav { max-width: min(100%, 360px); transition: max-width var(--motion-duration-morph) var(--motion-ease-morph), padding var(--motion-duration-morph) var(--motion-ease-morph), gap var(--motion-duration-morph) var(--motion-ease-morph), translate var(--motion-duration-morph) var(--motion-ease-morph); }
+  .sidebar nav { max-width: 100%; transition: max-width var(--motion-duration-morph) var(--motion-ease-morph), padding var(--motion-duration-morph) var(--motion-ease-morph), gap var(--motion-duration-morph) var(--motion-ease-morph), translate var(--motion-duration-morph) var(--motion-ease-morph); }
   /* A length rather than a percentage, so collapsing still has something to
      animate from now that the bar is only as wide as its tabs. */
   .sidebar .nav-item { max-width: 120px; overflow: hidden; transition: max-width var(--motion-duration-morph) var(--motion-ease-morph), min-width var(--motion-duration-morph) var(--motion-ease-morph), padding var(--motion-duration-morph) var(--motion-ease-morph), opacity var(--motion-duration-standard) ease; }

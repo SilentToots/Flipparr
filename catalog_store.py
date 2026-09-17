@@ -5707,7 +5707,7 @@ class CatalogStore:
         """Jobs with nothing sent to the download client yet.
 
         `backoff` holds back issues searched recently, for the scheduled sweep.
-        A person pressing "Search for missing" means now, so that path leaves
+        A person pressing "Manual find" means now, so that path leaves
         it off.
 
         A job qualifies when nothing it has downloaded is still standing and

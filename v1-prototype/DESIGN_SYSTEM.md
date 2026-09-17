@@ -119,11 +119,13 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   its size or weight.
 - **Page headers** (`PageHeader`) are every page's top, at every width
   (since 2026-09-17; the violet app bar is gone). The page's name is a 24px
-  bold `h1`, with an optional 12px meta line under it. On the right: search,
+  bold `h1`, alone: nothing sits under a title, so every page's reads the
+  same (the library's size is in the rail's foot and Settings › Library
+  folders). On the right: search,
   the page's actions, one primary action and the bell, all glass controls.
   Under them, an optional tools row (tabs, or view and sort). The header is
-  sticky. Once the page moves it *condenses*: the title scales to 18px, the
-  meta line fades, and on a desktop the header rises into its top padding.
+  sticky. Once the page moves it *condenses*: the title scales to 18px and,
+  on a desktop, the header rises into its top padding.
   Its height never changes, so nothing under a scroll jumps. Content under it
   meets a scroll edge: solid to the header's bottom, then a 24px blurred fade.
   The header itself is never a glass panel.
@@ -153,9 +155,9 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   spinners or keyframes.
 - **Empty states** use `.empty-state`: an icon, a heading and a centred,
   padded message.
-- **The phone tab bar** is a 360px pill whose four tabs share its width —
+- **The phone tab bar** is a pill on the page's edges (the 12px gutter) whose four tabs share its width —
   24px icons, 12px labels, 56px-tall tabs — so the glass on the open one is a
-  capsule. It is inset 8px on every side, in an 8px strip. Scrolling tucks it
+  capsule. The glass is inset 8px on every side; the strip is 8px tall above and below. Scrolling tucks it
   into a 64px circle at the left gutter, on `--motion-duration-morph` and
   `--motion-ease-morph`: an even curve, long enough that the other tabs are
   seen folding away.

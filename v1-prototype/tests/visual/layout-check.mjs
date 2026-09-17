@@ -1,6 +1,8 @@
 // Alignment and fit, measured rather than eyeballed, on every page at five
 // widths. Fails on anything off by more than half a pixel:
 //
+//   - the phone's tab bar sits on the page's edges;
+//
 //   - the page header's title and actions sit on the content's edges, and its
 //     tools row starts on the left one;
 //   - the first and last content blocks sit on the same edges (a form page's
@@ -19,11 +21,11 @@
 import { chromium } from "playwright";
 
 const APP = process.env.VISUAL_APP_ORIGIN || "http://localhost:4173";
-const WIDTHS = [320, 375, 768, 1024, 1440];
+const WIDTHS = [320, 375, 390, 430, 768, 1024, 1440];
 const PAGES = {
   library: { path: "/library", ready: ".series-card", first: ".series-grid > :first-child, .series-table", last: ".series-grid, .series-table" },
   discover: { path: "/discover", ready: ".release-shelf", first: ".release-shelf", last: ".release-shelf" },
-  pull: { path: "/pull-list", ready: ".request-card, .request-empty", first: ".request-card, .request-empty", last: ".request-card, .request-empty", also: [".request-tab-description"] },
+  pull: { path: "/pull-list", ready: ".request-card, .request-empty", first: ".request-card, .request-empty", last: ".request-card, .request-empty", also: [".request-list-bar"], alsoRight: [".request-list-bar"] },
   settings: { path: "/settings", ready: ".segmented-tabs", first: ".settings-layout > *", last: ".settings-layout > *" },
   import: { path: "/import", ready: ".focused-panel", first: ".library-sources-panel, .focused-panel", last: ".focused-panel" },
 };
@@ -53,6 +55,7 @@ function audit({ page }) {
   near("content, left", box(page.first)?.l, left);
   near("content, right", box(page.last)?.r, right);
   for (const sel of page.also || []) near(`${sel}, left`, box(sel)?.l, left);
+  for (const sel of page.alsoRight || []) near(`${sel}, right`, box(sel)?.r, right);
 
   const row = box(".page-header-title")?.cy;
   near("bell, centre", box(".page-header .appbar-bell")?.cy, row);
@@ -61,6 +64,11 @@ function audit({ page }) {
   near("rail toggle, centre", box(".sidebar-toggle")?.cy, row);
   near("rail mark, centre", box(".sidebar-mark-top")?.cy, row);
   near("rail wordmark, left", box(".sidebar-wordmark")?.l, box(".sidebar .nav-item > svg")?.l);
+  // The phone's tab bar sits on the page's edges.
+  if (window.innerWidth <= 640 && !document.querySelector(".tab-bar-collapsed")) {
+    near("tab bar, left", box(".sidebar nav")?.l, left);
+    near("tab bar, right", box(".sidebar nav")?.r, right);
+  }
   if (window.innerWidth > 900) near("rail toggle, right", box(".sidebar-toggle")?.r, box(".sidebar .nav-item")?.r);
 
   const ctx = document.createElement("canvas").getContext("2d");

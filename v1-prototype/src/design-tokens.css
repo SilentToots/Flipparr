@@ -177,10 +177,9 @@
   --scroll-edge-blur: 12px;
   /* The page's side inset, which the header's scroll edge bleeds across. */
   --page-inset: 32px;
-  /* The header's first row: a 24px title over a 12px meta line, whether or
-     not a page has the meta line, so every title sits on the same centre --
-     and the rail's head sits on it too. */
-  --page-header-row: calc(var(--text-2xl) * var(--leading-tight) + var(--text-xs) * var(--leading-snug));
+  /* The header's first row: the height of its controls, so every title sits
+     on the same centre -- and the rail's head sits on it too. */
+  --page-header-row: var(--control-height-md);
   /* A form page's column: Settings' sections and Import library. Its header
      stops where its content does. */
   --page-narrow: 920px;
