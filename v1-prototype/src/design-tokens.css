@@ -129,20 +129,6 @@
   --badge-text: rgb(255 255 255 / .8);
   /* The nav marker's fill, the same construction at half the strength. */
   --nav-active-bg: rgb(109 40 217 / .2);
-  /* The app bar and the field inside it. The bar is --violet; the pill is the
-     one colour in the design file that is still a raw hex rather than a named
-     variable, so expect this name to change when it enters the palette. */
-  --appbar-bg: var(--violet);
-  --appbar-search-bg: #641ba3;
-  /* What the bar actually paints: the violet at 85%, over a blur of whatever
-     scrolls beneath it. --appbar-bg stays solid for the few things drawn to
-     match the bar, and for browsers that cannot blur. */
-  --appbar-bg-translucent: rgb(126 34 206 / .85);
-  --appbar-blur: 16px;
-  /* The search field over it: a dark wash rather than a second violet, so it
-     reads as a well in the bar and the blur still shows through. */
-  --appbar-search-bg-translucent: rgb(0 0 0 / .3);
-  --appbar-search-bg-hover: rgb(0 0 0 / .38);
   /* The unread count beside the bell. Its own rung because it is the one red
      that sits under white text rather than on a dark tint. */
   --badge-alert-bg: var(--color-red-700);
@@ -153,10 +139,9 @@
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
   --mobile-nav-height: 88px;
-  /* The desktop frame: the app bar's height, and the rail beside the page at
-     full width and collapsed. Each is used by more than one rule -- the rail
-     and the page's margin -- so it is named once. */
-  --appbar-height: 58px;
+  /* The desktop frame: the rail beside the page at full width and collapsed.
+     Each is used by more than one rule -- the rail and the page's margin -- so
+     it is named once. */
   --sidebar-width: 228px;
   --sidebar-width-collapsed: 76px;
   /* The active tab's glass (node 69:793). Figma's Glass effect does not
@@ -170,6 +155,38 @@
   --nav-glass-splay: 1px;
   --nav-glass-depth: 10px;
   --nav-glass-frost: 4px;
+
+  /* Liquid Glass, for the navigation layer only: page-header controls, the
+     search field, the tab bars. Never on cards or rows, and never glass on
+     glass. A tinted blur with a hairline, a top rim of light and a soft
+     shadow; where the browser cannot blur, the solid fill is used instead. */
+  --glass-bg: color-mix(in srgb, var(--color-ios-gray6) 62%, transparent);
+  --glass-bg-hover: color-mix(in srgb, var(--color-ios-gray5) 72%, transparent);
+  --glass-bg-pressed: color-mix(in srgb, var(--color-ios-gray4) 78%, transparent);
+  --glass-solid: var(--color-ios-gray5);
+  --glass-border: rgb(255 255 255 / .1);
+  --glass-rim: inset 0 1px 0 rgb(255 255 255 / .14), inset 0 -1px 0 rgb(255 255 255 / .03);
+  --glass-shadow: 0 6px 20px rgb(0 0 0 / .35);
+  --glass-blur: blur(20px) saturate(180%);
+  --glass-primary-bg: color-mix(in srgb, var(--violet) 86%, transparent);
+  --glass-primary-bg-hover: color-mix(in srgb, var(--color-purple-600) 90%, transparent);
+  --glass-primary-border: rgb(255 255 255 / .18);
+  /* The page header's scroll edge: content fades and blurs under the header
+     once the page has moved, the way iOS 26 dissolves content under its bars
+     instead of drawing a divider. */
+  --scroll-edge-blur: 12px;
+  /* The page's side inset, which the header's scroll edge bleeds across. */
+  --page-inset: 32px;
+  /* The header's first row: a 24px title over a 12px meta line, whether or
+     not a page has the meta line, so every title sits on the same centre --
+     and the rail's head sits on it too. */
+  --page-header-row: calc(var(--text-2xl) * var(--leading-tight) + var(--text-xs) * var(--leading-snug));
+  /* A form page's column: Settings' sections and Import library. Its header
+     stops where its content does. */
+  --page-narrow: 920px;
+  /* The header's top padding, and how far it rises once condensed. */
+  --page-header-pad: 20px;
+  --page-header-lift: 12px;
 
   /* The text step below --muted, for secondary copy. At least 4.5:1 on a
      card, a raised panel and every tint; not on a hover fill (gray 4). */
@@ -348,6 +365,10 @@
   --motion-ease-morph: cubic-bezier(.45, 0, .15, 1);
   --motion-duration-loader: 880ms;
   --motion-ease-standard: cubic-bezier(.2, .8, .2, 1);
+  /* A press: quick in, and a small overshoot back out. The spring is written
+     with linear() (a bounce of about 0.15); older browsers keep the curve. */
+  --motion-duration-press: 260ms;
+  --motion-ease-spring: cubic-bezier(.34, 1.3, .64, 1);
 
   /* Loading-indicator component tokens */
   --loader-size-xs: 14px;
@@ -365,6 +386,28 @@
 @media (max-width: 640px) {
   :root {
     --control-height-md: 44px;
+    --page-inset: 12px;
+    --page-header-pad: 8px;
+    --page-header-lift: 0px;
+  }
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --motion-ease-spring: linear(0, .009, .035 2.1%, .141 4.4%, .723 12.9%, .938 16.7%, 1.017 19.4%, 1.067, 1.089 24.5%, 1.088 26.7%, 1.049 31.8%, 1.013 36.9%, .997 42%, .994 47%, 1.001 63.6%, 1);
+  }
+}
+
+/* Where transparency is unwanted or contrast is raised, glass is solid. The
+   first query is Chromium's only; Safari has no equivalent yet. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --glass-bg: var(--glass-solid);
+    --glass-bg-hover: var(--color-ios-gray4);
+    --glass-bg-pressed: var(--color-ios-gray3);
+    --glass-primary-bg: var(--violet);
+    --glass-blur: none;
+    --scroll-edge-blur: 0px;
   }
 }
 
@@ -374,6 +417,7 @@
     --motion-duration-standard: 1ms;
     --motion-duration-exit: 1ms;
     --motion-duration-morph: 1ms;
+    --motion-duration-press: 1ms;
     --motion-duration-loader: 1600ms;
   }
 }

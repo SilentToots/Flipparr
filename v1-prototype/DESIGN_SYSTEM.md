@@ -117,10 +117,34 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
 - **Drawer tabs** keep the underline look (16px regular, 44px tall); the run
   drawer's are the same glass on a violet bar. Selecting a tab never changes
   its size or weight.
-- **Page headers** (`PageHeader`): above 640px only the page's actions show,
-  since the rail and the app bar say where you are. On a phone every page gets
-  the Comics row -- its name at 20px, its actions as compact buttons, and the
-  bell -- 8px from the top, in the 12px gutter every phone page shares.
+- **Page headers** (`PageHeader`) are every page's top, at every width
+  (since 2026-09-17; the violet app bar is gone). The page's name is a 24px
+  bold `h1`, with an optional 12px meta line under it. On the right: search,
+  the page's actions, one primary action and the bell, all glass controls.
+  Under them, an optional tools row (tabs, or view and sort). The header is
+  sticky. Once the page moves it *condenses*: the title scales to 18px, the
+  meta line fades, and on a desktop the header rises into its top padding.
+  Its height never changes, so nothing under a scroll jumps. Content under it
+  meets a scroll edge: solid to the header's bottom, then a 24px blurred fade.
+  The header itself is never a glass panel.
+  - `search="global"`: a field above 640px, a button that opens the search
+    sheet on a phone (Comics).
+  - `search="desktop"`: the field above 640px only (Pull List, Settings).
+  - `search="page"`: the page's own field at every width, on a row of its own
+    on a phone (Discover).
+  - `narrow`: a form page's column (`--page-narrow`, 920px), so the header
+    stops where its content does.
+  - `leading`: a back button, before the title in the same cell.
+  - Every first row shares one centre line (`--page-header-row`), and so does
+    the rail's head. Content starts at the header's own spacing, never with a
+    top margin of its own.
+- **The rail's head** holds the wordmark and the fold control on the page
+  title's centre line. The wordmark starts where the nav icons do, and the
+  control ends where the items do. Folded, it shows the control alone; on a
+  tablet, the mark.
+- **Fields never truncate.** A placeholder is written to fit the narrowest
+  field it appears in; if it doesn't fit, reword it. `npm run layout:check`
+  measures every one.
 - **Lists of runs** use the Comics list card: a cover, the title and year,
   the publisher, the badges and the ownership bar. The Pull List's rows are
   that card, and the whole row opens its issues.
@@ -135,6 +159,24 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   into a 64px circle at the left gutter, on `--motion-duration-morph` and
   `--motion-ease-morph`: an even curve, long enough that the other tabs are
   seen folding away.
+
+## Glass and motion
+
+Liquid Glass is for the navigation layer only: page-header controls, the
+search field, the tab bars and the drawer tabs. Never cards, rows or covers,
+and never glass on glass. `.glass-button` (a capsule, or a circle with
+`--icon`), `.glass-button--primary` (one per page) and `.glass-field` use the
+`--glass-*` tokens: a tinted blur, a hairline, a rim of light along the top,
+and a soft shadow. Where the browser cannot blur, the fill is solid. Under
+`prefers-contrast: more` and `prefers-reduced-transparency` (Chromium) the
+glass turns solid.
+
+Motion tokens:
+- `--motion-duration-morph` and `--motion-ease-morph`: one shape becoming
+  another (the tab bar tucking away, the header condensing).
+- `--motion-duration-press` and `--motion-ease-spring`: a press. The spring is
+  a `linear()` curve, with a `cubic-bezier` fallback.
+- Reduced motion collapses every duration.
 
 ## Breakpoints
 
@@ -166,7 +208,9 @@ still asserted. Then `npm run figma:generate`.
 2. `npm run lint` and `npm run build`.
 3. `npm run figma:check` against a running app (`FLIPPARR_UI_ORIGIN`). It
    needs a real library behind the app, so it runs locally rather than in CI.
-4. `npm run visual:capture -- --out baseline` before the change and
+4. `npm run layout:check` against a running app (`VISUAL_APP_ORIGIN`): header,
+   content and rail edges at five widths, and every placeholder's fit.
+5. `npm run visual:capture -- --out baseline` before the change and
    `--out current` after, then `npm run visual:compare`. It fails when
    contrast gets worse or the layout moves; read its list of changed
    properties, which should contain only what you meant to change. Point it

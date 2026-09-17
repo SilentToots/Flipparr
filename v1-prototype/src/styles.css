@@ -24,11 +24,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .app-shell { min-height: 100vh; background: var(--bg); }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; width: var(--sidebar-width); background: var(--sidebar); border-right: 1px solid var(--line); padding: var(--space-16); display: flex; flex-direction: column; gap: var(--space-8); }
-/* The mark alone, the way Plex sits its logo above the nav: the name is on the
-   sign-in screen and in the tab, and repeating it over a list of the app's own
-   sections earned no room. It also survives the collapse to the icon rail,
-   which the wordmark had to be squeezed into. */
-.brand { display: flex; gap: var(--space-12); align-items: center; min-height: 42px; padding: 0 var(--space-10) var(--space-20); color: var(--color-violet-400); }
+/* The rail's head: the control that folds it, where the app bar's used to be.
+   Its row is the page header's first row, so the two line up. */
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); height: var(--page-header-row); margin: calc(var(--page-header-pad) - var(--space-16)) 0 var(--space-12); padding-left: var(--space-8); }
+.sidebar-wordmark { display: flex; color: var(--text); }
+.sidebar-mark-top { display: none; color: var(--text); }
+.sidebar-toggle { display: grid; place-items: center; width: var(--control-height-md); height: var(--control-height-md); padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted-strong); cursor: pointer; transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease; }
+@media (hover: hover) { .sidebar-toggle:hover { background: var(--surface-raised); color: var(--text); } }
+/* Folded, the control sits in the middle of the rail; on a tablet the rail is
+   always folded, so there is nothing for it to do and only its row stays. */
+.app-shell.nav-collapsed .sidebar-top { justify-content: center; padding-left: 0; }
+.app-shell.nav-collapsed .sidebar-wordmark { display: none; }
+@media (max-width: 900px) {
+  .sidebar-top { justify-content: center; padding-left: 0; }
+  .sidebar-wordmark, .sidebar-toggle { display: none; }
+  .sidebar-mark-top { display: flex; }
+}
 .sidebar nav { display: grid; gap: var(--space-8); }
 /* The design gives the marker only to the active item -- an inactive one has
    no left border at all -- so its content sits 4px further in when selected.
@@ -51,7 +62,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar-counts { display: flex; align-items: center; gap: var(--space-2); color: var(--color-neutral-0); font-size: var(--text-sm); white-space: nowrap; }
 .sidebar-counts strong { font-weight: var(--weight-bold); }
 .sidebar-counts i { color: var(--muted-weak); font-style: normal; font-size: var(--text-md); }
-.sidebar-mark { display: block; flex: none; color: var(--color-neutral-0); }
 /* The quick scan beside the counts: quiet until wanted, turning while any
    scan runs. Its duration is the loader's, which slows under reduced motion. */
 .sidebar-scan { display: grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-4); background: transparent; color: var(--chrome-label); cursor: pointer; transition: color var(--motion-duration-fast) ease, background var(--motion-duration-fast) ease, transform var(--motion-duration-fast) ease; }
@@ -70,25 +80,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .storage-track { height: 8px; background: var(--status-muted-bg); border-radius: var(--radius-6); overflow: hidden; margin-top: var(--space-4); }
 .storage-track i { display: block; height: 100%; width: 40%; background: var(--green); border-radius: inherit; }
 
-.main-content { min-height: 100vh; margin-left: var(--sidebar-width); padding: var(--space-28) var(--space-32) var(--space-10); max-width: 1540px; }
-.topbar { display: grid; grid-template-columns: minmax(280px, 520px); gap: var(--space-16); align-items: center; justify-content: start; min-height: 44px; }
-.search-field { height: 44px; min-width: 0; border: 1px solid var(--line); background: var(--bg); border-radius: var(--radius-4); display: flex; align-items: center; gap: var(--space-10); padding: 0 var(--space-12); color: var(--muted-weak); }
-.search-field:focus-within { border-color: var(--violet-border); box-shadow: 0 0 0 3px var(--violet-soft); }
-.search-field input { width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font-size: var(--text-md); }
-.search-field input::placeholder { color: var(--muted-weak); }
-/* Submit sits beside the field, not inside it, and is icon-only. Sized to the
-   field height so the pair reads as one control group. */
-.search-row { display: flex; align-items: stretch; gap: var(--space-8); min-width: 0; }
-.search-row .search-field { flex: 1 1 auto; }
-/* align-self: stretch rather than a fixed height, so the button always matches
-   the field whatever height the field takes at a given breakpoint. It carries
-   the accent because it is the action in this pair: against the field it read
-   at 1.19:1, which is barely a separation at all. */
-.search-submit { flex: 0 0 auto; width: 48px; min-height: var(--control-height-md); align-self: stretch; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-8); background: var(--violet); color: var(--color-neutral-0); cursor: pointer; transition: background var(--motion-duration-fast) ease, transform var(--motion-duration-fast) ease; }
-@media (hover: hover) { .search-submit:hover:not(:disabled) { background: var(--color-violet-500); } }
-.search-submit:active:not(:disabled) { transform: translateY(1px); }
-.search-submit:disabled { background: var(--status-muted-bg); color: var(--muted-weak); cursor: default; }
-.library-search { position: relative; min-width: 0; width: 100%; z-index: 30; }
+.main-content { min-height: 100vh; margin-left: var(--sidebar-width); padding: 0 var(--page-inset) var(--space-32); }
 .discovery-results { position: absolute; top: 51px; left: 0; width: min(690px, calc(100vw - 310px)); max-height: min(620px, calc(100vh - 105px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface); box-shadow: 0 22px 60px var(--shadow-strong); }
 .discovery-results > header { min-height: 59px; padding: var(--space-12) var(--space-14); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
 .discovery-results > header div, .discovery-copy { min-width: 0; display: grid; gap: var(--space-4); }
@@ -107,20 +99,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    Every value here is measured from the file rather than matched by eye.
    --------------------------------------------------------------------------- */
 
-/* The hero: one panel, two sizes. On the landing it carries the invitation and
-   the field; in search it holds the query alone, so it collapses to the height
-   of the field and the results start higher. */
-.discover-hero { background: var(--surface); border: 2px solid var(--color-violet-700); border-radius: var(--radius-8); padding: var(--space-80); display: flex; flex-direction: column; align-items: center; gap: var(--space-20); }
-.discover-hero.searching { padding: var(--space-12) var(--space-80); }
-.discover-hero h2 { margin: 0; width: 100%; font-size: var(--text-xl); font-weight: var(--weight-semibold); line-height: var(--leading-tight); color: var(--color-neutral-0); text-align: center; }
 .discover-search { width: 600px; max-width: 100%; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-8) var(--space-12) var(--space-8) var(--space-8); border: 1px solid var(--color-neutral-500); border-radius: var(--radius-pill); background: var(--color-black); }
-.discover-hero.searching .discover-search { background: var(--color-neutral-500); }
 .discover-search > svg { flex: none; margin: var(--space-4); }
 .discover-search input { flex: 1; min-width: 0; padding: var(--space-4); border: 0; background: transparent; color: var(--color-neutral-0); font: inherit; font-size: var(--text-sm); text-align: center; }
 .discover-search input:focus, .discover-search input:not(:placeholder-shown) { text-align: left; }
 .discover-search input:focus { outline: none; }
 .discover-search input::placeholder { color: var(--placeholder-on-color); }
-.discover-hero.searching .discover-search input { text-align: left; font-weight: var(--weight-bold); }
 .discover-search-clear { flex: none; padding: 0; border: 0; background: transparent; color: var(--color-neutral-0); display: grid; place-items: center; cursor: pointer; }
 
 /* A shelf and a results block are the same container: the file gives both the
@@ -325,8 +309,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .run-status.complete { background: var(--badge-muted-bg); }
 
 @media (max-width: 900px) {
-  .discover-hero { padding: var(--space-32) var(--space-20); }
-  .discover-hero.searching { padding: var(--space-12) var(--space-20); }
 }
 
 .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button { border: 0; border-radius: var(--radius-8); min-height: var(--control-height-md); padding: 0 var(--space-16); display: inline-flex; justify-content: center; align-items: center; gap: var(--space-8); font-weight: var(--weight-semibold); font-size: var(--text-sm); cursor: pointer; transition: transform var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard); }
@@ -389,17 +371,141 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   50%, 100% { opacity: var(--loader-muted-opacity); }
 }
 
-.dashboard-header { padding: var(--space-20); border-bottom: 2px solid var(--surface); display: flex; flex-direction: column; justify-content: center; }
-.dashboard-header > .library-tools { padding: 0; }
-.dashboard-body { padding: var(--space-32); }
-.page-header { padding: var(--space-20) 0; display: flex; justify-content: flex-end; align-items: center; gap: var(--space-12); }
-/* Above 640px the rail and the app bar say where you are and hold the bell,
-   so the page's header is its toolbar alone, and a page without actions has
-   none. The phone header below shows all three. */
-.page-header.page-header-bare, .page-header .phone-header-title, .page-header .phone-header-bell { display: none; }
-.page-header p { margin: 0; color: var(--muted); font-size: var(--text-md); }
+/* --- Page header (PageHeader) -----------------------------------------------
+   Every page's top, at every width: the name on the left; search, the page's
+   actions, its one primary action and the bell on the right; tools (tabs, view
+   and sort) on a row beneath. It sticks. Once the page moves it condenses --
+   the title shrinks, the meta line fades, and on a desktop the header rises
+   into its own top padding -- without changing its height, so nothing under a
+   scroll jumps. The content passing beneath dissolves into a blurred edge
+   rather than meeting a panel: the header is never glass itself, so the glass
+   controls on it are never glass on glass. */
+.page-header-sentinel { display: block; height: 1px; margin-bottom: -1px; }
+.page-header {
+  position: sticky; top: 0; z-index: 30;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+  grid-template-areas: "heading search actions" "tools tools tools";
+  align-items: center; column-gap: var(--space-12);
+  margin: 0 0 var(--space-12);
+  padding: calc(var(--page-header-pad) + env(safe-area-inset-top)) 0 var(--space-12);
+  transition: translate var(--motion-duration-morph) var(--motion-ease-morph);
+}
+.page-header::before {
+  content: ""; position: absolute; z-index: -1; pointer-events: none;
+  inset: 0 calc(var(--page-inset) * -1) calc(var(--space-24) * -1);
+  /* Solid to the header's own edge, so nothing ghosts behind the title or the
+     tools; the blur and the fade live in the 24px strip below it. */
+  background: linear-gradient(to bottom, var(--bg) calc(100% - var(--space-24)), transparent);
+  -webkit-backdrop-filter: blur(var(--scroll-edge-blur));
+  backdrop-filter: blur(var(--scroll-edge-blur));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
+  opacity: 0;
+  transition: opacity var(--motion-duration-standard) ease;
+}
+.page-header--condensed::before { opacity: 1; }
+/* A form page's header stops with its column; its scroll edge still runs to
+   the window's edge (the main column clips the overflow). */
+.page-header--narrow { max-width: var(--page-narrow); }
+.page-header--narrow::before { right: -100vw; }
+.main-content { overflow-x: clip; }
+/* Content starts at the header's own spacing, not a margin of its own. */
+.page-header + :is(.release-shelf, .discover-results, .library-sources-panel, .focused-panel, .request-tab-description) { margin-top: 0; }
+.page-header--condensed { translate: 0 calc(var(--page-header-lift) * -1); }
+
+/* A back button, when there is one, sits before the title in the same cell,
+   so a page without one has no empty column and its title starts on the
+   content's edge. */
+.page-header-heading { grid-area: heading; min-width: 0; display: flex; align-items: center; gap: var(--space-12); }
+.page-header-title { flex: 1 1 auto; min-width: 0; min-height: var(--page-header-row); display: grid; align-content: center; }
+.page-header h1 {
+  margin: 0; overflow: hidden; color: var(--color-neutral-0);
+  font-size: var(--text-2xl); font-weight: var(--weight-bold); line-height: var(--leading-tight);
+  text-overflow: ellipsis; white-space: nowrap;
+  transform-origin: left center;
+  transition: scale var(--motion-duration-morph) var(--motion-ease-morph), translate var(--motion-duration-morph) var(--motion-ease-morph);
+}
+.page-header-title p { margin: 0; overflow: hidden; color: var(--muted-strong); font-size: var(--text-xs); line-height: var(--leading-snug); text-overflow: ellipsis; white-space: nowrap; transition: opacity var(--motion-duration-standard) ease; }
+.page-header-title p strong { color: var(--text); font-weight: var(--weight-bold); }
+/* Condensed, the title is the section title's size and sits where the pair
+   was centred; the meta line has done its job. */
+.page-header--condensed h1 { scale: .75; }
+.page-header--condensed .page-header-title p { opacity: 0; }
+.page-header--condensed .page-header-title:has(p) h1 { translate: 0 var(--space-8); }
+
+.page-header-search { grid-area: search; justify-self: end; width: 280px; max-width: 100%; transition: width var(--motion-duration-standard) var(--motion-ease-standard), border-color var(--motion-duration-fast) ease; }
+.page-header-search:focus-within { width: 400px; }
+/* Discover's search is the page, so it leads at full size. */
+.page-header--search-page .page-header-search { width: 440px; }
+.page-header--search-page .page-header-search:focus-within { width: 520px; }
+.page-header-actions { grid-area: actions; display: flex; align-items: center; gap: var(--space-8); }
+.page-header .page-header-search-button, .page-header .library-phone-view { display: none; }
+.page-header-tools { grid-area: tools; min-width: 0; margin-top: var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
+.page-header-tools > .library-tools { flex: 1 1 auto; min-width: 0; }
+
+/* --- Glass controls ------------------------------------------------------------
+   The navigation layer's material (see the --glass-* tokens): a tinted blur, a
+   hairline, a rim of light along the top and a soft shadow. Solid where the
+   browser cannot blur. Buttons are capsules, or circles when they hold only an
+   icon; one per page may be the violet primary. */
+.glass-button, .glass-field { border: 1px solid var(--glass-border); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-button, .glass-field { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+}
+.glass-button {
+  position: relative; flex: none; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-6);
+  min-width: var(--control-height-md); height: var(--control-height-md); padding: 0 var(--space-16);
+  border-radius: var(--radius-pill); color: var(--text);
+  font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease, scale var(--motion-duration-press) var(--motion-ease-spring);
+}
+.glass-button--icon { width: var(--control-height-md); padding: 0; }
+@media (hover: hover) { .glass-button:not(:disabled):hover { background: var(--glass-bg-hover); } }
+.glass-button:not(:disabled):active { scale: .92; background: var(--glass-bg-pressed); }
+.glass-button[aria-expanded="true"] { color: var(--violet-text); }
+.glass-button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
+.glass-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.glass-button--primary { border-color: var(--glass-primary-border); background: var(--glass-primary-bg); color: var(--color-neutral-0); }
+@media (hover: hover) { .glass-button--primary:not(:disabled):hover { background: var(--glass-primary-bg-hover); } }
+.glass-button--primary:not(:disabled):active { background: var(--button-primary-bg-pressed); }
+@media (prefers-reduced-motion: reduce) { .glass-button:not(:disabled):active { scale: none; } }
+
+.glass-field { box-sizing: border-box; display: flex; align-items: center; gap: var(--space-8); height: var(--control-height-md); padding: 0 var(--space-6) 0 var(--space-14); border-radius: var(--radius-pill); color: var(--muted); }
+.glass-field:focus-within { border-color: var(--violet-border); color: var(--text); outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.glass-field > svg { flex: none; }
+.glass-field input { flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: var(--text-sm); }
+.glass-field input:focus-visible { outline: 0; }
+.glass-field input::placeholder { color: var(--muted-weak); }
+.glass-field input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.glass-field-clear { flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
+@media (hover: hover) { .glass-field-clear:hover { color: var(--text); } }
+
+@media (max-width: 900px) {
+  .page-header-search { width: 200px; }
+  .page-header-search:focus-within { width: 280px; }
+  .page-header--search-page .page-header-search, .page-header--search-page .page-header-search:focus-within { width: 320px; }
+}
+
+/* A phone: the name and at most three controls in the first row; a page's
+   own search takes a row of its own, and the tools the row after that. */
+@media (max-width: 640px) {
+  .page-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "heading actions" "search search" "tools tools";
+    column-gap: var(--space-8);
+    margin-bottom: var(--space-8); padding-bottom: var(--space-8);
+  }
+  .page-header--search-global .page-header-search, .page-header--search-desktop .page-header-search { display: none; }
+  .page-header--search-page .page-header-search, .page-header--search-page .page-header-search:focus-within { width: 100%; margin-top: var(--space-12); }
+  .page-header .glass-field input { font-size: var(--text-input); }
+  .page-header .page-header-search-button, .page-header .library-phone-view { display: inline-flex; }
+  .page-header-actions { gap: var(--space-6); }
+  .page-header-tools.library-tools-row { display: none; }
+  .search-missing-button { padding-inline: var(--space-14); }
+}
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: var(--weight-bold); margin-bottom: var(--space-10); }
-.page-actions { display: flex; gap: var(--space-8); }
 /* The four-card stat strip was 98px of chrome to say two numbers. It says
    them here instead, on the line the eye already visits for the page title. */
 /* The design writes the counts as one 16px line -- bold number, regular
@@ -584,9 +690,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .empty-state > span, .empty-state > p { width: 100%; max-width: 520px; margin: 0; padding-inline: var(--space-24); box-sizing: border-box; text-align: center; line-height: var(--leading-normal); }
 .empty-state .primary-button { margin-top: var(--space-10); }
 
-.focused-panel { max-width: 760px; margin-top: var(--space-16); margin-inline: auto; padding: var(--space-32); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface); }
-.discover-panel .search-field { width: min(620px, 100%); }
-.library-sources-panel { max-width: 920px; margin-top: var(--space-16); border: 1px solid var(--violet-border); border-radius: var(--radius-16); background: var(--surface); overflow: hidden; }
+.focused-panel { max-width: var(--page-narrow); margin-top: var(--space-16); padding: var(--space-32); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface); }
+.library-sources-panel { max-width: var(--page-narrow); margin-top: var(--space-16); border: 1px solid var(--violet-border); border-radius: var(--radius-16); background: var(--surface); overflow: hidden; }
 .library-sources-panel > header { padding: var(--space-20) var(--space-24); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-28); align-items: center; }
 .library-sources-panel h2 { margin: var(--space-4) 0 var(--space-6); font-size: var(--text-md); }
 .library-sources-panel p { margin: 0; color: var(--muted-strong); font-size: var(--text-sm); }
@@ -613,6 +718,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .form-field input { min-height: 44px; width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius-4); padding: 0 var(--space-12); }
 .path-input { display: grid; grid-template-columns: 1fr auto; gap: var(--space-8); }
 .path-input button, .file-problem button { border: 1px solid var(--line-strong); background: var(--status-muted-bg); color: var(--text); border-radius: var(--radius-8); padding: 0 var(--space-14); cursor: pointer; }
+/* A folder path is the whole point of its field; on a phone the picker goes
+   under it rather than leaving the path 73px at 320. */
+@media (max-width: 640px) {
+  .path-input { grid-template-columns: minmax(0, 1fr); }
+  .path-input button { min-height: 44px; justify-self: start; }
+}
 .check-row { margin: var(--space-20) 0; display: flex; gap: var(--space-12); align-items: flex-start; }
 .check-row input { margin-top: var(--space-4); accent-color: var(--violet); }
 .check-row > span, .safety-note > span { display: grid; gap: var(--space-4); }
@@ -842,7 +953,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 
 
-.settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); max-width: 900px; }
+.settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); max-width: var(--page-narrow); }
 /* Library health is a list beside a detail pane; 900px squeezed the detail. */
 .settings-layout-wide { max-width: none; }
 /* minmax(0, 1fr) rather than the implicit auto column: grid items default to
@@ -1528,11 +1639,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (max-width: 900px) {
   .sidebar { width: var(--sidebar-width-collapsed); padding-inline: var(--space-10); }
-  .brand { justify-content: center; padding-inline: 0; }
   .nav-item span, .nav-item b, .sidebar-footer { display: none; }
   .nav-item { grid-template-columns: 1fr; place-items: center; padding: var(--space-12) 0; }
-  .main-content { margin-left: var(--sidebar-width-collapsed); padding: var(--space-24); }
-  .topbar { grid-template-columns: 1fr; }
+  .main-content { margin-left: var(--sidebar-width-collapsed); }
   .series-table-head { display: none; }
   .library-loading-table header { display: none; }
   .library-loading-table article { grid-template-columns: 78px minmax(182px, 1fr) 150px; padding: var(--space-12) 0; }
@@ -1551,10 +1660,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 @media (max-width: 640px) {
-  .brand, .sidebar-footer { display: none; }
+  .sidebar-footer, .sidebar-top { display: none; }
 
-  .main-content { margin-left: 0; padding: var(--space-8) var(--space-12) calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
-  .topbar { grid-template-columns: 1fr; }
+  .main-content { margin-left: 0; padding: 0 var(--page-inset) calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
   .library-sources-panel > header { grid-template-columns: 1fr; }
   .library-scan-action { justify-items: start; }
   .library-source { grid-template-columns: auto minmax(0, 1fr); }
@@ -1596,7 +1704,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .series-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
   .metadata-layout { grid-template-columns: 1fr; }
   .metadata-layout { height: auto; min-height: 0; overflow: visible; }
-  .mobile-inbox-nav { position: sticky; top: 0; z-index: 6; min-height: 58px; padding: var(--space-8); border-bottom: 1px solid var(--line); background: var(--surface); display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; gap: var(--space-6); }
+  .mobile-inbox-nav { position: sticky; top: var(--page-header-height, 0px); z-index: 6; min-height: 58px; padding: var(--space-8); border-bottom: 1px solid var(--line); background: var(--surface); display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; gap: var(--space-6); }
   .mobile-inbox-nav > button { min-width: 0; min-height: 40px; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface-soft); color: var(--muted-strong); display: grid; place-items: center; cursor: pointer; }
   .mobile-inbox-nav > button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
   .mobile-inbox-nav > .mobile-inbox-browser { padding: var(--space-4) var(--space-8); display: flex; justify-content: center; gap: var(--space-8); text-align: left; }
@@ -1799,7 +1907,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      so raise them at touch sizes. Fixing it here rather than with
      maximum-scale on the viewport, which would also block pinch zoom. */
   input, select, textarea { font-size: var(--text-input); }
-  .search-field input { font-size: var(--text-input); }
   /* ...and the fields that set their own size, which beat the rule above on
      specificity and so kept zooming. Discover's search was the one that showed:
      tapping it zoomed the page, and iOS stays zoomed -- so the page was wider
@@ -1824,9 +1931,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Touch targets. Apple's guideline is 44px; several controls sat at 16-30px,
      which is fine to click and awkward to tap. Raised where it does not disturb
      the layout, rather than blanket-applied. */
-  .search-field { min-height: 48px; }
-  .search-field input { min-height: 44px; }
-  .search-field button, .search-field .ui-button { min-height: 44px; }
   /* The two view icons were 34x40 inside a 46px shell. Dropping the shell's
      padding and squaring the buttons to 44 keeps the shell the same height it
      already was, so the row does not grow. */
@@ -1855,56 +1959,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    sizes, the mobile card, and a floating tab bar. figma-check.mjs measures
    them at 375x812.
    --------------------------------------------------------------------------- */
-.library-phone-header { display: none; }
-.phone-header-title h1 { margin: 0; }
 /* The desktop rail marks its item with its own fill and bar. */
 .nav-glass { display: none; }
 
 @media (max-width: 640px) {
-  /* One inset for the whole screen (69:807), where the page, the header block
-     and the body used to stack 16, 20 and 32. The bottom clears the tab bar,
-     which floats over the grid rather than ending it. */
-  .main-content.main-content-flush { padding: 0 var(--space-12) calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
-  .main-content-flush .dashboard-header { padding: var(--space-8) 0 0; border-bottom: 0; gap: var(--space-4); }
-  /* The header's buttons are 44px and the cards beneath them are tappable, so
-     8px between the two put two different targets within a thumb's width of
-     each other. */
-  .main-content-flush .dashboard-body { padding: 0; margin-top: var(--space-20); }
-
-  /* One row for the whole top of the screen (chosen 2026-09-15, replacing the
-     file's count strip, 24px icon row and toolbar -- 69:744 needs updating to
-     match): the title with the library's size under it, then search, View &
-     sort and the bell as real 44px buttons, so no target is smaller than
-     Apple's minimum and none share a tap area. */
-  .phone-header { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
-  /* Every page's top row sits where the Comics one does, 8px down. */
-  .page-header.phone-header { padding: 0; margin-bottom: var(--space-16); justify-content: flex-start; }
-  .page-header.page-header-bare, .page-header .phone-header-bell { display: flex; }
-  .page-header .phone-header-title { display: grid; }
-  .phone-header-bell { flex: none; }
-  .phone-header-title { flex: 1 1 0; min-width: 0; display: grid; gap: 1px; }
-  .phone-header h1 { margin: 0; overflow: hidden; color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: var(--weight-semibold); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
-  .library-phone-title small { overflow: hidden; color: var(--muted-strong); font-size: var(--text-xs); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
-  .library-phone-title small strong { color: var(--color-neutral-0); font-weight: var(--weight-bold); }
-  .library-phone-action, .phone-header .appbar-bell { position: relative; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; transition: background var(--motion-duration-fast) ease; }
-  .library-phone-action:active, .phone-header .appbar-bell:active { background: var(--wash-active); }
-  @media (hover: hover) { .library-phone-action:hover, .phone-header .appbar-bell:hover { background: var(--wash-hover); } }
-  .library-phone-action:focus-visible, .phone-header .appbar-bell:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-  .library-phone-action[aria-expanded="true"] { background: var(--wash-active); color: var(--violet-text); }
-  .phone-header .appbar-action::after { display: none; }
-  .phone-header .appbar-bell > svg { opacity: .6; }
-  .phone-header .appbar-badge { top: 9px; right: 9px; box-shadow: 0 0 0 2px var(--bg); }
   .library-view-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--violet-text); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
-  .phone-header .notifications-menu { width: calc(100vw - 24px); }
-  /* A page's own actions are compact buttons beside its name, not bars
-     under it. */
-  .phone-header .page-actions { flex: none; margin-right: var(--space-2); }
-  .phone-header .page-actions > button { min-height: 36px; padding-inline: var(--space-12); white-space: nowrap; }
-  .phone-header .page-actions > button { position: relative; }
-  .phone-header .page-actions > button::after { content: ""; position: absolute; inset: -4px 0; }
-
-  /* View, sort and the filters are in the View & sort sheet on a phone. */
-  .dashboard-header > .library-tools { display: none; }
+  .page-header .notifications-menu { width: calc(100vw - var(--page-inset) * 2); }
 
   /* Discover's results, two to a row. One card per row made a phone a list of
      posters: a 350px cover, then a scroll to see whether the next result was
@@ -2381,7 +2441,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* Settings section switcher. Settings ran to ~3,600px of scrolling on a phone;
    one section at a time replaces that, in the pages' segmented tabs, which
    scroll sideways where the six do not fit. */
-.settings-switcher { margin: var(--space-16) 0 var(--space-20); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 
@@ -2589,7 +2648,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* The sidebar wordmark stands alone -- it names the app, so a "Comic library"
    line under it was labelling the label. The login screen keeps its subtitle,
    which says what to do rather than what this is. */
-.sidebar .brand { padding-bottom: var(--space-16); }
 
 /* "Get a key" beside the credential help: an account is the one prerequisite
    this screen cannot satisfy for you, so it links out to where you get one. */
@@ -2597,74 +2655,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (hover: hover) { .provider-credential-link:not(:disabled):hover { text-decoration: underline; } }
 .provider-credential-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-4); }
 
-/* --- Desktop app bar ------------------------------------------------------ */
-
-/* A bar above everything, identical on every screen: mark, search, settings,
-   and the control that collapses the nav beside it. A phone keeps the layout it
-   already had -- bottom bar, search inside the page -- so this starts at the
-   first breakpoint above it. */
-.appbar { display: none; }
-
-/* The active marker is a straight edge. As `inset 3px 0` it was clipped by the
-   pill's own radius and bowed at both ends; the pill keeps its rounded corners
-   and the marker no longer borrows them. */
-
-@media (min-width: 641px) {
-  .appbar {
-    position: fixed; inset: 0 0 auto 0; z-index: 40; min-height: 58px;
-    display: flex; justify-content: space-between; gap: var(--space-12);
-    align-items: center; padding: var(--space-8) var(--space-20) var(--space-8) var(--space-24);
-    background: var(--appbar-bg); border-bottom: 1px solid var(--line-strong);
-  }
-  /* Translucent only where the blur behind it is available: 85% violet over
-     unblurred covers is busy, not frosted. */
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .appbar {
-      background: var(--appbar-bg-translucent);
-      -webkit-backdrop-filter: blur(var(--appbar-blur));
-      backdrop-filter: blur(var(--appbar-blur));
-    }
-  }
-}
-
-/* The bar's controls and the bell's menu. Outside the breakpoint because the
-   bell is also mounted in the phone's Comics header; everything else here only
-   exists inside the bar, which a phone does not show. */
-.appbar-menu, .appbar-action {
-  display: grid; place-items: center; padding: 0; position: relative;
-  border: 0; border-radius: var(--radius-8); background: transparent;
-  color: var(--color-neutral-0); cursor: pointer;
-  transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease;
-}
-.appbar-menu { width: 20px; height: 20px; }
-.appbar-action { width: 24px; height: 24px; }
-/* The tap target the file does not draw, kept off the layout so it cannot
-   move the icons the file does place. */
-.appbar-menu::after, .appbar-action::after, .appbar-brand::after {
-  content: ""; position: absolute; inset: -7px; border-radius: var(--radius-8);
-}
-.appbar-notifications { align-items: flex-start; }
-.appbar-menu:hover::after, .appbar-action:hover::after { background: var(--wash-subtle); }
-.appbar-menu:hover, .appbar-action:hover { color: var(--text); }
-.appbar-menu:focus-visible, .appbar-action:focus-visible,
-.appbar-brand:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.appbar-brand {
-  display: grid; place-items: center; width: 21px; height: 20px; padding: 0;
-  border: 0; border-radius: var(--radius-4); background: transparent;
-  color: var(--text); cursor: pointer; position: relative;
-}
-.appbar-brand-group { display: flex; align-items: center; gap: var(--space-20); }
-.appbar-search { flex: 0 1 600px; min-width: 0; }
-.appbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-12); }
-
-/* Needs attention lives behind the bell: in the bar on a desktop, in the
-   Comics header on a phone. */
+/* Needs attention lives behind the bell, in every page's header. */
 .appbar-notifications { position: relative; display: flex; }
-.appbar-action { position: relative; }
-/* Beside the bell rather than over it, which is what the file draws and
-   what stops the count hiding the icon it belongs to. The button grows to
-   40px when there is a count and is 24px when there is not. */
-.appbar-bell { position: relative; width: 24px; height: 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
+.appbar-bell > svg { opacity: .8; }
+.appbar-bell.active { color: var(--violet-text); }
 /* A dot, not a count. The number never read as a circle at this size -- one
    digit made a squat pill and two made a wide one -- and the exact figure was
    doing no work in the bar, where the only question is whether anything is
@@ -2673,9 +2667,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    in node-map.json as such. */
 /* Clear of the icon, not on it: sitting in the bell's top-right corner the
    white dot ran into the white strokes of the bell itself and the two read
-   as one shape. Lifted out past the corner, with a ring of the bar's own
+   as one shape. Lifted out past the corner, with a ring of the page's own
    colour so the separation survives the pulse expanding back over it. */
-.appbar-badge { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--color-neutral-0); box-shadow: 0 0 0 2px var(--appbar-bg); pointer-events: none; }
+.appbar-badge { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--color-neutral-0); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
 /* The pulse is a second circle expanding out of the first and fading, rather
    than the dot itself changing size -- a dot that grows and shrinks reads as
    a glitch at 8px. */
@@ -2707,21 +2701,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notifications-empty { margin: 0; padding: var(--space-14) var(--space-8) var(--space-16); color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-8); }
 .notifications-empty svg { color: var(--green); }
 
-@media (min-width: 641px) {
-  /* Both columns start below the bar. */
-  .sidebar { top: var(--appbar-height); }
-  /* The content area is the file's Frame 33: flush against the rail, with its
-     own blocks carrying the 20px and 32px insets. */
-  .main-content { padding: var(--space-20) var(--space-32); max-width: none; }
-  /* Frame 33 has no padding of its own: the Comics dashboard's header block
-     and body carry the design's 20px and 32px themselves. */
-  .main-content-flush { padding: 0; }
-  .app-shell { padding-top: var(--appbar-height); }
-  /* Search lives in the bar now, so the copy of it inside the page is the
-     phone's alone. */
-  .topbar { display: none; }
-}
-
 /* Collapsing is only meaningful where the nav is not already an icon rail.
    The page's margin for the full rail lives here too: in the 641px-and-up
    block it outranked the tablet rail's, so between 641 and 900px the page
@@ -2742,40 +2721,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar, .main-content { transition: none; }
-}
-
-/* The bar's own field: a pill with the magnifier inside it as a label, and
-   Enter to submit. The page's search keeps its button, where searching is the
-   reason you are on the screen; in a bar that is always present, a permanent
-   accent button competes with whatever you are actually doing. */
-@media (min-width: 641px) {
-  .appbar .search-field {
-    height: 41px; min-height: 41px; box-sizing: border-box; gap: var(--space-4); padding: var(--space-8) var(--space-12) var(--space-8) var(--space-8);
-    border-radius: var(--radius-pill); border: 0;
-    background: var(--appbar-search-bg); color: var(--color-neutral-0);
-  }
-  .appbar .search-field:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .appbar .search-field > svg { flex: none; color: var(--color-neutral-0); }
-  .appbar .search-field input { padding: var(--space-4) 0; font-size: var(--text-sm); white-space: nowrap; }
-  .appbar .search-field input::placeholder { color: var(--placeholder-on-color); font-size: var(--text-sm); white-space: nowrap; }
-  /* Over the frosted bar, a darker see-through well; where the bar stays
-     solid, so does the field. */
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .appbar .search-field {
-      background: var(--appbar-search-bg-translucent);
-      transition: background var(--motion-duration-fast) var(--motion-ease-standard);
-    }
-    @media (hover: hover) {
-      .appbar .search-field:hover { background: var(--appbar-search-bg-hover); }
-    }
-  }
-}
-
-/* Settings is in the rail at every size, under Pull List, and carries
-   Library health; the bar no longer repeats it. `.active` here is the bell's
-   open state. */
-@media (min-width: 641px) {
-  .appbar-action.active { color: var(--violet-text); background: var(--violet-soft); }
 }
 
 /* What the Wanted list's search reports back: how many issues it is working

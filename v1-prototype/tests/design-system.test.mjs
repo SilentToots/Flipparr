@@ -210,3 +210,22 @@ for (const file of ["design-tokens.css", "styles.css"]) {
     assert.deepEqual(bad, []);
   });
 }
+
+// Glass is the navigation layer's material. Content -- cards, rows, covers --
+// stays solid, and glass never sits on glass, so a blur may only appear on
+// the controls and bars named here, each with its reason.
+const GLASS = new Map([
+  [".glass-button, .glass-field", "the page header's controls and search field"],
+  [".glass-indicator", "the sliding thumb in the tab bar, segmented tabs and drawer tabs"],
+  [".sidebar nav", "the phone's floating tab bar"],
+  [".page-header::before", "the header's scroll edge, which blurs content passing under it"],
+  [".comic-drawer-backdrop-button", "the control that floats over the run drawer's artwork"],
+]);
+
+test("backdrop blur is only on the navigation layer", () => {
+  const bad = declarations(read("styles.css"))
+    .filter((d) => /backdrop-filter$/.test(d.property) && d.value !== "none")
+    .filter((d) => !GLASS.has(d.selector.replace(/\s+/g, " ")))
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});

@@ -27,9 +27,9 @@ export const states = [
   {
     name: "library-grid",
     path: "/library",
-    require: [".series-card", ".appbar", ".sidebar"],
+    require: [".series-card", ".page-header", ".sidebar"],
     // A phone has no app bar; its header is part of the Comics screen.
-    phoneRequire: [".series-card", ".library-phone-header", ".sidebar"],
+    phoneRequire: [".series-card", ".page-header-search-button", ".sidebar"],
   },
   {
     name: "library-list",
@@ -61,7 +61,7 @@ export const states = [
     // The phone's bell is a different control in the Comics header.
     phone: false,
     path: "/library",
-    require: [".appbar", ".notifications-menu"],
+    require: [".page-header", ".notifications-menu"],
     async setup(page) {
       await page.waitForSelector(".appbar-notifications button", { timeout: 15000 });
       await page.locator(".appbar-notifications button").first().click();
@@ -95,7 +95,7 @@ export const states = [
   // at all -- from one run to the next, and a shelf that loads in one capture
   // and not the other buries anything a style change did under two thousand
   // elements. They are stubbed, as figma:check stubs them.
-  { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".discover-hero", ".pull-card:not(.pull-card-skeleton)"] },
+  { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings", require: [".settings-layout"] },

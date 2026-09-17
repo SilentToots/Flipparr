@@ -13,6 +13,7 @@
     "dev:uiqa": "SONICBOOM_API_ORIGIN=http://127.0.0.1:8795 vite",
     "visual:capture": "node tests/visual/capture.mjs",
     "visual:compare": "node tests/visual/compare.mjs",
+    "layout:check": "node tests/visual/layout-check.mjs",
     "figma:check": "node tests/visual/figma-check.mjs",
     "figma:generate": "node tests/visual/figma/generate.mjs",
     "lint": "eslint src tests scripts"

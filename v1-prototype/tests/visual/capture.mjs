@@ -96,7 +96,11 @@ const SWEEP = `(() => {
 
     // Own text only — an element whose text lives in a child would otherwise
     // be measured against the wrong colour.
-    const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+    // Visually hidden text (.sr-only: a 1px clipped box, there for screen
+    // readers) cannot fail contrast, and keeps the browser's own button fill.
+    const rect = el.getBoundingClientRect();
+    const visuallyHidden = rect.width <= 1 || rect.height <= 1;
+    const ownText = !visuallyHidden && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
     const fg = parse(cs.color);
     if (ownText && fg && fg.a > 0.5) {
       const size = parseFloat(cs.fontSize) || 16;

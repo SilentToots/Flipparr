@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FlipparrMark, FlipparrWordmark } from "./brand.jsx";
 import {
   ArrowsClockwise,
@@ -157,14 +158,15 @@ function useCollectedEditions() {
   return useContext(CollectedEditionsContext);
 }
 
-// The bell, for the phone's page headers: above 640px it lives in the app bar,
-// but a phone has no app bar, so every page's own header carries it.
-const NotificationsContext = createContext(null);
+// What every page header needs from the app and no page owns: the bell's
+// notifications, and search -- the current query, where a search goes, and the
+// runs the phone's search sheet matches against.
+const HeaderContext = createContext(null);
 
-function PhoneBell() {
-  const bell = useContext(NotificationsContext);
-  if (!bell) return null;
-  return <NotificationsBell notifications={bell.notifications} onOpen={bell.onOpen} onDismiss={bell.onDismiss} />;
+function HeaderBell() {
+  const header = useContext(HeaderContext);
+  if (!header) return null;
+  return <NotificationsBell notifications={header.notifications} onOpen={header.onOpenNotification} onDismiss={header.onDismissNotification} />;
 }
 
 const DIALOG_FOCUSABLE =
@@ -664,7 +666,7 @@ function useCollapsingTabBar(resetKey) {
 // number, on the library skeleton's shimmer.
 const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAlign: "middle" };
 
-function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
+function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary, railCollapsed, onToggleRail }) {
   const [collapsed, setCollapsed] = useCollapsingTabBar(active);
   const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active, collapsed]);
   // A tap on the tucked bar opens it rather than going anywhere, so the
@@ -681,6 +683,18 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   };
   return (
     <aside className={`sidebar${collapsed ? " tab-bar-collapsed" : ""}`}>
+      {/* The rail's head, on the page title's centre line: the wordmark and
+          the control that folds the rail (above 900px, where folding does
+          something); folded, the control alone; on a tablet, the mark. */}
+      <div className="sidebar-top">
+        <span className="sidebar-wordmark"><FlipparrWordmark height={26} /></span>
+        <span className="sidebar-mark-top"><FlipparrMark size={28} decorative /></span>
+        <button
+          type="button" className="sidebar-toggle" onClick={onToggleRail}
+          aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+          aria-expanded={!railCollapsed}
+        ><MenuIcon /></button>
+      </div>
       <nav aria-label="Primary navigation" ref={navRef} onClickCapture={expandInsteadOfNavigating}
         onFocusCapture={(event) => { if (event.target.matches?.(":focus-visible")) setCollapsed(false); }}>
         {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}
@@ -691,12 +705,10 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
           </button>
         ))}
       </nav>
-      {/* Frame 8:284: the library's size sits at the rail's foot now that the
-          page header is gone. The mark beside it is decoration in the file, not
-          a second route home, so it is not a button. */}
+      {/* Frame 8:284: the library's size sits at the rail's foot. The mark
+          the file draws beside it moved to the rail's head with the wordmark. */}
       <div className="sidebar-footer">
         <span className="sidebar-identity">
-          <FlipparrMark size={21} decorative className="sidebar-mark" />
           {/* Until the catalog answers there is no count to show, and a 0 reads
               as an empty library -- so the numbers shimmer and the labels stay,
               which keeps the row from shifting when they arrive. */}
@@ -734,10 +746,6 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   );
 }
 
-// The bar that sits above everything on desktop, unchanged from screen to
-// screen: the mark, one search, and the way into settings. A phone keeps the
-// bottom bar and the search inside the page -- 375px cannot hold this row, and
-// the layout it belongs to is not the one a phone uses.
 // The app's first popover. It borrows useDialog for Escape and the focus
 // trap, and adds the outside-click that a menu needs and a modal gets from
 // its backdrop. It must be mounted and unmounted rather than hidden: the
@@ -793,7 +801,7 @@ function NotificationsBell({ notifications, onOpen, onDismiss }) {
   const items = notifications || [];
   return <div className="appbar-notifications">
     <button
-      type="button" className={`appbar-action appbar-bell ${open ? "active" : ""}`}
+      type="button" className={`glass-button glass-button--icon appbar-bell ${open ? "active" : ""}`}
       onClick={() => setOpen((value) => !value)}
       aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
       aria-expanded={open}
@@ -810,62 +818,116 @@ function NotificationsBell({ notifications, onOpen, onDismiss }) {
   </div>;
 }
 
-function AppBar({ query, collapsed, notifications, onToggleNav, onSearch, onNavigate, onOpenNotification, onDismissNotification }) {
-  const [draft, setDraft] = useState(query || "");
-  // Reloading /search?q=… must not leave the field empty under its own results.
-  useEffect(() => { setDraft(query || ""); }, [query]);
-  return <header className="appbar">
-    <div className="appbar-brand-group">
-      <button
-        type="button" className="appbar-menu" onClick={onToggleNav}
-        aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-        aria-expanded={!collapsed}
-      ><MenuIcon /></button>
-    </div>
-    <div className="appbar-search">
-      <SearchBar
-        embedded value={draft} onChange={setDraft} onSubmit={() => onSearch(draft)}
-        label="Search your library"
-        placeholder="Search your library or add a series…"
-      />
-    </div>
-    <div className="appbar-actions">
-      <NotificationsBell notifications={notifications} onOpen={onOpenNotification} onDismiss={onDismissNotification} />
-    </div>
-  </header>;
-}
-
-function SearchBar({ value, onChange, onSubmit, actionLabel = "Search online", busy = false, placeholder = "Search series, issue, or creator…", label = "Search", embedded = false }) {
-  // Submit sits outside the field and carries the magnifier, so the field no
-  // longer repeats it. actionLabel becomes the button's accessible name, since
-  // an icon-only control has no visible text of its own.
-  //
-  // `embedded` is the app bar's shape instead: the magnifier moves inside the
-  // field as a label rather than a control, and Enter is the only way to
-  // submit. A bar that is always on screen should not carry a button that is
-  // only occasionally the thing you want.
-  const field = <div className="search-field">{embedded ? <SearchIcon /> : null}<input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => {
-    if (event.key === "Enter" && onSubmit) {
-      event.preventDefault();
-      onSubmit();
-    }
-  }} placeholder={placeholder} /></div>;
-  if (!onSubmit || embedded) return field;
-  return <div className="search-row">{field}<button type="button" className="search-submit" aria-label={busy ? "Searching…" : actionLabel} title={actionLabel} disabled={busy || value.trim().length < 2} aria-busy={busy} onClick={onSubmit}>{busy ? <LoadingSpinner size={18} /> : <MagnifyingGlass size={19} />}</button></div>;
-}
-
 const LoadingSpinner = LoadingIndicator;
 
-// Above 640px the design's header is the toolbar and nothing else: the rail
-// and the app bar already say where you are. A phone has neither, so there
-// every page gets the Comics screen's top row -- its name, then its actions
-// and the bell -- and a page with no actions still gets its name.
-function PageHeader({ title, children }) {
-  return <header className={`page-header phone-header${children ? "" : " page-header-bare"}`}>
-    <div className="phone-header-title"><h1>{title}</h1></div>
-    {children ? <div className="page-actions">{children}</div> : null}
-    <span className="phone-header-bell"><PhoneBell /></span>
-  </header>;
+// Every page's top, at every width (chosen 2026-09-17, replacing the violet
+// app bar): the page's name, then search, its actions, one primary action and
+// the bell as glass controls on the right, and an optional row of tools
+// (tabs, view and sort) under them. It sticks to the top; once the page moves
+// it condenses -- the title shrinks, the meta line fades -- and the content
+// passing under it blurs away, the way iOS 26 treats its bars. Its height does
+// not change as it condenses, so the page never jumps under a scroll.
+//
+// search: "global" is a field above 640px and a button that opens the search
+// sheet on a phone; "desktop" is the field above 640px only; "page" is a field
+// at every width, on a row of its own on a phone, for a page whose job is
+// search; "none" leaves it out.
+function PageHeader({ title, meta, leading, actions, primary, search = "desktop", field, tools, toolsClassName = "", narrow = false }) {
+  const sentinelRef = useRef(null);
+  const headerRef = useRef(null);
+  const [condensed, setCondensed] = useState(false);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(([entry]) => setCondensed(!entry.isIntersecting));
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+  // Sticky things further down the page sit under the header, not behind it.
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header || typeof ResizeObserver === "undefined") return undefined;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => root.style.setProperty("--page-header-height", `${header.offsetHeight}px`));
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--page-header-height");
+    };
+  }, []);
+  return <>
+    <span className="page-header-sentinel" ref={sentinelRef} aria-hidden="true" />
+    <header ref={headerRef} className={`page-header page-header--search-${search}${narrow ? " page-header--narrow" : ""}${condensed ? " page-header--condensed" : ""}`}>
+      <div className="page-header-heading">
+        {leading}
+        <div className="page-header-title"><h1>{title}</h1>{meta ? <p>{meta}</p> : null}</div>
+      </div>
+      {search === "none" ? null : <HeaderSearchField field={field} />}
+      <div className="page-header-actions">
+        {search === "global" ? <HeaderSearchButton /> : null}
+        {actions}
+        {primary}
+        <HeaderBell />
+      </div>
+      {tools ? <div className={`page-header-tools ${toolsClassName}`}>{tools}</div> : null}
+    </header>
+  </>;
+}
+
+// The header's search field. Without `field` it keeps its own draft, starts
+// from the app's current query, and Enter takes the search to Discover; a page
+// whose search it is (Discover) passes `field` to own the value instead.
+function HeaderSearchField({ field }) {
+  const header = useContext(HeaderContext);
+  const query = header?.query || "";
+  const [ownDraft, setOwnDraft] = useState(query);
+  useEffect(() => { setOwnDraft(query); }, [query]);
+  const inputRef = useRef(null);
+  const value = field ? field.value : ownDraft;
+  const change = field ? field.onChange : setOwnDraft;
+  function submit() {
+    if (field) field.onSubmit();
+    else header?.onSearch(ownDraft);
+  }
+  function clear() {
+    if (field) field.onClear();
+    else setOwnDraft("");
+    inputRef.current?.focus();
+  }
+  return <form className="glass-field page-header-search" role="search" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+    <SearchIcon />
+    <input
+      ref={inputRef} type="search" enterKeyHint="search" value={value}
+      onChange={(event) => change(event.target.value)}
+      aria-label={field?.label || "Search your library and comic catalogs"}
+      placeholder={field?.placeholder || "Search comics…"}
+    />
+    {value ? <button type="button" className="glass-field-clear" onClick={clear} aria-label="Clear search"><ClearSearchIcon /></button> : null}
+    {/* Implicit submission needs a real submit control to be reliable, and a
+        keyboard user gets something to land on. */}
+    <button type="submit" className="sr-only">Search</button>
+  </form>;
+}
+
+// The phone's search: a glass button that opens the search sheet, which
+// matches the library as you type and hands anything else to Discover.
+function HeaderSearchButton() {
+  const header = useContext(HeaderContext);
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  function close() {
+    setOpen(false);
+    buttonRef.current?.focus();
+  }
+  return <>
+    <button
+      type="button" ref={buttonRef} className="glass-button glass-button--icon page-header-search-button"
+      aria-label="Search" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}
+    ><MobileSearchIcon /></button>
+    {/* Fixed to the screen, so rendered at the document's root: the sticky
+        header it opens from becomes its containing block once it moves. */}
+    {open ? createPortal(<LibrarySearchFlyout series={header?.series || []} onSearch={header?.onSearch} onOpenSeries={header?.onOpenSeries} onClose={close} />, document.body) : null}
+  </>;
 }
 
 function Ownership({ series, compact = false }) {
@@ -1377,7 +1439,7 @@ function LibrarySearchFlyout({ series, onSearch, onOpenSeries, onClose }) {
           ref={inputRef} type="search" enterKeyHint="search" value={draft}
           onChange={(event) => setDraft(event.target.value)}
           aria-label="Search your library and comic catalogs"
-          placeholder="Title, creator or publisher…"
+          placeholder="Search comics…"
         />
         {draft ? <button type="button" className="discover-search-clear" onClick={() => { setDraft(""); inputRef.current?.focus(); }}
           aria-label="Clear search"><ClearSearchIcon /></button> : null}
@@ -1397,16 +1459,8 @@ function LibrarySearchFlyout({ series, onSearch, onOpenSeries, onClose }) {
   </div>;
 }
 
-function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, catalog, backendStatus, logicalSeriesCount }) {
-  // A phone searches in a full-screen flyout from the magnifier in its header;
-  // closing it hands focus back to the magnifier.
-  const [searchOpen, setSearchOpen] = useState(false);
+function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, catalog, backendStatus, logicalSeriesCount }) {
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
-  const searchToggleRef = useRef(null);
-  function closeSearch() {
-    setSearchOpen(false);
-    searchToggleRef.current?.focus();
-  }
   // Covers are the point of a comic library, so the grid leads.
   const [view, setView] = useState("grid");
   const [scope, setScope] = useState("runs");
@@ -1429,37 +1483,25 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
   const sortedFamilies = useMemo(() => sortLibrary(families, sort), [families, sort]);
   return (
     <>
-      <div className="dashboard-header">
-      {/* The phone's whole top in one row: the title with the library's size
-          under it, then search, View & sort and the bell as 44px buttons.
-          Hidden above 640px, where the rail's foot, the app bar and the
-          toolbar carry the same things. */}
-      <div className="phone-header library-phone-header">
-        <div className="phone-header-title library-phone-title">
-          <h1>Comics</h1>
-          <small><strong>{Number(catalog?.stats?.files ?? 0).toLocaleString()}</strong> files · <strong>{Number(logicalSeriesCount ?? 0).toLocaleString()}</strong> series</small>
-        </div>
-        <button
-          type="button" ref={searchToggleRef} className="library-phone-action library-phone-search"
-          aria-label="Search" aria-haspopup="dialog" aria-expanded={searchOpen}
-          onClick={() => setSearchOpen(true)}
-        ><MobileSearchIcon /></button>
-        <button
-          type="button" className="library-phone-action library-phone-view"
+      <PageHeader
+        title="Comics"
+        meta={<><strong>{Number(catalog?.stats?.files ?? 0).toLocaleString()}</strong> files · <strong>{Number(logicalSeriesCount ?? 0).toLocaleString()}</strong> series</>}
+        search="global"
+        actions={<button
+          type="button" className="glass-button glass-button--icon library-phone-view"
           aria-label={viewCustomized ? "View and sort, changed from the default" : "View and sort"}
           aria-haspopup="dialog" aria-expanded={viewSheetOpen} onClick={() => setViewSheetOpen(true)}
-        ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button>
-        <PhoneBell />
-      </div>
+        ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button>}
+        toolsClassName="library-tools-row"
+        tools={<div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>}
+      />
+      {/* View, sort and the filters are a sheet on a phone. */}
       {viewSheetOpen ? <LibraryViewSheet
         view={view} onView={setView} sort={sort} onSort={setSort}
         followingOnly={followingOnly} onFollowingOnly={setFollowingOnly}
         editionsOn={editionsOn} scope={effectiveScope} onScope={setScope}
         onClose={() => setViewSheetOpen(false)}
       /> : null}
-      {searchOpen ? <LibrarySearchFlyout series={series} onSearch={onSearch} onOpenSeries={onOpenSeries} onClose={closeSearch} /> : null}
-      <div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>
-      </div>
       <div className="dashboard-body">
       {initialLoading ? <LibraryLoadingSkeleton /> : null}
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} /> : null}
@@ -1579,22 +1621,18 @@ function DiscoverView({
   const outstanding = progress.filter((item) => item.status === "searching");
 
   return <>
-    <PageHeader title="Discover" />
-    <section className={`discover-hero${searching ? " searching" : ""}`}>
-      {searching ? null : <h2>Pull a new issue or search your library</h2>}
-      <form className="discover-search" onSubmit={(event) => { event.preventDefault(); onSearch(draft); }}>
-        <SearchIcon />
-        <input value={draft} onChange={(event) => setDraft(event.target.value)}
-          aria-label="Search comic catalogs"
-          placeholder="Try a title, creator or publisher, such as Wolverine 2026…" />
-        {searching ? <button type="button" className="discover-search-clear" onClick={onClearSearch}
-          aria-label="Clear search"><ClearSearchIcon /></button> : null}
-        {/* The design draws no submit control. Implicit submission covers the
-            pointer path, but only reliably with a real submit button in the
-            form -- and a keyboard user gets something to land on. */}
-        <button type="submit" className="sr-only">Search</button>
-      </form>
-    </section>
+    <PageHeader
+      title="Discover"
+      search="page"
+      field={{
+        value: draft,
+        onChange: setDraft,
+        onSubmit: () => onSearch(draft),
+        onClear: () => { setDraft(""); if (searching) onClearSearch(); },
+        label: "Search comic catalogs",
+        placeholder: "Title, creator or publisher…",
+      }}
+    />
 
     {searching ? <>
       <section className="discover-results" aria-label="Library matches">
@@ -1999,7 +2037,7 @@ function ImportLibraryView({ onNavigate, onStartInventory, onScanLibrary, onUpda
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   }
-  return <><PageHeader title="Import library"><button className="ghost-button page-back-action" onClick={() => onNavigate("settings")}><ArrowLeft size={18} /> Back to Settings</button></PageHeader>
+  return <><PageHeader title="Import library" narrow leading={<button type="button" className="glass-button glass-button--icon" onClick={() => onNavigate("settings")} aria-label="Back to Settings"><ArrowLeft size={20} /></button>} />
     <ScanProgress scanState={scanState} scanProgress={scanProgress} />
     {catalogPending(catalog, backendStatus) ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." /> : null}
     {roots.length ? <section className="library-sources-panel"><header><div><span className="eyebrow">Library folders</span><h2>Your comic sources</h2><p>Each folder is scanned independently. Removing one from Flipparr never deletes or moves its files.</p></div><div className="library-scan-action"><span>Last library scan</span><strong>{lastScan}</strong><button className={`primary-button ${busy ? "loading" : ""}`} onClick={onScanLibrary} disabled={busy}>{busy ? <LoadingSpinner size={19} /> : <ArrowsClockwise size={19} />}{busy ? "Scanning…" : "Scan all folders"}</button></div></header><div className="library-source-list">{roots.map((root) => <article className="library-source" key={root.id}><span className="library-source-icon"><FolderOpen size={22} weight="duotone" /></span><div className="library-source-copy"><strong>{root.path}</strong><span>{root.recursive ? "Includes subfolders" : "Top-level comics only"} · {rootScanLabel(root.last_scan_at)}</span></div><div className="library-source-actions"><button className="ghost-button" disabled={busy} onClick={() => onStartInventory(root.path, Boolean(root.recursive))}><ArrowsClockwise size={16} /> Scan</button><button className="ghost-button" disabled={busy} onClick={() => { setEditingRoot(editingRoot === root.id ? null : root.id); setRootRecursive(Boolean(root.recursive)); }}><PencilSimple size={16} /> Manage</button></div>{editingRoot === root.id ? <div className="library-source-editor"><label className="check-row"><input type="checkbox" checked={rootRecursive} onChange={(event) => setRootRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Apply this setting on future scans</small></span></label><div><button className="secondary-button" onClick={async () => { await onUpdateRoot(root, rootRecursive); setEditingRoot(null); }}>Save setting</button><button className="danger-button" onClick={() => removeRoot(root)}>Remove from Flipparr</button></div><small>To change the folder path, add the new folder below, then remove this source.</small></div> : null}</article>)}</div></section> : null}
@@ -2099,7 +2137,7 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
   const entries = buckets[tab] ?? [];
   const tabCopy = PULL_LIST_COPY[tab];
   const loading = catalogPending(catalog, backendStatus);
-  return <><PageHeader title="Pull List"><button type="button" className="primary-button search-missing-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}>{searchingMissing ? <LoadingSpinner size={16} /> : <MagnifyingGlass size={16} weight="bold" />} Search for missing</button></PageHeader><SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} /><p className="request-tab-description">{tabCopy.description}</p>{pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
+  return <><PageHeader title="Pull List" primary={<button type="button" className="glass-button glass-button--primary search-missing-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}>{searchingMissing ? <LoadingSpinner size={16} /> : <MagnifyingGlass size={16} weight="bold" />} Search for missing</button>} tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} />} /><p className="request-tab-description">{tabCopy.description}</p>{pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
     ? <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />
     : <RequestRow request={request} tab={tab} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }
@@ -2805,7 +2843,7 @@ function SettingsView({ catalog, backendStatus, onNavigate, onAuthChanged, onSig
   const roots = catalog?.roots || [];
   // A scan started here, from the rail or folders page, or in the background.
   const scanning = scanState === "scanning" || Boolean(catalog?.activeScan);
-  return <><PageHeader title="Settings" /><div className="settings-switcher"><SegmentedTabs label="Settings section" value={section} onChange={onSectionChange} items={SETTINGS_SECTIONS} /></div><div className={`settings-layout${section === "health" ? " settings-layout-wide" : ""}`}>{section === "health" ? <MetadataView {...health} /> : null}{section === "library" ? catalogPending(catalog, backendStatus) ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." /> : <section className="settings-library-folders"><header><div><h2>Library folders</h2><p>{roots.length ? `${roots.length} folder${roots.length === 1 ? "" : "s"} currently scanned for comics.` : "No library folders are configured yet."}</p>{roots.length ? <p className="settings-last-scan">{scanning ? "Scanning now" : catalog?.lastScan?.iso ? `Last scanned ${catalog.lastScan.date} at ${catalog.lastScan.time}` : "Not scanned yet"}</p> : null}</div><div className="settings-library-actions"><button className="secondary-button" onClick={() => onNavigate("import")}><FolderOpen size={18} /> Manage folders</button>{/* The rail's scan button is hidden on a phone; this is the one there. */}{roots.length ? <button className={`primary-button ${scanning ? "loading" : ""}`} onClick={onScanLibrary} disabled={scanning} aria-busy={scanning}>{scanning ? <LoadingSpinner size={18} /> : <ArrowsClockwise size={18} />}{scanning ? "Scanning…" : "Scan library"}</button> : null}</div></header><ScanProgress scanState={scanState} scanProgress={scanProgress} />{roots.length ? <div className="settings-root-list">{roots.map((root) => <span key={root.id}><FolderOpen size={17} /><strong>{root.path}</strong><small>{root.recursive ? "Includes subfolders" : "Top level only"}</small></span>)}</div> : null}{roots.length ? <div className="settings-auto-scan"><Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Checks your library folders in the background, so comics added outside Flipparr appear without a manual scan." />{autoScan ? <label className="form-field settings-language settings-scan-interval"><span>How often</span><select value={autoScanInterval} onChange={(event) => saveAutoScan({ autoScanIntervalMinutes: Number(event.target.value) })} disabled={savingAutoScan}><option value={15}>Every 15 minutes</option><option value={60}>Every hour</option><option value={360}>Every 6 hours</option><option value={1440}>Once a day</option></select></label> : null}</div> : null}</section> : null}{section === "matching" ? <section><h2>Matching and fixes</h2><aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Matches are accepted automatically when the evidence is strong</strong><small>Flipparr scores every match from corroborating and conflicting evidence (filename, embedded metadata, provider agreement). Confident matches are applied without review; anything below that threshold, or with conflicting evidence, waits under Library health for you to confirm or fix.</small></span></aside><Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions (trades, hardcovers, omnibuses)" description="Off by default. Turn on to browse and manage collected editions alongside Issues. Their metadata and file availability are less complete than Issues, and they are never used to fulfill Issue ownership or acquisition." /></section> : null}{section === "security" ? <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} /> : null}{section === "acquisition" ? <section className="metadata-source-settings acquisition-source-settings"><header><div><h2>Acquisition services</h2><p>Connect Prowlarr to find releases and SABnzbd to download the one you choose.</p></div></header><label className="form-field settings-language"><span>Language wanted</span><select value={language} onChange={(event) => changeLanguage(event.target.value)} disabled={savingLanguage}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="ru">Russian</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option><option value="pl">Polish</option><option value="nl">Dutch</option><option value="">No preference</option></select><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></label>{services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}{serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}</section> : null}{section === "metadata" ? <section className="metadata-source-settings"><header><div><h2>Metadata sources</h2><p>Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p></div></header>{providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}<BuiltInSources providers={providers} />{providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}<aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></section> : null}</div>{editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}{editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}</>;
+  return <><PageHeader title="Settings" narrow={section !== "health"} tools={<SegmentedTabs label="Settings section" value={section} onChange={onSectionChange} items={SETTINGS_SECTIONS} />} /><div className={`settings-layout${section === "health" ? " settings-layout-wide" : ""}`}>{section === "health" ? <MetadataView {...health} /> : null}{section === "library" ? catalogPending(catalog, backendStatus) ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." /> : <section className="settings-library-folders"><header><div><h2>Library folders</h2><p>{roots.length ? `${roots.length} folder${roots.length === 1 ? "" : "s"} currently scanned for comics.` : "No library folders are configured yet."}</p>{roots.length ? <p className="settings-last-scan">{scanning ? "Scanning now" : catalog?.lastScan?.iso ? `Last scanned ${catalog.lastScan.date} at ${catalog.lastScan.time}` : "Not scanned yet"}</p> : null}</div><div className="settings-library-actions"><button className="secondary-button" onClick={() => onNavigate("import")}><FolderOpen size={18} /> Manage folders</button>{/* The rail's scan button is hidden on a phone; this is the one there. */}{roots.length ? <button className={`primary-button ${scanning ? "loading" : ""}`} onClick={onScanLibrary} disabled={scanning} aria-busy={scanning}>{scanning ? <LoadingSpinner size={18} /> : <ArrowsClockwise size={18} />}{scanning ? "Scanning…" : "Scan library"}</button> : null}</div></header><ScanProgress scanState={scanState} scanProgress={scanProgress} />{roots.length ? <div className="settings-root-list">{roots.map((root) => <span key={root.id}><FolderOpen size={17} /><strong>{root.path}</strong><small>{root.recursive ? "Includes subfolders" : "Top level only"}</small></span>)}</div> : null}{roots.length ? <div className="settings-auto-scan"><Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Checks your library folders in the background, so comics added outside Flipparr appear without a manual scan." />{autoScan ? <label className="form-field settings-language settings-scan-interval"><span>How often</span><select value={autoScanInterval} onChange={(event) => saveAutoScan({ autoScanIntervalMinutes: Number(event.target.value) })} disabled={savingAutoScan}><option value={15}>Every 15 minutes</option><option value={60}>Every hour</option><option value={360}>Every 6 hours</option><option value={1440}>Once a day</option></select></label> : null}</div> : null}</section> : null}{section === "matching" ? <section><h2>Matching and fixes</h2><aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Matches are accepted automatically when the evidence is strong</strong><small>Flipparr scores every match from corroborating and conflicting evidence (filename, embedded metadata, provider agreement). Confident matches are applied without review; anything below that threshold, or with conflicting evidence, waits under Library health for you to confirm or fix.</small></span></aside><Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions (trades, hardcovers, omnibuses)" description="Off by default. Turn on to browse and manage collected editions alongside Issues. Their metadata and file availability are less complete than Issues, and they are never used to fulfill Issue ownership or acquisition." /></section> : null}{section === "security" ? <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} /> : null}{section === "acquisition" ? <section className="metadata-source-settings acquisition-source-settings"><header><div><h2>Acquisition services</h2><p>Connect Prowlarr to find releases and SABnzbd to download the one you choose.</p></div></header><label className="form-field settings-language"><span>Language wanted</span><select value={language} onChange={(event) => changeLanguage(event.target.value)} disabled={savingLanguage}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="ru">Russian</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option><option value="pl">Polish</option><option value="nl">Dutch</option><option value="">No preference</option></select><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></label>{services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}{serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}</section> : null}{section === "metadata" ? <section className="metadata-source-settings"><header><div><h2>Metadata sources</h2><p>Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p></div></header>{providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}<BuiltInSources providers={providers} />{providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}<aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></section> : null}</div>{editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}{editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}</>;
 }
 
 function SecuritySettings({ onChanged, onSignOut }) {
@@ -4057,7 +4095,6 @@ export function App() {
   const notifications = useMemo(
     () => buildNotifications(catalog, dismissedNotifications, seenUntil),
     [catalog, dismissedNotifications, seenUntil]);
-  const notificationsBell = { notifications, onOpen: openNotification, onDismiss: dismissNotification };
   useEffect(() => {
     if (!catalog || !dismissedNotifications.length) return;
     const pruned = pruneDismissed(catalog, dismissedNotifications);
@@ -4963,7 +5000,12 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [catalog?.enrichment?.active, catalog?.requests, catalog?.replacementRequests, catalog?.activeScan]);
   const visibleSeries = catalog?.series ?? (backendStatus === "offline" ? DEMO_SERIES : []);
-  const logicalSeriesCount = logicalCatalogSeries(catalog, visibleSeries).length;
+  const logicalSeries = useMemo(() => logicalCatalogSeries(catalog, visibleSeries), [catalog, backendStatus]);
+  const logicalSeriesCount = logicalSeries.length;
+  const header = {
+    notifications, onOpenNotification: openNotification, onDismissNotification: dismissNotification,
+    query: searchQuery, onSearch: openSearch, series: logicalSeries, onOpenSeries: openSeries,
+  };
   const navActive = active === "discover" ? "discover" : active === "import" ? "settings" : active;
   useEffect(() => { loadAuthStatus(); }, []);
   if (authStatus && authStatus.method === "forms" && !authStatus.authenticated) {
@@ -4983,5 +5025,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><NotificationsContext.Provider value={notificationsBell}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><AppBar query={searchQuery} collapsed={navCollapsed} notifications={notifications} onToggleNav={toggleNav} onSearch={openSearch} onNavigate={navigate} onOpenNotification={openNotification} onDismissNotification={dismissNotification} /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className={`main-content${active === "library" ? " main-content-flush" : ""}`}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} /> : null}{active === "discover" ? <DiscoverView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></NotificationsContext.Provider></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className={`app-shell${navCollapsed ? " nav-collapsed" : ""}`}><Nav railCollapsed={navCollapsed} onToggleRail={toggleNav} active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} /> : null}{active === "discover" ? <DiscoverView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
 }
