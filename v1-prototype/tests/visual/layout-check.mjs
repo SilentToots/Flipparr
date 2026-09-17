@@ -64,12 +64,6 @@ function audit({ page }) {
   near("rail toggle, centre", box(".sidebar-toggle")?.cy, row);
   near("rail mark, centre", box(".sidebar-mark-top")?.cy, row);
   near("rail wordmark, left", box(".sidebar-wordmark")?.l, box(".sidebar .nav-item > svg")?.l);
-  // A tab set that must fit never scrolls.
-  for (const tabs of document.querySelectorAll(".segmented-tabs--fit")) {
-    if (tabs.scrollWidth > tabs.clientWidth + 0.5) issues.push(`tabs overflow: need ${tabs.scrollWidth}px, have ${tabs.clientWidth}px`);
-    const rb = tabs.getBoundingClientRect();
-    if (window.innerWidth <= 640) { near("fitted tabs, left", rb.left, left); near("fitted tabs, right", rb.right, right); }
-  }
   // The phone's tab bar sits on the page's edges.
   if (window.innerWidth <= 640 && !document.querySelector(".tab-bar-collapsed")) {
     near("tab bar, left", box(".sidebar nav")?.l, left);

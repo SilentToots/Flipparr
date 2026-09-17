@@ -558,9 +558,7 @@ function animateGlassIndicator(glass, from, to) {
 // control: a pill track with a glass thumb that slides to the open tab. The
 // run drawer's tabs are the same glass on its violet bar. A row wider than
 // the screen scrolls sideways, and opening a tab brings it into view.
-// `fit` is for a short set that must never scroll: on a phone its tabs share
-// the row and a count rides the tab's corner instead of widening it.
-function SegmentedTabs({ label, items, value, onChange, fit = false }) {
+function SegmentedTabs({ label, items, value, onChange }) {
   const [trackRef, glass] = useGlassIndicator(".segmented-tab.active", [value, items.map((item) => item.id).join()]);
   useEffect(() => {
     const track = trackRef.current;
@@ -570,7 +568,7 @@ function SegmentedTabs({ label, items, value, onChange, fit = false }) {
     const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     track.scrollTo?.({ left: Math.max(0, left), behavior: still ? "auto" : "smooth" });
   }, [value, trackRef]);
-  return <div className={`segmented-tabs${fit ? " segmented-tabs--fit" : ""}`} role="tablist" aria-label={label} ref={trackRef}>
+  return <div className="segmented-tabs" role="tablist" aria-label={label} ref={trackRef}>
     <span className="glass-indicator" aria-hidden="true" style={glass || { opacity: 0 }} />
     {items.map((item) => <button
       type="button" role="tab" aria-selected={value === item.id}
@@ -2098,7 +2096,7 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
       {searchingMissing ? <LoadingSpinner size={16} /> : null}Manual find
     </button>
   </div> : null;
-  return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" fit value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b className={tabCount(buckets[id]) ? "" : "zero"}>{tabCount(buckets[id])}</b> }))} />} />{wantedBar}{tab === "wanted" && pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
+  return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} />} />{wantedBar}{tab === "wanted" && pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
     ? <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />
     : <RequestRow request={request} tab={tab} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }

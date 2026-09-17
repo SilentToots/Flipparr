@@ -2726,22 +2726,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm > span { display: flex; gap: var(--space-8); flex: none; }
 /* Failed is the only tab that appears because something is wrong, so its count
    carries the weight rather than the tab reading like the other three. */
-/* A set that must fit (Pull List's): on a phone the tabs share the row and a
-   count is a small raised number after its label, in the label's colour, with
-   no chip and none at all for zero -- labels and chips together ran ~400px on
-   a 296-406px row. On a 320px phone with Failed showing, the labels take the
-   tab bar's 12px. */
-@media (max-width: 640px) {
-  .page-header-tools { container: header-tools / inline-size; }
-  .segmented-tabs--fit { width: 100%; }
-  .segmented-tabs--fit .segmented-tab { flex: 1 1 auto; justify-content: center; gap: var(--space-2); padding-inline: var(--space-6); }
-  .segmented-tabs--fit .segmented-tab b { padding: 0; min-width: 0; background: none; color: inherit; translate: 0 -4px; }
-  .segmented-tabs--fit .segmented-tab.request-tab-failed b { background: none; color: var(--red-text); }
-  .segmented-tabs--fit .segmented-tab b.zero { display: none; }
-  @container header-tools (max-width: 330px) {
-    .segmented-tabs--fit .segmented-tab { padding-inline: var(--space-4); font-size: var(--text-xs); }
-  }
-}
 .segmented-tab.request-tab-failed b { background: var(--badge-red-bg); color: var(--color-neutral-0); }
 .segmented-tab.request-tab-failed.active { color: var(--red-text); }
 /* Arriving from the bell, so the reader can see which of a dozen rows the

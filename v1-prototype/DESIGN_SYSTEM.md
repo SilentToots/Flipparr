@@ -114,10 +114,6 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   tall inside a 4px inset, and the glass thumb (`.glass-indicator`) sliding to
   the open one. A row wider than the screen scrolls inside the pill and the
   open tab is scrolled into view. A count rides the tab as a badge.
-  A set that must never scroll (`fit`, Pull List's) shares the row on a phone.
-  There, a count is a small raised number after the label, in the label's
-  colour (red on Failed), and zero shows nothing. On a 320px phone its labels
-  drop to 12px.
 - **Drawer tabs** keep the underline look (16px regular, 44px tall); the run
   drawer's are the same glass on a violet bar. Selecting a tab never changes
   its size or weight.
