@@ -171,6 +171,10 @@
   --glass-primary-bg: color-mix(in srgb, var(--violet) 86%, transparent);
   --glass-primary-bg-hover: color-mix(in srgb, var(--color-purple-600) 90%, transparent);
   --glass-primary-border: rgb(255 255 255 / .18);
+  /* The bell with something waiting: a violet rim on its own circle, and a
+     soft ring breathing out from it. */
+  --bell-unread-border: color-mix(in srgb, var(--violet-text) 55%, transparent);
+  --bell-unread-pulse: color-mix(in srgb, var(--violet-text) 35%, transparent);
   /* The page header's scroll edge: content fades and blurs under the header
      once the page has moved, the way iOS 26 dissolves content under its bars
      instead of drawing a divider. */

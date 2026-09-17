@@ -801,12 +801,11 @@ function NotificationsBell({ notifications, onOpen, onDismiss }) {
   const items = notifications || [];
   return <div className="appbar-notifications">
     <button
-      type="button" className={`glass-button glass-button--icon appbar-bell ${open ? "active" : ""}`}
+      type="button" className={`glass-button glass-button--icon appbar-bell${items.length ? " unread" : ""}${open ? " active" : ""}`}
       onClick={() => setOpen((value) => !value)}
       aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
       aria-expanded={open}
     >
-      {items.length ? <b className="appbar-badge" aria-hidden="true" /> : null}
       <NotificationsIcon />
     </button>
     {open ? <NotificationsMenu
@@ -3248,7 +3247,12 @@ function useShelfPaging(deps = []) {
   }, []);
   function page(direction) {
     const node = scroller.current;
-    if (node) node.scrollBy({ left: direction * node.clientWidth, behavior: "smooth" });
+    if (!node) return;
+    // A row that bleeds to its container's edges pads its ends; a page is
+    // the width between them, so it still lands on a card's edge.
+    const style = getComputedStyle(node);
+    const inner = node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    node.scrollBy({ left: direction * inner, behavior: "smooth" });
   }
   return { scroller, atStart, atEnd, measure, page };
 }
