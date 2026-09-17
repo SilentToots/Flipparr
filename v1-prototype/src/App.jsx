@@ -1675,17 +1675,58 @@ function formatLongDate(iso) {
 
 const PREVIEW_PROVIDER_NAMES = { metron: "Metron", comic_vine: "Comic Vine", gcd: "Grand Comics Database" };
 
+// A drawer's top bar, after Plex's detail page. It stays pinned: at the top
+// it is clear, with the close control as a glass circle over the art; once
+// the title has scrolled under it, it frosts and takes the title, and its
+// controls lose their circles (no glass on glass). While the drawer moves,
+// it also tells the header how far it has gone -- the art darkens and drifts
+// at a slower pace than the page, and stretches when pulled down at the top.
+function DrawerTopBar({ title, onClose, closeLabel, children }) {
+  const barRef = useRef(null);
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    const drawer = barRef.current?.closest(".series-drawer");
+    if (!drawer) return undefined;
+    let frame = 0;
+    function update() {
+      frame = 0;
+      const y = drawer.scrollTop;
+      const hero = drawer.querySelector(".comic-drawer-hero");
+      const heading = drawer.querySelector(".comic-drawer-titles h2");
+      drawer.style.setProperty("--hero-scroll", `${Math.max(0, y)}px`);
+      drawer.style.setProperty("--hero-pull", `${Math.max(0, -y)}px`);
+      drawer.style.setProperty("--hero-progress", String(Math.min(1, Math.max(0, y / (hero?.offsetHeight || 1)))));
+      if (heading && barRef.current) {
+        setPinned(heading.getBoundingClientRect().bottom <= barRef.current.getBoundingClientRect().bottom);
+      }
+    }
+    function onScroll() {
+      if (!frame) frame = requestAnimationFrame(update);
+    }
+    update();
+    drawer.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      drawer.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+  return <div className={`comic-drawer-bar${pinned ? " pinned" : ""}`} ref={barRef}>
+    <button type="button" className="glass-button glass-button--icon comic-drawer-close" onClick={onClose} aria-label={closeLabel}><DrawerCloseIcon size={null} /></button>
+    <span className="comic-drawer-bar-title" aria-hidden="true">{title}</span>
+    <span className="comic-drawer-bar-end">{children}</span>
+  </div>;
+}
+
 // The run drawer's header, for the Discover drawers: the cover as art behind a
 // violet-to-black scrim, the cover itself, the title, a byline and chips. The
 // same classes as the Comics drawer, so the two read as one kind of panel.
 function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, closeLabel, children }) {
-  return <header className="comic-drawer-hero">
+  return <><DrawerTopBar title={title} onClose={onClose} closeLabel={closeLabel} /><header className="comic-drawer-hero">
     {art ? <>
       <img className="comic-drawer-backdrop" src={art} alt="" aria-hidden="true" key={art} />
       <img className="comic-drawer-backdrop blurred" src={art} alt="" aria-hidden="true" key={`${art}-blurred`} />
     </> : null}
     <span className="comic-drawer-scrim" aria-hidden="true" />
-    <button type="button" className="comic-drawer-close" onClick={onClose} aria-label={closeLabel}><DrawerCloseIcon size={null} /></button>
     <div className="comic-drawer-identity">
       <div className="comic-drawer-cover">{cover}</div>
       <div className="comic-drawer-copy">
@@ -1696,7 +1737,7 @@ function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, close
         {children ? <div className="comic-drawer-statuses">{children}</div> : null}
       </div>
     </div>
-  </header>;
+  </header></>;
 }
 
 /**
@@ -3391,11 +3432,12 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   ];
   const alternateTitles = (series.aliases || []).filter((item) => identityKey(item.name) !== identityKey(series.title));
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+    <DrawerTopBar title={series.title} onClose={requestClose} closeLabel="Close series details">
+      {onChangeBackdrop ? <button type="button" className="glass-button glass-button--icon comic-drawer-backdrop-button" onClick={() => onChangeBackdrop(series, shownBackdrop)} aria-label="Choose the header background page" title="Choose background page"><ImageSquare size={20} /></button> : null}
+    </DrawerTopBar>
     <header className="comic-drawer-hero">
       {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={pageArt ? () => setBackdropFailed(true) : undefined} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
       <span className="comic-drawer-scrim" aria-hidden="true" />
-      <button type="button" className="comic-drawer-close" onClick={requestClose} aria-label="Close series details"><DrawerCloseIcon size={null} /></button>
-      {onChangeBackdrop ? <button type="button" className="comic-drawer-backdrop-button" onClick={() => onChangeBackdrop(series, shownBackdrop)} aria-label="Choose the header background page" title="Choose background page"><ImageSquare size={20} /></button> : null}
       {parentCollection ? <button type="button" className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}
       <div className="comic-drawer-identity">
         <div className="comic-drawer-cover">{onChangeSeriesCover ? <button type="button" className="drawer-cover-button" onClick={() => onChangeSeriesCover(series)} aria-label={`Change the cover for ${series.title}`}><SeriesCover series={series} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <SeriesCover series={series} />}</div>

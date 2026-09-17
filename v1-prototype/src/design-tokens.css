@@ -179,6 +179,8 @@
      once the page has moved, the way iOS 26 dissolves content under its bars
      instead of drawing a divider. */
   --scroll-edge-blur: 12px;
+  /* A drawer's pinned top bar (DrawerTopBar). */
+  --drawer-bar-height: 60px;
   /* The page's side inset, which the header's scroll edge bleeds across. */
   --page-inset: 32px;
   /* The header's first row: the height of its controls, so every title sits

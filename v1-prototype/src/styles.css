@@ -2120,8 +2120,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    --------------------------------------------------------------------------- */
 .series-drawer.comic-drawer { width: min(606px, 100%); padding: 0; background: var(--surface); }
 
-.comic-drawer-hero { position: relative; isolation: isolate; min-height: 524px; padding: var(--space-96) var(--space-24) var(--space-24); display: flex; align-items: flex-end; overflow: hidden; }
-.comic-drawer-backdrop { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; object-position: center top; pointer-events: none; }
+.comic-drawer-hero { position: relative; isolation: isolate; min-height: 524px; padding: var(--space-96) var(--space-24) var(--space-24); display: flex; align-items: flex-end; clip-path: inset(calc(var(--hero-pull, 0px) * -1) 0 0 0); }
+/* The art drifts up at under half the page's pace, and when the drawer is
+   pulled down past its top (iOS's rubber band) it grows to fill the gap. The
+   values come from DrawerTopBar as the drawer scrolls. */
+.comic-drawer-backdrop { position: absolute; top: calc(var(--hero-pull, 0px) * -1); left: 0; z-index: -2; width: 100%; height: calc(100% + var(--hero-pull, 0px)); object-fit: cover; object-position: center top; pointer-events: none; translate: 0 calc(var(--hero-scroll, 0px) * .4); }
+/* ...and darkens as the page covers it. */
+.comic-drawer-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--bg); opacity: calc(var(--hero-progress, 0) * .75); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .comic-drawer-backdrop { translate: none; } }
 /* The file's blur is progressive: the art is sharp at the top and fully
    blurred where the scrim turns black. CSS has no progressive backdrop blur,
    so a blurred copy of the cover sits over the sharp one and a gradient mask
@@ -2130,10 +2136,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* The file's Rectangle 1: #4c0bb2 at 40% to black by 81%, the whole layer at
    80%. */
 .comic-drawer-scrim { position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, var(--drawer-scrim-top) 0%, var(--drawer-scrim-bottom) 80.77%); pointer-events: none; }
-.comic-drawer-close { position: absolute; top: 8px; left: 8px; z-index: 2; width: 60px; height: 60px; padding: 0; border: 0; border-radius: var(--radius-8); display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; }
-.comic-drawer-close svg { width: 60px; height: 60px; }
-.comic-drawer-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -4px; }
-@media (hover: hover) { .comic-drawer-close:hover { background: var(--wash-hover); } }
+/* The pinned top bar (DrawerTopBar): it overlays the art rather than pushing
+   it down. Clear at the top of the drawer; frosted, with the title, once the
+   title has scrolled under it. */
+.comic-drawer-bar { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: var(--control-height-md) minmax(0, 1fr) var(--control-height-md); align-items: center; gap: var(--space-8); height: var(--drawer-bar-height); margin-bottom: calc(var(--drawer-bar-height) * -1); padding: 0 var(--space-12); pointer-events: none; }
+.comic-drawer-bar > button, .comic-drawer-bar-end > * { pointer-events: auto; }
+.comic-drawer-bar::before { content: ""; position: absolute; inset: 0; z-index: -1; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); opacity: 0; transition: opacity var(--motion-duration-standard) ease; }
+.comic-drawer-bar.pinned::before { opacity: 1; }
+.comic-drawer-bar-title { min-width: 0; overflow: hidden; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-semibold); line-height: var(--leading-tight); text-align: center; text-overflow: ellipsis; white-space: nowrap; opacity: 0; translate: 0 var(--space-4); transition: opacity var(--motion-duration-standard) ease, translate var(--motion-duration-standard) var(--motion-ease-standard); }
+.comic-drawer-bar.pinned .comic-drawer-bar-title { opacity: 1; translate: none; }
+.comic-drawer-bar-end { display: flex; justify-content: flex-end; }
+.comic-drawer-close svg { width: 24px; height: 24px; }
+/* On the frosted bar the controls drop their own glass. */
+.comic-drawer-bar.pinned .glass-button { border-color: transparent; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+@media (hover: hover) { .comic-drawer-bar.pinned .glass-button:not(:disabled):hover { background: var(--wash-hover); } }
+/* The run's tabs pin under the bar. */
+.series-drawer.comic-drawer > nav.comic-drawer-tabs { position: sticky; top: var(--drawer-bar-height); z-index: 5; }
 .comic-drawer-hero .drawer-back-link { position: absolute; top: 20px; left: 76px; z-index: 2; margin: 0; }
 .comic-drawer-identity { position: relative; width: 100%; display: flex; align-items: flex-end; gap: var(--space-8); }
 .comic-drawer-cover { flex: 0 0 200px; width: 200px; height: 280px; border-radius: var(--radius-8); overflow: hidden; background: var(--surface-soft); }
@@ -2258,9 +2276,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .comic-drawer-backdrop { animation: comic-drawer-art-in var(--motion-duration-standard) ease both; }
 @keyframes comic-drawer-art-in { from { opacity: 0; } to { opacity: 1; } }
 /* Not in the file: the way to choose the header's page. */
-.comic-drawer-backdrop-button { position: absolute; top: 16px; right: 16px; z-index: 2; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--scrim); color: var(--color-neutral-0); cursor: pointer; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transition: background var(--motion-duration-fast) ease; }
-@media (hover: hover) { .comic-drawer-backdrop-button:hover { background: var(--scrim-medium); } }
-.comic-drawer-backdrop-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 .backdrop-workbench { width: min(760px, 100%); }
 .backdrop-workbench h2 { margin: 0 var(--space-48) var(--space-6) 0; }
@@ -2280,9 +2295,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 640px) {
   .series-drawer.comic-drawer { width: 100%; padding: 0 0 env(safe-area-inset-bottom); border-left: 0; }
   .comic-drawer-hero { min-height: 380px; padding: var(--space-64) var(--space-16) var(--space-16); }
-  .comic-drawer-close { top: 4px; left: 4px; width: 48px; height: 48px; }
-  .comic-drawer-close svg { width: 48px; height: 48px; }
-  .comic-drawer-backdrop-button { top: 6px; right: 6px; }
+  .comic-drawer-bar { padding-inline: var(--space-8); }
   .comic-drawer-hero .drawer-back-link { top: 10px; left: 56px; }
   .comic-drawer-identity { gap: var(--space-4); }
   .comic-drawer-cover { flex-basis: 120px; width: 120px; height: 168px; }

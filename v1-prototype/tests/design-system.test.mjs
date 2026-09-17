@@ -219,7 +219,7 @@ const GLASS = new Map([
   [".glass-indicator", "the sliding thumb in the tab bar, segmented tabs and drawer tabs"],
   [".sidebar nav", "the phone's floating tab bar"],
   [".page-header::before", "the header's scroll edge, which blurs content passing under it"],
-  [".comic-drawer-backdrop-button", "the control that floats over the run drawer's artwork"],
+  [".comic-drawer-bar::before", "a drawer's pinned top bar, frosted once the title scrolls under it"],
 ]);
 
 test("backdrop blur is only on the navigation layer", () => {

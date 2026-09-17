@@ -162,10 +162,18 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   `--motion-ease-morph`: an even curve, long enough that the other tabs are
   seen folding away.
 
+- **Drawers** (`DrawerTopBar`) follow Plex's detail page. A pinned top bar
+  holds the close control, and the header-page control on a run. At the top
+  of the drawer the bar is clear and its controls are glass circles over the
+  art. As the drawer scrolls, the art darkens and drifts at 0.4× the page's
+  pace, and it stretches when pulled past the top. Once the title passes
+  under the bar, the bar frosts, shows the title, and its controls drop their
+  circles. A run's tabs pin under the bar.
+
 ## Glass and motion
 
 Liquid Glass is for the navigation layer only: page-header controls, the
-search field, the tab bars and the drawer tabs. Never cards, rows or covers,
+search field, the tab bars, the drawer tabs and a drawer's top bar. Never cards, rows or covers,
 and never glass on glass. `.glass-button` (a capsule, or a circle with
 `--icon`), `.glass-button--primary` (one per page) and `.glass-field` use the
 `--glass-*` tokens: a tinted blur, a hairline, a rim of light along the top,
