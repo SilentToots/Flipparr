@@ -8,6 +8,7 @@ Then open: http://127.0.0.1:8787
 from __future__ import annotations
 
 import argparse
+import atexit
 import concurrent.futures
 import datetime as dt
 import difflib
@@ -114,6 +115,7 @@ _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
 
 _LOG_LOCK = threading.Lock()
 _REQUEST_CONTEXT = threading.local()
+_LOG_CLOSED = False
 
 
 def current_request_id() -> str | None:
@@ -136,8 +138,28 @@ def log_event(event: str, level: str = "info", **fields: Any) -> None:
     # One write under a lock: interleaved partial lines are unparseable, and
     # every worker thread logs to the same stream.
     with _LOG_LOCK:
+        if _LOG_CLOSED:
+            return
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
+
+
+@atexit.register
+def _close_log() -> None:
+    """Stop background workers writing to stdout once the process is exiting.
+
+    Workers are daemon threads, and one still logging while the interpreter
+    finalizes can hold stdout's buffer lock as the runtime flushes it -- a
+    fatal error that turned a passing test run into exit 134 in CI. Taking the
+    log lock here waits out any line in flight; after it, nothing writes.
+    """
+    global _LOG_CLOSED
+    with _LOG_LOCK:
+        _LOG_CLOSED = True
+        try:
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
 
 
 def log_exception(event: str, exc: BaseException, level: str = "error", **fields: Any) -> None:
