@@ -2150,6 +2150,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* On the frosted bar the controls drop their own glass. */
 .comic-drawer-bar.pinned .glass-button { border-color: transparent; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 @media (hover: hover) { .comic-drawer-bar.pinned .glass-button:not(:disabled):hover { background: var(--wash-hover); } }
+/* A drawer toned from its art, after Plex: the art's colour at the header's
+   foot and the top of the page, deepening below it, with the page's bands,
+   tabs and bar in darker or translucent versions of it. The gradient scrolls
+   with the drawer's content. */
+.series-drawer.comic-drawer.toned {
+  background: linear-gradient(180deg, var(--art-tone) 0, var(--art-tone) 440px, var(--art-tone-deep) 1000px) local no-repeat, var(--art-tone-deep);
+  transition: --art-tone var(--motion-duration-exit) ease, --art-tone-deep var(--motion-duration-exit) ease;
+}
+.comic-drawer.toned .comic-drawer-scrim { background: linear-gradient(180deg, color-mix(in srgb, var(--art-tone) 35%, transparent) 0%, var(--art-tone) 92%); }
+.comic-drawer.toned .comic-drawer-hero::before { background: var(--art-tone); }
+.comic-drawer.toned .comic-drawer-tabs.drawer-tabs { background: color-mix(in srgb, var(--art-tone) 70%, var(--bg)); }
+.comic-drawer.toned :is(.comic-drawer-follow, .comic-drawer-creators) { background: var(--art-band); }
+.series-drawer.comic-drawer.discover-drawer.toned > .discover-drawer-actions { background: var(--art-tone-deep); }
+.comic-drawer.toned .comic-drawer-bar::before { background: color-mix(in srgb, var(--art-tone) 82%, transparent); }
 /* The run's tabs pin under the bar. */
 .series-drawer.comic-drawer > nav.comic-drawer-tabs { position: sticky; top: var(--drawer-bar-height); z-index: 5; }
 .comic-drawer-hero .drawer-back-link { position: absolute; top: 20px; left: 76px; z-index: 2; margin: 0; }

@@ -218,6 +218,38 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(response.headers["Content-Type"], "font/woff2")
 
+    def test_art_swatch_is_a_small_png_of_an_allowed_cover(self):
+        from PIL import Image
+        source = io.BytesIO()
+        Image.new("RGB", (400, 600), (180, 40, 30)).save(source, "JPEG")
+
+        class Upstream:
+            def __init__(self, body):
+                self.body = body
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+            def read(self, limit):
+                return self.body[:limit]
+
+        opener = type("Opener", (), {"open": lambda _self, request, timeout: Upstream(source.getvalue())})()
+        app._ART_SWATCH_CACHE.clear()
+        with patch.object(app.urllib.request, "build_opener", return_value=opener):
+            response = self.get("/api/v1/art-swatch?src=" + urllib.parse.quote("https://static.metron.cloud/media/a.jpg"))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["Content-Type"], "image/png")
+        with Image.open(io.BytesIO(response.body)) as swatch:
+            self.assertEqual(swatch.size, (app.ART_SWATCH_SIZE, app.ART_SWATCH_SIZE))
+
+    def test_art_swatch_refuses_hosts_it_does_not_read_covers_from(self):
+        for src in ("https://example.com/a.jpg", "http://static.metron.cloud/a.jpg",
+                    "https://user:pw@static.metron.cloud/a.jpg", "https://static.metron.cloud:8443/a.jpg",
+                    "file:///etc/passwd", ""):
+            with self.subTest(src=src):
+                response = self.get("/api/v1/art-swatch?src=" + urllib.parse.quote(src))
+                self.assertEqual(response.status, 400)
+
     def test_asset_traversal_outside_the_web_root_is_refused(self):
         self.assertEqual(self.get("/../app.py").status, 404)
 

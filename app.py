@@ -1216,6 +1216,81 @@ class _ReportRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+# --- Art swatches -----------------------------------------------------------
+#
+# A drawer takes its background colour from its art, the way Plex's detail
+# page does. The browser can only read the pixels of an image served from
+# this origin, and most covers come from the providers' image hosts, which
+# send no CORS headers. So the server fetches those and hands back a 24px
+# swatch the page can read -- never the image itself, only from the hosts
+# covers actually come from, over https, and without following redirects
+# (an allowed host must not be able to point the fetch somewhere else).
+
+ART_SWATCH_HOSTS = frozenset({"static.metron.cloud", "comicvine.gamespot.com", "files1.comics.org"})
+ART_SWATCH_SIZE = 24
+ART_SWATCH_MAX_BYTES = 8 * 1024 * 1024
+ART_SWATCH_MAX_PIXELS = 60_000_000
+_ART_SWATCH_CACHE_LIMIT = 256
+_ART_SWATCH_CACHE: dict[str, bytes] = {}
+_ART_SWATCH_LOCK = threading.Lock()
+
+
+class ArtSwatchUnavailable(Exception):
+    """The image host did not give back an image."""
+
+
+def _art_swatch_source(src: str) -> str:
+    parsed = urllib.parse.urlsplit(src or "")
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or host not in ART_SWATCH_HOSTS
+        or parsed.port not in (None, 443)
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError("That image is not from a cover host Flipparr reads")
+    return urllib.parse.urlunsplit(("https", host, parsed.path, parsed.query, ""))
+
+
+def art_swatch(src: str) -> bytes:
+    """A small PNG of a remote cover, for reading its colour in the page."""
+    url = _art_swatch_source(src)
+    with _ART_SWATCH_LOCK:
+        cached = _ART_SWATCH_CACHE.get(url)
+    if cached is not None:
+        return cached
+    request = urllib.request.Request(url, headers={
+        "Accept": "image/*",
+        "User-Agent": "Flipparr/1.0 (cover colour)",
+    })
+    opener = urllib.request.build_opener(_ReportRedirect)
+    try:
+        with opener.open(request, timeout=10.0) as response:
+            payload = response.read(ART_SWATCH_MAX_BYTES + 1)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ArtSwatchUnavailable("The cover host did not answer") from exc
+    if len(payload) > ART_SWATCH_MAX_BYTES:
+        raise ArtSwatchUnavailable("The cover is larger than a cover should be")
+    from PIL import Image, UnidentifiedImageError
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            if image.width * image.height > ART_SWATCH_MAX_PIXELS:
+                raise ArtSwatchUnavailable("The cover is larger than a cover should be")
+            image.draft("RGB", (ART_SWATCH_SIZE * 4, ART_SWATCH_SIZE * 4))
+            swatch = image.convert("RGB").resize((ART_SWATCH_SIZE, ART_SWATCH_SIZE))
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ArtSwatchUnavailable("The cover host did not return an image") from exc
+    out = io.BytesIO()
+    swatch.save(out, "PNG")
+    body = out.getvalue()
+    with _ART_SWATCH_LOCK:
+        if len(_ART_SWATCH_CACHE) >= _ART_SWATCH_CACHE_LIMIT:
+            _ART_SWATCH_CACHE.pop(next(iter(_ART_SWATCH_CACHE)))
+        _ART_SWATCH_CACHE[url] = body
+    return body
+
+
 def _upload_redirect_target(current: str, location: str) -> str | None:
     """Where an upload may be retried, or None when it must not follow.
 
@@ -10818,6 +10893,25 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
                 self.send_json({"error": f"This run's issues could not be listed: {exc}"}, 502)
+            return
+        if parsed_url.path == "/api/v1/art-swatch":
+            src = (urllib.parse.parse_qs(parsed_url.query).get("src") or [""])[0]
+            try:
+                body = art_swatch(src)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except ArtSwatchUnavailable as exc:
+                self.send_json({"error": str(exc)}, 502)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
             return
         if parsed_url.path == "/api/v1/discover/issue":
             issue_id = (urllib.parse.parse_qs(parsed_url.query).get("id") or [""])[0]

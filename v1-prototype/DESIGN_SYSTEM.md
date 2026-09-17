@@ -169,6 +169,14 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   pace, and it stretches when pulled past the top. Once the title passes
   under the bar, the bar frosts, shows the title, and its controls drop their
   circles. A run's tabs pin under the bar.
+- **Drawer colour** comes from the drawer's art, as Plex's does from a poster.
+  `useArtTone` reads the cover, through `/api/v1/art-swatch` when it's
+  remote. `art-tone.js` picks the most vibrant hue family and derives `tone`
+  (the header's foot and the top of the page) and `deep` (the rest), each
+  darkened until white and muted text clear AA. Bands, tabs and the pinned
+  bar take darker or translucent versions of the tone. Art with no real colour
+  leaves the drawer as it was. The tones are registered custom properties, so
+  they ease between drawers.
 
 ## Glass and motion
 

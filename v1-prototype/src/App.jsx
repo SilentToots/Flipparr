@@ -36,6 +36,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { jobsNeedingAttention } from "./nav-counts.js";
+import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
 import {
   buildNotifications, pruneDismissed, readDismissed, writeDismissed,
@@ -1675,6 +1676,57 @@ function formatLongDate(iso) {
 
 const PREVIEW_PROVIDER_NAMES = { metron: "Metron", comic_vine: "Comic Vine", gcd: "Grand Comics Database" };
 
+// A drawer's colour, from its art (see art-tone.js). The page can only read
+// the pixels of an image from this origin, so a remote cover is read through
+// the server's small swatch of it. Tones are kept per image for the session.
+const ART_TONES = new Map();
+
+function useArtTone(src) {
+  const [tone, setTone] = useState(() => (src && ART_TONES.get(src)) || null);
+  useEffect(() => {
+    if (!src) {
+      setTone(null);
+      return undefined;
+    }
+    if (ART_TONES.has(src)) {
+      setTone(ART_TONES.get(src));
+      return undefined;
+    }
+    let live = true;
+    const settle = (value) => {
+      ART_TONES.set(src, value);
+      if (live) setTone(value);
+    };
+    let local = false;
+    try { local = new URL(src, window.location.href).origin === window.location.origin; } catch { local = false; }
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 24;
+        canvas.height = 24;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        context.drawImage(image, 0, 0, 24, 24);
+        settle(artTone(context.getImageData(0, 0, 24, 24).data));
+      } catch {
+        settle(null);
+      }
+    };
+    image.onerror = () => settle(null);
+    image.src = local ? src : `/api/v1/art-swatch?src=${encodeURIComponent(src)}`;
+    return () => { live = false; };
+  }, [src]);
+  return tone;
+}
+
+// The drawer's class and style for a tone, or nothing for art without one.
+function toneProps(tone) {
+  return tone
+    ? { className: " toned", style: { "--art-tone": tone.tone, "--art-tone-deep": tone.deep } }
+    : { className: "", style: undefined };
+}
+
 // A drawer's top bar, after Plex's detail page. It stays pinned: at the top
 // it is clear, with the close control as a glass circle over the art; once
 // the title has scrolled under it, it frosts and takes the title, and its
@@ -1761,6 +1813,7 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
     return () => { live = false; };
   }, [issue?.providerIssueId]);
   const data = detail.data || {};
+  const toned = toneProps(useArtTone(issue.cover));
   const facts = [
     ["Ships", formatLongDate(data.storeDate || issue.storeDate)],
     ["Cover date", formatLongDate(data.coverDate || issue.coverDate)],
@@ -1768,7 +1821,7 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
     ["Price", data.price ? `$${data.price}` : null],
   ].filter(([, value]) => value);
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer comic-drawer discover-drawer ${closing ? "closing" : ""}`} ref={dialogRef}
+    <aside className={`series-drawer comic-drawer discover-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="discover-issue-title"
       onMouseDown={(event) => event.stopPropagation()}>
       <DiscoverDrawerHero art={issue.cover} titleId="discover-issue-title" title={issue.title}
@@ -1898,8 +1951,9 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
   }
   const yearLabel = item.yearLabel || run?.year || item.yearBegan;
   const art = run?.cover || item.cover;
+  const toned = toneProps(useArtTone(art));
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer comic-drawer discover-drawer ${closing ? "closing" : ""}`} ref={dialogRef}
+    <aside className={`series-drawer comic-drawer discover-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="discover-run-title"
       onMouseDown={(event) => event.stopPropagation()}>
       <DiscoverDrawerHero art={art} titleId="discover-run-title" title={run?.title || item.title}
@@ -3386,6 +3440,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   // Nothing until this run's answer arrives, so the last run's page never
   // flashes behind a new title.
   const heroArt = shownBackdrop ? pageArt || coverArt : null;
+  const toned = toneProps(useArtTone(coverArt));
   const related = useMemo(() => (series ? relatedRuns(series, allSeries || []) : null), [series, allSeries]);
   const creators = useMemo(() => orderedCreators(series?.creators), [series?.creators]);
   const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, series?.id, editionsOn]);
@@ -3431,7 +3486,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     ["advanced", "Advanced"],
   ];
   const alternateTitles = (series.aliases || []).filter((item) => identityKey(item.name) !== identityKey(series.title));
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
     <DrawerTopBar title={series.title} onClose={requestClose} closeLabel="Close series details">
       {onChangeBackdrop ? <button type="button" className="glass-button glass-button--icon comic-drawer-backdrop-button" onClick={() => onChangeBackdrop(series, shownBackdrop)} aria-label="Choose the header background page" title="Choose background page"><ImageSquare size={20} /></button> : null}
     </DrawerTopBar>

@@ -14,7 +14,7 @@ import urllib.parse
 import traceback
 import zipfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import app
 from app import _run_end_evidence, SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, archive_page_members, automatic_backdrop_page, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
@@ -2847,6 +2847,40 @@ class FilenameParserTests(unittest.TestCase):
         self.assertIsNone(result["recommendation"]["subtitle"])
         self.assertEqual(result["recommendation"]["named_contents"], [])
 
+
+
+class ArtSwatchTests(unittest.TestCase):
+    def setUp(self):
+        app._ART_SWATCH_CACHE.clear()
+
+    def test_a_redirect_is_not_followed(self):
+        # The opener reports redirects rather than following them, so an
+        # allowed host cannot send the fetch somewhere else.
+        redirect = urllib.error.HTTPError("https://static.metron.cloud/a.jpg", 302, "Found", {"Location": "http://127.0.0.1/"}, None)
+        opener = Mock()
+        opener.open.side_effect = redirect
+        with patch.object(app.urllib.request, "build_opener", return_value=opener) as build:
+            with self.assertRaises(app.ArtSwatchUnavailable):
+                app.art_swatch("https://static.metron.cloud/a.jpg")
+        self.assertIs(build.call_args.args[0], app._ReportRedirect)
+
+    def test_something_that_is_not_an_image_is_refused(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"<html>not a cover</html>"
+        opener = Mock()
+        opener.open.return_value = response
+        with patch.object(app.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaises(app.ArtSwatchUnavailable):
+                app.art_swatch("https://files1.comics.org/a.jpg")
+
+    def test_an_oversized_download_is_refused_before_decoding(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"x" * (app.ART_SWATCH_MAX_BYTES + 1)
+        opener = Mock()
+        opener.open.return_value = response
+        with patch.object(app.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaises(app.ArtSwatchUnavailable):
+                app.art_swatch("https://comicvine.gamespot.com/a.jpg")
 
 if __name__ == "__main__":
     unittest.main()
