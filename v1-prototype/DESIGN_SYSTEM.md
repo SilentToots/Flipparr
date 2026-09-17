@@ -109,10 +109,21 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   the accent at 40% (`--badge-violet-bg`, `--badge-muted-bg`) or solid
   (`--badge-green-bg`, `--badge-amber-bg`, `--badge-red-bg`), with white type.
   New status labels use `StatusBadge` with a tone.
-- **Tabs** have one look: 16px regular, 44px tall, 24px apart, muted until
-  selected, then the text colour and a violet underline. A row wider than the
-  screen scrolls sideways. The run drawer's tabs are the same type on a violet
-  bar with a glass pill. Selecting a tab never changes its size or weight.
+- **Page tabs** (Pull List, Settings) are `SegmentedTabs`, after iOS 26's
+  segmented control: a pill track on `--surface`, 14px semibold tabs 36px
+  tall inside a 4px inset, and the glass thumb (`.glass-indicator`) sliding to
+  the open one. A row wider than the screen scrolls inside the pill and the
+  open tab is scrolled into view. A count rides the tab as a badge.
+- **Drawer tabs** keep the underline look (16px regular, 44px tall); the run
+  drawer's are the same glass on a violet bar. Selecting a tab never changes
+  its size or weight.
+- **Page headers** (`PageHeader`): above 640px only the page's actions show,
+  since the rail and the app bar say where you are. On a phone every page gets
+  the Comics row -- its name at 20px, its actions as compact buttons, and the
+  bell -- 8px from the top, in the 12px gutter every phone page shares.
+- **Lists of runs** use the Comics list card: a cover, the title and year,
+  the publisher, the badges and the ownership bar. The Pull List's rows are
+  that card, and the whole row opens its issues.
 - **Buttons**: new actions use `Button`, including its `busy` state.
 - **Loading**: all asynchronous UI uses `LoadingIndicator`; no one-off
   spinners or keyframes.
@@ -121,7 +132,9 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
 - **The phone tab bar** is a 360px pill whose four tabs share its width —
   24px icons, 12px labels, 56px-tall tabs — so the glass on the open one is a
   capsule. It is inset 8px on every side, in an 8px strip. Scrolling tucks it
-  into a 64px circle at the left gutter.
+  into a 64px circle at the left gutter, on `--motion-duration-morph` and
+  `--motion-ease-morph`: an even curve, long enough that the other tabs are
+  seen folding away.
 
 ## Breakpoints
 

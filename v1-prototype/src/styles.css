@@ -393,6 +393,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dashboard-header > .library-tools { padding: 0; }
 .dashboard-body { padding: var(--space-32); }
 .page-header { padding: var(--space-20) 0; display: flex; justify-content: flex-end; align-items: center; gap: var(--space-12); }
+/* Above 640px the rail and the app bar say where you are and hold the bell,
+   so the page's header is its toolbar alone, and a page without actions has
+   none. The phone header below shows all three. */
+.page-header.page-header-bare, .page-header .phone-header-title, .page-header .phone-header-bell { display: none; }
 .page-header p { margin: 0; color: var(--muted); font-size: var(--text-md); }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: var(--weight-bold); margin-bottom: var(--space-10); }
 .page-actions { display: flex; gap: var(--space-8); }
@@ -629,45 +633,62 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    underline, never by size or weight, so choosing one moves nothing. */
 /* A row of tabs wider than its screen scrolls sideways rather than squeezing
    its labels -- the Pull List's three, with their counts, need 390px. */
-.request-tabs, .settings-tabs, .drawer-tabs { display: flex; gap: var(--space-24); overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
-:is(.request-tabs, .settings-tabs, .drawer-tabs)::-webkit-scrollbar { display: none; }
-.request-tabs button, .settings-tabs button, .drawer-tabs button { flex: 0 0 auto; min-height: 44px; padding: 0 var(--space-2); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: var(--text-md); font-weight: var(--weight-regular); line-height: var(--leading-tight); white-space: nowrap; cursor: pointer; }
-.request-tabs button.active, .settings-tabs button.active, .drawer-tabs button.active { color: var(--text); border-color: var(--violet); }
-.request-tabs b { margin-left: var(--space-6); vertical-align: 2px; }
-.request-tab-description { margin: var(--space-10) 0 var(--space-6); color: var(--muted); font-size: var(--text-sm); }
-.request-list { display: grid; }
-.request-card { border-bottom: 1px solid var(--line); }
-.request-card { --request-cover: 62px; --request-gap: var(--space-16); }
-.request-row { display: grid; grid-template-columns: var(--request-cover) minmax(0, 1fr) auto minmax(132px, auto); gap: var(--request-gap); align-items: center; min-height: 105px; padding: var(--space-12) var(--space-4); }
-.request-row img { width: 62px; height: 93px; object-fit: contain; border-radius: var(--radius-4); }
-.request-cover { width: 62px; height: 93px; display: block; overflow: hidden; border-radius: var(--radius-4); background: var(--status-muted-bg); }
+.drawer-tabs { display: flex; gap: var(--space-24); overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.drawer-tabs::-webkit-scrollbar { display: none; }
+.drawer-tabs button { flex: 0 0 auto; min-height: 44px; padding: 0 var(--space-2); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: var(--text-md); font-weight: var(--weight-regular); line-height: var(--leading-tight); white-space: nowrap; cursor: pointer; }
+.drawer-tabs button.active { color: var(--text); border-color: var(--violet); }
+/* The pages' tabs (SegmentedTabs), after iOS 26's segmented control: a pill
+   track, the tabs in it, and the drawer's glass thumb sliding to the open
+   one. 36px tabs in a 4px inset make a 46px control, so every tab is a full
+   tap target. A row wider than the page scrolls inside the pill. */
+.segmented-tabs { position: relative; isolation: isolate; box-sizing: border-box; display: flex; gap: var(--space-2); width: fit-content; max-width: 100%; padding: var(--space-4); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface); }
+.segmented-tabs::-webkit-scrollbar { display: none; }
+.segmented-tabs > .glass-indicator { background-color: var(--surface-hover); }
+.segmented-tab { position: relative; z-index: 1; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-6); min-height: 36px; padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; cursor: pointer; transition: color var(--motion-duration-fast) ease; }
+.segmented-tab.active { color: var(--text); }
+.segmented-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.request-tab-description { margin: var(--space-12) 0 var(--space-16); color: var(--muted); font-size: var(--text-sm); }
+/* A pull is the Comics list's card (.series-row): cover, title and year,
+   publisher, the run's badges and its ownership bar, with the whole row the
+   button that opens its issues underneath. */
+.request-list { display: grid; gap: var(--space-8); }
+.request-card { --request-cover: 72px; --request-gap: var(--space-16); border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--surface); overflow: hidden; }
+.request-row { box-sizing: border-box; width: 100%; display: grid; grid-template-columns: var(--request-cover) minmax(0, 1fr) 24px; gap: var(--request-gap); align-items: center; padding: var(--space-12) var(--space-16); border: 0; border-radius: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; transition: background var(--motion-duration-fast) ease; }
+@media (hover: hover) { .request-row:hover { background: var(--surface-raised); } }
+.request-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.request-row img { width: 100%; height: 100%; object-fit: contain; object-position: top center; }
+.request-cover { width: var(--request-cover); aspect-ratio: var(--cover-ratio); align-self: start; display: block; overflow: hidden; border-radius: var(--radius-4); background: var(--surface-soft); }
 .request-cover .cover-placeholder { width: 100%; height: 100%; display: grid; place-items: center; color: var(--muted-weak); }
-.request-row h3 { margin: 0 0 var(--space-4); font-size: var(--text-md); }
-.request-row p { margin: 0 0 var(--space-8); color: var(--muted-strong); font-size: var(--text-sm); }
-.request-row div span { color: var(--muted); font-size: var(--text-sm); }
+.request-identity { min-width: 0; display: grid; align-content: center; gap: var(--space-6); }
+.request-identity strong { overflow: hidden; color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
+.request-identity strong em { color: var(--muted-weak); font-style: normal; font-weight: var(--weight-medium); }
+.request-identity small { overflow: hidden; color: var(--status-muted-text); font-size: var(--text-sm); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
+.request-identity .tag-line { min-height: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.request-ownership { display: block; max-width: 320px; margin-top: var(--space-2); }
+.request-ownership .ownership.compact { width: 100%; display: grid; gap: var(--space-6); padding: 0; }
+.request-ownership .ownership.compact .ownership-label { font-size: var(--text-sm); }
+.request-ownership .ownership.compact .progress { width: 100%; height: 6px; }
+.request-caret { align-self: start; margin-top: var(--space-2); color: var(--muted-weak); transition: transform var(--motion-duration-fast) ease; }
+.request-row[aria-expanded="true"] .request-caret { transform: rotate(180deg); }
 /* Every status badge is the design's Comics badge (the .publication-status
    rules above): a filled pill, 10px bold, 18px tall, the accent at 40% or
    solid, and white type. The Pull List's and Settings' badges had drifted to
    12px pale type on a dark tint, 23px tall, and a tab's count to a 14px
    grey block. */
-.status-badge, .status-chip, .provider-state, .request-tabs b { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); width: fit-content; box-sizing: border-box; padding: 3px var(--space-8); border: 0; border-radius: var(--radius-pill); background: var(--badge-muted-bg); color: var(--badge-text); font-size: var(--text-2xs); font-weight: var(--weight-bold); line-height: var(--leading-tight); white-space: nowrap; }
+.status-badge, .status-chip, .provider-state, .segmented-tab b { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); width: fit-content; box-sizing: border-box; padding: 3px var(--space-8); border: 0; border-radius: var(--radius-pill); background: var(--badge-muted-bg); color: var(--badge-text); font-size: var(--text-2xs); font-weight: var(--weight-bold); line-height: var(--leading-tight); white-space: nowrap; }
 .status-badge--violet, .status-chip.violet { background: var(--badge-violet-bg); color: var(--badge-text); }
 .status-badge--muted, .status-chip.muted { background: var(--badge-muted-bg); color: var(--badge-text); }
 .status-badge--green, .status-chip.green, .provider-state.connected { background: var(--badge-green-bg); color: var(--color-neutral-0); }
 .status-badge--amber, .status-chip.amber, .provider-state.paused { background: var(--badge-amber-bg); color: var(--color-neutral-0); }
 .status-badge--red, .status-chip.red { background: var(--badge-red-bg); color: var(--color-neutral-0); }
 .icon-button, .modal-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
-.request-expand { min-height: 34px; padding: 0 var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface-soft); color: var(--muted-strong); display: flex; align-items: center; justify-content: center; gap: var(--space-6); font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }
-.request-expand svg { transition: transform var(--motion-duration-fast) ease; }
-.request-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
-.replacement-safety-note { margin: calc(var(--space-4) * -1) var(--space-4) var(--space-14) calc(var(--space-4) + var(--request-cover) + var(--request-gap)); padding: var(--space-10) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--green-text); display: flex; align-items: center; gap: var(--space-8); font-size: var(--text-sm); }
-.request-job-panel { margin: 0 var(--space-4) var(--space-16) calc(var(--space-4) + var(--request-cover) + var(--request-gap)); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface); overflow: hidden; }
+.replacement-safety-note { margin: 0 var(--space-16) var(--space-16); padding: var(--space-10) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--green-text); display: flex; align-items: center; gap: var(--space-8); font-size: var(--text-sm); }
+.request-job-panel { margin: 0; border-top: 1px solid var(--line); background: var(--surface); }
 .request-job-panel > header { min-height: 64px; padding: var(--space-12) var(--space-16); display: flex; justify-content: space-between; gap: var(--space-20); align-items: center; background: var(--surface-raised); }
 .request-job-panel > header div { display: grid; gap: var(--space-4); }
 .request-job-panel > header strong { font-size: var(--text-sm); }
-.request-job-panel > header span, .request-job-panel > footer { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.request-job-panel > header :is(span, small), .request-job-panel > footer { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
 .request-job-panel > header > button { flex: none; white-space: nowrap; }
-.request-job-panel > header > b { color: var(--violet-text); background: var(--violet-soft); border-radius: var(--radius-12); padding: var(--space-4) var(--space-8); font-size: var(--text-sm); white-space: nowrap; }
 .request-jobs { display: grid; }
 .request-job-group + .request-job-group { border-top: 1px solid var(--line-strong); }
 .request-job-group > header { min-height: 54px; padding: var(--space-10) var(--space-16); display: grid; grid-template-columns: 1fr auto; gap: var(--space-4) var(--space-14); align-items: center; background: var(--surface-raised); }
@@ -1532,7 +1553,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 640px) {
   .brand, .sidebar-footer { display: none; }
 
-  .main-content { margin-left: 0; padding: var(--space-16) var(--space-16) calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
+  .main-content { margin-left: 0; padding: var(--space-8) var(--space-12) calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
   .topbar { grid-template-columns: 1fr; }
   .library-sources-panel > header { grid-template-columns: 1fr; }
   .library-scan-action { justify-items: start; }
@@ -1544,7 +1565,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .settings-root-list > span { grid-template-columns: auto minmax(0, 1fr); }
   .settings-root-list small { grid-column: 2; }
   .discovery-results { width: calc(100vw - 32px); }
-  .page-header { align-items: flex-start; flex-direction: column; padding-top: var(--space-24); min-height: 100px; }
   .library-loading-tools { flex-wrap: wrap; }
   .library-loading-tools i:last-child { margin-left: 0; }
   .library-loading-table article { grid-template-columns: 58px minmax(0, 1fr); min-height: 102px; }
@@ -1594,13 +1614,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .comparison { overflow-x: auto; }
   .comparison-head, .comparison-row { min-width: 650px; }
   .review-actions { flex-wrap: wrap; }
-  .request-card { --request-cover: 54px; }
-  .request-row { grid-template-columns: var(--request-cover) 1fr auto; }
-  .request-row :is(.status-badge, .status-chip) { grid-column: 2; width: fit-content; }
-  .request-row .request-expand { grid-column: 3; grid-row: 1 / span 2; min-width: 44px; min-height: 44px; justify-content: center; }
-  .request-expand span { display: none; }
-  .request-job-panel { margin-left: 0; }
-  .request-job { grid-template-columns: 38px minmax(0, 1fr) auto; padding-inline: var(--space-12); }
+  /* The Comics phone card's sizes: a 58px cover, 8px by 10px inside. */
+  .request-card { --request-cover: 58px; --request-gap: var(--space-10); }
+  .request-row { grid-template-columns: var(--request-cover) minmax(0, 1fr) 22px; padding: var(--space-8) var(--space-10); }
+  .request-identity { gap: var(--space-4); }
+  .request-ownership { max-width: none; margin-top: var(--space-4); }
+  .replacement-safety-note { margin: 0 var(--space-10) var(--space-10); }
+  /* An issue's actions go under its name: beside it, they squeezed the name
+     and its status into a column a word wide. */
+  .request-job { grid-template-columns: 38px minmax(0, 1fr); padding-inline: var(--space-10); }
+  .request-job > .request-job-actions { grid-column: 2; justify-self: start; flex-wrap: wrap; }
+  .request-job-panel > header, .request-job-group > header { padding-inline: var(--space-10); }
   .request-job-actions .job-state { display: none; }
   .release-search-modal { width: 100%; padding: var(--space-20) var(--space-16); }
   .release-candidate { grid-template-columns: minmax(0, 1fr) 62px; }
@@ -1832,6 +1856,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    them at 375x812.
    --------------------------------------------------------------------------- */
 .library-phone-header { display: none; }
+.phone-header-title h1 { margin: 0; }
 /* The desktop rail marks its item with its own fill and bar. */
 .nav-glass { display: none; }
 
@@ -1851,21 +1876,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      match): the title with the library's size under it, then search, View &
      sort and the bell as real 44px buttons, so no target is smaller than
      Apple's minimum and none share a tap area. */
-  .library-phone-header { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
-  .library-phone-title { flex: 1 1 0; min-width: 0; display: grid; gap: 1px; }
-  .library-phone-header h1 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: var(--weight-semibold); line-height: var(--leading-tight); }
+  .phone-header { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
+  /* Every page's top row sits where the Comics one does, 8px down. */
+  .page-header.phone-header { padding: 0; margin-bottom: var(--space-16); justify-content: flex-start; }
+  .page-header.page-header-bare, .page-header .phone-header-bell { display: flex; }
+  .page-header .phone-header-title { display: grid; }
+  .phone-header-bell { flex: none; }
+  .phone-header-title { flex: 1 1 0; min-width: 0; display: grid; gap: 1px; }
+  .phone-header h1 { margin: 0; overflow: hidden; color: var(--color-neutral-0); font-size: var(--text-xl); font-weight: var(--weight-semibold); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
   .library-phone-title small { overflow: hidden; color: var(--muted-strong); font-size: var(--text-xs); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
   .library-phone-title small strong { color: var(--color-neutral-0); font-weight: var(--weight-bold); }
-  .library-phone-action, .library-phone-header .appbar-bell { position: relative; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; transition: background var(--motion-duration-fast) ease; }
-  .library-phone-action:active, .library-phone-header .appbar-bell:active { background: var(--wash-active); }
-  @media (hover: hover) { .library-phone-action:hover, .library-phone-header .appbar-bell:hover { background: var(--wash-hover); } }
-  .library-phone-action:focus-visible, .library-phone-header .appbar-bell:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  .library-phone-action, .phone-header .appbar-bell { position: relative; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--color-neutral-0); cursor: pointer; transition: background var(--motion-duration-fast) ease; }
+  .library-phone-action:active, .phone-header .appbar-bell:active { background: var(--wash-active); }
+  @media (hover: hover) { .library-phone-action:hover, .phone-header .appbar-bell:hover { background: var(--wash-hover); } }
+  .library-phone-action:focus-visible, .phone-header .appbar-bell:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   .library-phone-action[aria-expanded="true"] { background: var(--wash-active); color: var(--violet-text); }
-  .library-phone-header .appbar-action::after { display: none; }
-  .library-phone-header .appbar-bell > svg { opacity: .6; }
-  .library-phone-header .appbar-badge { top: 9px; right: 9px; box-shadow: 0 0 0 2px var(--bg); }
+  .phone-header .appbar-action::after { display: none; }
+  .phone-header .appbar-bell > svg { opacity: .6; }
+  .phone-header .appbar-badge { top: 9px; right: 9px; box-shadow: 0 0 0 2px var(--bg); }
   .library-view-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--violet-text); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
-  .library-phone-header .notifications-menu { width: calc(100vw - 24px); }
+  .phone-header .notifications-menu { width: calc(100vw - 24px); }
+  /* A page's own actions are compact buttons beside its name, not bars
+     under it. */
+  .phone-header .page-actions { flex: none; margin-right: var(--space-2); }
+  .phone-header .page-actions > button { min-height: 36px; padding-inline: var(--space-12); white-space: nowrap; }
+  .phone-header .page-actions > button { position: relative; }
+  .phone-header .page-actions > button::after { content: ""; position: absolute; inset: -4px 0; }
 
   /* View, sort and the filters are in the View & sort sheet on a phone. */
   .dashboard-header > .library-tools { display: none; }
@@ -1956,12 +1992,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* Scrolling down tucks the bar into a 64px circle holding the current tab
      (.tab-bar-collapsed, from useCollapsingTabBar); scrolling up, the top of
      the page or a tap opens it again. The other tabs and the labels ease out
-     rather than vanish, on the glass's iOS curve. */
-  .sidebar nav { max-width: min(100%, 360px); transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), gap var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), translate var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
+     rather than vanish. The glass's iOS curve was tried here first; it does
+     most of its travel in the first fifth, so the bar was a circle within
+     about 50ms and the other tabs read as removed, not folded away. */
+  .sidebar nav { max-width: min(100%, 360px); transition: max-width var(--motion-duration-morph) var(--motion-ease-morph), padding var(--motion-duration-morph) var(--motion-ease-morph), gap var(--motion-duration-morph) var(--motion-ease-morph), translate var(--motion-duration-morph) var(--motion-ease-morph); }
   /* A length rather than a percentage, so collapsing still has something to
      animate from now that the bar is only as wide as its tabs. */
-  .sidebar .nav-item { max-width: 120px; overflow: hidden; transition: max-width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), padding var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
-  .sidebar .nav-item > span { max-height: 16px; transition: max-height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1), opacity var(--motion-duration-fast) ease; }
+  .sidebar .nav-item { max-width: 120px; overflow: hidden; transition: max-width var(--motion-duration-morph) var(--motion-ease-morph), min-width var(--motion-duration-morph) var(--motion-ease-morph), padding var(--motion-duration-morph) var(--motion-ease-morph), opacity var(--motion-duration-standard) ease; }
+  .sidebar .nav-item > span { max-height: 16px; transition: max-height var(--motion-duration-morph) var(--motion-ease-morph), opacity var(--motion-duration-standard) ease; }
+  /* The tabs keep their icons' size while their width closes over them. */
+  .sidebar .nav-item > svg { flex-shrink: 0; }
   /* The circle is the one thing left to tap, so it takes the 44px minimum with
      room to spare rather than sitting at it. The gap goes with the tabs it
      separated: three 2px gaps between four items, one of them now the only one
@@ -2253,11 +2293,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .backdrop-workbench-tools select { width: 100%; min-width: 0; }
 
 @media (max-width: 640px) {
-  /* Pull List's two actions wrapped their labels onto two lines inside 44px
-     buttons, under a header held 100px tall for a title it no longer shows. */
-  .page-header { min-height: 0; padding-top: var(--space-12); }
-  .page-actions { width: 100%; flex-wrap: wrap; gap: var(--space-8); }
-  .page-actions > button { flex: 1 1 auto; justify-content: center; white-space: nowrap; }
 
   /* Discover: Pull Run and the run drawer's actions were 30px, its mode
      choice 36, and the clear button a bare 20px icon. */
@@ -2344,43 +2379,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .series-drawer.closing { animation: drawer-slide-out var(--motion-duration-exit) cubic-bezier(.32,.72,0,1) forwards; }
 
 /* Settings section switcher. Settings ran to ~3,600px of scrolling on a phone;
-   one section at a time replaces that. Tabs where there is room, a select where
-   there is not — the select is the same control the OS already renders as a
-   native picker on mobile. */
+   one section at a time replaces that, in the pages' segmented tabs, which
+   scroll sideways where the six do not fit. */
 .settings-switcher { margin: var(--space-16) 0 var(--space-20); }
-.settings-switcher-select { display: none; }
-.settings-tabs { flex-wrap: wrap; row-gap: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-@media (max-width: 640px) {
-  .settings-tabs { display: none; }
-  .settings-switcher { margin: var(--space-16) 0 var(--space-24); }
-  .settings-switcher-select { display: block; }
-  /* This select is the only way to move between settings sections on a phone,
-     so its height is the whole tap target. 48px is the accessibility floor, not
-     a size to design to. appearance:none replaces the native chevron -- which
-     renders tiny and jammed against the border -- with one that has room around
-     it; the OS still opens its own picker on tap. */
-  .settings-switcher-select select {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 100%;
-    min-height: 56px;
-    padding: 0 var(--space-48) 0 var(--space-16);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius-4);
-    background-color: var(--bg);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23b8c0cc' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 16px center;
-    background-size: 16px 16px;
-    color: var(--text);
-    font-size: var(--text-input);
-    font-weight: var(--weight-medium);
-    cursor: pointer;
-  }
-  .settings-switcher-select select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-}
 
 /* First-run setup. A full-screen takeover rather than a view inside the nav:
    until a library folder exists there is nothing for the nav to lead to. */
@@ -2797,8 +2800,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .request-search-confirm > span { display: flex; gap: var(--space-8); flex: none; }
 /* Failed is the only tab that appears because something is wrong, so its count
    carries the weight rather than the tab reading like the other three. */
-.request-tabs .request-tab-failed b { background: var(--badge-red-bg); color: var(--color-neutral-0); }
-.request-tabs .request-tab-failed.active { color: var(--red-text); }
+.segmented-tab.request-tab-failed b { background: var(--badge-red-bg); color: var(--color-neutral-0); }
+.segmented-tab.request-tab-failed.active { color: var(--red-text); }
 /* Arriving from the bell, so the reader can see which of a dozen rows the
    notification meant. Fades rather than sticks: it is an answer to "which
    one", not a status. */
@@ -2839,10 +2842,10 @@ button:disabled { cursor: default; }
 button:not(:disabled):active { scale: var(--button-press-scale); }
 .series-card:active, .series-row:active, .library-match:active, .discover-open:active, .notifications-open:active,
 .drawer-cover-button:active, .family-summary:active { scale: var(--card-press-scale); }
-.drawer-tabs button:active, .request-tabs button:active, .settings-tabs button:active, .nav-item:active { scale: none; }
+.drawer-tabs button:active, .segmented-tab:active, .nav-item:active { scale: none; }
 .primary-button:not(:disabled):active, .candidate-select:not(:disabled):active { background: var(--button-primary-bg-pressed); }
 .secondary-button:not(:disabled):active { background: var(--button-secondary-bg-pressed); }
-.ghost-button:not(:disabled):active, .request-expand:active, .shelf-message > button:active,
+.ghost-button:not(:disabled):active, .request-row:active, .shelf-message > button:active,
 .advanced-card button:not(:disabled):active, .request-job-actions button:not(:disabled):active,
 .modal-close:active, .notifications-open:active,
 .view-toggle button:not(.active):active, .scope-toggle button:not(.active):active,
@@ -2865,7 +2868,6 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .modal-close:hover { background: var(--button-ghost-bg-hover); color: var(--text); }
   .danger-button:not(:disabled):hover { background: var(--button-danger-bg-hover); }
   .pull-button:not(:disabled):hover { filter: brightness(1.1); }
-  .request-expand:hover { background: var(--surface-sunken); color: var(--text); }
   /* Discover's cards lift as the Comics grid's do: up 2px, border to violet.
      A shelf or search card lifts for its cover, not for its Pull button,
      which answers on its own. */
@@ -2882,8 +2884,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .shelf-message > button:hover { background: var(--button-ghost-bg-hover); }
   .run-synopsis footer button:hover { text-decoration: underline; text-underline-offset: 3px; }
   /* Tabs: the unselected ones brighten; the selected one already says so. */
-  .drawer-tabs button:not(.active):hover, .request-tabs button:not(.active):hover,
-  .settings-tabs button:not(.active):hover { color: var(--text); }
+  .drawer-tabs button:not(.active):hover, .segmented-tab:not(.active):hover { color: var(--text); }
   /* Segmented toggles. */
   .view-toggle button:not(.active):hover, .scope-toggle button:not(.active):hover { background: var(--button-ghost-bg-hover); color: var(--text); }
 }

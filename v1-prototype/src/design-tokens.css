@@ -341,6 +341,11 @@
   --motion-duration-standard: 220ms;
   /* A drawer or sheet leaving: long enough to be seen going. */
   --motion-duration-exit: 300ms;
+  /* A shape turning into another -- the phone tab bar tucking into its circle.
+     Long enough, on an even curve, that the tabs are seen folding away
+     rather than vanishing. */
+  --motion-duration-morph: 440ms;
+  --motion-ease-morph: cubic-bezier(.45, 0, .15, 1);
   --motion-duration-loader: 880ms;
   --motion-ease-standard: cubic-bezier(.2, .8, .2, 1);
 
@@ -368,6 +373,7 @@
     --motion-duration-fast: 1ms;
     --motion-duration-standard: 1ms;
     --motion-duration-exit: 1ms;
+    --motion-duration-morph: 1ms;
     --motion-duration-loader: 1600ms;
   }
 }

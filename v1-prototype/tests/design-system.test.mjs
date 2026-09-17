@@ -85,7 +85,7 @@ const SMALLEST_TEXT = new Set([
   ".library-match-art b",
   ".run-status",
   ".publication-status, .monitoring-status",
-  ".status-badge, .status-chip, .provider-state, .request-tabs b",
+  ".status-badge, .status-chip, .provider-state, .segmented-tab b",
   ".series-card :is(.publication-status, .monitoring-status)",
   ".new-run-copy p",
   ".series-card-byline",
@@ -111,7 +111,7 @@ const SPACING = /^((row-|column-)?gap|padding(-[a-z]+){0,2}|margin(-[a-z]+){0,2}
 // The design's badge: 12px of icon and text centred in an 18px chip, which
 // puts 3px above and below. The one spacing value off the 2px grid.
 const BADGE_INSET = new Set([".publication-status, .monitoring-status", ".run-status", ".library-match-art b",
-  ".status-badge, .status-chip, .provider-state, .request-tabs b"]);
+  ".status-badge, .status-chip, .provider-state, .segmented-tab b"]);
 
 test("every spacing token is named for its value, and the scale is the published one", () => {
   const defined = [...read("design-tokens.css").matchAll(/^\s*--space-(\d+):\s*([^;]+);/gm)];
