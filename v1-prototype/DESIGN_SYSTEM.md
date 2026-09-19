@@ -248,8 +248,10 @@ Motion tokens:
   quarter of its height or on a flick, otherwise settling back. A sheet with
   `detents` taller than three-quarters of the screen opens at half height and
   is pulled up to full.
-- **Arrivals.** Nothing snaps in: a page fades up as it opens (`.page-view`,
-  keyed by the view), content fades in where its loading placeholder was, and
+- **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
+  keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
+  because a transform here would make the page the containing block for every
+  fixed thing inside it), content fades in where its loading placeholder was, and
   a grid's first screenful of cards arrives in order (`--card-index`, 24ms
   apart, capped at twelve). All of it is mount-time animation, so there is no
   state to keep.
