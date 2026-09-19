@@ -5,8 +5,8 @@
 // five of them a pixel apart, spacing tokens used 4 times in ~1,200 chances,
 // 25 radii. Nothing failed when any of that landed. This does.
 //
-// Every exception below carries its reason, the same way node-map.json treats
-// a Figma deviation: a written ledger, not a silent pass.
+// Every exception below carries its reason: a written ledger, not a silent
+// pass.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

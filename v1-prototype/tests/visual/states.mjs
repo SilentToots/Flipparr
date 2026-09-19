@@ -94,7 +94,7 @@ export const states = [
   // The release shelves come from Metron, which answers differently -- or not
   // at all -- from one run to the next, and a shelf that loads in one capture
   // and not the other buries anything a style change did under two thousand
-  // elements. They are stubbed, as figma:check stubs them.
+  // elements. They are stubbed (stubs.mjs).
   { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },

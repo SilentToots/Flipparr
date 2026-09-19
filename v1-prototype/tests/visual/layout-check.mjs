@@ -16,7 +16,7 @@
 //
 //   VISUAL_APP_ORIGIN=http://localhost:4180 npm run layout:check
 //
-// Needs a running app with a library behind it, like figma:check.
+// Needs a running app with a library behind it.
 
 import { chromium } from "playwright";
 

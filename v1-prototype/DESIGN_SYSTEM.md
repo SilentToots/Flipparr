@@ -14,8 +14,8 @@ enforcement; this file is the explanation.
 - `src/components/` — `Button`, `StatusBadge`, `LoadingIndicator`.
 - `tests/design-system.test.mjs` — the guard. Its allowlists name each
   exception and say why.
-- `tests/visual/` — `figma:check` (the design file's values, asserted against
-  the running app) and `visual:capture` / `visual:compare` (every screen at
+- `tests/visual/` — `layout:check` (edges, alignment and placeholder fit at
+  seven widths) and `visual:capture` / `visual:compare` (every screen at
   1440 and 375, with colour, type, spacing and contrast recorded per element).
 
 ## Brand
@@ -227,22 +227,19 @@ implementation.
 
 ## The Figma file
 
-The Figma file is where a screen starts, not a gate on every change. Where the
-app deliberately differs, record it in `tests/visual/figma/node-map.json` —
-`ignoreProps` for a style, `ignoreSize` for an icon, a `false` and a `_note` for
-a frame dimension — saying what the file says, why the app differs, and what is
-still asserted. Then `npm run figma:generate`.
+Retired on 2026-09-19 at the user's request: the app has moved far enough
+from it that it no longer describes the design. This document, the tokens and
+the guard test are the reference; new screens follow the patterns here rather
+than the file.
 
 ## Changing styles
 
 1. `npm test` — the guard. A new value needs a token, or an allowlist entry in
    the test with its reason.
 2. `npm run lint` and `npm run build`.
-3. `npm run figma:check` against a running app (`FLIPPARR_UI_ORIGIN`). It
-   needs a real library behind the app, so it runs locally rather than in CI.
-4. `npm run layout:check` against a running app (`VISUAL_APP_ORIGIN`): header,
+3. `npm run layout:check` against a running app (`VISUAL_APP_ORIGIN`): header,
    content and rail edges at five widths, and every placeholder's fit.
-5. `npm run visual:capture -- --out baseline` before the change and
+4. `npm run visual:capture -- --out baseline` before the change and
    `--out current` after, then `npm run visual:compare`. It fails when
    contrast gets worse or the layout moves; read its list of changed
    properties, which should contain only what you meant to change. Point it

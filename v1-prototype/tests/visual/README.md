@@ -81,62 +81,10 @@ it has real content, and the run fails if they are missing.
 `intake` is captured on the backend origin, not through Vite — the dev server
 only proxies `/api`, and that surface consumes the same tokens.
 
-## Checking against the Figma file
+## The Figma file (retired)
 
-`figma/raw/` holds the verbatim Figma MCP responses for `node-id=1-86`.
-`figma/generate.mjs` parses them into `figma-spec.generated.mjs`, and
-`figma-check.mjs` asserts the running app against that:
-
-```
-npm run figma:generate     # raw/ -> figma-spec.generated.mjs
-npm run figma:check        # assert the app against it
-```
-
-`figma:check` takes an origin, so it can be pointed at what is actually
-deployed rather than at localhost:
-
-```
-FLIPPARR_UI_ORIGIN=https://flipparr.example.com npm run figma:check
-```
-
-**The point of the generator is not the parsing, it is the coverage check.**
-A node that is neither mapped to a selector nor skipped *with a reason* in
-`figma/node-map.json` fails generation. Every miss that reached the user was a
-node nobody had written down; this makes leaving one out impossible rather than
-unlikely. When it first ran it found thirteen differences the hand-written
-spec had no assertions for at all.
-
-`node-map.json` is the only hand-written file — Figma knows nothing about the
-app's markup, so node→selector cannot be derived. Everything else (values,
-geometry, icon names and sizes) comes out of `raw/`.
-
-### Refreshing after a design change
-
-Node ids resolve against whichever document is the **active tab in the Figma
-desktop app**. Point it at another file and `1:86` silently resolves to
-something else entirely. So: open the Flipparr file, make it active, re-run the
-three tools, replace `figma/raw/`, then regenerate.
-
-## What the Figma check enforces
-
-`figma-check.mjs` asserts the running app against `figma-spec.generated.mjs`
-(style properties, frame geometry within 1px, and icon names and sizes). It
-fails on *any* difference the node map has not recorded, unlike
-`compare.mjs`. A deliberate difference is recorded in `figma/node-map.json`
-with its reason — `ignoreProps` for a style, `ignoreSize` for an icon, a
-dimension set to `false` with a `_note` for a frame — and then
-`npm run figma:generate`. The Comics and Discover screens are checked at
-1440px and the phone's Comics screen at 375px; `stubs.mjs` holds the Metron
-responses both this and the capture use.
-
-Two rules this file exists to enforce, both learned the hard way:
-
-- **Values come from `get_design_context`, never a screenshot.** A picture
-  cannot tell you a 40% fill from a solid one, or 8px radius from 11px.
-- **Icons are part of the spec.** Each icon node's `data-name` gives the set and
-  variant (`heroicons-mini/bars-3`, `heroicons-micro/bolt`). The app shipped
-  Phosphor against a heroicons design, which was wrong on every screen at once.
-
-A badge that only appears for a followed series is synthesised from its own
-classes rather than skipped, so the rule is still checked on a library where no
-data reaches it.
+The app was checked against the Figma file (`figma:check`) until 2026-09-19,
+when the user retired it: the app had moved far enough from the file that it
+no longer described the design. `DESIGN_SYSTEM.md` and the guard test are the
+reference now, with `layout:check` and `visual:compare` for what renders. The
+generator, node map and captured responses are in git history.

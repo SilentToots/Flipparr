@@ -2078,8 +2078,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    Mobile Comics (node-id=69-744)
    The phone's Comics screen and its tab bar, to the file: a count strip, a
    title row with search and the bell, the toolbar at the desktop's control
-   sizes, the mobile card, and a floating tab bar. figma-check.mjs measures
-   them at 375x812.
+   sizes, the mobile card, and a floating tab bar.
    --------------------------------------------------------------------------- */
 /* The desktop rail marks its item with its own fill and bar. */
 .nav-glass { display: none; }
