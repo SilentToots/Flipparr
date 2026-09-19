@@ -18,6 +18,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.parse
@@ -405,10 +406,23 @@ class HttpContractTests(unittest.TestCase):
         self.assertFalse(app.verify_password("same password", "not-a-hash"))
 
     def _captured_log(self, run):
-        """Run `run` with stdout captured, returning the JSON lines it emitted."""
+        """Run `run` with stdout captured, returning the JSON lines it emitted.
+
+        The server writes its line just after it has answered, so the client
+        can be back here before the line lands -- and the line for the request
+        *before* this one can land inside this window. Both made this suite
+        flaky in CI (an empty capture, or a neighbour's line read as ours), so
+        wait for the line this request wrote, and read lines by request id
+        (`_logged`) rather than by position.
+        """
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             result = run()
+            request_id = getattr(result, "headers", {}).get("X-Request-Id")
+            if request_id:
+                deadline = time.monotonic() + 5
+                while request_id not in buffer.getvalue() and time.monotonic() < deadline:
+                    time.sleep(0.005)
         lines = []
         for line in buffer.getvalue().splitlines():
             line = line.strip()
@@ -416,10 +430,17 @@ class HttpContractTests(unittest.TestCase):
                 lines.append(json.loads(line))
         return result, lines
 
+    @staticmethod
+    def _logged(lines, response, event="http_request"):
+        """The lines this response's own request wrote."""
+        request_id = response.headers.get("X-Request-Id")
+        return [line for line in lines
+                if line.get("event") == event and line.get("request_id") == request_id]
+
     def test_every_request_is_logged_as_one_json_object(self):
         response, lines = self._captured_log(lambda: self.get("/healthz"))
         self.assertEqual(response.status, 200)
-        requests = [line for line in lines if line.get("event") == "http_request"]
+        requests = self._logged(lines, response)
         self.assertEqual(len(requests), 1)
         entry = requests[0]
         for field in ("ts", "level", "event", "request_id", "method", "path", "status", "duration_ms"):
@@ -433,8 +454,9 @@ class HttpContractTests(unittest.TestCase):
         response, lines = self._captured_log(lambda: self.get("/healthz"))
         header_id = response.headers.get("X-Request-Id")
         self.assertTrue(header_id)
-        logged = [line for line in lines if line.get("event") == "http_request"][0]
-        self.assertEqual(logged["request_id"], header_id)
+        logged = self._logged(lines, response)
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0]["request_id"], header_id)
 
     def test_request_ids_differ_between_requests(self):
         first = self.get("/healthz").headers.get("X-Request-Id")
@@ -444,13 +466,13 @@ class HttpContractTests(unittest.TestCase):
     def test_a_query_string_is_never_written_to_the_log(self):
         """This line is meant to be safe to paste into a bug report, so the part
         of the URL a caller controls freely does not go into it."""
-        _, lines = self._captured_log(
+        response, lines = self._captured_log(
             lambda: self.get("/api/v1/catalog?token=super-secret-value&q=private")
         )
         rendered = json.dumps(lines)
         self.assertNotIn("super-secret-value", rendered)
         self.assertNotIn("private", rendered)
-        entry = [line for line in lines if line.get("event") == "http_request"][0]
+        entry = self._logged(lines, response)[0]
         self.assertEqual(entry["path"], "/api/v1/catalog")
 
     def test_a_failing_route_logs_the_stack_and_answers_generically(self):
@@ -459,7 +481,7 @@ class HttpContractTests(unittest.TestCase):
             response, lines = self._captured_log(lambda: self.get("/api/v1/catalog"))
         self.assertEqual(response.status, 500)
         self.assertNotIn("inner detail", response.body.decode())
-        failures = [line for line in lines if line.get("event") == "request_failed"]
+        failures = self._logged(lines, response, event="request_failed")
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0]["error_type"], "RuntimeError")
         self.assertIn("inner detail", failures[0]["traceback"])
