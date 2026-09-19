@@ -3039,6 +3039,9 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 .danger-button, .ui-button--danger, .release-error button, .family-members article button,
 .request-job-actions button.request-job-delete, .advanced-card.danger button { background: var(--button-standard-bg); color: var(--red-text); }
 .pull-button-queued, .pull-button-owned { color: var(--muted); }
+/* The full-size Pull sits beside standard buttons (See the whole run, the
+   choose-issues bar), so it takes their height and padding. */
+.pull-button-md { min-height: var(--control-height-md); padding: 0 var(--space-16); }
 @media (hover: hover) {
   .primary-button:not(:disabled):hover, .ui-button--primary:not(:disabled):hover, .pull-button-idle:not(:disabled):hover { background: var(--button-primary-bg-hover); transform: none; }
   :is(.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost):not(:disabled):hover { background: var(--button-standard-bg-hover); color: var(--text); }
