@@ -3108,3 +3108,25 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .issue-catalog-card.ready > div:first-child > strong::before { background: var(--violet); }
 .issue-catalog-card.pending > div:first-child > strong::before { background: var(--muted-weak); }
 
+
+/* --- Pull List and Settings take the drawer's card (2026-09-19) -------------------
+   No outlines: a card is a fill one step lighter than what it sits on, with
+   corners that nest (24px panel, 16px card, 12px row inside a card). */
+.request-card { border: 0; border-radius: var(--radius-16); background: var(--surface); }
+.settings-shell { border-radius: var(--radius-24); }
+.settings-card { border: 0; border-radius: var(--radius-16); background: var(--surface-raised); }
+.settings-root-list > span { border: 0; border-radius: var(--radius-12); background: var(--field-bg); }
+.provider-policy-note { border: 0; border-radius: var(--radius-16); background: var(--surface-raised); }
+.metadata-layout { border: 0; border-radius: var(--radius-16); background: var(--surface-raised); }
+.metadata-layout .inbox-list { background: transparent; }
+.metadata-layout .review-panel { background: transparent; }
+@media (max-width: 640px) {
+  .settings-card { background: var(--surface); }
+  .settings-shell { border-radius: 0; }
+}
+/* The standard button's shape for the two stragglers: a job's Upload a file
+   (a label around a file input) and a source's Manage. */
+.job-upload { min-height: 32px; padding: 0 var(--space-12); border: 0; border-radius: var(--radius-pill); background: var(--button-standard-bg); color: var(--text); }
+@media (hover: hover) { .job-upload:hover { background: var(--button-standard-bg-hover); } }
+.provider-row > button { min-height: 36px; padding: 0 var(--space-16); color: var(--text); font-weight: var(--weight-semibold); }
+@media (max-width: 640px) { .provider-row > button { min-height: 44px; } }

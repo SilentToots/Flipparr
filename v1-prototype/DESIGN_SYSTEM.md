@@ -88,7 +88,13 @@ that lines up with a row's text is computed from the row's parts — see
 - A button **nested inside another control** — a menu's row — is 8px inside
   its frame; a segment inside a capsule is a capsule.
 - Pills stay pills, circles stay circles.
-- Covers and thumbnails are 4px, cards 8px, dialogs and sheets 16px.
+- Covers and thumbnails are 4px. **Cards have no outline** (since
+  2026-09-19): a card is a fill one step lighter than what it sits on --
+  `--surface` on the page, `--surface-raised` inside a panel, the drawer's
+  tone (`--art-band`) inside a toned drawer -- and corners nest: a 24px panel
+  or drawer holds 16px cards, which hold 12px rows. Dialogs and sheets are
+  16px on a desktop and 24px as a phone sheet. Pull List, Settings and the
+  drawers all follow this; state that a border once carried is a dot.
 
 ## Colour
 
