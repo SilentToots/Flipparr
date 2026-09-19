@@ -1966,14 +1966,20 @@ function RunSynopsis({ text, source, sourcePrefix = "From", loading = false }) {
   </section>;
 }
 
+// A catalog run, as the comics drawer shows a library one: the art, then --
+// on one page, no tabs -- how to take it, stacked. Follow is the comics
+// drawer's band (a run that has ended has nothing to follow, so it has none);
+// under it one card pulls every released issue (or the whole of an ended
+// run), and one opens into the issue list to pick from. The story follows.
 function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClose }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   const [preview, setPreview] = useState({ state: "loading", data: null, error: "" });
-  const [mode, setMode] = useState("choose");
+  const [choosing, setChoosing] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(settled === PULL_STATES.queued ? "Already on your Pull List." : "");
+  // Which action is running, and what the last one said, by action.
+  const [busy, setBusy] = useState("");
+  const [done, setDone] = useState(settled === PULL_STATES.queued ? { whole: "Already on your Pull List." } : {});
   const ids = runPreviewIds(item);
   const idsKey = JSON.stringify(ids);
   const source = ["metron", "comic_vine", "gcd"].find((provider) => ids[provider]);
@@ -1992,45 +1998,46 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
   // The preview's own reading outranks the search row's, which is often
   // silent about whether a run has ended.
   const status = run?.publicationStatus || discoveryRunStatus(item);
-  const completed = status === "completed";
-  // A mode the run no longer offers -- picked before the preview said it had
-  // ended -- falls back to taking the whole run.
-  const activeMode = completed && (mode === "follow" || mode === "released") ? "complete"
-    : !completed && mode === "complete" ? "released" : mode;
-  const summary = runPullSummary(activeMode, issues, [...selected], { following: Boolean(run?.following) });
-  const [modesRef, modeGlass] = useGlassIndicator("button.active", [activeMode, preview.state]);
+  const modes = runModes(status).map(([id]) => id);
+  const canFollow = modes.includes("follow");
+  const completed = modes.includes("complete");
+  const following = Boolean(run?.following);
+  const followSummary = runPullSummary("follow", issues, [], { following });
+  const wholeMode = completed ? "complete" : "released";
+  const wholeSummary = runPullSummary(wholeMode, issues);
+  const chooseSummary = runPullSummary("choose", issues, [...selected]);
   function toggle(number) {
-    setMode("choose");
-    setDone("");
+    setDone((current) => ({ ...current, choose: "" }));
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(number)) next.delete(number); else next.add(number);
       return next;
     });
   }
-  async function commit() {
-    if (!run || summary.disabled || busy) return;
-    setBusy(true);
+  async function commit(action) {
+    if (!run || busy) return;
+    setBusy(action);
     const target = {
       provider: run.provider, providerSeriesId: run.providerSeriesId,
       title: run.title, query: query || run.title,
     };
-    const result = activeMode === "follow"
+    const result = action === "follow"
       ? await onFollow(target)
-      : await onPullIssues(activeMode === "released" ? { ...target, released: true }
-        : activeMode === "complete"
+      : await onPullIssues(action === "choose" ? { ...target, numbers: [...selected] }
+        : completed
           ? { ...target, complete: true, numbers: completeRunToPull(issues).map((issue) => issue.number) }
-          : { ...target, numbers: [...selected] });
-    setBusy(false);
+          : { ...target, released: true });
+    setBusy("");
     if (result?.ok) {
-      setDone(activeMode === "follow" ? "Following this run." : "On your Pull List.");
-      setSelected(new Set());
+      setDone((current) => ({ ...current, [action]: action === "follow" ? "Following this run." : "On your Pull List." }));
+      if (action === "choose") setSelected(new Set());
       load();
     }
   }
   const yearLabel = item.yearLabel || run?.year || item.yearBegan;
   const art = run?.cover || item.cover;
   const toned = toneProps(useArtTone(art));
+  const waiting = preview.state === "loading" ? "Getting the issue list…" : "";
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
     <aside className={`series-drawer comic-drawer discover-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="discover-run-title"
@@ -2039,65 +2046,84 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClo
         cover={<DiscoverCover src={art} alt={`${item.title} cover`} glyph={30} />}
         byline={[run?.publisher || item.publisher, yearLabel].filter(Boolean).join(" • ")}
         onClose={requestClose} closeLabel="Close run details">
-        <RunStatusChip status={run?.publicationStatus || discoveryRunStatus(item)} />
+        <RunStatusChip status={status} />
         {(run?.medium || item.medium) === "manga" ? <StatusBadge tone="muted">Manga</StatusBadge> : null}
         {run ? <StatusBadge tone="muted">{issues.length} issue{issues.length === 1 ? "" : "s"}</StatusBadge> : null}
       </DiscoverDrawerHero>
-      {/* How much to take, as the run drawer's tab bar: the same violet bar and
-          sliding glass, choosing one of three rather than a page. */}
-      <div className="drawer-tabs comic-drawer-tabs discover-mode-tabs" role="radiogroup" aria-label="How much of this run to pull" ref={modesRef}>
-        <span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={modeGlass || { opacity: 0 }} />
-        {runModes(completed ? "completed" : status).map(([id, label]) =>
-          <button type="button" role="radio" aria-checked={activeMode === id} className={activeMode === id ? "active" : ""}
-            disabled={!run || busy} onClick={() => { setMode(id); setDone(""); }} key={id}>{label}</button>)}
-      </div>
       <div className="comic-drawer-body">
-      {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
-      {run?.detailsLimited ? <p className="discover-note">The Grand Comics Database lists this run&rsquo;s issue numbers without titles, dates or covers.</p> : null}
-      <section className="discover-issue-list" aria-label="Issues in this run">
-        <header>
-          <h3>Issues</h3>
-          {run && mode === "choose" ? <span>
-            <button type="button" onClick={() => { setSelected(new Set(releasedToPull(issues).map((issue) => issue.number))); setDone(""); }}>Select all released</button>
-            <button type="button" onClick={() => { setSelected(new Set()); setDone(""); }} disabled={!selected.size}>Clear</button>
-          </span> : null}
-        </header>
-        {preview.state === "loading" ? <div role="status" aria-busy="true">
-          <p className="discover-note">Getting the issue list from {PREVIEW_PROVIDER_NAMES[source] || "the catalogs"}&hellip; a long run takes a little while the first time.</p>
-          {[0, 1, 2, 3, 4, 5].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}>
-            <i /><span className="discover-cover" /><span><i /><i /></span>
-          </div>)}
+        {canFollow ? <div className="comic-drawer-follow">
+          <FollowSwitch following={following || Boolean(done.follow)} busy={busy === "follow"}
+            label={busy === "follow" ? "Following…" : following || done.follow ? "Following Run" : "Follow Run"}
+            onChange={(on) => { if (on) commit("follow"); }} />
+          <small className="comic-drawer-follow-note" role="status" aria-live="polite">{done.follow || waiting || followSummary.detail}</small>
         </div> : null}
         {preview.state === "error" ? <div className="shelf-message">
           <WarningCircle size={18} />
           <span><strong>This run&rsquo;s issues could not be listed</strong><small>{preview.error}</small></span>
           <button type="button" onClick={load}>Try again</button>
-        </div> : null}
-        {preview.state === "done" ? issues.map((issue, index) => {
-          const available = selectableIssue(issue);
-          const note = issue.owned ? "In library" : issue.queued ? "On Pull List"
-            : issue.releaseState === "upcoming" ? "Not out yet"
-            : issue.releaseState === "unknown" ? "Release date unknown" : null;
-          const date = formatLongDate(issue.publicationDate) || issue.publicationYear;
-          return <label className={`discover-issue-row${available ? "" : " unavailable"}`} key={`${issue.number}-${index}`}>
-            <input type="checkbox" checked={selected.has(issue.number)} disabled={!available || busy}
-              onChange={() => toggle(issue.number)} aria-label={`Issue ${issue.number}`} />
-            <DiscoverCover src={issue.cover} alt="" glyph={16} />
-            <span>
-              <strong>{issueLabel(issue.number, run?.medium || item.medium)}{issue.title ? ` · ${issue.title}` : ""}</strong>
-              <small>{[date, note].filter(Boolean).join(" · ") || "\u00a0"}</small>
+        </div> : <section className="run-pull-options" aria-label="Pull issues">
+          <div className="run-pull-option">
+            <span className="run-pull-option-copy">
+              <strong>{run ? wholeSummary.label : completed ? "Pull complete run" : "Pull all released"}</strong>
+              <small role="status" aria-live="polite">{done.whole || waiting || wholeSummary.detail}</small>
             </span>
-          </label>;
-        }) : null}
-      </section>
-      </div>
-      <div className="discover-drawer-actions">
-        <small role="status" aria-live="polite">{done || summary.detail}</small>
-        <button type="button" className="pull-button pull-button-md pull-button-idle"
-          disabled={!run || summary.disabled || busy} onClick={commit} aria-busy={busy || undefined}>
-          <span>{busy ? "Working…" : summary.label}</span>
-          {busy ? <LoadingIndicator size={16} /> : <PullIcon />}
-        </button>
+            <button type="button" className="pull-button pull-button-md pull-button-idle"
+              disabled={!run || wholeSummary.disabled || Boolean(busy)} onClick={() => commit("whole")} aria-busy={busy === "whole" || undefined}>
+              <span>{busy === "whole" ? "Pulling…" : "Pull"}</span>
+              {busy === "whole" ? <LoadingIndicator size={16} /> : <PullIcon />}
+            </button>
+          </div>
+          <div className={`run-pull-option run-pull-choose${choosing ? " open" : ""}`}>
+            <button type="button" className="run-pull-choose-toggle" aria-expanded={choosing} aria-controls="run-issue-picker"
+              onClick={() => setChoosing((open) => !open)}>
+              <span className="run-pull-option-copy">
+                <strong>Choose issues</strong>
+                <small>{choosing ? "Tick the issues you want to pull." : "Pick single issues from this run."}</small>
+              </span>
+              <ChevronDown />
+            </button>
+            {choosing ? <div className="discover-issue-list" id="run-issue-picker">
+              <header>
+                <h3>Issues</h3>
+                {run ? <span>
+                  <button type="button" onClick={() => { setSelected(new Set(releasedToPull(issues).map((issue) => issue.number))); setDone((current) => ({ ...current, choose: "" })); }}>Select all released</button>
+                  <button type="button" onClick={() => setSelected(new Set())} disabled={!selected.size}>Clear</button>
+                </span> : null}
+              </header>
+              {preview.state === "loading" ? <div role="status" aria-busy="true">
+                <p className="discover-note">Getting the issue list from {PREVIEW_PROVIDER_NAMES[source] || "the catalogs"}&hellip; a long run takes a little while the first time.</p>
+                {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}>
+                  <i /><span className="discover-cover" /><span><i /><i /></span>
+                </div>)}
+              </div> : issues.map((issue, index) => {
+                const available = selectableIssue(issue);
+                const note = issue.owned ? "In library" : issue.queued ? "On Pull List"
+                  : issue.releaseState === "upcoming" ? "Not out yet"
+                  : issue.releaseState === "unknown" ? "Release date unknown" : null;
+                const date = formatLongDate(issue.publicationDate) || issue.publicationYear;
+                return <label className={`discover-issue-row${available ? "" : " unavailable"}`} key={`${issue.number}-${index}`}>
+                  <input type="checkbox" checked={selected.has(issue.number)} disabled={!available || Boolean(busy)}
+                    onChange={() => toggle(issue.number)} aria-label={`Issue ${issue.number}`} />
+                  <DiscoverCover src={issue.cover} alt="" glyph={16} />
+                  <span>
+                    <strong>{issueLabel(issue.number, run?.medium || item.medium)}{issue.title ? ` · ${issue.title}` : ""}</strong>
+                    <small>{[date, note].filter(Boolean).join(" · ") || " "}</small>
+                  </span>
+                </label>;
+              })}
+              <footer className="run-pull-choose-actions">
+                <small role="status" aria-live="polite">{done.choose || chooseSummary.detail}</small>
+                <button type="button" className="pull-button pull-button-md pull-button-idle"
+                  disabled={!run || chooseSummary.disabled || Boolean(busy)} onClick={() => commit("choose")} aria-busy={busy === "choose" || undefined}>
+                  <span>{busy === "choose" ? "Pulling…" : chooseSummary.disabled ? "Pull issues" : chooseSummary.label}</span>
+                  {busy === "choose" ? <LoadingIndicator size={16} /> : <PullIcon />}
+                </button>
+              </footer>
+            </div> : null}
+          </div>
+        </section>}
+        {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
+        {run?.detailsLimited ? <p className="discover-note">The Grand Comics Database lists this run&rsquo;s issue numbers without titles, dates or covers.</p> : null}
       </div>
     </aside>
   </div>;
@@ -4107,7 +4133,11 @@ function stateFromLocation(pathname, search) {
   const params = new URLSearchParams(search || "");
   const segments = String(pathname || "").split("/").filter(Boolean);
   const first = `/${segments[0] || ""}`;
-  const active = VIEW_BY_ROUTE[first] || RETIRED_ROUTES[first] || "library";
+  const routed = VIEW_BY_ROUTE[first] || RETIRED_ROUTES[first] || "library";
+  // A search is Discover's on a phone and the Search page's above 640px,
+  // whichever address it came in on.
+  const active = routed === "search" && isPhoneWidth() ? "discover"
+    : routed === "discover" && params.get("q") && !isPhoneWidth() ? "search" : routed;
   const requestedSection = segments[1];
   return {
     active,
@@ -4128,11 +4158,17 @@ export function App() {
   // releases -- so a search follows the width it is read at: a /search link
   // opens on a phone as Discover's results, and Discover's results widen into
   // the Search page.
+  //
+  // Only when the width changes: choosing Discover from the sidebar with a
+  // search still open goes to the releases, not back to the results.
   const phoneWidth = usePhoneWidth();
   useEffect(() => {
     if (phoneWidth && active === "search") setActive("discover");
     else if (!phoneWidth && active === "discover" && searchQuery) setActive("search");
-  }, [phoneWidth, active]);
+  }, [phoneWidth]);
+  // Above 640px Discover is the releases alone; the search stays open on the
+  // Search page, and Discover neither shows it nor carries it in its address.
+  const viewQuery = active === "discover" && !phoneWidth ? "" : searchQuery;
   // A ?series= link cannot be honoured until the catalog it refers to exists.
   const [pendingSeriesId, setPendingSeriesId] = useState(BOOT_ROUTE.seriesId);
   // Bumped when the address no longer names an open drawer, so the drawer can
@@ -5113,12 +5149,12 @@ export function App() {
   useEffect(() => {
     if (pendingSeriesId) return;
     const target = locationForState({
-      active, settingsSection, searchQuery, seriesId: selectedSeries?.id,
+      active, settingsSection, searchQuery: viewQuery, seriesId: selectedSeries?.id,
     });
     if (target !== window.location.pathname + window.location.search) {
       window.history.pushState(null, "", target);
     }
-  }, [active, settingsSection, searchQuery, selectedSeries?.id, pendingSeriesId]);
+  }, [active, settingsSection, viewQuery, selectedSeries?.id, pendingSeriesId]);
   // Back and forward move between views, and close the drawer when the entry
   // being returned to did not have it open.
   useEffect(() => {
@@ -5172,7 +5208,7 @@ export function App() {
   const logicalSeriesCount = logicalSeries.length;
   const header = {
     notifications, onOpenNotification: openNotification, onDismissNotification: dismissNotification,
-    query: SEARCH_VIEWS.has(active) ? searchQuery : "", onSearch: openSearch, onClearSearch: () => openSearch(""),
+    query: SEARCH_VIEWS.has(active) ? viewQuery : "", onSearch: openSearch, onClearSearch: () => openSearch(""),
   };
   const navActive = active === "import" ? "settings" : active;
   useEffect(() => { loadAuthStatus(); }, []);
@@ -5193,5 +5229,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
 }

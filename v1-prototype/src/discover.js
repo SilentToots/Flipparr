@@ -138,7 +138,7 @@ export const releasedToPull = (issues = []) =>
 export const completeRunToPull = (issues = []) => (issues || []).filter(selectableIssue);
 
 /**
- * The choices the run drawer offers.
+ * The ways the run drawer offers to take a run, in the order it stacks them.
  *
  * Following a run that has ended watches for issues that will never come, and
  * "Pull all released" is the same thing as the whole run once nothing is left

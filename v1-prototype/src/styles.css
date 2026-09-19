@@ -2196,6 +2196,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    facts, chips and rows shift with the art the way the Comics drawer's do. */
 .comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip) { background: var(--art-band); }
 .comic-drawer.toned .comic-drawer-follow { background: var(--art-band-strong); }
+.comic-drawer.toned .run-pull-option { background: var(--art-band); }
 .comic-drawer.toned .discover-issue-row { border-bottom-color: var(--art-line); }
 .series-drawer.comic-drawer.discover-drawer.toned > .discover-drawer-actions { background: var(--art-tone-deep); }
 .comic-drawer.toned .comic-drawer-bar::before { background: color-mix(in srgb, var(--art-tone) 82%, transparent); }
@@ -2317,6 +2318,39 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .comic-drawer-creator-list span { color: var(--muted-strong); font-size: var(--text-xs); }
 
 .comic-drawer-body .drawer-facts { margin: 0; }
+/* The Discover run drawer's ways to take a run (DiscoverRunDrawer): stacked
+   cards under the Follow band, the last opening into the issue list. */
+.comic-drawer-follow-note { color: var(--muted); font-size: var(--text-sm); }
+.run-pull-options { display: grid; gap: var(--space-12); }
+.run-pull-option { display: flex; align-items: center; gap: var(--space-16); padding: var(--space-16) var(--space-20); border-radius: var(--radius-12); background: var(--surface-raised); }
+.run-pull-option-copy { flex: 1 1 auto; min-width: 0; display: grid; gap: var(--space-4); }
+.run-pull-option-copy strong { color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.run-pull-option-copy small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.run-pull-option .pull-button { flex: none; width: auto; min-width: 112px; }
+.run-pull-option .pull-button-idle:disabled { opacity: var(--button-disabled-opacity); }
+.run-pull-choose { display: block; padding: 0; }
+.run-pull-choose-toggle { width: 100%; display: flex; align-items: center; gap: var(--space-16); padding: var(--space-16) var(--space-20); border: 0; border-radius: inherit; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.run-pull-choose-toggle > svg { flex: none; color: var(--muted); transition: rotate var(--motion-duration-fast) var(--motion-ease-standard); }
+.run-pull-choose.open .run-pull-choose-toggle > svg { rotate: 180deg; }
+.run-pull-choose-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.run-pull-choose .discover-issue-list { margin-top: 0; padding: 0 var(--space-20); }
+/* Its Pull stays in reach however long the list: pinned to the drawer's foot
+   while the list scrolls past, a black band like the Follow band. */
+.run-pull-choose-actions {
+  position: sticky; bottom: 0; z-index: 1;
+  margin: 0 calc(var(--space-20) * -1); padding: var(--space-16) var(--space-20) calc(var(--space-16) + env(safe-area-inset-bottom));
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-16);
+  border-radius: 0 0 var(--radius-12) var(--radius-12); background: var(--color-black);
+}
+.run-pull-choose-actions small { min-width: 0; color: var(--muted); font-size: var(--text-sm); }
+.run-pull-choose-actions .pull-button { flex: none; width: auto; min-width: 160px; }
+@media (max-width: 640px) {
+  .run-pull-option, .run-pull-choose-toggle { padding: var(--space-14) var(--space-16); }
+  .run-pull-choose { padding: 0; }
+  .run-pull-choose .discover-issue-list { padding: 0 var(--space-16); }
+  .run-pull-choose-actions { margin-inline: calc(var(--space-16) * -1); padding-inline: var(--space-16); flex-wrap: wrap; gap: var(--space-12); }
+  .run-pull-choose-actions .pull-button { width: 100%; }
+}
 .comic-drawer-body .advanced-tools { display: grid; gap: var(--space-12); }
 .advanced-card.advanced-aliases { display: block; }
 .advanced-aliases .alias-list, .advanced-aliases .alias-form { margin-top: var(--space-12); }
