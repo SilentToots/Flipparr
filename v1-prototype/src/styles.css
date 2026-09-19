@@ -3121,3 +3121,4 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* Text only, and it may need to cut off with an ellipsis, so a line box the chip's height rather than flex centring. */
 .discover-chip { display: inline-block; line-height: var(--chip-height); }
 .comic-drawer-statuses :is(.publication-status, .monitoring-status, .run-status, .status-badge) { height: var(--chip-height-lg); padding-block: 0; }
+

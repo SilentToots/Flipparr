@@ -54,6 +54,10 @@ const LEADING_EXCEPTIONS = {
   // A tap-target hack: the summary is made 44px tall by its line box. It
   // should become min-height plus centring, and then this entry can go.
   ".issue-catalog-card summary": "44px",
+  // A text-only chip set to the chip height (--chip-height) centres its
+  // words with a line box that height: flex centring would stop a long
+  // "matched by" chip ending in an ellipsis.
+  ".discover-chip": "var(--chip-height)",
 };
 
 test("every line-height is a leading token or a written exception", () => {
