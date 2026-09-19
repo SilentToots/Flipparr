@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { FlipparrMark, FlipparrWordmark } from "./brand.jsx";
+import { FlipparrMark } from "./brand.jsx";
 import {
   ArrowsClockwise,
   ArrowUpRight,
@@ -776,7 +776,7 @@ function useCollapsingTabBar(resetKey) {
 const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAlign: "middle" };
 
 // Above 640px, the window's top bar, after YouTube's masthead: the menu control
-// on the nav icons' column with the wordmark beside it, the one search in the
+// on the nav icons' column with the F mark beside it, the one search in the
 // middle of the window, and the bell. It is frosted, so the page fades under
 // it as it scrolls. A phone has none: its pages carry their own tops.
 function Masthead({ navExpanded, onToggleNav }) {
@@ -786,7 +786,8 @@ function Masthead({ navExpanded, onToggleNav }) {
         type="button" className="masthead-menu" onClick={onToggleNav}
         aria-label={navExpanded ? "Collapse navigation" : "Expand navigation"} aria-expanded={navExpanded}
       ><MenuIcon /></button>
-      <span className="masthead-brand"><FlipparrWordmark height={24} /></span>
+      {/* The F mark is the brand everywhere; the full wordmark is not used. */}
+      <span className="masthead-brand"><FlipparrMark size={28} /></span>
     </div>
     <div className="masthead-search"><HeaderSearchField /></div>
     <div className="masthead-end"><HeaderBell /></div>
@@ -834,7 +835,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
         ))}
       </nav>
       {/* Frame 8:284: the library's size sits at the rail's foot. The mark
-          the file draws beside it moved to the rail's head with the wordmark. */}
+          the file draws beside it is in the masthead now. */}
       <div className="sidebar-footer">
         <span className="sidebar-identity">
           {/* Until the catalog answers there is no count to show, and a 0 reads
@@ -2867,9 +2868,9 @@ function SetupView({ catalog, onFinish }) {
     <div className={`setup-card${step.id === "welcome" ? " welcome" : ""}`}>
       <header className="setup-header">
         {/* The welcome screen has the mark as its subject and no stepper to
-            label, so the small wordmark above it was the name twice over. */}
+            label, so the small mark above it would be the mark twice over. */}
         {step.id === "welcome" ? null : <div className="setup-topline">
-          <span className="setup-brand"><FlipparrWordmark height={22} /></span>
+          <span className="setup-brand"><FlipparrMark size={24} /></span>
           <SetupStepper stepIndex={stepIndex} />
         </div>}
         {step.id === "welcome" ? null : <>
@@ -4084,7 +4085,7 @@ function LoginView({ onSignedIn }) {
         left-aligned form is the usual shape of a sign-in, and the sidebar's
         rules are tuned for a row in a nav. */}
     <div className="login-brand">
-      <FlipparrWordmark height={64} />
+      <FlipparrMark size={72} />
     </div>
     <label>
       <span>Username</span>

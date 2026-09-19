@@ -1885,12 +1885,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .login-shell { min-height: 100dvh; display: grid; place-items: center; padding: var(--space-24); background: var(--bg); }
 .login-card { width: min(380px, 100%); display: flex; flex-direction: column; gap: var(--space-16); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-8); padding: var(--space-32) var(--space-28); }
 
-/* The wordmark stands alone: the button says what this does, and the browser
+/* The F mark stands alone: the button says what this does, and the browser
    tab and password manager both name the app already. */
 .login-brand { display: flex; flex-direction: column; align-items: center; margin-bottom: var(--space-24); color: var(--text); }
-/* The wordmark is wide (about 2.7:1), so cap it against the card as well as by
-   height -- on a narrow phone the height alone would push it past the edges. */
-.login-brand .brand-wordmark { max-width: 100%; }
 
 .login-card label { display: flex; flex-direction: column; gap: var(--space-8); font-size: var(--text-sm); color: var(--muted); }
 /* 16px: a smaller font makes iOS zoom the page when the field takes focus. */
@@ -2627,7 +2624,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* Same card as the steps that follow it -- a wider one made the first screen
    jump to a different shape on Continue. It keeps its own two differences: no
-   rule under the wordmark, since there is no heading to separate from controls,
+   rule under the mark, since there is no heading to separate from controls,
    and a larger title. */
 .setup-card.welcome .setup-header { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
 .setup-card.welcome .setup-brand { margin-bottom: 0; }
@@ -2682,13 +2679,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* Brand marks. Both are currentColor, so they take the colour of whatever they
    sit in: full strength on the welcome screen, muted beside a nav label. */
-.brand-wordmark { display: block; width: auto; }
 .brand-mark { display: block; flex: none; }
 .setup-brand { color: var(--muted-strong); }
 .setup-welcome .brand-mark { color: var(--color-violet-400); }
-/* The sidebar wordmark stands alone -- it names the app, so a "Comic library"
-   line under it was labelling the label. The login screen keeps its subtitle,
-   which says what to do rather than what this is. */
 
 /* "Get a key" beside the credential help: an account is the one prerequisite
    this screen cannot satisfy for you, so it links out to where you get one. */

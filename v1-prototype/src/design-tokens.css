@@ -150,7 +150,7 @@
      nav icons sit on, which is the collapsed rail's centre line. */
   --masthead-height: 64px;
   /* Each side of the masthead is at least wide enough for the menu control and
-     the wordmark, and both sides match, so the search stays on the window's
+     the F mark, and both sides match, so the search stays on the window's
      centre line and gives up width first on a narrow window. */
   --masthead-side: 160px;
   --sidebar-inset: var(--space-12);

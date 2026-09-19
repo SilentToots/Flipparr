@@ -18,6 +18,12 @@ enforcement; this file is the explanation.
   the running app) and `visual:capture` / `visual:compare` (every screen at
   1440 and 375, with colour, type, spacing and contrast recorded per element).
 
+## Brand
+
+The brand is the F bubble mark (`FlipparrMark`), and only that: in the
+masthead, on sign-in and setup, and anywhere else the app names itself. The
+full wordmark is not used.
+
 ## Type
 
 Inter, bundled (`@fontsource-variable/inter`, the optical-size cut, OFL-1.1 —
@@ -142,7 +148,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
 - **The frame above 640px** (since 2026-09-19) follows YouTube's structure and
   the Apple TV app's sidebar.
   - The **masthead** (`Masthead`) spans the window, frosted: the menu control,
-    then the wordmark, then one search centred on the window, then the bell.
+    then the F mark, then one search centred on the window, then the bell.
     The search always searches everything and shows its results on Discover.
     Both sides of the masthead are at least `--masthead-side`, so the search
     stays centred and gives up width first.
