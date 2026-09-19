@@ -28,7 +28,9 @@ const PAGES = {
   // A phone opens this as Discover's results; above 640px it is the Search page.
   search: { path: "/search?q=batman", ready: ".discover-results .library-match, .discover-results .discover-note", first: ".discover-results", last: ".discover-results" },
   pull: { path: "/pull-list", ready: ".request-card, .request-empty", first: ".request-card, .request-empty", last: ".request-card, .request-empty", also: [".request-list-bar"], alsoRight: [".request-list-bar"] },
-  settings: { path: "/settings", ready: ".segmented-tabs", first: ".settings-layout > *", last: ".settings-layout > *" },
+  // A phone opens on the list of sections; above 640px, on the first section.
+  settings: { path: "/settings", ready: ".settings-shell, .settings-index", first: ".settings-shell, .settings-index", last: ".settings-shell, .settings-index" },
+  "settings-folders": { path: "/settings/library", ready: ".settings-card", first: ".settings-shell", last: ".settings-shell" },
   import: { path: "/import", ready: ".focused-panel", first: ".library-sources-panel, .focused-panel", last: ".focused-panel" },
 };
 

@@ -995,34 +995,83 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 
 
-.settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); max-width: var(--page-narrow); }
-/* Library health is a list beside a detail pane; 900px squeezed the detail. */
-.settings-layout-wide { max-width: none; }
-/* minmax(0, 1fr) rather than the implicit auto column: grid items default to
-   min-width:auto, so an auto column refuses to shrink below its content's
-   min-content width and the whole page scrolls sideways at 320px. */
-.settings-layout > section { padding: var(--space-24); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-8); }
-.settings-layout h2 { font-size: var(--text-md); margin: 0 0 var(--space-20); }
-.settings-layout .secondary-button { margin-top: var(--space-12); }
-.settings-library-folders > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-24); }
-.settings-library-folders > header h2 { margin-bottom: var(--space-6); }
-.settings-library-folders > header p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
-.settings-library-folders > header .secondary-button { flex: 0 0 auto; margin-top: 0; }
-/* Manage folders and Scan library. On a phone the rail's scan button is
-   hidden, so this one is the scan there. */
-.settings-library-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8); }
-.settings-library-actions .primary-button { margin-top: 0; }
-.settings-library-folders > header p.settings-library-size { margin-top: var(--space-4); color: var(--muted); font-size: var(--text-sm); }
-.settings-library-folders > header p.settings-library-size strong { color: var(--text); font-weight: var(--weight-semibold); }
-.settings-library-folders > header p.settings-last-scan { margin-top: var(--space-4); color: var(--muted-weak); font-size: var(--text-sm); }
+/* --- Settings (SettingsView) -----------------------------------------------------
+   Above 640px: one panel, the sections listed down its left and the open one's
+   cards on the right. On a phone the list is a page of its own (SettingsIndex,
+   grouped rows as in iPhone Settings) and a section opens as the next page. */
+.settings-shell {
+  display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--space-32); align-items: start;
+  padding: var(--space-24); border-radius: var(--radius-16); background: var(--surface);
+}
+.settings-nav {
+  position: sticky; top: calc(var(--page-header-height, 0px) + var(--space-16));
+  display: grid; gap: var(--space-4); padding-right: var(--space-24); border-right: 1px solid var(--line);
+}
+.settings-nav button {
+  min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-8);
+  padding: 0 var(--space-14); border: 0; border-radius: var(--radius-pill); background: none;
+  color: var(--muted-strong); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); text-align: left; cursor: pointer;
+  transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease;
+}
+@media (hover: hover) { .settings-nav button:not(.active):hover { background: var(--surface-hover); color: var(--text); } }
+.settings-nav button.active { background: var(--violet-soft); color: var(--violet-text); font-weight: var(--weight-semibold); }
+.settings-nav button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.settings-nav b { min-width: 20px; padding: var(--space-2) var(--space-6); border-radius: var(--radius-pill); background: var(--red); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-bold); text-align: center; }
+.settings-pane { min-width: 0; display: grid; gap: var(--space-16); }
+.settings-pane-header h2 { margin: 0 0 var(--space-4); color: var(--text); font-size: var(--text-xl); font-weight: var(--weight-bold); }
+.settings-pane-header p { margin: 0; color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.settings-card { min-width: 0; padding: var(--space-24); border: 1px solid var(--line); border-radius: var(--radius-16); }
+.settings-card > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); min-height: var(--control-height-md); margin-bottom: var(--space-12); }
+.settings-card > header h3 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+.settings-card > header button { flex: none; margin: 0; }
+/* A toggle straight under the title needs no rule above it. */
+.settings-card > header + .toggle-row { border-top: 0; }
+.settings-card-lead { max-width: 72ch; margin: 0 0 var(--space-12); color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.settings-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-12); margin-top: var(--space-16); }
+.settings-card-actions small { color: var(--muted-weak); font-size: var(--text-sm); }
+.settings-card .form-field { margin-bottom: 0; }
+.settings-library-size { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.settings-library-size strong { color: var(--text); font-weight: var(--weight-semibold); }
 .settings-library-folders .scan-progress, .settings-library-folders .success-banner { position: relative; overflow: hidden; margin: var(--space-16) 0 0; }
-/* Scan automatically, and how often. */
-.settings-auto-scan { display: grid; gap: var(--space-12); margin-top: var(--space-16); padding-top: var(--space-16); border-top: 1px solid var(--line); }
-.settings-auto-scan .settings-scan-interval { margin: 0; }
+.settings-scan-interval { margin: var(--space-12) 0 0; }
+@media (min-width: 641px) and (max-width: 1100px) {
+  .settings-shell { grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-20); padding: var(--space-16); }
+  .settings-nav { padding-right: var(--space-16); }
+  .settings-card { padding: var(--space-20); }
+}
 @media (max-width: 640px) {
-  .settings-library-folders > header { flex-direction: column; }
-  .settings-library-actions { justify-content: flex-start; }
-}.settings-root-list { display: grid; gap: var(--space-8); margin-top: var(--space-16); }
+  .settings-shell { display: block; padding: 0; border-radius: 0; background: none; }
+  .settings-pane { gap: var(--space-12); }
+  .settings-pane-header p { padding-inline: var(--space-4); }
+  .settings-card { padding: var(--space-16); border: 0; border-radius: var(--radius-12); background: var(--surface); }
+  .settings-card > header { flex-wrap: wrap; margin-bottom: var(--space-8); }
+  .settings-card > header h3 { font-size: var(--text-md); }
+}
+
+/* The phone's list of sections: grouped rounded panels of rows, each an icon
+   tile, the name, what is set and a chevron, with the rule between rows
+   starting at the name, as iOS draws it. */
+.settings-index { display: grid; gap: var(--space-24); }
+.settings-index ul { margin: 0; padding: 0; overflow: hidden; list-style: none; border-radius: var(--radius-12); background: var(--surface); }
+.settings-index button {
+  --settings-row-rule: calc(var(--space-16) + 30px + var(--space-12));
+  width: 100%; min-height: 48px; box-sizing: border-box;
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-12);
+  padding: var(--space-8) var(--space-12) var(--space-8) var(--space-16); border: 0; background: none;
+  color: var(--text); font: inherit; font-size: var(--text-md); text-align: left; cursor: pointer;
+}
+.settings-index li + li button { background: linear-gradient(var(--line), var(--line)) no-repeat var(--settings-row-rule) 0 / calc(100% - var(--settings-row-rule)) 1px; }
+.settings-index button:active { background-color: var(--surface-hover); }
+.settings-index button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.settings-index-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--radius-8); background: var(--color-ios-gray3); color: var(--color-neutral-0); }
+.settings-index-icon--health { background: var(--red); }
+.settings-index-icon--library { background: var(--amber); }
+.settings-index-icon--acquisition { background: var(--green); }
+.settings-index-icon--metadata { background: var(--violet); }
+.settings-index-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-index-value { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
+.settings-index button > svg { color: var(--muted-weak); }
+.settings-root-list { display: grid; gap: var(--space-8); margin-top: var(--space-16); }
 .settings-root-list > span { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); padding: var(--space-12) var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--bg); color: var(--color-violet-400); }
 .settings-root-list strong { overflow: hidden; color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .settings-root-list small { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
@@ -1708,8 +1757,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .library-source { grid-template-columns: auto minmax(0, 1fr); }
   .library-source-actions { grid-column: 1 / -1; margin-left: calc(var(--source-icon) + var(--source-gap)); }
   .library-source-editor { margin-left: 0; }
-  .settings-library-folders > header { align-items: stretch; flex-direction: column; }
-  .settings-library-folders > header .secondary-button { width: fit-content; }
   .settings-root-list > span { grid-template-columns: auto minmax(0, 1fr); }
   .settings-root-list small { grid-column: 2; }
   .discovery-results { width: calc(100vw - 32px); }
@@ -2474,8 +2521,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
   /* Settings: Manage folders and Scan library stacked at two different widths;
      the provider rows' Manage was the only regular-weight button. */
-  .settings-library-actions { flex-direction: column; align-items: stretch; width: 100%; }
-  .settings-library-folders .settings-library-actions > button { width: 100%; justify-content: center; }
   .provider-row button { font-weight: var(--weight-semibold); }
 
   /* The workbench dialogs, held to the same floor as the screens behind them.

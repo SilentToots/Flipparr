@@ -145,6 +145,15 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   - `leading`: a back button, before the title in the same cell.
   - Every first row shares one centre line (`--page-header-row`). Content starts at the header's own spacing, never with a
     top margin of its own.
+- **Settings** (since 2026-09-19). Above 640px: one panel, the sections
+  listed down its left (the open one a violet-soft pill, Library health's
+  count as a red badge) and the open section's title, a line on what it
+  holds, then its blocks as titled `SettingsCard`s with an optional action at
+  the title's end. `/settings` opens Library health. On a phone it is two
+  levels, as iPhone Settings: `/settings` is `SettingsIndex` (grouped rounded
+  rows of an icon tile, the name, what is set and a chevron), and each
+  section opens as its own page with a back button; tapping the Settings tab
+  inside a section returns to the list.
 - **The frame above 640px** (since 2026-09-19) follows the Apple TV app's
   sidebar. There is no top bar: each page's header carries its bell.
   - The **sidebar** is a Liquid Glass panel floating the full height of the

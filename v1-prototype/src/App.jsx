@@ -2,6 +2,10 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { FlipparrMark } from "./brand.jsx";
 import {
   ArrowsClockwise,
+  CaretRight,
+  Heartbeat,
+  LockSimple,
+  Sparkle,
   ArrowUpRight,
   ArrowLeft,
   ArrowRight,
@@ -2196,11 +2200,11 @@ function ImportLibraryView({ onNavigate, onStartInventory, onScanLibrary, onUpda
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   }
-  return <><PageHeader title="Import library" narrow leading={<button type="button" className="glass-button glass-button--icon" onClick={() => onNavigate("settings")} aria-label="Back to Settings"><ArrowLeft size={20} /></button>} />
+  return <><PageHeader title="Import library" narrow leading={<button type="button" className="glass-button glass-button--icon" onClick={() => onNavigate("settings", "library")} aria-label="Back to Library folders"><ArrowLeft size={20} /></button>} />
     <ScanProgress scanState={scanState} scanProgress={scanProgress} />
     {catalogPending(catalog, backendStatus) ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." /> : null}
     {roots.length ? <section className="library-sources-panel"><header><div><span className="eyebrow">Library folders</span><h2>Your comic sources</h2><p>Each folder is scanned independently. Removing one from Flipparr never deletes or moves its files.</p></div><div className="library-scan-action"><span>Last library scan</span><strong>{lastScan}</strong><button className={`primary-button ${busy ? "loading" : ""}`} onClick={onScanLibrary} disabled={busy}>{busy ? <LoadingSpinner size={19} /> : <ArrowsClockwise size={19} />}{busy ? "Scanning…" : "Scan all folders"}</button></div></header><div className="library-source-list">{roots.map((root) => <article className="library-source" key={root.id}><span className="library-source-icon"><FolderOpen size={22} weight="duotone" /></span><div className="library-source-copy"><strong>{root.path}</strong><span>{root.recursive ? "Includes subfolders" : "Top-level comics only"} · {rootScanLabel(root.last_scan_at)}</span></div><div className="library-source-actions"><button className="ghost-button" disabled={busy} onClick={() => onStartInventory(root.path, Boolean(root.recursive))}><ArrowsClockwise size={16} /> Scan</button><button className="ghost-button" disabled={busy} onClick={() => { setEditingRoot(editingRoot === root.id ? null : root.id); setRootRecursive(Boolean(root.recursive)); }}><PencilSimple size={16} /> Manage</button></div>{editingRoot === root.id ? <div className="library-source-editor"><label className="check-row"><input type="checkbox" checked={rootRecursive} onChange={(event) => setRootRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Apply this setting on future scans</small></span></label><div><button className="secondary-button" onClick={async () => { await onUpdateRoot(root, rootRecursive); setEditingRoot(null); }}>Save setting</button><button className="danger-button" onClick={() => removeRoot(root)}>Remove from Flipparr</button></div><small>To change the folder path, add the new folder below, then remove this source.</small></div> : null}</article>)}</div></section> : null}
-    <section className="focused-panel add-panel"><div className="panel-icon"><FolderOpen size={30} weight="duotone" /></div><h2>Add another library folder</h2><p>We’ll inventory the issues and volumes already in this folder, use covers and metadata from the files, and check for damaged archives. Online details can be refreshed after the library is visible.</p><label className="form-field"><span>Library folder</span><div className="path-input"><input value={path} placeholder="/comics-archive" onChange={(event) => setPath(event.target.value)} /><button type="button" onClick={chooseFolder}>Choose folder</button></div>{pickerState ? <small>{pickerState}</small> : null}</label><label className="check-row"><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Useful when each series has its own folder</small></span></label><div className="safety-note"><ShieldCheck size={22} weight="fill" /><span><strong>Your files stay untouched</strong><small>No files will be renamed, moved, or modified during this scan.</small></span></div><div className="docker-path-note"><HardDrive size={20} /><span><strong>Using Docker?</strong><small>Mount each NAS share into the Flipparr container first, then enter its container path here. Avoid adding a folder inside an existing source.</small></span></div><div className="panel-actions"><button className={`primary-button ${busy ? "loading" : ""}`} disabled={busy || !path.trim()} onClick={() => onStartInventory(path, recursive)}>{busy ? <LoadingSpinner size={19} /> : <UploadSimple size={19} />} {busy ? "Scanning…" : "Import and scan folder"}</button><button className="ghost-button" onClick={() => onNavigate("settings")}>Cancel</button></div></section></>;
+    <section className="focused-panel add-panel"><div className="panel-icon"><FolderOpen size={30} weight="duotone" /></div><h2>Add another library folder</h2><p>We’ll inventory the issues and volumes already in this folder, use covers and metadata from the files, and check for damaged archives. Online details can be refreshed after the library is visible.</p><label className="form-field"><span>Library folder</span><div className="path-input"><input value={path} placeholder="/comics-archive" onChange={(event) => setPath(event.target.value)} /><button type="button" onClick={chooseFolder}>Choose folder</button></div>{pickerState ? <small>{pickerState}</small> : null}</label><label className="check-row"><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Useful when each series has its own folder</small></span></label><div className="safety-note"><ShieldCheck size={22} weight="fill" /><span><strong>Your files stay untouched</strong><small>No files will be renamed, moved, or modified during this scan.</small></span></div><div className="docker-path-note"><HardDrive size={20} /><span><strong>Using Docker?</strong><small>Mount each NAS share into the Flipparr container first, then enter its container path here. Avoid adding a folder inside an existing source.</small></span></div><div className="panel-actions"><button className={`primary-button ${busy ? "loading" : ""}`} disabled={busy || !path.trim()} onClick={() => onStartInventory(path, recursive)}>{busy ? <LoadingSpinner size={19} /> : <UploadSimple size={19} />} {busy ? "Scanning…" : "Import and scan folder"}</button><button className="ghost-button" onClick={() => onNavigate("settings", "library")}>Cancel</button></div></section></>;
 }
 
 function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDeletePull, onRefresh }) {
@@ -2688,14 +2692,49 @@ function MetadataComparison({ comparison }) {
 }
 
 
+// Each section's name, the line under its title, and -- for a phone's list of
+// them, grouped as iOS Settings groups its rows -- its icon and group.
 const SETTINGS_SECTIONS = [
-  { id: "health", label: "Library health" },
-  { id: "library", label: "Library folders" },
-  { id: "matching", label: "Matching and fixes" },
-  { id: "security", label: "Security" },
-  { id: "acquisition", label: "Acquisition services" },
-  { id: "metadata", label: "Metadata sources" },
+  { id: "health", label: "Library health", icon: Heartbeat, group: "library",
+    detail: "Damaged files and matches waiting for you to confirm or fix." },
+  { id: "library", label: "Library folders", icon: FolderOpen, group: "library",
+    detail: "The folders Flipparr reads your comics from, and how often it checks them." },
+  { id: "matching", label: "Matching and fixes", icon: Sparkle, group: "library",
+    detail: "How Flipparr decides what a file is, and which formats it manages." },
+  { id: "acquisition", label: "Acquisition services", icon: CloudArrowDown, group: "sources",
+    detail: "Where releases are found and downloaded, and in which language." },
+  { id: "metadata", label: "Metadata sources", icon: Database, group: "sources",
+    detail: "Where issue titles, dates, covers and matches come from." },
+  { id: "security", label: "Security", icon: LockSimple, group: "app",
+    detail: "Who can reach this app, and how they sign in." },
 ];
+
+// One block of a settings section, as a titled card; `action` sits at the
+// title's end.
+function SettingsCard({ title, action, className = "", children }) {
+  return <section className={`settings-card ${className}`.trim()}>
+    <header><h3>{title}</h3>{action}</header>
+    {children}
+  </section>;
+}
+
+// A phone's first level of Settings, after iPhone Settings: grouped rows of an
+// icon, a name and what is set, each opening its section as a page.
+function SettingsIndex({ values, onOpen }) {
+  const groups = [...new Set(SETTINGS_SECTIONS.map((item) => item.group))];
+  return <nav className="settings-index" aria-label="Settings sections">
+    {groups.map((group) => <ul key={group}>
+      {SETTINGS_SECTIONS.filter((item) => item.group === group).map(({ id, label, icon: Icon }) => <li key={id}>
+        <button type="button" onClick={() => onOpen(id)}>
+          <span className={`settings-index-icon settings-index-icon--${id}`} aria-hidden="true"><Icon size={18} weight="fill" /></span>
+          <span className="settings-index-label">{label}</span>
+          {values[id] ? <span className="settings-index-value">{values[id]}</span> : null}
+          <CaretRight size={16} aria-hidden="true" />
+        </button>
+      </li>)}
+    </ul>)}
+  </nav>;
+}
 
 // The documented Docker mount, so most installs need no typing at all.
 const DEFAULT_LIBRARY_FOLDER = "/comics";
@@ -3016,7 +3055,97 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   const roots = catalog?.roots || [];
   // A scan started here, from the rail or folders page, or in the background.
   const scanning = scanState === "scanning" || Boolean(catalog?.activeScan);
-  return <><PageHeader title="Settings" narrow={section !== "health"} tools={<SegmentedTabs label="Settings section" value={section} onChange={onSectionChange} items={SETTINGS_SECTIONS} />} /><div className={`settings-layout${section === "health" ? " settings-layout-wide" : ""}`}>{section === "health" ? <MetadataView {...health} /> : null}{section === "library" ? catalogPending(catalog, backendStatus) ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." /> : <section className="settings-library-folders"><header><div><h2>Library folders</h2><p>{roots.length ? `${roots.length} folder${roots.length === 1 ? "" : "s"} scanned for comics.` : "No library folders are configured yet."}</p>{roots.length ? <p className="settings-library-size"><strong>{Number(catalog?.stats?.files ?? 0).toLocaleString()}</strong> files · <strong>{Number(logicalSeriesCount ?? 0).toLocaleString()}</strong> series</p> : null}{roots.length ? <p className="settings-last-scan">{scanning ? "Scanning now" : catalog?.lastScan?.iso ? `Last scanned ${catalog.lastScan.date} at ${catalog.lastScan.time}` : "Not scanned yet"}</p> : null}</div><div className="settings-library-actions"><button className="secondary-button" onClick={() => onNavigate("import")}><FolderOpen size={18} /> Manage folders</button>{/* The rail's scan button is hidden on a phone; this is the one there. */}{roots.length ? <button className={`primary-button ${scanning ? "loading" : ""}`} onClick={onScanLibrary} disabled={scanning} aria-busy={scanning}>{scanning ? <LoadingSpinner size={18} /> : <ArrowsClockwise size={18} />}{scanning ? "Scanning…" : "Scan library"}</button> : null}</div></header><ScanProgress scanState={scanState} scanProgress={scanProgress} />{roots.length ? <div className="settings-root-list">{roots.map((root) => <span key={root.id}><FolderOpen size={17} /><strong>{root.path}</strong><small>{root.recursive ? "Includes subfolders" : "Top level only"}</small></span>)}</div> : null}{roots.length ? <div className="settings-auto-scan"><Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Checks your library folders in the background, so comics added outside Flipparr appear without a manual scan." />{autoScan ? <label className="form-field settings-language settings-scan-interval"><span>How often</span><select value={autoScanInterval} onChange={(event) => saveAutoScan({ autoScanIntervalMinutes: Number(event.target.value) })} disabled={savingAutoScan}><option value={15}>Every 15 minutes</option><option value={60}>Every hour</option><option value={360}>Every 6 hours</option><option value={1440}>Once a day</option></select></label> : null}</div> : null}</section> : null}{section === "matching" ? <section><h2>Matching and fixes</h2><aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Matches are accepted automatically when the evidence is strong</strong><small>Flipparr scores every match from corroborating and conflicting evidence (filename, embedded metadata, provider agreement). Confident matches are applied without review; anything below that threshold, or with conflicting evidence, waits under Library health for you to confirm or fix.</small></span></aside><Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions (trades, hardcovers, omnibuses)" description="Off by default. Turn on to browse and manage collected editions alongside Issues. Their metadata and file availability are less complete than Issues, and they are never used to fulfill Issue ownership or acquisition." /></section> : null}{section === "security" ? <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} /> : null}{section === "acquisition" ? <section className="metadata-source-settings acquisition-source-settings"><header><div><h2>Acquisition services</h2><p>Connect Prowlarr to find releases and SABnzbd to download the one you choose.</p></div></header><label className="form-field settings-language"><span>Language wanted</span><select value={language} onChange={(event) => changeLanguage(event.target.value)} disabled={savingLanguage}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="ru">Russian</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option><option value="pl">Polish</option><option value="nl">Dutch</option><option value="">No preference</option></select><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></label>{services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}{serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}</section> : null}{section === "metadata" ? <section className="metadata-source-settings"><header><div><h2>Metadata sources</h2><p>Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p></div></header>{providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}<BuiltInSources providers={providers} />{providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}<aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></section> : null}</div>{editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}{editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}</>;
+  // Above 640px, the sections are listed beside the one open, and one is
+  // always open; on a phone, the list is a page of its own and each section
+  // opens over it, as iPhone Settings does.
+  const phone = usePhoneWidth();
+  const current = section || (phone ? "" : "health");
+  const open = SETTINGS_SECTIONS.find((item) => item.id === current);
+  const needAttention = Number(catalog?.stats?.needAttention ?? 0);
+  const modals = <>
+    {editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}
+    {editingService ? <AcquisitionServiceSettingsModal service={editingService} onClose={() => setEditingService(null)} onSaved={async () => { await loadServices(); setEditingService(null); }} /> : null}
+  </>;
+  if (!open) {
+    return <><PageHeader title="Settings" />
+      <SettingsIndex onOpen={onSectionChange} values={{
+        health: needAttention ? String(needAttention) : "",
+        library: roots.length ? `${roots.length} folder${roots.length === 1 ? "" : "s"}` : "",
+        acquisition: services.length ? `${services.filter((item) => item.enabled).length} of ${services.length} ready` : "",
+      }} />
+      {modals}
+    </>;
+  }
+  const languageOptions = [["en", "English"], ["fr", "French"], ["es", "Spanish"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"], ["ru", "Russian"], ["ja", "Japanese"], ["ko", "Korean"], ["zh", "Chinese"], ["pl", "Polish"], ["nl", "Dutch"], ["", "No preference"]];
+  return <>
+    <PageHeader title={phone ? open.label : "Settings"}
+      leading={phone ? <button type="button" className="glass-button glass-button--icon" onClick={() => onSectionChange("")} aria-label="Back to Settings"><ArrowLeft size={20} /></button> : null} />
+    <div className={`settings-shell${current === "health" ? " settings-shell--wide" : ""}`}>
+      {phone ? null : <nav className="settings-nav" aria-label="Settings sections">
+        {SETTINGS_SECTIONS.map(({ id, label }) => <button type="button" key={id}
+          className={id === current ? "active" : ""} aria-current={id === current ? "page" : undefined}
+          onClick={() => onSectionChange(id)}>
+          <span>{label}</span>{id === "health" && needAttention ? <b>{needAttention}</b> : null}
+        </button>)}
+      </nav>}
+      <div className="settings-pane">
+        <header className="settings-pane-header">
+          {phone ? null : <h2>{open.label}</h2>}
+          <p>{open.detail}</p>
+        </header>
+        {current === "health" ? <MetadataView {...health} /> : null}
+        {current === "library" ? catalogPending(catalog, backendStatus)
+          ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." />
+          : <>
+            <SettingsCard title="Folders" className="settings-library-folders"
+              action={<button type="button" className="secondary-button" onClick={() => onNavigate("import")}><FolderOpen size={18} /> Manage folders</button>}>
+              <p className="settings-card-lead">{roots.length ? `${roots.length} folder${roots.length === 1 ? "" : "s"} scanned for comics.` : "No library folders are configured yet."}</p>
+              {roots.length ? <p className="settings-library-size"><strong>{Number(catalog?.stats?.files ?? 0).toLocaleString()}</strong> files · <strong>{Number(logicalSeriesCount ?? 0).toLocaleString()}</strong> series</p> : null}
+              {roots.length ? <div className="settings-root-list">{roots.map((root) => <span key={root.id}><FolderOpen size={17} /><strong>{root.path}</strong><small>{root.recursive ? "Includes subfolders" : "Top level only"}</small></span>)}</div> : null}
+              <ScanProgress scanState={scanState} scanProgress={scanProgress} />
+              {/* The rail's scan button is hidden on a phone; this is the one there. */}
+              {roots.length ? <div className="settings-card-actions">
+                <button type="button" className={`primary-button ${scanning ? "loading" : ""}`} onClick={onScanLibrary} disabled={scanning} aria-busy={scanning}>{scanning ? <LoadingSpinner size={18} /> : <ArrowsClockwise size={18} />}{scanning ? "Scanning…" : "Scan library"}</button>
+                <small>{scanning ? "Scanning now" : catalog?.lastScan?.iso ? `Last scanned ${catalog.lastScan.date} at ${catalog.lastScan.time}` : "Not scanned yet"}</small>
+              </div> : null}
+            </SettingsCard>
+            {roots.length ? <SettingsCard title="Automatic scans">
+              <Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Checks your library folders in the background, so comics added outside Flipparr appear without a manual scan." />
+              {autoScan ? <label className="form-field settings-language settings-scan-interval"><span>How often</span><select value={autoScanInterval} onChange={(event) => saveAutoScan({ autoScanIntervalMinutes: Number(event.target.value) })} disabled={savingAutoScan}><option value={15}>Every 15 minutes</option><option value={60}>Every hour</option><option value={360}>Every 6 hours</option><option value={1440}>Once a day</option></select></label> : null}
+            </SettingsCard> : null}
+          </> : null}
+        {current === "matching" ? <>
+          <SettingsCard title="How matches are accepted">
+            <p className="settings-card-lead">Matches are accepted automatically when the evidence is strong. Flipparr scores every match from corroborating and conflicting evidence (filename, embedded metadata, provider agreement). Confident matches are applied without review; anything below that threshold, or with conflicting evidence, waits under Library health for you to confirm or fix.</p>
+          </SettingsCard>
+          <SettingsCard title="Formats">
+            <Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions (trades, hardcovers, omnibuses)" description="Off by default. Turn on to browse and manage collected editions alongside Issues. Their metadata and file availability are less complete than Issues, and they are never used to fulfill Issue ownership or acquisition." />
+          </SettingsCard>
+        </> : null}
+        {current === "security" ? <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} /> : null}
+        {current === "acquisition" ? <>
+          <SettingsCard title="Services" className="metadata-source-settings">
+            <p className="settings-card-lead">Connect Prowlarr to find releases and SABnzbd to download the one you choose.</p>
+            {services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}
+            {serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}
+          </SettingsCard>
+          <SettingsCard title="Language">
+            <label className="form-field settings-language"><span>Language wanted</span><select value={language} onChange={(event) => changeLanguage(event.target.value)} disabled={savingLanguage}>{languageOptions.map(([value, label]) => <option value={value} key={value || "none"}>{label}</option>)}</select><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></label>
+          </SettingsCard>
+        </> : null}
+        {current === "metadata" ? <>
+          <SettingsCard title="Sources with an account" className="metadata-source-settings">
+            <p className="settings-card-lead">Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p>
+            {providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+            <BuiltInSources providers={providers} />
+            {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+          </SettingsCard>
+          <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>
+        </> : null}
+      </div>
+    </div>
+    {modals}
+  </>;
 }
 
 function SecuritySettings({ onChanged, onSignOut }) {
@@ -3059,8 +3188,10 @@ function SecuritySettings({ onChanged, onSignOut }) {
   }
   if (!config) return null;
   const on = config.method === "forms";
-  return <section className="metadata-source-settings">
-    <header><div><h2>Security</h2><p>This app stores your metadata and download-client API keys and can start downloads, so require a sign-in if anything other than you can reach it.</p></div></header>
+  return <>
+    <SettingsCard title="Sign-in"
+      action={on && onSignOut ? <button type="button" className="secondary-button" onClick={onSignOut}><SignOut size={17} /> Sign out</button> : null}>
+    <p className="settings-card-lead">This app stores your metadata and download-client API keys and can start downloads, so require a sign-in if anything other than you can reach it.</p>
     <Toggle
       checked={on}
       onChange={(next) => next
@@ -3077,6 +3208,8 @@ function SecuritySettings({ onChanged, onSignOut }) {
       title="Skip sign-in on local addresses"
       description="Off by default. Anything reaching this app through a tunnel, reverse proxy or container bridge arrives from a private address and would be let straight in — so turn this on only if you know the traffic is genuinely local, and set FLIPPARR_TRUSTED_PROXIES when a proxy is in front."
     />
+    </SettingsCard>
+    <SettingsCard title="Credentials">
     <div className="auth-credentials">
       <label className="form-field"><span>Username</span>
         <input value={username} autoComplete="username" onChange={(event) => setUsername(event.target.value)} />
@@ -3091,9 +3224,9 @@ function SecuritySettings({ onChanged, onSignOut }) {
       {error ? <p className="workbench-error" role="alert">{error}</p> : null}
       {saved ? <small className="auth-saved">{saved}</small> : null}
     </div>
+    </SettingsCard>
     <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your password is stored as a scrypt hash</strong><small>It is never returned by the API, and signing in sets an HttpOnly cookie rather than exposing a token to page scripts.</small></span></aside>
-    {on && onSignOut ? <button type="button" className="secondary-button" onClick={onSignOut}><SignOut size={17} /> Sign out of this device</button> : null}
-  </section>;
+  </>;
 }
 
 function Toggle({ checked, onChange, title, description }) {
@@ -4155,9 +4288,10 @@ function stateFromLocation(pathname, search) {
   const requestedSection = segments[1];
   return {
     active,
+    // No section is the list of them on a phone; above 640px it opens the first.
     settingsSection: active === "settings" && SETTINGS_SECTIONS.some((item) => item.id === requestedSection)
       ? requestedSection
-      : "health",
+      : "",
     searchQuery: SEARCH_VIEWS.has(active) ? params.get("q") || "" : "",
     seriesId: params.get("series") || "",
   };
@@ -4322,6 +4456,9 @@ export function App() {
     // Settings shows one section at a time, so a deep link selects the section
     // rather than scrolling to it.
     if (id === "settings" && sectionId) setSettingsSection(sectionId);
+    // Choosing Settings again, from inside a section, goes back to the list,
+    // as tapping the tab you are on does on an iPhone.
+    else if (id === "settings" && active === "settings") setSettingsSection("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function openSearch(value) {

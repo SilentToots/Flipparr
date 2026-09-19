@@ -98,7 +98,7 @@ export const states = [
   { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
-  { name: "settings", path: "/settings", require: [".settings-layout"] },
+  { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   // The folders panel only renders once the catalog has loaded; the header
   // alone let a capture land on "0 Files" and a page 120px shorter.
   { name: "import", path: "/import", require: [".page-header", ".library-sources-panel"], phone: false },
