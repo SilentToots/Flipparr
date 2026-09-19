@@ -3122,3 +3122,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .discover-chip { display: inline-block; line-height: var(--chip-height); }
 .comic-drawer-statuses :is(.publication-status, .monitoring-status, .run-status, .status-badge) { height: var(--chip-height-lg); padding-block: 0; }
 
+/* A drawer scrolls up and down only. The blurred backdrop is scaled past the
+   header's edges so its blur has no soft rim; clip-path hid that paint but it
+   still widened the drawer's scroll area, so on a phone the whole drawer slid
+   and bounced sideways under a finger. The header clips it sideways, and the
+   drawer never scrolls sideways whatever its content does. */
+.comic-drawer-hero { overflow-x: clip; }
+.series-drawer { overflow-x: hidden; }
