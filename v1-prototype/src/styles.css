@@ -2234,14 +2234,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    tabs: it cancels the body's top and side padding and puts its own back. */
 .comic-drawer-follow { margin: calc(var(--space-32) * -1) calc(var(--space-32) * -1) 0; padding: var(--space-16) var(--space-32); background: var(--color-black); }
 .comic-drawer-follow .follow-switch { min-height: 36px; padding: 0; border: 0; gap: var(--space-8); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
-.comic-drawer-follow .follow-switch > i { width: 40px; height: 23px; border-radius: var(--radius-pill); background: var(--chrome-label); }
+.comic-drawer-follow .follow-switch > i { background: var(--chrome-label); }
 /* Settings' switch, now that the label beside it is 16px: a 40x23 track and
    a 17px knob that travels 17px and stretches by 4 while pressed. The track
    keeps the chrome grey when off, which stands out on the drawer's surface. */
-.comic-drawer-follow .follow-switch > i::after { top: 3px; left: 3px; width: 17px; height: 17px; box-shadow: 0 1px 2px var(--shadow-faint); }
 .comic-drawer-follow .follow-switch input:checked + i { background: var(--violet); }
-.comic-drawer-follow .follow-switch input:checked + i::after { transform: translateX(17px); }
-.comic-drawer-follow .follow-switch:not(:has(input:disabled)):active > i::after { width: 21px; }
 .comic-drawer-follow .follow-switch:not(:has(input:disabled)):active input:checked + i::after { transform: translateX(13px); }
 @media (hover: hover) { .comic-drawer-follow .follow-switch:not(:has(input:disabled)):hover { background: transparent; } }
 .comic-drawer-link, .comic-drawer-more { min-height: 36px; padding: 0 var(--space-4); border: 0; border-radius: var(--radius-8); background: transparent; color: var(--violet-text); font-size: var(--text-sm); font-weight: var(--weight-bold); cursor: pointer; }
@@ -3110,3 +3107,25 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 @media (hover: hover) { .job-upload:hover { background: var(--button-standard-bg-hover); } }
 .provider-row > button { min-height: 36px; padding: 0 var(--space-16); color: var(--text); font-weight: var(--weight-semibold); }
 @media (max-width: 640px) { .provider-row > button { min-height: 44px; } }
+
+/* --- Switches (2026-09-19) ---------------------------------------------------------
+   One switch at iOS's proportions everywhere -- settings rows, Follow in a
+   drawer, the phone's View & sort sheet -- which were three sizes (40x23,
+   36x21, 40x23) with knobs to match. Each keeps its own off colour: a row's
+   sunken grey, a drawer's chrome over art. */
+:is(.toggle-row, .follow-switch) > i {
+  width: var(--switch-width); height: var(--switch-height); border-radius: var(--radius-pill);
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+:is(.toggle-row, .follow-switch) > i::after {
+  width: var(--switch-knob); height: var(--switch-knob); top: var(--switch-inset); left: var(--switch-inset);
+  box-shadow: 0 1px 3px var(--shadow-faint);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard), width var(--motion-duration-fast) var(--motion-ease-standard);
+}
+:is(.toggle-row, .follow-switch) input:checked + i::after { transform: translateX(var(--switch-travel)); }
+/* Pressed, the knob stretches; on, it stretches from the right edge. */
+:is(.toggle-row, .follow-switch):not(:has(input:disabled)):active > i::after { width: var(--switch-knob-pressed); }
+:is(.toggle-row, .follow-switch):not(:has(input:disabled)):active input:checked + i::after { transform: translateX(var(--switch-travel-pressed)); }
+.comic-drawer-follow .follow-switch > i::after { box-shadow: 0 1px 3px var(--shadow-faint); }
+@media (prefers-reduced-motion: reduce) { :is(.toggle-row, .follow-switch) > i, :is(.toggle-row, .follow-switch) > i::after { transition: none; } }
+

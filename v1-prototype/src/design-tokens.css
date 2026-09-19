@@ -371,6 +371,16 @@
   /* Status chips have a set height, not one their contents decide: a chip
      with an icon took its height from the 12px icon and one without from the
      font's line box, and Safari rounds the two apart. */
+  /* A switch, at iOS's proportions (2026-09-19): a 51x31 track with a 27px
+     knob inset 2, so its travel is 20px; pressed, the knob stretches to 32
+     and a switch that is on holds its right edge (a 15px travel). */
+  --switch-width: 51px;
+  --switch-height: 31px;
+  --switch-knob: 27px;
+  --switch-inset: 2px;
+  --switch-travel: 20px;
+  --switch-knob-pressed: 32px;
+  --switch-travel-pressed: 15px;
   --chip-height: 18px;
   /* A text field is a soft fill, as iOS draws one, a shade lighter than the
      standard button's so the two are not mistaken for each other. */

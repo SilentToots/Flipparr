@@ -235,6 +235,10 @@ Motion tokens:
   button's fill), 12px corners, no outline; focus turns the edge violet. On a
   phone a `.field-group` is one rounded panel of rows, each a label and its
   field, divided by hairlines, with one focus ring around the panel.
+- **A switch** is iOS's (`--switch-*`): a 51x31 track with a 27px knob inset
+  2, violet when on, and the knob stretches while pressed (holding its right
+  edge when on). Settings rows, a drawer's Follow band and the phone's View &
+  sort sheet all use it; each keeps its own off colour.
 - **The toast** is a glass capsule centred at the foot of the page (over the
   content area above 640px, above the tab bar on a phone). It springs up,
   sinks away after about three seconds, and a new one replaces it.
