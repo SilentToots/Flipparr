@@ -61,15 +61,18 @@ function audit({ page }) {
   near("bell, centre", box(".page-header .appbar-bell")?.cy, row);
   near("primary action, centre", box(".page-header .glass-button--primary")?.cy, row);
   if (!document.querySelector(".page-header--search-page")) near("search, centre", box(".page-header .page-header-search")?.cy, row);
-  // Above 640px: the masthead's menu control sits on the nav icons' column,
-  // its search on the window's centre line, and its controls on one line;
-  // the sidebar floats on its inset.
+  // Above 640px: the sidebar's menu control sits on the nav icons' column and
+  // on the masthead's centre line with the bell; the masthead's search is
+  // centred over the page; the sidebar floats on its inset; and a folded
+  // sidebar hides the F mark.
   if (window.innerWidth > 640) {
-    const menu = box(".masthead-menu");
+    const menu = box(".sidebar-menu");
     const icon = document.querySelector(".sidebar .nav-item > svg")?.getBoundingClientRect();
     if (menu && icon) near("menu over the nav icons", (menu.l + menu.r) / 2, icon.left + icon.width / 2);
     const search = box(".masthead-search .glass-field");
-    if (search) near("masthead search, centred", (search.l + search.r) / 2, window.innerWidth / 2);
+    const bar = box(".masthead");
+    if (search && bar) near("masthead search, centred over the page", (search.l + search.r) / 2, (bar.l + bar.r) / 2);
+    if (document.querySelector(".app-shell.nav-rail") && shown(document.querySelector(".sidebar-brand"))) issues.push("F mark shown on the folded rail");
     near("masthead bell, centre", box(".masthead .appbar-bell")?.cy, menu?.cy);
     near("sidebar, inset", box(".sidebar")?.l, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--space-12")));
   }

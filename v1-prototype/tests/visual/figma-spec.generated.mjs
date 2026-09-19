@@ -978,7 +978,7 @@ export const icons = [
     "node": "1:89",
     "name": "heroicons-mini/bars-3",
     "size": 20,
-    "where": ".masthead-menu svg",
+    "where": ".sidebar-menu svg",
     "route": "/library"
   },
   {

@@ -147,21 +147,23 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
     top margin of its own.
 - **The frame above 640px** (since 2026-09-19) follows YouTube's structure and
   the Apple TV app's sidebar.
-  - The **masthead** (`Masthead`) spans the window, frosted: the menu control,
-    then the F mark, then one search centred on the window, then the bell.
-    The search always searches everything and shows its results on Discover.
-    Both sides of the masthead are at least `--masthead-side`, so the search
-    stays centred and gives up width first.
-  - The **sidebar** is a Liquid Glass panel floating under it, inset
-    `--sidebar-inset` from the window's edges, with 24px corners. Rows are
+  - The **masthead** (`Masthead`) runs across the page, from the sidebar's
+    edge, frosted: one search centred over the page, then the bell. The
+    search always searches everything and shows its results on Discover.
+    Both sides are at least `--masthead-side`, so the search stays centred
+    and gives up width first.
+  - The **sidebar** is a Liquid Glass panel floating the full height of the
+    window, inset `--sidebar-inset` from its edges, with 24px corners. Its
+    head holds the menu control and the F mark, on the masthead's centre
+    line; folded, the F mark goes. Rows are
     44px pills with an icon and a label; the open one is a filled violet pill.
   - Folded (`.nav-rail`), it is a 76px rail with each icon over a 10px label,
     as YouTube's mini guide. A tablet shows the rail, and the menu control
     opens the full sidebar over the page (`.nav-overlay`); tapping the page
     closes it. Wider, the control folds and unfolds it, and remembers.
   - The nav icons sit on `--nav-icon-centre` in both shapes, and so does the
-    menu control. `layout:check` holds that, the centred search, and the
-    inset.
+    menu control. `layout:check` holds that, the menu on the masthead's line,
+    the centred search, the inset, and the folded rail's missing F.
 - **Fields never truncate.** A placeholder is written to fit the narrowest
   field it appears in; if it doesn't fit, reword it. `npm run layout:check`
   measures every one.

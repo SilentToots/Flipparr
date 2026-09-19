@@ -148,11 +148,13 @@
      top bar the width of the window, and a glass sidebar floating under it,
      inset from the window's edges. The menu control sits on the column the
      nav icons sit on, which is the collapsed rail's centre line. */
-  --masthead-height: 64px;
-  /* Each side of the masthead is at least wide enough for the menu control and
-     the F mark, and both sides match, so the search stays on the window's
-     centre line and gives up width first on a narrow window. */
-  --masthead-side: 160px;
+  --masthead-height: 72px;
+  /* The masthead's side columns match, so the search stays centred over the
+     page and gives up width first; each is at least wide enough for the bell. */
+  --masthead-side: 48px;
+  /* The sidebar's head: a row of this height, centred on the masthead's centre
+     line, holding the menu control and the F mark. */
+  --sidebar-head: 40px;
   --sidebar-inset: var(--space-12);
   --sidebar-pad: var(--space-8);
   --nav-icon: 20px;
