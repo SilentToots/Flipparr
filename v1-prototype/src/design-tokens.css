@@ -191,6 +191,9 @@
   /* The Following band under a toned drawer's tabs: well darker than the tabs'
      own shade of the tone, so the two read as separate bands. */
   --art-band-strong: rgb(0 0 0 / .55);
+  /* A glass menu is denser than a glass control: its words sit over whatever
+     it opens on, covers included. */
+  --glass-menu-bg: color-mix(in srgb, var(--color-ios-gray6) 94%, transparent);
   /* A rule between rows on a toned drawer: light over the tone, not grey. */
   --art-line: rgb(255 255 255 / .1);
   /* A drawer's pinned top bar (DrawerTopBar). */

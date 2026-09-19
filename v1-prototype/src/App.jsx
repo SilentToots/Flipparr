@@ -589,6 +589,20 @@ function SegmentedTabs({ label, items, value, onChange }) {
   </div>;
 }
 
+// A choice of one, as SegmentedTabs draws it but choosing a setting rather
+// than a page: grid or list, runs or collections. An item with only an icon
+// names itself with `title`.
+function GlassSegmented({ label, items, value, onChange, className = "" }) {
+  const [trackRef, glass] = useGlassIndicator(".segmented-tab.active", [value, items.map((item) => item.id).join()]);
+  return <div className={`segmented-tabs ${className}`.trim()} role="radiogroup" aria-label={label} ref={trackRef}>
+    <span className="glass-indicator" aria-hidden="true" style={glass || { opacity: 0 }} />
+    {items.map((item) => <button type="button" role="radio" aria-checked={value === item.id}
+      className={`segmented-tab${item.label ? "" : " segmented-tab--icon"}${value === item.id ? " active" : ""}`}
+      aria-label={item.label ? undefined : item.title} title={item.label ? undefined : item.title}
+      onClick={() => onChange(item.id)} key={item.id}>{item.icon}{item.label}</button>)}
+  </div>;
+}
+
 function useGlassIndicator(selector, deps) {
   const containerRef = useRef(null);
   const [style, setStyle] = useState(null);
@@ -1332,9 +1346,9 @@ const PULL_LIST_COPY = {
 };
 
 const SORT_OPTIONS = [
-  { value: "title", label: "Sort: Title A-Z" },
-  { value: "added", label: "Sort: Recently added" },
-  { value: "attention", label: "Sort: Needs attention" },
+  { value: "title", label: "Title A–Z" },
+  { value: "added", label: "Recently added" },
+  { value: "attention", label: "Needs attention" },
 ];
 
 // Everything the phone's toolbar used to hold, in one sheet from the bottom of
@@ -1366,7 +1380,7 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
         <legend>Sort by</legend>
         <div className="library-sheet-options" role="radiogroup" aria-label="Sort by">
           {SORT_OPTIONS.map((option) => <button type="button" role="radio" aria-checked={option.value === sort} onClick={() => onSort(option.value)} key={option.value}>
-            {option.label.replace(/^Sort:\s*/, "")}
+            {option.label}
             {option.value === sort ? <CheckCircle size={20} weight="fill" aria-hidden="true" /> : null}
           </button>)}
         </div>
@@ -1412,12 +1426,14 @@ function SortMenu({ value, onChange }) {
       items[(next + items.length) % items.length]?.focus();
     }
   }
+  // The trigger is a segment of the Sort and Following capsule, and the menu
+  // is glass that grows out of it, as iOS 26's pull-down menus do.
   return <div className="sort-field" ref={rootRef}>
     <button
-      type="button" className="sort-trigger" aria-haspopup="listbox" aria-expanded={open}
+      type="button" className="sort-trigger glass-capsule-segment" aria-haspopup="listbox" aria-expanded={open}
       aria-label={`Sort by. ${current.label}`} onClick={() => setOpen((value) => !value)}
     >{current.label}<ChevronDown /></button>
-    {open ? <div className="sort-menu">
+    {open ? <div className="sort-menu glass-menu">
       <ul className="sort-menu-options" role="listbox" aria-label="Sort by" onKeyDown={onListKeyDown}>
         {SORT_OPTIONS.map((option) => (
           <li key={option.value} role="none">
@@ -1425,7 +1441,7 @@ function SortMenu({ value, onChange }) {
               type="button" role="option" aria-selected={option.value === value}
               className={option.value === value ? "selected" : ""}
               onClick={() => choose(option)}
-            >{option.label}</button>
+            ><span className="sort-menu-check" aria-hidden="true">{option.value === value ? <Check size={16} weight="bold" /> : null}</span>{option.label}</button>
           </li>
         ))}
       </ul>
@@ -1489,7 +1505,22 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
           aria-haspopup="dialog" aria-expanded={viewSheetOpen} onClick={() => setViewSheetOpen(true)}
         ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button>}
         toolsClassName="library-tools-row"
-        tools={<div className="library-tools">{editionsOn ? <div className="scope-toggle" aria-label="Choose catalog grouping"><button className={effectiveScope === "runs" ? "active" : ""} onClick={() => setScope("runs")}><ListBullets size={17} /> Runs</button><button className={effectiveScope === "collections" ? "active" : ""} onClick={() => setScope("collections")}><Books size={17} /> Collections</button></div> : null}{effectiveScope === "runs" ? <div className="view-toggle" aria-label="Choose library view"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><GridViewIcon /></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><ListViewIcon /></button></div> : null}<SortMenu value={sort} onChange={setSort} />{effectiveScope === "runs" ? <button className={`filter-button ${followingOnly ? "active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button> : null}</div>}
+        tools={<div className="library-tools">
+          {/* The layout choices on the left as segmented controls; how the
+              grid is ordered and filtered on the right, in one glass
+              capsule, Following turning violet while it filters. */}
+          {editionsOn ? <GlassSegmented label="Choose catalog grouping" value={effectiveScope} onChange={setScope} className="library-scope-toggle"
+            items={[{ id: "runs", label: "Runs", icon: <ListBullets size={17} /> }, { id: "collections", label: "Collections", icon: <Books size={17} /> }]} /> : null}
+          {effectiveScope === "runs" ? <GlassSegmented label="Choose library view" value={view} onChange={setView} className="library-view-toggle"
+            items={[{ id: "grid", title: "Grid view", icon: <GridViewIcon /> }, { id: "list", title: "List view", icon: <ListViewIcon /> }]} /> : null}
+          <div className="glass-capsule library-refine">
+            <SortMenu value={sort} onChange={setSort} />
+            {effectiveScope === "runs" ? <>
+              <span className="glass-capsule-divider" aria-hidden="true" />
+              <button type="button" className={`glass-capsule-segment filter-button${followingOnly ? " active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button>
+            </> : null}
+          </div>
+        </div>}
       />
       {/* View, sort and the filters are a sheet on a phone. */}
       {viewSheetOpen ? <LibraryViewSheet

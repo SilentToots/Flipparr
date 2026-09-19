@@ -181,11 +181,19 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
 
 ## Glass and motion
 
+Settings chosen from a few (grid or list, runs or collections) are
+`GlassSegmented`: SegmentedTabs' track and sliding glass thumb, as radios.
+Comics' tools row is two of those on the left and a Sort + Following
+`.glass-capsule` at its end.
+
 Liquid Glass is for the navigation layer only: page-header controls, the
 search field, the tab bars, the drawer tabs and a drawer's top bar. Never cards, rows or covers,
 and never glass on glass. `.glass-button` (a capsule, or a circle with
-`--icon`), `.glass-button--primary` (one per page) and `.glass-field` use the
-`--glass-*` tokens: a tinted blur, a hairline, a rim of light along the top,
+`--icon`), `.glass-button--primary` (one per page), `.glass-field`,
+`.glass-capsule` (related controls in one pill: its segments are plain, never
+glass on glass, divided by a hairline; a segment that is on fills violet) and
+`.glass-menu` (a menu grown from the control that opens it, denser than a
+control, `--glass-menu-bg`) use the `--glass-*` tokens: a tinted blur, a hairline, a rim of light along the top,
 and a soft shadow. Where the browser cannot blur, the fill is solid. Under
 `prefers-contrast: more` and `prefers-reduced-transparency` (Chromium) the
 glass turns solid.

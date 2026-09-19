@@ -7,7 +7,7 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 365 nodes
-// accounted for, 80 style assertions, 12 frame assertions, 24 icons.
+// accounted for, 74 style assertions, 10 frame assertions, 24 icons.
 
 export const spec = [
   {
@@ -106,73 +106,6 @@ export const spec = [
     "node": "8:293",
     "props": {
       "fontSize": "16px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": ".view-toggle",
-    "node": "1:320",
-    "props": {
-      "borderTopWidth": "1px",
-      "borderRadius": "8px",
-      "padding": "4px",
-      "columnGap": "8px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": ".view-toggle button.active",
-    "node": "1:319",
-    "props": {
-      "backgroundColor": "rgb(109, 40, 217)",
-      "borderRadius": "4px",
-      "padding": "4px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": ".view-toggle button:not(.active)",
-    "node": "1:317",
-    "props": {
-      "borderRadius": "4px",
-      "padding": "4px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": ".sort-trigger",
-    "node": "1:331",
-    "props": {
-      "borderTopWidth": "1px",
-      "borderRadius": "8px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "4px",
-      "paddingTop": "4px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": ".filter-button",
-    "node": "1:366",
-    "props": {
-      "borderTopWidth": "1px",
-      "borderRadius": "8px",
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "4px",
-      "paddingTop": "4px",
-      "columnGap": "4px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": ".filter-button",
-    "node": "1:368",
-    "props": {
-      "fontSize": "14px",
-      "fontWeight": "700",
-      "whiteSpace": "nowrap"
     },
     "route": "/library"
   },
@@ -856,18 +789,6 @@ export const frames = [
     "within": null
   },
   {
-    "sel": ".library-tools",
-    "node": "1:330",
-    "route": "/library",
-    "h": 38
-  },
-  {
-    "sel": ".sort-trigger",
-    "node": "1:331",
-    "route": "/library",
-    "w": 200
-  },
-  {
     "sel": ".dashboard-body",
     "node": "1:522",
     "route": "/library"
@@ -943,28 +864,28 @@ export const icons = [
     "node": "1:293",
     "name": "heroicons-mini/squares-2x2",
     "size": 20,
-    "where": ".view-toggle button[aria-label=\"Grid view\"] svg",
+    "where": ".library-view-toggle [aria-label=\"Grid view\"] svg",
     "route": "/library"
   },
   {
     "node": "1:314",
     "name": "heroicons-solid/list-bullet",
     "size": 20,
-    "where": ".view-toggle button[aria-label=\"List view\"] svg",
+    "where": ".library-view-toggle [aria-label=\"List view\"] svg",
     "route": "/library"
   },
   {
     "node": "1:374",
     "name": "heroicons-mini/chevron-down",
     "size": 20,
-    "where": ".sort-trigger svg",
+    "where": ".library-refine .sort-trigger svg",
     "route": "/library"
   },
   {
     "node": "1:367",
     "name": "heroicons-outline/check-circle",
     "size": 20,
-    "where": ".filter-button svg",
+    "where": ".library-refine .filter-button svg",
     "route": "/library"
   },
   {

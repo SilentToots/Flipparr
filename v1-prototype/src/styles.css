@@ -455,9 +455,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    hairline, a rim of light along the top and a soft shadow. Solid where the
    browser cannot blur. Buttons are capsules, or circles when they hold only an
    icon; one per page may be the violet primary. */
-.glass-button, .glass-field { border: 1px solid var(--glass-border); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); }
+.glass-button, .glass-field, .glass-capsule, .glass-menu { border: 1px solid var(--glass-border); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass-button, .glass-field { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .glass-button, .glass-field, .glass-capsule, .glass-menu { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
 .glass-button {
   position: relative; flex: none; box-sizing: border-box;
@@ -583,7 +583,46 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sort-field { margin-left: auto; }
 .filter-button { height: 38px; min-height: 38px; gap: var(--space-4); padding: var(--space-4) var(--space-8); white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--muted-weak); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius-8); }
 .filter-button.active { border-color: var(--violet); background: var(--nav-active-bg); color: var(--text); }
-.library-tools { gap: var(--space-8); }
+.library-tools { gap: var(--space-12); }
+
+/* Comics' tools row in Liquid Glass (2026-09-19): grid or list (and runs or
+   collections) as segmented controls with the sliding glass thumb; Sort and
+   Following grouped in one glass capsule at the row's end, Following filled
+   violet while it filters; the sort menu is glass that grows out of its pill. */
+.segmented-tab--icon { width: 36px; padding: 0; justify-content: center; }
+/* The sort menu hangs from the capsule's right edge: the capsule ends the row,
+   and the page clips anything wider than itself. */
+.library-refine { position: relative; margin-left: auto; }
+.glass-capsule { box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-pill); }
+.glass-capsule-divider { flex: none; width: 1px; height: 20px; background: var(--line-strong); }
+.glass-capsule .glass-capsule-segment {
+  width: auto; height: auto; min-height: 36px; box-sizing: border-box;
+  display: inline-flex; align-items: center; gap: var(--space-6); padding: 0 var(--space-14);
+  border: 0; border-radius: var(--radius-pill); background: transparent;
+  color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap; cursor: pointer;
+  transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease, scale var(--motion-duration-press) var(--motion-ease-spring);
+}
+.glass-capsule .sort-trigger { padding-right: var(--space-10); }
+.glass-capsule .sort-trigger > svg { color: var(--muted); }
+@media (hover: hover) { .glass-capsule .glass-capsule-segment:not(.active):hover { background: var(--glass-bg-hover); } }
+.glass-capsule .glass-capsule-segment:active { scale: .95; }
+.glass-capsule .glass-capsule-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+.glass-capsule .filter-button.active { background: var(--glass-primary-bg); color: var(--color-neutral-0); }
+@media (hover: hover) { .glass-capsule .filter-button.active:hover { background: var(--glass-primary-bg-hover); } }
+.glass-capsule .sort-field { position: static; margin-left: 0; }
+.sort-menu.glass-menu {
+  top: calc(100% + var(--space-8)); right: 0; left: auto; width: 220px; padding: var(--space-6);
+  border-radius: var(--radius-16); background: var(--glass-menu-bg); box-shadow: var(--glass-rim), var(--glass-shadow);
+  transform-origin: top right; animation: glass-menu-in var(--motion-duration-standard) var(--motion-ease-spring);
+}
+.glass-menu .sort-menu-options { display: grid; gap: var(--space-2); }
+.glass-menu button { min-height: 36px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: var(--space-6); padding: 0 var(--space-10); border-radius: var(--radius-8); color: var(--text); font-weight: var(--weight-medium); }
+.glass-menu button.selected { background: transparent; color: var(--text); font-weight: var(--weight-semibold); }
+@media (hover: hover) { .glass-menu button:not(:disabled):hover { background: var(--glass-bg-hover); } }
+.glass-menu button:focus-visible { background: var(--glass-bg-hover); }
+.sort-menu-check { display: grid; place-items: center; color: var(--violet-text); }
+@keyframes glass-menu-in { from { opacity: 0; scale: .6; } to { opacity: 1; scale: 1; } }
+@media (prefers-reduced-motion: reduce) { .sort-menu.glass-menu { animation: none; } .glass-capsule .glass-capsule-segment:active { scale: none; } }
 
 .series-table { border-top: 1px solid var(--line); }
 .series-table-head, .series-row { display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(160px, .85fr) minmax(120px, .72fr) minmax(130px, .7fr) 24px; gap: var(--space-20); align-items: center; }
