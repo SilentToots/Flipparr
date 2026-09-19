@@ -2154,6 +2154,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    foot and the top of the page, deepening below it, with the page's bands,
    tabs and bar in darker or translucent versions of it. The gradient scrolls
    with the drawer's content. */
+/* Untoned, the tones are the drawer's own surface, so the first tone to arrive
+   eases from an opaque colour -- from the registered default, transparent,
+   the drawer went see-through for the length of the fade. */
+.series-drawer.comic-drawer { --art-tone: var(--surface); --art-tone-deep: var(--surface); }
 .series-drawer.comic-drawer.toned {
   background: linear-gradient(180deg, var(--art-tone) 0, var(--art-tone) 440px, var(--art-tone-deep) 1000px) local no-repeat, var(--art-tone-deep);
   transition: --art-tone var(--motion-duration-exit) ease, --art-tone-deep var(--motion-duration-exit) ease;
@@ -2447,15 +2451,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    appears. */
 @keyframes drawer-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @keyframes drawer-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
-@keyframes drawer-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
-.drawer-backdrop { animation: drawer-backdrop-in var(--motion-duration-standard) ease; }
+/* The scrim behind a drawer fades its colour, not its opacity: the drawer is
+   inside it, and fading the element faded the drawer too. On close, a
+   separate keyframes rather than the same one reversed -- a changed direction
+   on an animation that has already finished jumps straight to its end, which
+   blanked the scrim and the drawer in it at the first frame of the exit. */
+@keyframes drawer-scrim-in { from { background-color: transparent; } }
+@keyframes drawer-scrim-out { to { background-color: transparent; } }
+.drawer-backdrop { animation: drawer-scrim-in var(--motion-duration-standard) ease; }
 /* Closing slides the drawer back the way it came, fast first and settling off
    the edge -- the iOS curve the tab bar's glass uses. The ease-in it replaced
    had covered less than half the distance when the drawer was removed, which
    read as the drawer vanishing rather than leaving. */
-.drawer-backdrop.closing { animation: drawer-backdrop-in var(--motion-duration-exit) ease reverse forwards; }
+.drawer-backdrop.closing { animation: drawer-scrim-out var(--motion-duration-exit) ease forwards; }
 .series-drawer { animation: drawer-slide-in var(--motion-duration-standard) cubic-bezier(.22,.61,.36,1); }
 .series-drawer.closing { animation: drawer-slide-out var(--motion-duration-exit) cubic-bezier(.32,.72,0,1) forwards; }
+
+/* The cover in flight between a card and a drawer (flyCover). Above the
+   drawer, which it lands in; its box is animated in script. */
+.cover-flight { position: fixed; z-index: 80; overflow: hidden; border-radius: var(--radius-8); pointer-events: none; box-shadow: 0 18px 44px var(--shadow-strong); }
+.cover-flight > img, .cover-flight > * { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+
+/* A drawer's tabs: the new tab's content slides in from the side it lies on. */
+@keyframes drawer-tab-next { from { opacity: 0; translate: var(--space-24) 0; } }
+@keyframes drawer-tab-back { from { opacity: 0; translate: calc(var(--space-24) * -1) 0; } }
+.comic-drawer-body[data-tab-move="next"] { animation: drawer-tab-next var(--motion-duration-standard) var(--motion-ease-standard); }
+.comic-drawer-body[data-tab-move="back"] { animation: drawer-tab-back var(--motion-duration-standard) var(--motion-ease-standard); }
+@media (prefers-reduced-motion: reduce) { .comic-drawer-body[data-tab-move] { animation: none; } }
 
 /* Settings section switcher. Settings ran to ~3,600px of scrolling on a phone;
    one section at a time replaces that, in the pages' segmented tabs, which
