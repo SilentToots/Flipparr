@@ -797,7 +797,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .segmented-tab.active { color: var(--text); }
 .segmented-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 /* The head of the Wanted list: how much is missing, and the search for it. */
-.request-list-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-12); margin-bottom: var(--space-12); }
+.request-list-bar { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-10); margin-bottom: var(--space-12); }
 .request-list-bar > span { color: var(--muted); font-size: var(--text-sm); }
 .request-list-bar > span strong { color: var(--text); font-weight: var(--weight-semibold); }
 .request-list-bar .search-missing-button { position: relative; flex: none; min-height: var(--control-height-sm); padding-inline: var(--space-12); }
@@ -3069,3 +3069,42 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 @media (prefers-reduced-motion: reduce) { .toast, .toast.leaving { animation: none; } }
 
 .toast.toast--error > svg { color: var(--red); }
+
+/* Pull List's "3 missing issues | Find": the action is a link on the count's
+   line, after a hairline, rather than a button at the far end of the row. */
+.request-list-bar-rule { flex: none; width: 1px; height: 14px; background: var(--line-strong); }
+.request-list-bar .search-missing-button {
+  display: inline-flex; align-items: center; gap: var(--space-6); min-height: 0; padding: 0; border: 0; background: none;
+  color: var(--violet-text); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-semibold); cursor: pointer;
+}
+@media (hover: hover) { .request-list-bar .search-missing-button:not(:disabled):hover { text-decoration: underline; text-underline-offset: 3px; } }
+.request-list-bar .search-missing-button:disabled { color: var(--muted); cursor: default; }
+.request-list-bar .search-missing-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: var(--radius-4); }
+
+/* --- Drawer cards (2026-09-19) ------------------------------------------------------
+   One card in every drawer, as the Follow band and the run drawer's options
+   already are: no outline, 16px corners inside the drawer's 24, filled with
+   the drawer's tone (or the raised surface when it has none), with hairlines
+   in the tone between rows. The issue groups on Issues, the tools on
+   Advanced and the metadata card all take it; the metadata card's state,
+   which its coloured border used to carry, is a dot before its title. */
+.comic-drawer :is(.issue-run-group, .advanced-card, .issue-catalog-card) { border: 0; border-radius: var(--radius-16); background: var(--surface-raised); }
+.comic-drawer.toned :is(.issue-run-group, .advanced-card, .issue-catalog-card) { background: var(--art-band); }
+.comic-drawer :is(.advanced-card, .issue-catalog-card) { padding: var(--space-16) var(--space-20); }
+.comic-drawer .advanced-tools { gap: var(--space-12); }
+.comic-drawer .issue-run-group > header { min-height: 0; padding: var(--space-16) var(--space-20); border-bottom: 1px solid var(--line); background: transparent; }
+.comic-drawer .issue-run-group > div { padding: 0 var(--space-20); }
+.comic-drawer .issue-run-group > div.issue-tile-grid { padding: var(--space-16) var(--space-20) var(--space-20); }
+.comic-drawer.toned :is(.issue-run-group > header, .issue-run-group article, .file-inventory article) { border-bottom-color: var(--art-line); }
+.comic-drawer .drawer-facts span { border-radius: var(--radius-12); }
+.comic-drawer .advanced-card.danger { background: color-mix(in srgb, var(--red-soft) 70%, transparent); }
+.comic-drawer .issue-view-toggle { flex: none; }
+.issue-catalog-card > div:first-child > strong::before {
+  content: ""; display: inline-block; width: 8px; height: 8px; margin-right: var(--space-8); vertical-align: 1px;
+  border-radius: var(--radius-pill); background: var(--green);
+}
+.issue-catalog-card.repairing > div:first-child > strong::before { background: var(--amber); }
+.issue-catalog-card.error > div:first-child > strong::before { background: var(--red); }
+.issue-catalog-card.ready > div:first-child > strong::before { background: var(--violet); }
+.issue-catalog-card.pending > div:first-child > strong::before { background: var(--muted-weak); }
+

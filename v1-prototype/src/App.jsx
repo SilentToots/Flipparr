@@ -2550,11 +2550,14 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
   const missingIssues = buckets.wanted.reduce((sum, { kind, request }) => sum + (kind === "replacement"
     ? (request.jobs || []).filter((job) => !["fulfilled", "cancelled"].includes(job.status)).length
     : request.wantedIssueCount || 0), 0);
+  // The count and what to do about it, as one line: "3 missing issues | Find".
   const wantedBar = tab === "wanted" && !loading && entries.length ? <div className="request-list-bar">
     <span><strong>{missingIssues}</strong> missing issue{missingIssues === 1 ? "" : "s"}</span>
-    <button type="button" className="secondary-button search-missing-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}>
+    <i className="request-list-bar-rule" aria-hidden="true" />
+    <button type="button" className="search-missing-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}
+      aria-label={`Find the ${missingIssues} missing issue${missingIssues === 1 ? "" : "s"}`}>
       {/* No magnifier: that icon means typing a search, and this is not one. */}
-      {searchingMissing ? <LoadingSpinner size={16} /> : null}Manual find
+      {searchingMissing ? <><LoadingSpinner size={14} /> Finding…</> : "Find"}
     </button>
   </div> : null;
   return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} />} />{wantedBar}{tab === "wanted" && pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
@@ -3609,10 +3612,9 @@ function GroupedIssueInventory({ issues, onEditIssue, medium }) {
   }
   // The same toggle and icons as the Comics toolbar, in the first run's
   // header rather than on a row of its own above it.
-  const viewToggle = <div className="view-toggle" aria-label="Choose issue view">
-    <button type="button" className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view" aria-pressed={view === "grid"}><GridViewIcon /></button>
-    <button type="button" className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view" aria-pressed={view === "list"}><ListViewIcon /></button>
-  </div>;
+  // The Comics tools row's switch, so grid or list reads the same everywhere.
+  const viewToggle = <GlassSegmented label="Choose issue view" value={view} onChange={setView} className="issue-view-toggle"
+    items={[{ id: "grid", title: "Grid view", icon: <GridViewIcon /> }, { id: "list", title: "List view", icon: <ListViewIcon /> }]} />;
   return <div className={`grouped-issue-inventory ${view}`}>
     {groups.map((group, groupIndex) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
