@@ -1051,12 +1051,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* The phone's list of sections: grouped rounded panels of rows, each an icon
    tile, the name, what is set and a chevron, with the rule between rows
    starting at the name, as iOS draws it. */
+/* A row is its icon, its name and the chevron -- nothing else, so every row
+   reads the same and the chevrons line up down the page. */
 .settings-index { display: grid; gap: var(--space-24); }
 .settings-index ul { margin: 0; padding: 0; overflow: hidden; list-style: none; border-radius: var(--radius-12); background: var(--surface); }
 .settings-index button {
   --settings-row-rule: calc(var(--space-16) + 30px + var(--space-12));
   width: 100%; min-height: 48px; box-sizing: border-box;
-  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-12);
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) 16px; align-items: center; gap: var(--space-12);
   padding: var(--space-8) var(--space-12) var(--space-8) var(--space-16); border: 0; background: none;
   color: var(--text); font: inherit; font-size: var(--text-md); text-align: left; cursor: pointer;
 }
@@ -1069,7 +1071,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .settings-index-icon--acquisition { background: var(--green); }
 .settings-index-icon--metadata { background: var(--violet); }
 .settings-index-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings-index-value { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
 .settings-index button > svg { color: var(--muted-weak); }
 .settings-root-list { display: grid; gap: var(--space-8); margin-top: var(--space-16); }
 .settings-root-list > span { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); padding: var(--space-12) var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--bg); color: var(--color-violet-400); }

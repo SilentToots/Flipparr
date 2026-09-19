@@ -2954,9 +2954,9 @@ function SettingsCard({ title, action, className = "", children }) {
   </section>;
 }
 
-// A phone's first level of Settings, after iPhone Settings: grouped rows of an
-// icon, a name and what is set, each opening its section as a page.
-function SettingsIndex({ values, onOpen }) {
+// A phone's first level of Settings, after iPhone Settings: grouped rows of
+// an icon and a name, each opening its section as a page.
+function SettingsIndex({ onOpen }) {
   const groups = [...new Set(SETTINGS_SECTIONS.map((item) => item.group))];
   return <nav className="settings-index" aria-label="Settings sections">
     {groups.map((group) => <ul key={group}>
@@ -2964,7 +2964,6 @@ function SettingsIndex({ values, onOpen }) {
         <button type="button" onClick={() => onOpen(id)}>
           <span className={`settings-index-icon settings-index-icon--${id}`} aria-hidden="true"><Icon size={18} weight="fill" /></span>
           <span className="settings-index-label">{label}</span>
-          {values[id] ? <span className="settings-index-value">{values[id]}</span> : null}
           <CaretRight size={16} aria-hidden="true" />
         </button>
       </li>)}
@@ -3304,11 +3303,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   </>;
   if (!open) {
     return <><PageHeader title="Settings" />
-      <SettingsIndex onOpen={onSectionChange} values={{
-        health: needAttention ? String(needAttention) : "",
-        library: roots.length ? `${roots.length} folder${roots.length === 1 ? "" : "s"}` : "",
-        acquisition: services.length ? `${services.filter((item) => item.enabled).length} of ${services.length} ready` : "",
-      }} />
+      <SettingsIndex onOpen={onSectionChange} />
       {modals}
     </>;
   }
