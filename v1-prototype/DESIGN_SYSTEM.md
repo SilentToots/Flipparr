@@ -154,7 +154,8 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
     and the catalogs, the results a phone sees on Discover. Before a search
     the page is its field, centred between a heading and a hint and focused
     on arrival, then **Recently Searched** (after the Apple TV app): cards
-    of what was opened from results, newest first, kept in the viewer's
+    of the searches run (a magnifier where the cover goes; tapping runs it
+    again) and what was opened from results, newest first, kept in the viewer's
     browser (`recent-searches.js`), with Clear. With results the field moves
     to the header. Its foot holds the
     F mark beside the library's size and the scan control. It does not fold.

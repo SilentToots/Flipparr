@@ -712,6 +712,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .recent-search:active { scale: .98; }
 .recent-search:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .recent-search-art { width: 48px; aspect-ratio: 2 / 3; border-radius: var(--radius-6); }
+/* A search run, rather than something opened: the magnifier where a cover goes. */
+.recent-search-query { display: grid; place-items: center; background: var(--surface-raised); color: var(--muted); }
 .recent-search-copy { min-width: 0; display: grid; gap: var(--space-2); }
 .recent-search-copy strong { overflow: hidden; font-size: var(--text-md); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .recent-search-copy small { overflow: hidden; color: var(--muted); font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }

@@ -14,6 +14,11 @@ test("a reopened item moves to the front instead of repeating", () => {
   assert.deepEqual(list.map((item) => item.key), ["series:1", "run:metron-9"]);
 });
 
+test("a search is remembered once, whatever its case", () => {
+  const list = rememberRecent(rememberRecent([], recentEntry("query", " Batman ")), recentEntry("query", "batman"));
+  assert.deepEqual(list, [{ key: "query:batman", kind: "query", text: "batman" }]);
+});
+
 test("the list keeps only the newest", () => {
   let list = [];
   for (let id = 0; id < 12; id += 1) list = rememberRecent(list, recentEntry("series", { id }), 8);

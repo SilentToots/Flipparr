@@ -897,6 +897,14 @@ function HeaderSearchField({ field, className = "page-header-search" }) {
     <input
       ref={inputRef} type="search" enterKeyHint="search" value={value} autoFocus={field?.autoFocus}
       onChange={(event) => change(event.target.value)}
+      // Enter runs the search itself rather than leaning on the form's
+      // implicit submission, which not every browser raises for every Enter.
+      // Not while an input method is composing: there Enter picks a character.
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        submit();
+      }}
       aria-label={field?.label || "Search your library and comic catalogs"}
       placeholder={field?.placeholder || "Search comics…"}
     />
@@ -1147,8 +1155,11 @@ function LibraryMatchCard({ series, onOpen }) {
 // The Search page's "Recently Searched", after the Apple TV app's: what was
 // opened from results, as cards of a cover, a title and a line under it. A
 // library run no longer in the library drops out.
-function RecentSearches({ entries, allSeries, onClear, onOpenSeries, onOpenRun }) {
+function RecentSearches({ entries, allSeries, onClear, onSearch, onOpenSeries, onOpenRun }) {
   const cards = entries.map((entry) => {
+    if (entry.kind === "query") {
+      return { key: entry.key, title: entry.text, detail: "Search", query: true, open: () => onSearch(entry.text) };
+    }
     if (entry.kind === "series") {
       const series = allSeries.find((item) => String(item.id) === String(entry.id));
       return series && { key: entry.key, title: series.title, cover: series.cover,
@@ -1168,7 +1179,9 @@ function RecentSearches({ entries, allSeries, onClear, onOpenSeries, onOpenRun }
     </header>
     <div className="recent-search-grid">
       {cards.map((card) => <button type="button" className="recent-search" key={card.key} onClick={card.open}>
-        <DiscoverCover src={card.cover} alt="" className="recent-search-art" glyph={18} />
+        {card.query
+          ? <span className="recent-search-art recent-search-query" aria-hidden="true"><MagnifyingGlass size={20} /></span>
+          : <DiscoverCover src={card.cover} alt="" className="recent-search-art" glyph={18} />}
         <span className="recent-search-copy">
           <strong title={card.title}>{card.title}</strong>
           <small>{card.detail}</small>
@@ -1576,6 +1589,9 @@ function DiscoverView({
     setDraft(query || "");
     if (searching) searchProviders(query);
   }, [query, backendStatus]);
+  // Every search run is remembered, however it was started: the field, a
+  // "Did you mean", or Comics sending a search on.
+  useEffect(() => { if (query) remember("query", query); }, [query]);
 
   function mark(key, state) { setPulled((current) => ({ ...current, [key]: state })); }
   async function pullIssue(issue) {
@@ -1699,7 +1715,7 @@ function DiscoverView({
         <HeaderSearchField field={{ ...searchField, autoFocus: true }} className="search-empty-field" />
         <span>Try a title, a creator's full name or a publisher, and add a four-digit year to narrow it.</span>
       </div>
-      <RecentSearches entries={recent} allSeries={allSeries} onClear={clearRecent}
+      <RecentSearches entries={recent} allSeries={allSeries} onClear={clearRecent} onSearch={onSearch}
         onOpenSeries={(item) => { remember("series", item); openLibraryRun(item); }}
         onOpenRun={(run) => { remember("run", run); openCatalogRun(run); }} />
     </> : <>
