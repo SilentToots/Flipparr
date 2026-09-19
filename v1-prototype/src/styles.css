@@ -3129,3 +3129,22 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .comic-drawer-follow .follow-switch > i::after { box-shadow: 0 1px 3px var(--shadow-faint); }
 @media (prefers-reduced-motion: reduce) { :is(.toggle-row, .follow-switch) > i, :is(.toggle-row, .follow-switch) > i::after { transition: none; } }
 
+
+/* --- Arrivals (2026-09-19) ---------------------------------------------------------
+   Nothing snaps into place: a page fades up as it opens, content fades in
+   where its loading placeholder was, and a grid's first screenful of cards
+   arrives in order. All of it is mount-time animation -- no state to keep --
+   and reduced motion turns it off. */
+.page-view { animation: page-in var(--motion-duration-standard) var(--motion-ease-standard) both; }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* What replaces a loading placeholder, and the pieces a page is built from. */
+:is(.series-grid, .series-table, .request-list, .discover-results, .release-shelf, .metadata-layout, .settings-pane, .settings-index, .library-sources-panel) {
+  animation: content-in var(--motion-duration-standard) var(--motion-ease-standard) both;
+}
+@keyframes content-in { from { opacity: 0; } to { opacity: 1; } }
+.series-grid .series-card { animation: card-in var(--motion-duration-standard) var(--motion-ease-standard) both; animation-delay: calc(var(--card-index, 0) * 24ms); }
+@keyframes card-in { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .page-view, .series-grid .series-card,
+  :is(.series-grid, .series-table, .request-list, .discover-results, .release-shelf, .metadata-layout, .settings-pane, .settings-index, .library-sources-panel) { animation: none; }
+}

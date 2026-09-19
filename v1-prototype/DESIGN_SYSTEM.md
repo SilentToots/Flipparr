@@ -248,6 +248,15 @@ Motion tokens:
   quarter of its height or on a flick, otherwise settling back. A sheet with
   `detents` taller than three-quarters of the screen opens at half height and
   is pulled up to full.
+- **Arrivals.** Nothing snaps in: a page fades up as it opens (`.page-view`,
+  keyed by the view), content fades in where its loading placeholder was, and
+  a grid's first screenful of cards arrives in order (`--card-index`, 24ms
+  apart, capped at twelve). All of it is mount-time animation, so there is no
+  state to keep.
+- **Counters.** A number that changes under the reader counts to its new
+  value (`useCountUp`, `count-up.js`): fast first, settling at the end, 220ms
+  plus 12ms a step to a 900ms cap. It starts at the first number it is given,
+  so a library's size does not run up from zero on every load.
 - Reduced motion collapses every duration.
 
 ## Breakpoints
