@@ -45,6 +45,7 @@ import {
 } from "./notifications.js";
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
+import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
@@ -978,7 +979,7 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
 // The header's search field. Without `field` it keeps its own draft, starts
 // from the app's current query, and Enter runs the app's search; a page whose
 // search it is passes `field` to own the value instead.
-function HeaderSearchField({ field }) {
+function HeaderSearchField({ field, className = "page-header-search" }) {
   const header = useContext(HeaderContext);
   const query = header?.query || "";
   const [ownDraft, setOwnDraft] = useState(query);
@@ -999,7 +1000,7 @@ function HeaderSearchField({ field }) {
     }
     inputRef.current?.focus();
   }
-  return <form className="glass-field page-header-search" role="search" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+  return <form className={`glass-field ${className}`} role="search" onSubmit={(event) => { event.preventDefault(); submit(); }}>
     <SearchIcon />
     <input
       ref={inputRef} type="search" enterKeyHint="search" value={value} autoFocus={field?.autoFocus}
@@ -1249,6 +1250,40 @@ function LibraryMatchCard({ series, onOpen }) {
     </span>
     <h3 title={series.title}>{series.title}</h3>
   </button>;
+}
+
+// The Search page's "Recently Searched", after the Apple TV app's: what was
+// opened from results, as cards of a cover, a title and a line under it. A
+// library run no longer in the library drops out.
+function RecentSearches({ entries, allSeries, onClear, onOpenSeries, onOpenRun }) {
+  const cards = entries.map((entry) => {
+    if (entry.kind === "series") {
+      const series = allSeries.find((item) => String(item.id) === String(entry.id));
+      return series && { key: entry.key, title: series.title, cover: series.cover,
+        detail: [series.publisher, series.year].filter(Boolean).join(" · ") || "In your library",
+        open: () => onOpenSeries(series) };
+    }
+    const run = entry.item;
+    return { key: entry.key, title: run.title, cover: run.cover,
+      detail: [run.publisher, run.yearLabel || run.yearBegan].filter(Boolean).join(" · ") || "Comic catalog",
+      open: () => onOpenRun(run) };
+  }).filter(Boolean);
+  if (!cards.length) return null;
+  return <section className="recent-searches" aria-labelledby="recent-searches-title">
+    <header>
+      <h2 id="recent-searches-title">Recently Searched</h2>
+      <button type="button" className="recent-searches-clear" onClick={onClear}>Clear</button>
+    </header>
+    <div className="recent-search-grid">
+      {cards.map((card) => <button type="button" className="recent-search" data-morph={card.key} key={card.key} onClick={card.open}>
+        <DiscoverCover src={card.cover} alt="" className="recent-search-art" glyph={18} />
+        <span className="recent-search-copy">
+          <strong title={card.title}>{card.title}</strong>
+          <small>{card.detail}</small>
+        </span>
+      </button>)}
+    </div>
+  </section>;
 }
 
 function LibraryMatchSkeleton() {
@@ -1588,6 +1623,20 @@ function DiscoverView({
   const [pulled, setPulled] = useState({});
   const [drawer, setDrawer] = useState(null);
   const searching = Boolean(query);
+  const [recent, setRecent] = useState(() => readRecent(window.localStorage));
+  function remember(kind, item) {
+    setRecent((current) => {
+      const next = rememberRecent(current, recentEntry(kind, item));
+      writeRecent(window.localStorage, next);
+      return next;
+    });
+  }
+  function clearRecent() {
+    setRecent([]);
+    writeRecent(window.localStorage, []);
+  }
+  const openLibraryRun = (item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item);
+  const openCatalogRun = (run) => openWithMorph(`run:${run.provider}-${run.providerSeriesId}`, () => setDrawer({ kind: "run", item: run }));
 
   const allSeries = useMemo(
     () => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []),
@@ -1674,20 +1723,23 @@ function DiscoverView({
   const { fresh, ownedCount } = splitSearchResults(discovery.results);
   const progress = providerProgress(discovery);
   const outstanding = progress.filter((item) => item.status === "searching");
+  const searchField = {
+    value: draft,
+    onChange: setDraft,
+    onSubmit: () => onSearch(draft),
+    onClear: () => { setDraft(""); if (searching) onClearSearch(); },
+    label: mode === "search" ? "Search your library and comic catalogs" : "Search comic catalogs",
+    placeholder: "Title, creator or publisher…",
+  };
+  // The Search page before a search is only its field, in the middle of the
+  // page, ready to type into; once there are results it moves to the header.
+  const searchPrompt = mode === "search" && !searching;
 
   return <>
     <PageHeader
       title={mode === "search" ? "Search" : "Discover"}
-      search={mode === "search" ? "page" : "phone"}
-      field={{
-        value: draft,
-        onChange: setDraft,
-        onSubmit: () => onSearch(draft),
-        onClear: () => { setDraft(""); if (searching) onClearSearch(); },
-        label: mode === "search" ? "Search your library and comic catalogs" : "Search comic catalogs",
-        placeholder: "Title, creator or publisher…",
-        autoFocus: mode === "search" && !query,
-      }}
+      search={searchPrompt ? "none" : mode === "search" ? "page" : "phone"}
+      field={searchField}
     />
 
     {searching ? <>
@@ -1700,7 +1752,7 @@ function DiscoverView({
           {[0, 1, 2].map((item) => <LibraryMatchSkeleton key={item} />)}
         </div> : libraryState === "ready" ? <div className="library-match-row">
           {libraryMatches.map((series) => <LibraryMatchCard series={series}
-            onOpen={(item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item)}
+            onOpen={(item) => { remember("series", item); openLibraryRun(item); }}
             key={series.id} />)}
         </div> : <p className="discover-note">Nothing in your library matches “{query}”.</p>}
       </section>
@@ -1724,7 +1776,7 @@ function DiscoverView({
         {discovery.state === "done" && fresh.length ? <div className="new-run-grid">
           {fresh.map((item) => <NewRunCard item={item}
             state={pulled[`run:${item.provider}-${item.providerSeriesId}`] || PULL_STATES.idle}
-            onPull={pullRun} onOpen={(run) => openWithMorph(`run:${run.provider}-${run.providerSeriesId}`, () => setDrawer({ kind: "run", item: run }))}
+            onPull={pullRun} onOpen={(run) => { remember("run", run); openCatalogRun(run); }}
             key={`${item.provider}-${item.providerSeriesId}`} />)}
         </div> : null}
         {discovery.state === "done" && !fresh.length ? <div className="shelf-message">
@@ -1749,11 +1801,16 @@ function DiscoverView({
           {discovery.didYouMean.map((name) => <button type="button" key={name} onClick={() => onSearch(name)}>{name}</button>)}
         </p> : null}
       </section>
-    </> : mode === "search" ? <div className="empty-state search-empty">
-      <MagnifyingGlass size={35} weight="duotone" />
-      <strong>Search your library and the comic catalogs</strong>
-      <span>Try a title, a creator's full name or a publisher, and add a four-digit year to narrow it.</span>
-    </div> : <>
+    </> : mode === "search" ? <>
+      <div className="empty-state search-empty">
+        <strong>Search your library and the comic catalogs</strong>
+        <HeaderSearchField field={{ ...searchField, autoFocus: true }} className="search-empty-field" />
+        <span>Try a title, a creator's full name or a publisher, and add a four-digit year to narrow it.</span>
+      </div>
+      <RecentSearches entries={recent} allSeries={allSeries} onClear={clearRecent}
+        onOpenSeries={(item) => { remember("series", item); openLibraryRun(item); }}
+        onOpenRun={(run) => { remember("run", run); openCatalogRun(run); }} />
+    </> : <>
       <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
         state={shelfState(data.latest, data.available, releases.state === "loading")}
         issues={data.latest?.issues} error={data.latest?.error || data.error}

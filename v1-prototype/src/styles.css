@@ -694,6 +694,31 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    the dashed border -- the Pull List's empty state had fixed it for itself. */
 .empty-state > span, .empty-state > p { width: 100%; max-width: 520px; margin: 0; padding-inline: var(--space-24); box-sizing: border-box; text-align: center; line-height: var(--leading-normal); }
 .empty-state .primary-button { margin-top: var(--space-10); }
+/* The Search page's "Recently Searched", after the Apple TV app: cards of a
+   cover, a title and a line under it, four across on a wide window. */
+.recent-searches { margin-top: var(--space-32); display: grid; gap: var(--space-16); }
+.recent-searches > header { display: flex; align-items: baseline; gap: var(--space-16); }
+.recent-searches h2 { flex: 1; min-width: 0; margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); }
+.recent-searches-clear { padding: 0; border: 0; background: none; color: var(--violet-text); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-semibold); cursor: pointer; }
+@media (hover: hover) { .recent-searches-clear:hover { text-decoration: underline; text-underline-offset: 2px; } }
+.recent-search-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-16); }
+.recent-search {
+  min-width: 0; display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: var(--space-14);
+  padding: var(--space-14) var(--space-16); border: 0; border-radius: var(--radius-12);
+  background: var(--surface); color: var(--text); text-align: left; cursor: pointer;
+  transition: background var(--motion-duration-fast) ease, scale var(--motion-duration-press) var(--motion-ease-spring);
+}
+@media (hover: hover) { .recent-search:hover { background: var(--surface-raised); } }
+.recent-search:active { scale: .98; }
+.recent-search:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.recent-search-art { width: 48px; aspect-ratio: 2 / 3; border-radius: var(--radius-6); }
+.recent-search-copy { min-width: 0; display: grid; gap: var(--space-2); }
+.recent-search-copy strong { overflow: hidden; font-size: var(--text-md); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.recent-search-copy small { overflow: hidden; color: var(--muted); font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .recent-search:active { scale: none; } }
+
+/* The Search page before a search: its field between the heading and the hint. */
+.search-empty-field { width: min(520px, calc(100% - var(--space-48))); margin-block: var(--space-8); }
 
 .focused-panel { max-width: var(--page-narrow); margin-top: var(--space-16); padding: var(--space-32); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface); }
 .library-sources-panel { max-width: var(--page-narrow); margin-top: var(--space-16); border: 1px solid var(--violet-border); border-radius: var(--radius-16); background: var(--surface); overflow: hidden; }
