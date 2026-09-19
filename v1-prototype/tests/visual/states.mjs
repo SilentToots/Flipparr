@@ -37,8 +37,8 @@ export const states = [
     path: "/library",
     require: [".series-row"],
     async setup(page) {
-      await page.waitForSelector(".view-toggle", { timeout: 15000 });
-      await page.locator('.view-toggle button[aria-label="List view"]').first().click();
+      await page.waitForSelector(".library-view-toggle", { timeout: 15000 });
+      await page.locator('.library-view-toggle [aria-label="List view"]').first().click();
       await settle(page);
     },
   },
@@ -95,7 +95,7 @@ export const states = [
   // at all -- from one run to the next, and a shelf that loads in one capture
   // and not the other buries anything a style change did under two thousand
   // elements. They are stubbed (stubs.mjs).
-  { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
+  { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },

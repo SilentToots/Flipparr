@@ -4,14 +4,14 @@
 html.page-scroll-locked { overflow: hidden; scrollbar-gutter: stable; }
 html { background: var(--bg); }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--bg); -webkit-font-smoothing: antialiased; }
-button, input, select { font: inherit; }
+button, input { font: inherit; }
 button { color: inherit; }
 /* The browser sizes <small> as `smaller`, a fifth under its parent, which
    lands between the ladder's steps (11.67px in 14px text, 13.33px in 16px) and
    at 10px under 12px text. Here it is a caption. A rule that sizes one
    explicitly still wins. */
 small { font-size: var(--text-xs); }
-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 :is(.discovery-results, .release-search-modal, .inbox-list, .review-panel, .series-drawer, .metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .advanced-run-list, .structure-groups) {
   scrollbar-width: thin;
@@ -77,13 +77,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar-scan.scanning svg { animation: sidebar-scan-turn var(--motion-duration-loader) linear infinite; }
 @keyframes sidebar-scan-turn { to { transform: rotate(360deg); } }
 .sidebar-session { display: grid; gap: var(--space-8); padding-top: var(--space-8); }
-.health-line { color: var(--muted-strong); display: flex; gap: var(--space-8); align-items: center; }
-.health-line i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
-.health-line.offline { color: var(--amber); }
-.health-line.offline i { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
-.storage-title { margin-top: var(--space-14); color: var(--muted-weak); font-size: var(--text-sm); text-transform: uppercase; letter-spacing: .13em; font-weight: var(--weight-bold); }
-.storage-track { height: 8px; background: var(--status-muted-bg); border-radius: var(--radius-6); overflow: hidden; margin-top: var(--space-4); }
-.storage-track i { display: block; height: 100%; width: 40%; background: var(--green); border-radius: inherit; }
 
 .main-content { min-height: 100vh; margin-left: calc(var(--sidebar-inset) + var(--sidebar-width)); padding: 0 var(--page-inset) var(--space-32); }
 .discovery-results { position: absolute; top: 51px; left: 0; width: min(690px, calc(100vw - 310px)); max-height: min(620px, calc(100vh - 105px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface); box-shadow: 0 22px 60px var(--shadow-strong); }
@@ -104,13 +97,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    Every value here is measured from the file rather than matched by eye.
    --------------------------------------------------------------------------- */
 
-.discover-search { width: 600px; max-width: 100%; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-8) var(--space-12) var(--space-8) var(--space-8); border: 1px solid var(--color-neutral-500); border-radius: var(--radius-pill); background: var(--color-black); }
-.discover-search > svg { flex: none; margin: var(--space-4); }
-.discover-search input { flex: 1; min-width: 0; padding: var(--space-4); border: 0; background: transparent; color: var(--color-neutral-0); font: inherit; font-size: var(--text-sm); text-align: center; }
-.discover-search input:focus, .discover-search input:not(:placeholder-shown) { text-align: left; }
-.discover-search input:focus { outline: none; }
-.discover-search input::placeholder { color: var(--placeholder-on-color); }
-.discover-search-clear { flex: none; padding: 0; border: 0; background: transparent; color: var(--color-neutral-0); display: grid; place-items: center; cursor: pointer; }
 
 /* A shelf and a results block are the same container: the file gives both the
    same fill, radius and 20px padding. */
@@ -319,8 +305,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .run-status.active { background: var(--badge-violet-bg); }
 .run-status.complete { background: var(--badge-muted-bg); }
 
-@media (max-width: 900px) {
-}
 
 .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button { border: 0; border-radius: var(--radius-8); min-height: var(--control-height-md); padding: 0 var(--space-16); display: inline-flex; justify-content: center; align-items: center; gap: var(--space-8); font-weight: var(--weight-semibold); font-size: var(--text-sm); cursor: pointer; transition: transform var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard); }
 .primary-button { background: var(--violet); color: var(--color-neutral-0); }
@@ -474,9 +458,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .glass-button[aria-expanded="true"] { color: var(--violet-text); }
 .glass-button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 .glass-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.glass-button--primary { border-color: var(--glass-primary-border); background: var(--glass-primary-bg); color: var(--color-neutral-0); }
-@media (hover: hover) { .glass-button--primary:not(:disabled):hover { background: var(--glass-primary-bg-hover); } }
-.glass-button--primary:not(:disabled):active { background: var(--button-primary-bg-pressed); }
 @media (prefers-reduced-motion: reduce) { .glass-button:not(:disabled):active { scale: none; } }
 
 .glass-field { box-sizing: border-box; display: flex; align-items: center; gap: var(--space-8); height: var(--control-height-md); padding: 0 var(--space-6) 0 var(--space-14); border-radius: var(--radius-pill); color: var(--muted); }
@@ -557,9 +538,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes library-skeleton { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
 .library-tools { min-height: 38px; display: flex; align-items: center; gap: var(--space-12); }
-.scope-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-8); padding: var(--space-4); background: var(--bg); }
-.scope-toggle button { min-height: 32px; padding: 0 var(--space-10); border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-weak); display: flex; align-items: center; gap: var(--space-6); cursor: pointer; font-size: var(--text-sm); }
-.scope-toggle button.active { background: var(--violet-soft); color: var(--violet-text); }
 /* One control shape across the row, per the design: a --line-strong hairline
    at --radius, 4px of padding, and 14px bold --muted-weak copy. Only the
    selected view is filled, and it is filled with the accent itself. */
@@ -675,17 +653,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .family-copy > strong { font-size: var(--text-md); }
 .family-copy > small { color: var(--muted); font-size: var(--text-sm); }
 .family-summary > svg { color: var(--muted-weak); }
-.family-run-list { border-top: 1px solid var(--line); background: var(--bg); }
-.family-run-list > button { width: 100%; min-height: 83px; padding: var(--space-8) var(--space-16) var(--space-8) var(--space-32); border: 0; border-top: 1px solid var(--line); background: transparent; color: inherit; display: grid; grid-template-columns: 44px minmax(240px, 1fr) minmax(160px, .45fr) 20px; gap: var(--space-14); align-items: center; text-align: left; cursor: pointer; }
-.family-run-list > button:first-child { border-top: 0; }
-@media (hover: hover) { .family-run-list > button:not(:disabled):hover { background: var(--surface); } }
-.run-cover { width: 44px; aspect-ratio: var(--cover-ratio); overflow: hidden; border-radius: var(--radius-4); background: var(--surface-soft); }
-.run-cover img, .run-cover .cover-placeholder { width: 100%; height: 100%; object-fit: contain; }
-.family-run-list > button > span:nth-child(2) { min-width: 0; display: grid; gap: var(--space-4); }
-.family-run-list > button > span:nth-child(2) strong { font-size: var(--text-md); }
-.family-run-list > button > span:nth-child(2) strong em { color: var(--muted-weak); font-style: normal; font-weight: var(--weight-medium); }
-.family-run-list > button > span:nth-child(2) small { color: var(--muted); font-size: var(--text-sm); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.family-run-list > button > svg { color: var(--muted-weak); }
 /* "Ongoing" and "Following" come to about 155px side by side, and a 165px
    card left 153px to put them in -- two pixels short, so the second badge
    was cut in half. There is plenty of room on a desktop, so the cards take
@@ -873,7 +840,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .status-badge--green, .status-chip.green, .provider-state.connected { background: var(--badge-green-bg); color: var(--color-neutral-0); }
 .status-badge--amber, .status-chip.amber, .provider-state.paused { background: var(--badge-amber-bg); color: var(--color-neutral-0); }
 .status-badge--red, .status-chip.red { background: var(--badge-red-bg); color: var(--color-neutral-0); }
-.icon-button, .modal-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.modal-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .replacement-safety-note { margin: 0 var(--request-inset) var(--request-inset); padding: var(--space-10) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--green-text); display: flex; align-items: center; gap: var(--space-8); font-size: var(--text-sm); }
 .request-job-panel { margin: 0; border-top: 1px solid var(--line); background: var(--surface); }
 .request-job-panel > header { min-height: 64px; padding: var(--space-12) var(--request-inset); display: flex; justify-content: space-between; gap: var(--space-20); align-items: center; background: var(--surface-raised); }
@@ -1159,7 +1126,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .provider-settings-modal form { display: grid; gap: var(--space-16); }
 .provider-credential-help { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-relaxed); margin-top: calc(var(--space-8) * -1); }
 .provider-settings-modal .toggle-row { border: 1px solid var(--line); border-radius: var(--radius-8); padding: 0 var(--space-14); }
-.provider-priority-field select { width: 100%; min-height: 39px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
 .provider-priority-field small { color: var(--muted); font-size: var(--text-sm); }
 .provider-test-result { margin: 0; padding: var(--space-10) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-8); background: var(--green-soft); color: var(--green); display: flex; gap: var(--space-8); align-items: center; font-size: var(--text-sm); }
 /* Actions group at the leading edge rather than sitting at opposite ends of the
@@ -1171,7 +1137,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .provider-modal-actions .secondary-button { margin: 0; }
 .replacement-modal { width: min(560px, calc(100% - 32px)); }
 .replacement-modal form { display: grid; gap: var(--space-16); }
-.replacement-modal select { min-height: 43px; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-4); background: var(--bg); color: var(--text); padding: 0 var(--space-12); }
 .replacement-summary { padding: var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--green); display: flex; gap: var(--space-10); }
 .replacement-summary span { display: grid; gap: var(--space-4); }
 .replacement-summary strong { color: var(--text); font-size: var(--text-sm); }
@@ -1203,7 +1168,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .run-synopsis .discover-drawer-lines { display: grid; gap: var(--space-8); }
 .run-synopsis .discover-drawer-lines i { height: 12px; }
 .run-synopsis .discover-drawer-lines i:last-child { width: 60%; }
-.drawer-statuses { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-8); margin-top: var(--space-8); }
 .family-link-chip { width: fit-content; height: 20px; min-height: 20px; margin: 0; padding: var(--space-2) var(--space-8) 0; border: 1px solid var(--violet-border); border-radius: var(--radius-pill); background: var(--violet-soft); color: var(--violet-text); display: inline-flex; align-items: center; gap: var(--space-4); cursor: pointer; font-size: var(--text-xs); font-weight: var(--weight-bold); line-height: var(--leading-none); }
 .family-link-chip svg { flex: 0 0 auto; transform: translateY(-1px); }
 .drawer-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-8); margin: var(--space-24) 0; }
@@ -1249,24 +1213,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .advanced-card { grid-template-columns: 1fr; gap: var(--space-12); }
   .advanced-card button { width: 100%; }
 }
-/* As a tab of its own it needs no rule above it, and reads at body size. */
-.advanced-collection-tools.advanced-tab { margin-top: 0; padding-top: 0; border-top: 0; }
-.advanced-collection-tools.advanced-tab p { margin: var(--space-16) 0 var(--space-8); font-size: var(--text-sm); }
-.advanced-collection-tools.advanced-tab p:first-child { margin-top: 0; }
 /* Remove from library comes last, set apart: the one tool here that cannot be undone. */
-.advanced-collection-tools.advanced-tab p:has(+ .advanced-danger) { margin-top: var(--space-24); padding-top: var(--space-16); border-top: 1px solid var(--line); }
-.advanced-collection-tools button.advanced-danger { border-color: color-mix(in srgb, var(--red-text) 45%, transparent); background: var(--red-soft); color: var(--red-text); }
-@media (hover: hover) { .advanced-collection-tools button.advanced-danger:not(:disabled):hover { background: color-mix(in srgb, var(--red-text) 22%, transparent); } }
 .advanced-collection-tools button { min-height: 34px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--muted-strong); display: flex; align-items: center; gap: var(--space-6); cursor: pointer; }
 .placement-callout { margin-top: var(--space-16); padding: var(--space-12); border: 1px solid var(--amber-border); border-radius: var(--radius-4); background: var(--surface-raised); color: var(--amber); display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: var(--space-10); align-items: center; }
 .placement-callout > div { display: grid; gap: var(--space-4); }
 .placement-callout strong { color: var(--amber-text); font-size: var(--text-sm); }
 .placement-callout small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .placement-callout button { min-height: 34px; padding: 0 var(--space-10); border: 1px solid var(--amber-border); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--amber-text); cursor: pointer; }
-.placement-list-note { margin: 0 0 var(--space-10); padding: var(--space-12); border: 1px solid var(--amber-border); border-radius: var(--radius-4); background: var(--surface-raised); color: var(--amber); display: flex; gap: var(--space-8); }
-.placement-list-note span { display: grid; gap: var(--space-4); }
-.placement-list-note strong { color: var(--amber-text); font-size: var(--text-sm); }
-.placement-list-note small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .story-arc-list { display: grid; gap: var(--space-10); padding-top: var(--space-14); }
 .story-arc-list > article { border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface-raised); overflow: hidden; }
 .story-arc-list article > header { padding: var(--space-12); display: flex; justify-content: space-between; gap: var(--space-10); }
@@ -1296,7 +1249,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .collection-volume-list button strong { font-size: var(--text-sm); overflow-wrap: anywhere; }
 .collection-volume-list button small { color: var(--muted); font-size: var(--text-xs); }
 .collection-volume-list button span > b { color: var(--amber); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
-.placement-workbench { width: min(560px, 100%); }
 .series-merge-workbench { width: min(680px, calc(100vw - 36px)); }
 .merge-loading { min-height: 96px; margin-top: var(--space-14); border: 1px solid var(--line); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; gap: var(--space-12); color: var(--muted); font-size: var(--text-sm); }
 .merge-direction { margin-top: var(--space-16); display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--space-12); align-items: center; }
@@ -1316,11 +1268,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .merge-warning small { color: inherit; opacity: .86; font-size: var(--text-xs); line-height: var(--leading-normal); }
 .merge-warning label { margin-top: var(--space-4); display: flex; align-items: flex-start; gap: var(--space-8); color: var(--text); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .merge-warning input { margin-top: var(--space-2); accent-color: var(--violet); }
-.placement-form { display: grid; gap: var(--space-16); }
-.placement-safety { padding: var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-4); background: var(--surface-raised); color: var(--green); display: flex; gap: var(--space-8); }
-.placement-safety span { display: grid; gap: var(--space-4); }
-.placement-safety strong { color: var(--green-text); font-size: var(--text-sm); }
-.placement-safety small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .coverage-overview { margin-top: var(--space-20); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-8); }
 .coverage-overview span { min-height: 72px; padding: var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-4); color: var(--muted); font-size: var(--text-xs); display: grid; align-content: center; gap: var(--space-6); }
 .coverage-overview strong { color: var(--text); font-size: var(--text-md); }
@@ -1349,11 +1296,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .drawer-empty { min-height: 230px; display: grid; place-items: center; align-content: center; gap: var(--space-8); color: var(--muted); text-align: center; }
 .drawer-empty strong { color: var(--muted-strong); }
 .drawer-empty span { max-width: 330px; font-size: var(--text-sm); line-height: var(--leading-relaxed); }
-.issue-inventory, .edition-inventory, .file-inventory { display: grid; padding-top: var(--space-12); }
-.issue-inventory article { min-height: 62px; display: grid; grid-template-columns: 45px 1fr auto; gap: var(--space-12); align-items: center; border-bottom: 1px solid var(--line); }
-.issue-number { color: var(--violet-text); font-weight: var(--weight-bold); }
-.issue-inventory article > div { display: grid; gap: var(--space-4); }
-.issue-inventory small { color: var(--muted); }
+.edition-inventory, .file-inventory { display: grid; padding-top: var(--space-12); }
 .ownership-source { padding: var(--space-4) var(--space-8); border-radius: var(--radius-8); background: var(--surface-sunken); color: var(--status-muted-text); font-size: var(--text-xs); }
 .ownership-source.direct, .ownership-source.both { background: var(--green-soft); color: var(--green-text); }
 .ownership-source.collection { background: var(--violet-soft); color: var(--violet-text); }
@@ -1448,8 +1391,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .file-inventory article > div { min-width: 0; display: grid; gap: var(--space-4); }
 .file-inventory strong { font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .file-inventory small { color: var(--muted); font-size: var(--text-xs); }
-.file-health { max-width: 115px; text-transform: capitalize; color: var(--green); font-size: var(--text-xs); text-align: right; }
-.file-health.error { color: var(--red); }
 .metadata-lock { color: var(--green-text) !important; display: flex; align-items: center; gap: var(--space-4); }
 /* One line for the whole set. The row is the file's actions, so it takes the
    full width rather than indenting to the filename, and the buttons are sized
@@ -1519,7 +1460,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .metadata-edit-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-12); }
 .metadata-edit-form .workbench-intro, .metadata-edit-actions { grid-column: 1 / -1; }
 .metadata-edit-form label { display: grid; gap: var(--space-6); color: var(--muted-strong); font-size: var(--text-sm); }
-.metadata-edit-form input, .metadata-edit-form select { width: 100%; min-height: 39px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
+.metadata-edit-form input { width: 100%; min-height: 39px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
 .metadata-edit-actions { display: flex; justify-content: space-between; gap: var(--space-10); margin-top: var(--space-8); }
 .issue-metadata-workbench { width: min(560px, 100%); }
 .issue-metadata-workbench h2 { margin-bottom: var(--space-8); }
@@ -1597,11 +1538,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .contents-list article button { min-height: 30px; padding: 0 var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--muted-strong); cursor: pointer; }
 .series-run-workbench { width: min(980px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; }
 .series-run-workbench h2 { margin-bottom: var(--space-8); }
-.run-search-context { min-height: 64px; margin-bottom: var(--space-12); padding: var(--space-12) var(--space-12); border: 1px solid var(--violet-border); border-radius: var(--radius-4); background: var(--violet-soft); display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-16); }
-.run-search-context > div { padding-right: var(--space-16); border-right: 1px solid var(--violet-border); display: grid; justify-items: center; gap: var(--space-4); }
-.run-search-context strong { color: var(--violet-text); font-size: var(--text-xl); }
-.run-search-context span { max-width: 120px; color: var(--muted); font-size: var(--text-xs); text-align: center; line-height: var(--leading-snug); }
-.run-search-context p { margin: 0; color: var(--muted-strong); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
 .run-loading { min-height: 250px; display: grid; place-items: center; align-content: center; gap: var(--space-8); color: var(--color-violet-400); }
 .run-loading .loading-indicator { color: var(--color-violet-400); }
 .run-loading span { color: var(--muted); font-size: var(--text-sm); }
@@ -1648,48 +1584,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .advanced-run-list small { color: var(--muted); font-size: var(--text-xs); }
 .advanced-run-list article > div { display: flex; align-items: center; gap: var(--space-8); }
 .advanced-run-list a { color: var(--color-violet-400); font-size: var(--text-xs); }
-.build-collection-bar { margin: 0 0 var(--space-12); padding: var(--space-12); border: 1px solid var(--violet-border); border-radius: var(--radius-4); background: var(--violet-soft); display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, .65fr) auto; gap: var(--space-12); align-items: end; }
-.build-collection-bar > div:first-child { align-self: center; display: grid; gap: var(--space-4); }
-.build-collection-bar strong { font-size: var(--text-sm); }
-.build-collection-bar small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
-.build-collection-bar label { display: grid; gap: var(--space-4); color: var(--status-muted-text); font-size: var(--text-xs); }
-.build-collection-bar input { min-height: 37px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-8); }
-.build-collection-bar > div:last-child { display: flex; gap: var(--space-8); }
-.build-collection-bar button { min-height: 37px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--muted-strong); cursor: pointer; white-space: nowrap; }
-.build-collection-bar button.primary-button { border: 0; background: var(--violet); color: var(--color-neutral-0); display: flex; align-items: center; gap: var(--space-6); }
-.build-collection-bar button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
-.series-run-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
-.series-run-card { min-width: 0; padding: var(--space-14); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface); display: grid; align-content: start; gap: var(--space-12); }
-.series-run-card.suggested { border-color: var(--violet-border); background: var(--violet-soft); box-shadow: inset 0 2px 0 var(--violet); }
-.series-run-card.included { border-color: var(--violet-border); background: var(--violet-soft); box-shadow: inset 0 0 0 1px var(--violet-soft); }
-.series-run-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-12); }
-.series-run-card header > div { min-width: 0; display: grid; gap: var(--space-4); }
-.series-run-card header span { color: var(--violet-text); font-size: var(--text-xs); font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: .035em; }
-.series-run-card h3 { margin: 0; color: var(--text); font-size: var(--text-md); }
-.series-run-card header small { color: var(--muted); font-size: var(--text-xs); }
-.series-run-card header > b { flex: 0 0 auto; padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--status-muted-bg); color: var(--muted-strong); font-size: var(--text-xs); }
-.run-collection-select { padding: var(--space-8) var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--surface-raised); display: flex; align-items: center; gap: var(--space-8); cursor: pointer; }
-.run-collection-select input { accent-color: var(--violet); }
-.run-collection-select > span { display: grid; gap: var(--space-4); }
-.run-collection-select strong { color: var(--muted-strong); font-size: var(--text-xs); }
-.run-collection-select small { color: var(--muted); font-size: var(--text-xs); }
-.series-run-card dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: var(--radius-6); overflow: hidden; background: var(--line); }
-.series-run-card dl > div { min-width: 0; padding: var(--space-8); background: var(--surface-raised); display: grid; gap: var(--space-4); }
-.series-run-card dt { color: var(--muted-weak); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .04em; }
-.series-run-card dd { margin: 0; color: var(--muted-strong); font-size: var(--text-xs); overflow-wrap: anywhere; }
-.run-issue-preview { padding: var(--space-8) var(--space-10); border-radius: var(--radius-6); background: var(--surface-raised); display: grid; gap: var(--space-4); }
-.run-issue-preview strong { color: var(--status-muted-text); font-size: var(--text-xs); }
-.run-issue-preview span { color: var(--violet-text); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; }
-.series-run-card ul { margin: 0; padding-left: var(--space-16); color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-relaxed); }
-.run-card-actions { margin-top: auto; padding-top: var(--space-2); display: flex; justify-content: space-between; align-items: center; gap: var(--space-10); }
-.run-card-actions a { color: var(--color-violet-400); font-size: var(--text-xs); }
-.run-card-actions button { min-height: 35px; padding: 0 var(--space-10); border: 0; border-radius: var(--radius-8); background: var(--violet); color: var(--color-neutral-0); display: flex; align-items: center; gap: var(--space-6); cursor: pointer; }
-.run-card-actions button:disabled { opacity: var(--button-disabled-opacity); cursor: wait; }
 .contents-add-form { margin-top: var(--space-16); padding-top: var(--space-16); border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-12); }
 .contents-add-form h3 { grid-column: 1 / -1; margin: 0; }
 .contents-add-form label { display: grid; gap: var(--space-6); color: var(--muted-strong); font-size: var(--text-sm); }
 .contents-add-form label:nth-of-type(3) { grid-column: 1 / -1; }
-.contents-add-form input, .contents-add-form select { width: 100%; min-height: 39px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
+.contents-add-form input { width: 100%; min-height: 39px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
 .contents-add-form button { width: fit-content; }
 .contents-reset { margin-top: var(--space-14); }
 .alias-list strong { font-size: var(--text-sm); color: var(--text); }
@@ -1721,7 +1620,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .family-assignment, .family-create-form { padding: var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface-raised); }
 .family-assignment h3, .family-create-form h3 { margin: 0 0 var(--space-8); color: var(--muted-strong); font-size: var(--text-sm); }
 .family-assignment > div, .family-create-form > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-8); }
-.family-assignment select, .family-create-form input { min-width: 0; min-height: 37px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-8); }
+.family-create-form input { min-width: 0; min-height: 37px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-8); }
 .family-assignment button, .family-create-form button { min-height: 37px; padding: 0 var(--space-10); border: 0; border-radius: var(--radius-8); background: var(--violet-soft); color: var(--color-neutral-0); display: flex; align-items: center; gap: var(--space-4); cursor: pointer; }
 .family-assignment button:disabled, .family-create-form button:disabled, .family-members button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 .family-assignment > small { display: block; margin-top: var(--space-8); color: var(--muted); font-size: var(--text-xs); }
@@ -1737,7 +1636,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .run-assignment-choice > button small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .run-assignment-fields { display: grid; grid-template-columns: minmax(0, 1.8fr) .7fr 1fr; gap: var(--space-8); }
 .run-assignment-form .form-field { margin: 0; }
-.run-assignment-form .form-field input, .run-assignment-form .form-field select { width: 100%; min-height: 40px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
+.run-assignment-form .form-field input { width: 100%; min-height: 40px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-10); }
 .run-assignment-note { padding: var(--space-12) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-6); background: var(--surface-raised); color: var(--green); display: flex; gap: var(--space-8); }
 .run-assignment-note span { display: grid; gap: var(--space-4); }
 .run-assignment-note strong { color: var(--text); font-size: var(--text-sm); }
@@ -1749,14 +1648,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .structure-groups > article.empty { border-style: dashed; }
 .structure-groups article > header { display: grid; grid-template-columns: 25px minmax(170px, 1fr) 150px 31px 31px; gap: var(--space-8); align-items: center; }
 .structure-groups header > span { width: 25px; height: 25px; border-radius: 50%; background: var(--violet-soft); color: var(--violet-text); display: grid; place-items: center; font-size: var(--text-xs); font-weight: var(--weight-bold); }
-.structure-groups input, .structure-groups select { min-width: 0; min-height: 36px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-8); }
+.structure-groups input { min-width: 0; min-height: 36px; border: 1px solid var(--line-strong); border-radius: var(--radius-6); background: var(--bg); color: var(--text); padding: 0 var(--space-8); }
 .structure-groups header > button { min-height: 31px; border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--muted-strong); cursor: pointer; }
 .structure-groups header > button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 .structure-groups article > small { color: var(--muted); font-size: var(--text-xs); }
 .structure-runs { display: grid; gap: var(--space-6); }
 .structure-runs > div { min-height: 38px; padding: var(--space-4) var(--space-8) var(--space-4) var(--space-10); border-radius: var(--radius-6); background: var(--surface-soft); display: grid; grid-template-columns: minmax(0, 1fr) 210px; align-items: center; gap: var(--space-8); }
 .structure-runs span { color: var(--muted-strong); font-size: var(--text-sm); }
-.structure-runs select { min-height: 29px; font-size: var(--text-xs); }
 .structure-runs em { padding: var(--space-8); color: var(--muted); font-size: var(--text-xs); font-style: normal; }
 .add-structure-group { width: fit-content; }
 .toast { position: fixed; z-index: 100; right: 24px; bottom: 24px; min-height: 48px; padding: 0 var(--space-16); border: 1px solid var(--green-border); border-radius: var(--radius-4); background: var(--surface-raised); color: var(--green-text); display: flex; align-items: center; gap: var(--space-8); box-shadow: 0 18px 50px var(--shadow-soft); }
@@ -1779,13 +1677,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .series-row > .table-copy { display: none; }
   .series-grid { grid-template-columns: repeat(2, 1fr); }
   .metadata-layout { grid-template-columns: 240px minmax(0, 1fr); }
-  .series-run-candidates { grid-template-columns: 1fr; }
-  .build-collection-bar { grid-template-columns: 1fr 1fr; }
-  .build-collection-bar > div:first-child { grid-column: 1 / -1; }
   .family-summary { grid-template-columns: 60px minmax(220px, 1fr) 24px; }
   .family-summary > .ownership { display: none; }
-  .family-run-list > button { grid-template-columns: 42px minmax(220px, 1fr) 20px; padding-left: var(--space-16); }
-  .family-run-list > button > .ownership { display: none; }
 }
 
 @media (max-width: 640px) {
@@ -1894,13 +1787,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .modal { justify-self: stretch; width: 100%; max-width: none; max-height: calc(100dvh - var(--mobile-nav-height) - 36px - env(safe-area-inset-bottom)); padding: var(--space-20) var(--space-16); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   .modal h2 { padding-right: var(--space-40); font-size: var(--text-xl); line-height: var(--leading-tight); }
   .modal-close { top: 12px; right: 12px; }
-  .provider-settings-modal, .replacement-modal, .release-search-modal, .metadata-workbench, .metadata-workbench.match-workbench, .issue-metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .file-run-workbench, .structure-workbench, .placement-workbench, .series-merge-workbench { width: 100%; max-width: none; }
+  .provider-settings-modal, .replacement-modal, .release-search-modal, .metadata-workbench, .metadata-workbench.match-workbench, .issue-metadata-workbench, .cover-workbench, .contents-workbench, .series-run-workbench, .file-run-workbench, .structure-workbench, .series-merge-workbench { width: 100%; max-width: none; }
 
   /* An icon-only control in a corner is the hardest thing on the screen to hit,
      and this one was 34px. */
   .modal-close { width: 44px; height: 44px; right: 12px; top: 12px; }
   /* The priority select sat at 39px while every field around it was 44. */
-  .provider-priority-field select { min-height: 44px; }
 
   .merge-direction { grid-template-columns: 1fr; }
   .merge-direction > svg { justify-self: center; transform: rotate(90deg); }
@@ -1927,14 +1819,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .contents-summary > b { width: 100%; margin-left: 0; }
   .contents-list article { grid-template-columns: 1fr auto; }
   .contents-list article > span { grid-column: 1; }
-  .run-search-context { grid-template-columns: 1fr; }
-  .build-collection-bar { grid-template-columns: 1fr; }
-  .build-collection-bar > div:first-child { grid-column: 1; }
-  .build-collection-bar > div:last-child { flex-wrap: wrap; }
-  .run-search-context > div { padding-right: 0; padding-bottom: var(--space-10); border-right: 0; border-bottom: 1px solid var(--violet-border); }
   .plan-outcomes, .preference-grid { grid-template-columns: 1fr; }
   .monitoring-summary { align-items: flex-start; flex-direction: column; }
-  .run-card-actions { align-items: flex-start; flex-direction: column; }
   .drawer-identity { align-items: flex-start; }
   .drawer-cover { flex-basis: 90px; width: 90px; height: 120px; }
   .series-drawer, .collection-drawer { width: 100%; padding: var(--space-20) var(--space-16) calc(var(--space-24) + env(safe-area-inset-bottom)); border-left: 0; }
@@ -1945,13 +1831,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .family-summary { grid-template-columns: 52px minmax(0, 1fr) 20px; padding: var(--space-8) var(--space-10); }
   .family-cover { width: 52px; height: 70px; }
   .family-copy > small { line-height: var(--leading-normal); }
-  .family-run-list > button { grid-template-columns: 38px minmax(0, 1fr) 18px; padding: var(--space-8) var(--space-10) var(--space-8) var(--space-16); }
-  .run-cover { width: 38px; height: 51px; }
   .family-assignment > div, .family-create-form > div { grid-template-columns: 1fr; }
   .run-assignment-choice, .run-assignment-fields { grid-template-columns: 1fr; }
   .structure-groups article > header { grid-template-columns: 25px minmax(0, 1fr) 31px 31px; }
   .structure-groups header > input { grid-column: 2 / -1; }
-  .structure-groups header > select { grid-column: 1 / -1; grid-row: 2; }
   .structure-groups header > button:nth-of-type(1) { grid-column: 3; grid-row: 3; }
   .structure-groups header > button:nth-of-type(2) { grid-column: 4; grid-row: 3; }
   .structure-runs > div { grid-template-columns: 1fr; }
@@ -2028,14 +1911,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      reads as the interface lurching. Controls inherit the body size (~14px),
      so raise them at touch sizes. Fixing it here rather than with
      maximum-scale on the viewport, which would also block pinch zoom. */
-  input, select, textarea { font-size: var(--text-input); }
+  input, textarea { font-size: var(--text-input); }
   /* ...and the fields that set their own size, which beat the rule above on
      specificity and so kept zooming. Discover's search was the one that showed:
      tapping it zoomed the page, and iOS stays zoomed -- so the page was wider
      than the screen and scrolled sideways for the rest of the visit, which is
      disorienting in a way a slightly larger font is not. */
-  .discover-search input, .release-query input, .structure-runs select { font-size: var(--text-input); }
-  .filter-button, .scope-toggle button, .view-toggle button { font-size: var(--text-md); }
+  .release-query input { font-size: var(--text-input); }
+  .filter-button, .view-toggle button { font-size: var(--text-md); }
 
 
   /* #2: this card is a two-column grid (text | action) with no mobile
@@ -2056,8 +1939,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   /* The two view icons were 34x40 inside a 46px shell. Dropping the shell's
      padding and squaring the buttons to 44 keeps the shell the same height it
      already was, so the row does not grow. */
-  .view-toggle, .scope-toggle { padding: 0; }
-  .view-toggle button, .scope-toggle button { min-height: 44px; min-width: 44px; }
+  .view-toggle { padding: 0; }
+  .view-toggle button { min-height: 44px; min-width: 44px; }
   /* Library health's per-problem actions sat at 38px, its inbox pager at 43. */
   .file-problem-actions button { min-height: 44px; }
   .mobile-inbox-nav button { min-height: 44px; }
@@ -2210,7 +2093,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      allows and never overlapping a neighbour's. */
   .shelf-scroll button { position: relative; }
   .shelf-scroll button::after { content: ""; position: absolute; inset: -10px -6px; }
-  .discover-search input { padding-block: var(--space-12); margin-block: calc(var(--space-8) * -1); }
   /* The card's Pull button: 36px on a phone, between the design's 26px and
      a full 44px, which read as too big. It keeps the design's 12px type, and
      the last 4px above and below are an invisible part of the target. */
@@ -2451,7 +2333,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .backdrop-workbench-intro { margin: 0 0 var(--space-16); color: var(--muted); }
 .backdrop-workbench-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-12); margin-bottom: var(--space-16); }
 .backdrop-workbench-tools label { flex: 1 1 240px; display: grid; gap: var(--space-6); color: var(--muted); font-size: var(--text-sm); }
-.backdrop-workbench-tools select { min-height: 42px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-4); background: var(--bg); color: var(--text); font: inherit; }
 .backdrop-workbench-status { display: flex; align-items: center; gap: var(--space-8); margin: 0; color: var(--muted); }
 .backdrop-page-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: var(--space-12); max-height: min(56vh, 560px); padding: var(--space-2); overflow-y: auto; }
 .backdrop-page { display: grid; gap: var(--space-6); padding: 0; border: 0; background: transparent; color: var(--muted-strong); font-size: var(--text-xs); text-align: center; cursor: pointer; }
@@ -2497,46 +2378,28 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .library-sheet-close { width: 44px; height: 44px; margin-right: calc(var(--space-8) * -1); padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--muted-strong); cursor: pointer; }
 .library-sheet fieldset { margin: var(--space-12) 0 0; padding: 0; border: 0; }
 .library-sheet legend { margin-bottom: var(--space-8); padding: 0; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-bold); }
-.library-sheet-segments { display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--line-strong); border-radius: var(--radius-8); }
-.library-sheet-segments button { min-height: 44px; border: 0; border-radius: var(--radius-4); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-8); background: transparent; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-bold); cursor: pointer; }
-.library-sheet-segments button[aria-pressed="true"] { background: var(--violet); color: var(--color-neutral-0); }
 .library-sheet-options { display: grid; gap: var(--space-2); }
 .library-sheet-options button { min-height: 48px; padding: 0 var(--space-12); border: 0; border-radius: var(--radius-4); display: flex; align-items: center; justify-content: space-between; background: transparent; color: var(--text); font-size: var(--text-md); text-align: left; cursor: pointer; }
 .library-sheet-options button[aria-checked="true"] { background: var(--nav-active-bg); font-weight: var(--weight-bold); }
 .library-sheet-options button svg { color: var(--violet-text); }
 .library-sheet .follow-switch { width: 100%; min-height: 48px; margin-top: var(--space-16); box-sizing: border-box; padding: 0 var(--space-12); flex-direction: row-reverse; justify-content: space-between; border-color: var(--line); color: var(--text); font-size: var(--text-md); }
 .library-sheet-done { width: 100%; min-height: 48px; margin-top: var(--space-16); border: 0; border-radius: var(--radius-8); background: var(--violet); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); cursor: pointer; }
-.library-sheet :is(.library-sheet-close, .library-sheet-segments button, .library-sheet-options button, .library-sheet-done):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.library-sheet :is(.library-sheet-close, .library-sheet-options button, .library-sheet-done):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* ---------------------------------------------------------------------------
    Consistency and tap-target pass (2026-09-15)
    --------------------------------------------------------------------------- */
-/* Form selects drew as the browser's own grey box -- 21px tall on a desktop and
-   24 on a phone -- under 44px text fields in the same form. They take the
-   field's look and the settings switcher's chevron. :not([multiple]) lifts the
-   rule over the per-form select rules, whose background shorthand would
-   otherwise drop the chevron and leave no arrow at all. */
-.form-field select:not([multiple]) { width: 100%; min-height: 44px; padding: 0 var(--space-40) 0 var(--space-12); border: 1px solid var(--line-strong); border-radius: var(--radius-4); background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23b8c0cc' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 12px center / 16px 16px; color: var(--text); -webkit-appearance: none; appearance: none; cursor: pointer; }
-.form-field select:not([multiple]):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-/* The scan toggle drew its own top rule inside a section that already has one. */
-.settings-auto-scan .toggle-row { border-top: 0; }
-/* A long file name widened the issue select past the page picker's edge. */
-.backdrop-workbench-tools select { width: 100%; min-width: 0; }
-
 @media (max-width: 640px) {
 
   /* Discover: Pull Run and the run drawer's actions were 30px, its mode
      choice 36, and the clear button a bare 20px icon. */
   .pull-button-md, .new-run-skeleton .new-run-action i { min-height: 44px; }
-  .discover-search input { padding-block: var(--space-14); margin-block: calc(var(--space-10) * -1); }
   .discover-issue-list > header button { min-height: 44px; padding-inline: var(--space-8); }
   /* Cover, copy and action across 375px left the title as "Ni…" and its
      publisher line three words deep. The action takes its own row instead. */
   .discovery-result { grid-template-columns: 42px minmax(0, 1fr); row-gap: var(--space-10); }
   .discovery-result > button { grid-column: 1 / -1; min-height: 44px; justify-content: center; }
   .discover-text-button { display: inline-block; padding-block: var(--space-10); margin-block: calc(var(--space-10) * -1); }
-  .discover-search-clear { position: relative; }
-  .discover-search-clear::after { content: ""; position: absolute; inset: -12px; }
   /* Shelf arrows keep the file's 24px circle; a wider gap lets each hit area
      reach 44 without meeting its neighbour's. */
   .shelf-scroll { gap: var(--space-20); }
@@ -2555,7 +2418,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .alias-form input { height: 44px; }
   .alias-form button { min-height: 44px; }
   .backdrop-workbench-tools label { flex-basis: 100%; min-width: 0; }
-  .backdrop-workbench-tools select { min-height: 44px; }
   .backdrop-workbench-tools .secondary-button { width: 100%; justify-content: center; }
 
   /* Settings: Manage folders and Scan library stacked at two different widths;
@@ -2566,9 +2428,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
      They are reached less often, so their controls had kept desktop sizes:
      31px "Use cover" buttons, 39-40px fields, a 19px release search box. */
   .cover-option-grid button { min-height: 44px; }
-  .metadata-edit-form input, .metadata-edit-form select { min-height: 44px; }
+  .metadata-edit-form input { min-height: 44px; }
   .match-search-form input { min-height: 44px; }
-  .run-assignment-form .form-field input, .run-assignment-form .form-field select { min-height: 44px; }
+  .run-assignment-form .form-field input { min-height: 44px; }
   .modal :is(.danger-button, .secondary-button, .primary-button) { min-height: 44px; }
   .release-query { min-height: 56px; }
   .release-query :is(input, button) { min-height: 44px; }
@@ -2669,7 +2531,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-step-label em { font-style: normal; font-size: var(--text-xs); color: var(--muted); opacity: .8; }
 
 .setup-step-body { display: flex; flex-direction: column; gap: var(--space-16); }
-.setup-lead { margin: 0; color: var(--muted-strong); font-size: var(--text-md); line-height: var(--leading-relaxed); }
 .setup-field { display: flex; flex-direction: column; gap: var(--space-8); }
 .setup-field > span { color: var(--muted); font-size: var(--text-sm); }
 .setup-field input { min-height: 48px; padding: 0 var(--space-14); border: 1px solid var(--line-strong); border-radius: var(--radius-4); background: var(--bg); color: var(--text); font-size: var(--text-input); }
@@ -2729,7 +2590,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-welcome-copy { min-width: 0; }
 .setup-welcome h1 { margin: 0 0 var(--space-14); font-size: var(--text-2xl); line-height: var(--leading-tight); letter-spacing: -.015em; }
 .setup-welcome > .setup-welcome-copy > p { margin: 0 0 var(--space-28); max-width: 46ch; color: var(--muted-strong); font-size: var(--text-md); line-height: var(--leading-relaxed); }
-.setup-welcome-note { display: block; margin-top: var(--space-16); color: var(--muted); font-size: var(--text-sm); }
 /* The mark renders as .brand-mark; these sized a class that was never on it,
    so the phone kept the full-size desktop artwork. */
 .setup-welcome .brand-mark { width: 190px; height: 190px; flex: none; }
@@ -2952,12 +2812,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 .drawer-tabs button:active, .segmented-tab:active, .nav-item:active { scale: none; }
 .primary-button:not(:disabled):active, .candidate-select:not(:disabled):active { background: var(--button-primary-bg-pressed); }
 .secondary-button:not(:disabled):active { background: var(--button-secondary-bg-pressed); }
-.ghost-button:not(:disabled):active, .request-row:active, .shelf-message > button:active,
-.advanced-card button:not(:disabled):active, .request-job-actions button:not(:disabled):active,
-.modal-close:active, .notifications-open:active,
-.view-toggle button:not(.active):active, .scope-toggle button:not(.active):active,
-.danger-button:not(:disabled):active, .advanced-card.danger button:not(:disabled):active,
-.request-job-actions button.request-job-delete:not(:disabled):active { background: var(--button-danger-bg-pressed); }
+.ghost-button:not(:disabled):active, .request-row:active, .shelf-message > button:active, .advanced-card button:not(:disabled):active, .request-job-actions button:not(:disabled):active, .modal-close:active, .notifications-open:active, .view-toggle button:not(.active):active, .danger-button:not(:disabled):active, .advanced-card.danger button:not(:disabled):active, .request-job-actions button.request-job-delete:not(:disabled):active { background: var(--button-danger-bg-pressed); }
 .pull-button:not(:disabled):active { filter: brightness(.92); }
 .shelf-scroll button:not(:disabled):active { background: var(--color-neutral-400); }
 
@@ -2984,7 +2839,6 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .pull-card:has(.discover-open:hover) .discover-cover,
   .library-match:hover .discover-cover { border-color: var(--violet-border); }
   .family-link-chip:hover { filter: brightness(1.2); }
-  .discover-search-clear:hover { opacity: .8; }
   .notifications-open:hover { background: var(--button-ghost-bg-hover); }
   .candidate-select:not(:disabled):hover { background: var(--button-primary-bg-hover); }
   .shelf-scroll button:not(:disabled):hover { background: var(--color-neutral-300); }
@@ -2993,7 +2847,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   /* Tabs: the unselected ones brighten; the selected one already says so. */
   .drawer-tabs button:not(.active):hover, .segmented-tab:not(.active):hover { color: var(--text); }
   /* Segmented toggles. */
-  .view-toggle button:not(.active):hover, .scope-toggle button:not(.active):hover { background: var(--button-ghost-bg-hover); color: var(--text); }
+  .view-toggle button:not(.active):hover { background: var(--button-ghost-bg-hover); color: var(--text); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3008,8 +2862,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
    the controls instead. Last in the file so it wins on source order against
    each control's own rule, at that rule's own specificity. */
 @media (max-width: 640px) {
-  .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button,
-  .scope-toggle button, .follow-switch, .setup-pill { font-size: var(--text-md); }
+  .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button, .follow-switch, .setup-pill { font-size: var(--text-md); }
   .did-you-mean button, .ui-button--sm, .issue-catalog-card button { font-size: var(--text-md); }
 }
 
@@ -3020,21 +2873,11 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
    fill). Buttons in content stay solid; glass is for the close and back
    controls, which float over what they close. Last in the file, so it
    outranks the older per-component shapes. */
-.primary-button, .secondary-button, .ghost-button, .danger-button, .ui-button, .pull-button,
-.shelf-message > button, .did-you-mean button, .path-input button, .file-problem button,
-.request-job-actions button, .release-error button, .advanced-card button, .advanced-collection-tools button,
-.placement-callout button, .issue-catalog-card button, .file-row-actions button, .contents-list article button,
-.advanced-run-toolbar button, .build-collection-bar button, .family-members article button,
-.structure-groups header > button, .sign-out-button, .provider-row > button, .cover-option-grid button {
+.primary-button, .secondary-button, .ghost-button, .danger-button, .ui-button, .pull-button, .shelf-message > button, .did-you-mean button, .path-input button, .file-problem button, .request-job-actions button, .release-error button, .advanced-card button, .advanced-collection-tools button, .placement-callout button, .issue-catalog-card button, .file-row-actions button, .contents-list article button, .advanced-run-toolbar button, .family-members article button, .structure-groups header > button, .sign-out-button, .provider-row > button, .cover-option-grid button {
   border: 0; border-radius: var(--radius-pill); box-shadow: none;
 }
-.primary-button, .ui-button--primary, .pull-button-idle, .pull-button-pending, .build-collection-bar button.primary-button { background: var(--button-primary-bg); color: var(--button-primary-text); }
-.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost, .pull-button-queued, .pull-button-owned,
-.shelf-message > button, .did-you-mean button, .path-input button, .file-problem button:not(.primary-button),
-.request-job-actions button, .advanced-card button, .advanced-collection-tools button, .placement-callout button,
-.issue-catalog-card button, .file-row-actions button, .contents-list article button, .advanced-run-toolbar button,
-.build-collection-bar button:not(.primary-button), .structure-groups header > button, .sign-out-button,
-.provider-row > button, .cover-option-grid button { background: var(--button-standard-bg); }
+.primary-button, .ui-button--primary, .pull-button-idle, .pull-button-pending { background: var(--button-primary-bg); color: var(--button-primary-text); }
+.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost, .pull-button-queued, .pull-button-owned, .shelf-message > button, .did-you-mean button, .path-input button, .file-problem button:not(.primary-button), .request-job-actions button, .advanced-card button, .advanced-collection-tools button, .placement-callout button, .issue-catalog-card button, .file-row-actions button, .contents-list article button, .advanced-run-toolbar button, .structure-groups header > button, .sign-out-button, .provider-row > button, .cover-option-grid button { background: var(--button-standard-bg); }
 .secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost { color: var(--text); }
 .danger-button, .ui-button--danger, .release-error button, .family-members article button,
 .request-job-actions button.request-job-delete, .advanced-card.danger button { background: var(--button-standard-bg); color: var(--red-text); }
@@ -3180,16 +3023,16 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    outline, as iOS draws one; focus shows the violet ring. On a phone a group
    of fields (Settings' credentials) is one rounded panel of rows, each a
    label and its field, divided by hairlines. */
-:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar, .build-collection-bar,
+:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar,
   .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]) {
   box-sizing: border-box; border: 1px solid transparent; border-radius: var(--radius-12); background: var(--field-bg); color: var(--text);
   transition: background var(--motion-duration-fast) ease, border-color var(--motion-duration-fast) ease;
 }
-:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar, .build-collection-bar,
+:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar,
   .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):focus {
   border-color: var(--violet-border); background: var(--field-bg-focus);
 }
-:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar, .build-collection-bar,
+:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar,
   .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input::placeholder { color: var(--muted-weak); }
 .field-group { display: grid; gap: var(--space-12); }
 @media (max-width: 640px) {
@@ -3225,3 +3068,4 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 @media (max-width: 640px) { .toast { left: 50%; right: auto; bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom)); max-width: calc(100vw - var(--space-24)); } }
 @media (prefers-reduced-motion: reduce) { .toast, .toast.leaving { animation: none; } }
 
+.toast.toast--error > svg { color: var(--red); }

@@ -11,7 +11,6 @@ import {
   ArrowUpRight,
   ArrowLeft,
   ArrowRight,
-  BookmarkSimple,
   BookOpen,
   ImageSquare,
   Books,
@@ -25,7 +24,6 @@ import {
   DotsThree,
   Eye,
   FolderOpen,
-  Funnel,
   Gear,
   HardDrive,
   ListBullets,
@@ -60,7 +58,7 @@ import {
 } from "./design-icons.jsx";
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
-  countLabel, providerProgress, libraryMatchState,
+  providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
   runModes, completeRunToPull, issueLabel, libraryRunMatches,
 } from "./discover.js";
@@ -2507,7 +2505,7 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
       try {
         const result = await apiRequest("/api/v1/acquisition/progress");
         if (!cancelled) setProgress(result?.downloads || {});
-      } catch (error) { /* a download client that cannot answer shows no bar */ }
+      } catch { /* a download client that cannot answer shows no bar */ }
     }
     poll();
     const timer = window.setInterval(poll, 3000);
@@ -3239,7 +3237,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       setLanguage(result?.preferredLanguage ?? "en");
       setAutoScan(result?.autoScanEnabled ?? true);
       setAutoScanInterval(Number(result?.autoScanIntervalMinutes) || 60);
-    } catch (error) {
+    } catch {
       /* settings fall back to defaults */
     }
   }
@@ -3253,7 +3251,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         body: JSON.stringify({ collectedEditionsEnabled: next }),
       });
       setCollectedEditions(Boolean(result?.collectedEditionsEnabled));
-    } catch (error) {
+    } catch {
       setCollectedEditions(!next);
     } finally {
       setSavingCollectedEditions(false);
@@ -3270,7 +3268,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         body: JSON.stringify({ preferredLanguage: next }),
       });
       setLanguage(result?.preferredLanguage ?? next);
-    } catch (error) {
+    } catch {
       setLanguage(previous);
     } finally {
       setSavingLanguage(false);
@@ -4155,9 +4153,9 @@ function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructu
   };
   const display = { ...collection, id: `collection-${collection.id}`, title: collection.name };
   const preferenceLabel = ACQUISITION_LABELS[collection.acquisitionPreference] || ACQUISITION_LABELS.either;
-  return <div className="drawer-backdrop" onMouseDown={onClose}>
-    <aside className="series-drawer collection-drawer" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collection-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
-      <DialogCloseButton onClose={onClose} label="Close collection details" drawer />
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
+    <aside className={`series-drawer collection-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collection-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+      <DialogCloseButton onClose={requestClose} label="Close collection details" drawer />
       <div className="drawer-identity"><div className="drawer-cover"><SeriesCover series={display} /></div><div><span className={`status-chip ${collection.structureStatus === "unmapped" || issueCoveragePending ? "amber" : "green"}`}>{collection.monitoringStatus === "monitored" ? "Following" : "In your library"}</span><h2 id="collection-drawer-title">{collection.name}</h2><p>{collection.publisher} · {collection.year} · {mainArcs.length} runs{specials.length ? ` + ${specials.length} specials` : ""}</p></div></div>
       <div className="drawer-facts collection-coverage-facts">{issueCoveragePending ? <><span><strong>{volumes.length}</strong>Volumes identified</span><span><strong>{unverifiedVolumes.length}</strong>Need issue ranges</span><span><strong>{ownedIssueCount}</strong>Issues confirmed</span><span><strong>{files.length}</strong>Comic files</span></> : <><span><strong>{ownedIssueCount} <em>of {issues.length}</em></strong>Issues confirmed</span><span><strong>{missingIssueCount}</strong>Issues missing</span><span><strong>{volumes.length}</strong>Volumes owned</span><span><strong>{files.length}</strong>Comic files</span></>}</div>
       <nav className="drawer-tabs" aria-label="Collection details">{[["overview", "Overview"], ["issues", `Issues (${issues.length})`], ["volumes", `Volumes (${volumes.length})`], ["specials", `Specials (${specials.length})`], ["arcs", `Runs (${mainArcs.length})`], ["files", `Files (${files.length})`]].map(([id, label]) => <button className={tab === id ? "active" : ""} onClick={() => onTabChange(id)} key={id}>{label}</button>)}</nav>
@@ -4581,6 +4579,7 @@ export function App() {
   const [scanState, setScanState] = useState("idle");
   const [scanProgress, setScanProgress] = useState(null);
   const [toast, setToast] = useState("");
+  const [toastTone, setToastTone] = useState("success");
   const [toastLeaving, setToastLeaving] = useState(false);
   const toastTimers = useRef([]);
   const [reviewFocus, setReviewFocus] = useState(null);
@@ -4649,7 +4648,7 @@ export function App() {
     try {
       const settings = await apiRequest("/api/v1/settings");
       setSetupCompleted(Boolean(settings?.setupCompleted));
-    } catch (error) {
+    } catch {
       // An unreachable or unauthenticated backend is not evidence that setup is
       // outstanding, and guessing wrong puts the wizard over a working library.
       setSetupCompleted(true);
@@ -4747,9 +4746,12 @@ export function App() {
   }
   // A new message replaces the one showing, and restarts its time; the last
   // 300ms play its exit rather than cutting it off.
-  function showToast(message) {
+  // `tone` is "success" (a green check) or "error" (a red warning): a failed
+  // action said with a check read as though it had worked.
+  function showToast(message, tone = "success") {
     toastTimers.current.forEach((timer) => window.clearTimeout(timer));
     setToast(message);
+    setToastTone(tone);
     setToastLeaving(false);
     toastTimers.current = [
       window.setTimeout(() => setToastLeaving(true), 2900),
@@ -4835,7 +4837,7 @@ export function App() {
       showToast(`Library inventory complete · ${changed} changed, ${reused} unchanged`);
     } catch (error) {
       setScanState("idle");
-      showToast(error.message);
+      showToast(error.message, "error");
     }
   }
   async function updateLibraryRoot(root, recursive) {
@@ -4847,7 +4849,7 @@ export function App() {
       await loadCatalog();
       showToast("Library folder setting saved");
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       throw error;
     }
   }
@@ -4857,7 +4859,7 @@ export function App() {
       await loadCatalog();
       showToast("Folder removed from Flipparr · comic files were untouched");
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       throw error;
     }
   }
@@ -4870,7 +4872,7 @@ export function App() {
       await loadCatalog();
       showToast("Review item resolved");
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
     }
   }
   async function addSeriesAlias(seriesId, alias) {
@@ -4925,7 +4927,7 @@ export function App() {
     try {
       const data = await apiRequest(`/api/v1/collections/${collection.id}/structure`);
       setStructureWorkbench(data);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   async function saveStoryStructure(arcs) {
     setStructureBusy(true); setStructureError("");
@@ -5085,7 +5087,7 @@ export function App() {
       const data = await apiRequest(`/api/v1/files/${file.id}`);
       setWorkbench({ data, mode });
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
     }
   }
   async function openFileRunWorkbench(file) {
@@ -5094,7 +5096,7 @@ export function App() {
       const data = await apiRequest(`/api/v1/files/${file.id}`);
       setFileRunWorkbench(data);
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
     }
   }
   async function moveFileToRun(payload) {
@@ -5231,7 +5233,7 @@ export function App() {
         : `Following ${request.title} · you’re up to date`);
       return { ok: true, request };
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       return { ok: false, error: error.message };
     } finally {
       setRequestBusyKey("");
@@ -5256,7 +5258,7 @@ export function App() {
       showToast(`${issue.title} added to your Pull List`);
       return { ok: true, result };
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       return { ok: false, error: error.message };
     }
   }
@@ -5275,7 +5277,7 @@ export function App() {
       showToast(`${title} · ${count} issue${count === 1 ? "" : "s"} added to your Pull List`);
       return { ok: true, result };
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       return { ok: false, error: error.message };
     }
   }
@@ -5297,7 +5299,7 @@ export function App() {
       showToast(`${result.series.title} added · ${result.issueCount} issues followed`);
       return { ok: true, result };
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       return { ok: false, error: error.message };
     }
   }
@@ -5331,7 +5333,7 @@ export function App() {
       });
       await loadCatalog();
       showToast(`Replacement cancelled for ${request.targetTitle}`);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   // Deleted, not cancelled: a pull is one click to make again, and a cancelled
   // row would sit on the Pull List as a comic nobody wants.
@@ -5344,7 +5346,7 @@ export function App() {
       showToast(issue
         ? `Deleted #${issue.number} from your Pull List`
         : `Deleted ${request.title} from your Pull List`);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   async function setSeriesFormat(series, format) {
     try {
@@ -5354,7 +5356,7 @@ export function App() {
       });
       await loadCatalog();
       showToast(format === "manga" ? `${series.title} is filed as manga` : `${series.title} is filed as a comic`);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   // Irreversible, so it says exactly what goes -- files and space -- before
   // it asks, and the server checks every path again before deleting any.
@@ -5362,7 +5364,7 @@ export function App() {
     try {
       const plan = await apiRequest(`/api/v1/series/${series.id}/removal`);
       if (plan.activeDownloads) {
-        showToast("Something for this run is still downloading. Remove it once that has finished.");
+        showToast("Something for this run is still downloading. Remove it once that has finished.", "error");
         return;
       }
       const size = plan.sizeBytes >= 1e9 ? `${(plan.sizeBytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(plan.sizeBytes / 1e6))} MB`;
@@ -5376,14 +5378,14 @@ export function App() {
       showToast(result.filesDeleted
         ? `Removed ${plan.title} and deleted ${result.filesDeleted} file${result.filesDeleted === 1 ? "" : "s"}`
         : `Removed ${plan.title}`);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   async function openCoverWorkbench(file) {
     setCoverError("");
     try {
       const data = await apiRequest(`/api/v1/files/${file.id}`);
       setCoverWorkbench(data);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   async function finishCoverChange(message) {
     const selectedId = selectedSeries?.id;
@@ -5425,7 +5427,7 @@ export function App() {
     setCoverError("");
     try {
       setSeriesCoverWorkbench(await apiRequest(`/api/v1/series/${series.id}/cover`));
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   async function finishSeriesCoverChange(message) {
     const selectedId = selectedSeries?.id;
@@ -5462,7 +5464,7 @@ export function App() {
       const refreshed = data?.series?.find((item) => item.id === series.id);
       if (refreshed) setSelectedSeries(refreshed);
       showToast(`No longer following ${series.title}`);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
     setUnfollowBusy(false);
   }
   // From a Discover drawer: the run as the library knows it, by its id.
@@ -5477,7 +5479,7 @@ export function App() {
       showToast(`No longer following ${title}`);
       return { ok: true };
     } catch (error) {
-      showToast(error.message);
+      showToast(error.message, "error");
       return { ok: false, error: error.message };
     }
   }
@@ -5492,7 +5494,7 @@ export function App() {
       const refreshed = data?.families?.find((item) => item.id === collection.id);
       if (refreshed) setSelectedCollection(refreshed);
       showToast(`No longer following ${collection.name}`);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
     setUnfollowBusy(false);
   }
   async function openSeriesMatchWorkbench(series) {
@@ -5542,7 +5544,7 @@ export function App() {
       const data = await apiRequest(`/api/v1/files/${file.id}`);
       if (!data.collectionContents) throw new Error("This file is not linked to a volume");
       setContentsWorkbench(data);
-    } catch (error) { showToast(error.message); }
+    } catch (error) { showToast(error.message, "error"); }
   }
   async function finishContentsChange(data, message) {
     const selectedId = selectedSeries?.id;
@@ -5660,5 +5662,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className={`toast${toastLeaving ? " leaving" : ""}`} role="status" key={toast}><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
 }
