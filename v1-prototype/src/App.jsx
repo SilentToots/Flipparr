@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { FlipparrMark } from "./brand.jsx";
 import {
   ArrowsClockwise,
@@ -217,119 +216,13 @@ function exitDurationMs() {
   return ms + 34;
 }
 
-// --- The cover morph ---------------------------------------------------------
-//
-// Opening a drawer from a card, the card's cover flies to the drawer's cover
-// while the drawer slides in; closing, it flies back into the card as the
-// drawer leaves. A copy of the cover is animated between the two boxes (the
-// drawer's own cover is hidden until it lands), which behaves the same in
-// every browser -- view transitions lost the sliding drawer in WebKit. Where
-// motion is reduced, or a drawer is already open (one drawer replacing
-// another), the drawer just opens or closes as it did before.
-//
-// Cards say what they open with data-morph ("series:12", "issue:…",
-// "run:…"). The card actually pressed is remembered, so an issue shown on two
-// shelves flies from the one that was tapped.
-let pressedMorphHost = null;
-if (typeof document !== "undefined") {
-  document.addEventListener("click", (event) => {
-    pressedMorphHost = event.target?.closest?.("[data-morph]") || null;
-  }, true);
-}
-
-function morphCover(key) {
-  if (!key) return null;
-  const host = pressedMorphHost?.isConnected && pressedMorphHost.dataset.morph === key
-    ? pressedMorphHost
-    : document.querySelector(`[data-morph="${CSS.escape(key)}"]`);
-  const cover = host?.querySelector(":is(.discover-cover, img, .cover-placeholder)");
-  if (!cover) return null;
-  // Off screen, there is nothing to see it fly from or to.
-  const box = cover.getBoundingClientRect();
-  return box.bottom > 0 && box.top < window.innerHeight && box.width > 0 ? cover : null;
-}
-
-function motionAllowed() {
-  return typeof Element !== "undefined" && typeof Element.prototype.animate === "function"
-    && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-}
-
-function motionToken(name, fallback) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
-}
-
-function millis(value) {
-  const number = parseFloat(value);
-  return /ms$/.test(value) ? number : number * 1000;
-}
-
-// A copy of `from` flown over `fromBox` to `toBox`, both hidden meanwhile.
-function flyCover(from, fromBox, toBox, { hide = [], duration, easing }) {
-  const image = from.querySelector?.("img") || from;
-  const flight = document.createElement("div");
-  flight.className = "cover-flight";
-  flight.setAttribute("aria-hidden", "true");
-  const copy = image.tagName === "IMG" ? Object.assign(document.createElement("img"), { src: image.currentSrc || image.src, alt: "" }) : image.cloneNode(true);
-  flight.append(copy);
-  document.body.append(flight);
-  hide.forEach((node) => node && (node.style.visibility = "hidden"));
-  const frame = (box) => ({ left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
-  const animation = flight.animate([frame(fromBox), frame(toBox)], { duration, easing, fill: "forwards" });
-  const land = () => {
-    hide.forEach((node) => node && (node.style.visibility = ""));
-    flight.remove();
-  };
-  animation.finished.then(land, land);
-}
-
-// Open a drawer, flying the cover in from the card that opened it.
-function openWithMorph(key, update) {
-  const from = motionAllowed() && !document.querySelector(".series-drawer") ? morphCover(key) : null;
-  if (!from) {
-    update();
-    return;
-  }
-  const fromBox = from.getBoundingClientRect();
-  flushSync(update);
-  const drawer = document.querySelector(".series-drawer");
-  const to = drawer?.querySelector(".comic-drawer-cover");
-  if (!to) return;
-  // The drawer is still at the start of its slide; its cover lands where the
-  // drawer comes to rest, which is where it would be without the transform.
-  const drawerBox = drawer.getBoundingClientRect();
-  const restLeft = drawer.offsetParent ? drawer.offsetParent.getBoundingClientRect().left + drawer.offsetLeft : drawerBox.left;
-  const coverBox = to.getBoundingClientRect();
-  const toBox = { left: coverBox.left - (drawerBox.left - restLeft), top: coverBox.top, width: coverBox.width, height: coverBox.height };
-  flyCover(from, fromBox, toBox, {
-    hide: [to, from],
-    duration: millis(motionToken("--motion-duration-morph", "440ms")),
-    easing: motionToken("--motion-ease-morph", "ease"),
-  });
-}
-
-// Close a drawer, flying its cover back into the card, when that can be seen.
-function flyCoverHome(key) {
-  if (!motionAllowed()) return;
-  const from = document.querySelector(".series-drawer .comic-drawer-cover");
-  const to = morphCover(key);
-  if (!from || !to) return;
-  const fromBox = from.getBoundingClientRect();
-  if (fromBox.bottom <= 0 || fromBox.top >= window.innerHeight) return;
-  flyCover(from, fromBox, to.getBoundingClientRect(), {
-    hide: [from, to],
-    duration: millis(motionToken("--motion-duration-exit", "300ms")),
-    easing: "cubic-bezier(.32, .72, 0, 1)",
-  });
-}
-
-function useDrawerExit(onClose, morphKey = null) {
+function useDrawerExit(onClose) {
   const [closing, setClosing] = useState(false);
   const timer = useRef(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  // `plain` skips the morph: iOS's back swipe already animates the page.
-  function requestClose(options) {
+  function requestClose() {
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       closeRef.current();
       return;
@@ -340,7 +233,6 @@ function useDrawerExit(onClose, morphKey = null) {
     // own gesture and the browser's back gesture that the same swipe triggers
     // -- and closing on the second cut the animation the first had started.
     if (closing) return;
-    if (!options?.plain) flyCoverHome(morphKey);
     setClosing(true);
     timer.current = window.setTimeout(() => closeRef.current(), exitDurationMs());
   }
@@ -359,7 +251,7 @@ function useExternalDismiss(signal, requestClose) {
   useEffect(() => {
     if (signal === seen.current) return;
     seen.current = signal;
-    closeRef.current({ plain: true });
+    closeRef.current();
   }, [signal]);
 }
 
@@ -1090,7 +982,7 @@ function SeriesCover({ series, decorative = false }) {
 }
 
 function SeriesList({ series, onOpen, view }) {
-  if (view === "grid") return <div className="series-grid">{series.map((item) => <button className="series-card" data-morph={`series:${item.id}`} onClick={() => onOpen(item)} key={item.id}>
+  if (view === "grid") return <div className="series-grid">{series.map((item) => <button className="series-card" onClick={() => onOpen(item)} key={item.id}>
     <SeriesCover series={item} />
     <span className="series-card-identity"><strong>{item.title}</strong><span className="series-card-byline">{item.publisher} • {item.year}</span></span>
     <span className="series-card-statuses"><PublicationStatus series={item} /><MonitoringStatus series={item} /></span>
@@ -1101,7 +993,7 @@ function SeriesList({ series, onOpen, view }) {
     <div className="series-table">
       <div className="series-table-head"><span>Series</span><span>Ownership</span><span>Format</span><span>Last updated</span><span /></div>
       {series.map((item) => (
-        <button className="series-row" data-morph={`series:${item.id}`} onClick={() => onOpen(item)} key={item.id}>
+        <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
           <div className="series-identity"><SeriesCover series={item} decorative /><div className="series-identity-copy"><strong>{item.title} <em>({item.year})</em></strong><small>{item.isCollectionSeries ? `${item.publisher} · ${item.run}` : item.publisher}</small><span className="tag-line"><PublicationStatus series={item} /><MonitoringStatus series={item} /></span><div className="mobile-list-ownership"><Ownership series={item} compact /></div></div></div>
           <Ownership series={item} /><span className="table-copy">{item.format}</span><span className="table-copy">{item.updated}<small>{item.time}</small></span><DotsThree size={22} />
         </button>
@@ -1176,7 +1068,7 @@ function RunStatusChip({ status }) {
 }
 
 function PullCard({ issue, state, onPull, onOpen }) {
-  return <article className="pull-card" data-morph={`issue:${issueKey(issue)}`}>
+  return <article className="pull-card">
     <button type="button" className="discover-open" onClick={() => onOpen(issue)}
       aria-label={`Details for ${issue.title}`}>
       <DiscoverCover src={issue.cover} alt="" glyph={30} />
@@ -1243,7 +1135,7 @@ function ReleaseShelf({ title, date, state, issues = [], error, pulled, onPull, 
 }
 
 function LibraryMatchCard({ series, onOpen }) {
-  return <button type="button" className="library-match" data-morph={`series:${series.id}`} onClick={() => onOpen(series)}>
+  return <button type="button" className="library-match" onClick={() => onOpen(series)}>
     <span className="library-match-art">
       <DiscoverCover src={series.cover} alt={`${series.title} cover`} />
       {series.year ? <b>{series.year}</b> : null}
@@ -1275,7 +1167,7 @@ function RecentSearches({ entries, allSeries, onClear, onOpenSeries, onOpenRun }
       <button type="button" className="recent-searches-clear" onClick={onClear}>Clear</button>
     </header>
     <div className="recent-search-grid">
-      {cards.map((card) => <button type="button" className="recent-search" data-morph={card.key} key={card.key} onClick={card.open}>
+      {cards.map((card) => <button type="button" className="recent-search" key={card.key} onClick={card.open}>
         <DiscoverCover src={card.cover} alt="" className="recent-search-art" glyph={18} />
         <span className="recent-search-copy">
           <strong title={card.title}>{card.title}</strong>
@@ -1302,7 +1194,7 @@ function NewRunCard({ item, state, onPull, onOpen }) {
     item.yearLabel || item.yearBegan,
     issues ? `${issues} issue${issues === 1 ? "" : "s"}` : null,
   ].filter(Boolean).join(" • ");
-  return <article className="new-run-card" data-morph={`run:${item.provider}-${item.providerSeriesId}`}>
+  return <article className="new-run-card">
     <button type="button" className="discover-open" onClick={() => onOpen(item)}
       aria-label={`Issues in ${item.title}`}>
       <DiscoverCover src={item.cover} alt="" className="new-run-art" glyph={44} />
@@ -1636,7 +1528,7 @@ function DiscoverView({
     writeRecent(window.localStorage, []);
   }
   const openLibraryRun = (item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item);
-  const openCatalogRun = (run) => openWithMorph(`run:${run.provider}-${run.providerSeriesId}`, () => setDrawer({ kind: "run", item: run }));
+  const openCatalogRun = (run) => setDrawer({ kind: "run", item: run });
 
   const allSeries = useMemo(
     () => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []),
@@ -1814,19 +1706,19 @@ function DiscoverView({
       <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
         state={shelfState(data.latest, data.available, releases.state === "loading")}
         issues={data.latest?.issues} error={data.latest?.error || data.error}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => openWithMorph(`issue:${issueKey(issue)}`, () => setDrawer({ kind: "issue", issue }))}
+        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
       <ReleaseShelf title="Upcoming Releases" date={formatShelfDate(data.upcoming?.date)}
         state={shelfState(data.upcoming, data.available, releases.state === "loading")}
         issues={data.upcoming?.issues} error={data.upcoming?.error || data.error}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => openWithMorph(`issue:${issueKey(issue)}`, () => setDrawer({ kind: "issue", issue }))}
+        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
       {/* The week before last: a comic is easy to miss by a few days, and by
           the time you look the shelf it was on has moved up. */}
       <ReleaseShelf title="Previous Releases" date={formatShelfDate(data.previous?.date)}
         state={shelfState(data.previous, data.available, releases.state === "loading")}
         issues={data.previous?.issues} error={data.previous?.error || data.error}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => openWithMorph(`issue:${issueKey(issue)}`, () => setDrawer({ kind: "issue", issue }))}
+        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
     </>}
     {drawer?.kind === "issue" ? <DiscoverIssueDrawer issue={drawer.issue}
@@ -1971,7 +1863,7 @@ function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, close
  * placeholder lines rather than a spinner in an empty panel.
  */
 function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
-  const { closing, requestClose } = useDrawerExit(onClose, `issue:${issueKey(issue)}`);
+  const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   const [detail, setDetail] = useState({ state: "loading", data: null });
   useEffect(() => {
@@ -2059,7 +1951,7 @@ function RunSynopsis({ text, source, sourcePrefix = "From", loading = false }) {
 }
 
 function DiscoverRunDrawer({ item, query, settled, onFollow, onPullIssues, onClose }) {
-  const { closing, requestClose } = useDrawerExit(onClose, `run:${item.provider}-${item.providerSeriesId}`);
+  const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   const [preview, setPreview] = useState({ state: "loading", data: null, error: "" });
   const [mode, setMode] = useState("choose");
@@ -3548,7 +3440,7 @@ function ComicDrawerCreators({ creators }) {
 }
 
 function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0 }) {
-  const { closing, requestClose } = useDrawerExit(onClose, `series:${series?.id}`);
+  const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   const editionsOn = useCollectedEditions();
   useSwipeToDismiss(dialogRef, requestClose);
@@ -4383,7 +4275,9 @@ export function App() {
     loadCatalog();
   }
   function openSeries(series) {
-    openWithMorph(`series:${series?.id}`, () => { setSelectedCollection(null); setSeriesParentCollection(null); setSelectedSeries(series); });
+    setSelectedCollection(null);
+    setSeriesParentCollection(null);
+    setSelectedSeries(series);
   }
   function openCollection(collection) { if (!catalog?.collectedEditionsEnabled) return; setSelectedSeries(null); setSeriesParentCollection(null); setCollectionTab("overview"); setSelectedCollection(collection); }
   function openCollectionRun(series) { setSeriesParentCollection(selectedCollection); setSelectedCollection(null); setSelectedSeries(series); }

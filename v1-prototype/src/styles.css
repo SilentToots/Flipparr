@@ -2492,11 +2492,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .series-drawer { animation: drawer-slide-in var(--motion-duration-standard) cubic-bezier(.22,.61,.36,1); }
 .series-drawer.closing { animation: drawer-slide-out var(--motion-duration-exit) cubic-bezier(.32,.72,0,1) forwards; }
 
-/* The cover in flight between a card and a drawer (flyCover). Above the
-   drawer, which it lands in; its box is animated in script. */
-.cover-flight { position: fixed; z-index: 80; overflow: hidden; border-radius: var(--radius-8); pointer-events: none; box-shadow: 0 18px 44px var(--shadow-strong); }
-.cover-flight > img, .cover-flight > * { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
-
 /* A drawer's tabs: the new tab's content slides in from the side it lies on. */
 @keyframes drawer-tab-next { from { opacity: 0; translate: var(--space-24) 0; } }
 @keyframes drawer-tab-back { from { opacity: 0; translate: calc(var(--space-24) * -1) 0; } }

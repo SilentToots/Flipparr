@@ -185,11 +185,9 @@ Motion tokens:
   another (the tab bar tucking away, the header condensing).
 - `--motion-duration-press` and `--motion-ease-spring`: a press. The spring is
   a `linear()` curve, with a `cubic-bezier` fallback.
-- **Drawer transitions.** A drawer opened from a card (`data-morph`)
-  flies the card's cover into the drawer's cover while the drawer slides in,
-  and back into the card on close (`openWithMorph`, `flyCoverHome`). This is
-  a copy of the cover animated between the two boxes rather than a view
-  transition, because WebKit lost the sliding drawer in one. A drawer's tab
+- **Drawer transitions.** A drawer slides in and out on its own; the cover
+  does not fly between card and drawer (removed 2026-09-19 at the user's
+  request -- it was unnecessary). A drawer's tab
   content slides in from the side the tab lies on. The scrim fades its colour
   rather than its opacity, since the drawer is inside it.
 - Reduced motion collapses every duration.
