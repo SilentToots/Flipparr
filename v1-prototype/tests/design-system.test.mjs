@@ -91,9 +91,9 @@ const SMALLEST_TEXT = new Set([
   ".series-card-byline",
   ".ownership.compact .ownership-label",
   ".sidebar .nav-item > b",
-  // The collapsed rail's labels, under their icons, as YouTube's mini guide.
-  ".app-shell.nav-rail .nav-item",
-  ".app-shell.nav-rail .nav-item > b",
+  // A tablet's rail: labels under their icons, as YouTube's mini guide.
+  ".sidebar nav .nav-item",
+  ".sidebar nav .nav-item > b",
 ]);
 
 test("every font-size is a step on the ladder", () => {

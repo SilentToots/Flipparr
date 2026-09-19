@@ -153,50 +153,14 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
     Both sides are at least `--masthead-side`, so the search stays centred
     and gives up width first.
   - The **sidebar** is a Liquid Glass panel floating the full height of the
-    window, inset `--sidebar-inset` from its edges, with 24px corners. Its
-    head holds the menu control and the F mark, on the masthead's centre
-    line; folded, the F mark goes. Rows are
-    44px pills with an icon and a label; the open one is a filled violet pill.
-  - Folded (`.nav-rail`), it is a 76px rail with each icon over a 10px label,
-    as YouTube's mini guide. A tablet shows the rail, and the menu control
-    opens the full sidebar over the page (`.nav-overlay`); tapping the page
-    closes it. Wider, the control folds and unfolds it, and remembers.
-  - The nav icons sit on `--nav-icon-centre` in both shapes, and so does the
-    menu control. `layout:check` holds that, the menu on the masthead's line,
-    the centred search, the inset, and the folded rail's missing F.
-- **Fields never truncate.** A placeholder is written to fit the narrowest
-  field it appears in; if it doesn't fit, reword it. `npm run layout:check`
-  measures every one.
-- **Lists of runs** use the Comics list card: a cover, the title and year,
-  the publisher, the badges and the ownership bar. The Pull List's rows are
-  that card, and the whole row opens its issues.
-- **Buttons**: new actions use `Button`, including its `busy` state.
-- **Loading**: all asynchronous UI uses `LoadingIndicator`; no one-off
-  spinners or keyframes.
-- **Empty states** use `.empty-state`: an icon, a heading and a centred,
-  padded message.
-- **The phone tab bar** is a pill on the page's edges (the 12px gutter) whose four tabs share its width —
-  24px icons, 12px labels, 56px-tall tabs — so the glass on the open one is a
-  capsule. The glass is inset 8px on every side; the strip is 8px tall above and below. Scrolling tucks it
-  into a 64px circle at the left gutter, on `--motion-duration-morph` and
-  `--motion-ease-morph`: an even curve, long enough that the other tabs are
-  seen folding away.
-
-- **Drawers** (`DrawerTopBar`) follow Plex's detail page. A pinned top bar
-  holds the close control, and the header-page control on a run. At the top
-  of the drawer the bar is clear and its controls are glass circles over the
-  art. As the drawer scrolls, the art darkens and drifts at 0.4× the page's
-  pace, and it stretches when pulled past the top. Once the title passes
-  under the bar, the bar frosts, shows the title, and its controls drop their
-  circles. A run's tabs pin under the bar.
-- **Drawer colour** comes from the drawer's art, as Plex's does from a poster.
-  `useArtTone` reads the cover, through `/api/v1/art-swatch` when it's
-  remote. `art-tone.js` picks the most vibrant hue family and derives `tone`
-  (the header's foot and the top of the page) and `deep` (the rest), each
-  darkened until white and muted text clear AA. Bands, tabs and the pinned
-  bar take darker or translucent versions of the tone. Art with no real colour
-  leaves the drawer as it was. The tones are registered custom properties, so
-  they ease between drawers.
+    window, inset `--sidebar-inset` from its edges, with 24px corners. Rows
+    are 44px pills with an icon and a label; the open one is a filled violet
+    pill. Its foot holds the F mark beside the library's size and the scan
+    control. It does not fold: there is no menu control.
+  - A **tablet** (641-900px) shows the rail instead: 76px, each icon over a
+    10px label, as YouTube's mini guide, without the foot.
+  - `layout:check` holds the centred search, the bell on the masthead's line,
+    the sidebar's inset, and a tablet's rail showing no F mark.
 
 ## Glass and motion
 

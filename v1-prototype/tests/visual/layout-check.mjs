@@ -61,19 +61,15 @@ function audit({ page }) {
   near("bell, centre", box(".page-header .appbar-bell")?.cy, row);
   near("primary action, centre", box(".page-header .glass-button--primary")?.cy, row);
   if (!document.querySelector(".page-header--search-page")) near("search, centre", box(".page-header .page-header-search")?.cy, row);
-  // Above 640px: the sidebar's menu control sits on the nav icons' column and
-  // on the masthead's centre line with the bell; the masthead's search is
-  // centred over the page; the sidebar floats on its inset; and a folded
-  // sidebar hides the F mark.
+  // Above 640px: the masthead's search is centred over the page and its
+  // bell on its centre line; the sidebar floats on its inset; and a tablet's
+  // rail shows no F mark (it sits with the counts, which the rail leaves out).
   if (window.innerWidth > 640) {
-    const menu = box(".sidebar-menu");
-    const icon = document.querySelector(".sidebar .nav-item > svg")?.getBoundingClientRect();
-    if (menu && icon) near("menu over the nav icons", (menu.l + menu.r) / 2, icon.left + icon.width / 2);
     const search = box(".masthead-search .glass-field");
     const bar = box(".masthead");
     if (search && bar) near("masthead search, centred over the page", (search.l + search.r) / 2, (bar.l + bar.r) / 2);
-    if (document.querySelector(".app-shell.nav-rail") && shown(document.querySelector(".sidebar-brand"))) issues.push("F mark shown on the folded rail");
-    near("masthead bell, centre", box(".masthead .appbar-bell")?.cy, menu?.cy);
+    near("masthead bell, centre", box(".masthead .appbar-bell")?.cy, bar ? (bar.cy) : null);
+    if (window.innerWidth <= 900 && shown(document.querySelector(".sidebar-mark"))) issues.push("F mark shown on a tablet's rail");
     near("sidebar, inset", box(".sidebar")?.l, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--space-12")));
   }
   // The phone's tab bar sits on the page's edges.

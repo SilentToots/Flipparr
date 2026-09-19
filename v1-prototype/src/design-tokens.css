@@ -152,9 +152,6 @@
   /* The masthead's side columns match, so the search stays centred over the
      page and gives up width first; each is at least wide enough for the bell. */
   --masthead-side: 48px;
-  /* The sidebar's head: a row of this height, centred on the masthead's centre
-     line, holding the menu control and the F mark. */
-  --sidebar-head: 40px;
   --sidebar-inset: var(--space-12);
   --sidebar-pad: var(--space-8);
   --nav-icon: 20px;

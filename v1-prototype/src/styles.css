@@ -33,23 +33,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar {
   position: fixed; top: var(--sidebar-inset); bottom: var(--sidebar-inset); left: var(--sidebar-inset); z-index: 20;
   width: var(--sidebar-width); box-sizing: border-box;
-  padding: calc(var(--masthead-height) / 2 - var(--sidebar-inset) - var(--sidebar-head) / 2) var(--sidebar-pad) var(--space-12);
+  padding: var(--space-12) var(--sidebar-pad);
   display: flex; flex-direction: column; gap: var(--space-8);
   overflow: hidden auto; scrollbar-width: none;
   border-radius: var(--radius-24); background: var(--glass-solid);
   box-shadow: inset 0 0 0 1px var(--glass-border), var(--glass-rim), var(--glass-shadow);
-  transition: width var(--motion-duration-morph) var(--motion-ease-morph);
 }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .sidebar { background: var(--sidebar-glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
-/* The head: the menu control on the nav icons' column and the masthead's
-   centre line, then the F mark. */
-.sidebar-head { flex: none; display: flex; align-items: center; gap: var(--space-8); height: var(--sidebar-head); margin-bottom: var(--space-8); padding-left: calc(var(--nav-icon-centre) - var(--sidebar-inset) - var(--sidebar-pad) - var(--sidebar-head) / 2); }
-.sidebar-menu { flex: none; display: grid; place-items: center; width: var(--sidebar-head); height: var(--sidebar-head); padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text); cursor: pointer; transition: background var(--motion-duration-fast) ease; }
-@media (hover: hover) { .sidebar-menu:hover { background: var(--wash-hover); } }
-.sidebar-menu:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.sidebar-brand { display: flex; color: var(--text); }
 .sidebar nav { display: grid; gap: var(--space-4); }
 .nav-item > span { min-width: 0; overflow: hidden; color: inherit; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item {
@@ -70,6 +62,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    header, which no longer exists. */
 .sidebar-footer { flex: 1 0 0; min-height: 0; display: flex; align-items: flex-end; justify-content: center; }
 .sidebar-identity { display: flex; align-items: center; justify-content: center; gap: var(--space-8); }
+.sidebar-mark { display: block; flex: none; color: var(--color-neutral-0); }
 .sidebar-counts { display: flex; align-items: center; gap: var(--space-2); color: var(--color-neutral-0); font-size: var(--text-sm); white-space: nowrap; }
 .sidebar-counts strong { font-weight: var(--weight-bold); }
 .sidebar-counts i { color: var(--muted-weak); font-style: normal; font-size: var(--text-md); }
@@ -91,7 +84,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .storage-track { height: 8px; background: var(--status-muted-bg); border-radius: var(--radius-6); overflow: hidden; margin-top: var(--space-4); }
 .storage-track i { display: block; height: 100%; width: 40%; background: var(--green); border-radius: inherit; }
 
-.main-content { min-height: 100vh; margin-left: calc(var(--sidebar-inset) + var(--sidebar-width)); padding: 0 var(--page-inset) var(--space-32); transition: margin-left var(--motion-duration-morph) var(--motion-ease-morph); }
+.main-content { min-height: 100vh; margin-left: calc(var(--sidebar-inset) + var(--sidebar-width)); padding: 0 var(--page-inset) var(--space-32); }
 .discovery-results { position: absolute; top: 51px; left: 0; width: min(690px, calc(100vw - 310px)); max-height: min(620px, calc(100vh - 105px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface); box-shadow: 0 22px 60px var(--shadow-strong); }
 .discovery-results > header { min-height: 59px; padding: var(--space-12) var(--space-14); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
 .discovery-results > header div, .discovery-copy { min-width: 0; display: grid; gap: var(--space-4); }
@@ -2034,7 +2027,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: auto; box-sizing: border-box; padding: var(--space-8) var(--page-inset) calc(var(--space-8) + env(safe-area-inset-bottom)); border: 0; background: transparent; overflow: visible; pointer-events: none; }
   .sidebar-session { display: none; }
   .sidebar { border-radius: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; transition: none; }
-  .sidebar-head { display: none; }
   /* A pill on the page's own edges, so it lines up with the cards above it
      at every phone width. It was 360px and centred, which on a 390-430px
      iPhone left it narrower than the content. The tabs share its width, so
@@ -2737,10 +2729,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notifications-empty { margin: 0; padding: var(--space-14) var(--space-8) var(--space-16); color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-8); }
 .notifications-empty svg { color: var(--green); }
 
-/* The masthead (Masthead), and the nav's two shapes above 640px. .nav-rail is
-   the folded rail (a tablet's default, or folded on a desktop); .nav-overlay
-   is a tablet's full sidebar opened over the page, which keeps the page where
-   the rail leaves it. */
+/* The masthead (Masthead). */
 .masthead { display: none; }
 @media (min-width: 641px) {
   .app-shell { padding-top: var(--masthead-height); }
@@ -2748,7 +2737,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     position: fixed; top: 0; right: 0; left: calc(var(--sidebar-inset) + var(--sidebar-width)); z-index: 40; height: var(--masthead-height); box-sizing: border-box;
     display: grid; grid-template-columns: minmax(var(--masthead-side), 1fr) minmax(0, 640px) minmax(var(--masthead-side), 1fr); align-items: center; column-gap: var(--space-16);
     padding-inline: var(--page-inset);
-    transition: left var(--motion-duration-morph) var(--motion-ease-morph);
     background: var(--masthead-bg);
     -webkit-backdrop-filter: blur(var(--scroll-edge-blur)) saturate(160%); backdrop-filter: blur(var(--scroll-edge-blur)) saturate(160%);
   }
@@ -2760,25 +2748,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .page-header { top: var(--masthead-height); }
   .page-header .page-header-search, .page-header .appbar-notifications { display: none; }
 
-  .app-shell.nav-rail .sidebar { width: var(--sidebar-width-collapsed); }
-  .app-shell.nav-rail .nav-item {
+}
+
+/* A tablet's sidebar is the rail: icons over their labels, as YouTube's mini
+   guide, without the counts or sign-out. */
+@media (min-width: 641px) and (max-width: 900px) {
+  .sidebar { width: var(--sidebar-width-collapsed); }
+  .sidebar nav .nav-item {
     grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: center; gap: var(--space-4);
     min-height: 60px; padding: var(--space-8) 0; border-radius: var(--radius-12);
     font-size: var(--text-2xs); font-weight: var(--weight-medium); text-align: center;
   }
-  .app-shell.nav-rail .nav-item > b { position: absolute; top: var(--space-4); right: var(--space-6); width: auto; min-width: 16px; padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); }
-  .app-shell.nav-rail :is(.sidebar-footer, .sidebar-session) { display: none; }
-  .app-shell:is(.nav-rail, .nav-overlay) .main-content { margin-left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); }
-  .app-shell:is(.nav-rail, .nav-overlay) .masthead { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); }
-  /* Folded, the head is the menu control alone, on the rail's centre line. */
-  .app-shell.nav-rail .sidebar-head { justify-content: center; padding-left: 0; }
-  .app-shell.nav-rail .sidebar-brand { display: none; }
-  /* Over the page's sticky header (30), under the masthead (40). */
-  .app-shell.nav-overlay .sidebar { z-index: 35; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar, .main-content { transition: none; }
+  .sidebar nav .nav-item > b { position: absolute; top: var(--space-4); right: var(--space-6); width: auto; min-width: 16px; padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); }
+  :is(.sidebar-footer, .sidebar-session) { display: none; }
+  .main-content { margin-left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); }
+  .masthead { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); }
 }
 
 /* What the Wanted list's search reports back: how many issues it is working
