@@ -2455,36 +2455,26 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
   const [tab, setTab] = useState("wanted");
   const [searchingMissing, setSearchingMissing] = useState(false);
   const [searchMissingMessage, setSearchMissingMessage] = useState("");
-  const [pendingSearch, setPendingSearch] = useState(null);
   // The Wanted list's own action, the way Radarr and Sonarr put one there:
   // everything still missing, searched on demand. It covers issues nothing
   // good enough was found for last time, and requests made before Flipparr
   // searched on its own.
-  async function searchMissing(confirmed) {
-    // Only a literal true starts downloads. Passed this function directly as
-    // an onClick handler, `confirmed` was the click event: JSON.stringify threw
-    // on its cyclic references, and had it survived, its truthiness would have
-    // meant "yes, download all of them" without anyone being asked.
-    const startDownloads = confirmed === true;
+  //
+  // It runs on the tap, without a confirmation (2026-09-19, at the user's
+  // request): the line it sits on says how many issues it is for, downloading
+  // them is what a wanted list is for, and nothing here is destructive -- a
+  // download that was not wanted is removed from this same page.
+  async function searchMissing() {
     setSearchingMissing(true);
     setSearchMissingMessage("");
     try {
       const result = await apiRequest("/api/v1/requests/search-missing", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmed: startDownloads }),
+        body: JSON.stringify({ confirmed: true }),
       });
-      // Asking first is the point: this downloads every missing issue at once,
-      // and how many that is only becomes clear once the jobs are reconciled
-      // against what is already on disk.
-      if (result.status === "confirm") {
-        setPendingSearch(result);
-        return;
-      }
-      setPendingSearch(null);
       setSearchMissingMessage(result.detail || "");
       await onRefresh?.();
     } catch (error) {
-      setPendingSearch(null);
       setSearchMissingMessage(error.message || "That search could not be started");
     } finally {
       setSearchingMissing(false);
@@ -2554,13 +2544,13 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
   const wantedBar = tab === "wanted" && !loading && entries.length ? <div className="request-list-bar">
     <span><strong>{missingIssues}</strong> missing issue{missingIssues === 1 ? "" : "s"}</span>
     <i className="request-list-bar-rule" aria-hidden="true" />
-    <button type="button" className="search-missing-button" onClick={() => searchMissing(false)} disabled={searchingMissing} aria-busy={searchingMissing}
+    <button type="button" className="search-missing-button" onClick={() => searchMissing()} disabled={searchingMissing} aria-busy={searchingMissing}
       aria-label={`Find the ${missingIssues} missing issue${missingIssues === 1 ? "" : "s"}`}>
       {/* No magnifier: that icon means typing a search, and this is not one. */}
       {searchingMissing ? <><LoadingSpinner size={14} /> Finding…</> : "Find"}
     </button>
   </div> : null;
-  return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} />} />{wantedBar}{tab === "wanted" && pendingSearch ? <div className="request-search-confirm" role="alertdialog"><div><strong>{pendingSearch.detail}</strong><small>Downloads start immediately, one for every issue listed.</small></div><span><button type="button" className="ghost-button" onClick={() => setPendingSearch(null)}>Cancel</button><button type="button" className="primary-button" disabled={searchingMissing} onClick={() => searchMissing(true)}>{searchingMissing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Start downloads</button></span></div> : null}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
+  return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} />} />{wantedBar}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
     ? <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />
     : <RequestRow request={request} tab={tab} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }

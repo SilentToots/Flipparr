@@ -97,7 +97,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    Every value here is measured from the file rather than matched by eye.
    --------------------------------------------------------------------------- */
 
-
 /* A shelf and a results block are the same container: the file gives both the
    same fill, radius and 20px padding. */
 .release-shelf, .discover-results { margin-top: var(--space-20); padding: var(--space-20); border-radius: var(--radius-8); background: var(--surface); display: flex; flex-direction: column; gap: var(--space-20); }
@@ -221,7 +220,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .discover-credits dd { margin: 0; color: var(--text); font-size: var(--text-sm); }
 .discover-chip { padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--muted-strong); font-size: var(--text-xs); }
 
-
 .discover-issue-list { display: grid; margin-top: var(--space-8); }
 .discover-issue-list > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-12); min-height: 36px; }
 .discover-issue-list > header h3 { margin: 0; }
@@ -304,7 +302,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .run-status { display: inline-flex; align-items: center; gap: var(--space-2); padding: 3px var(--space-8); border-radius: var(--radius-pill); font-size: var(--text-2xs); font-weight: var(--weight-bold); white-space: nowrap; color: var(--badge-text); }
 .run-status.active { background: var(--badge-violet-bg); }
 .run-status.complete { background: var(--badge-muted-bg); }
-
 
 .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button { border: 0; border-radius: var(--radius-8); min-height: var(--control-height-md); padding: 0 var(--space-16); display: inline-flex; justify-content: center; align-items: center; gap: var(--space-8); font-weight: var(--weight-semibold); font-size: var(--text-sm); cursor: pointer; transition: transform var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard); }
 .primary-button { background: var(--violet); color: var(--color-neutral-0); }
@@ -692,7 +689,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .ownership.compact .ownership-label strong { font-size: inherit; font-weight: var(--weight-bold); }
 .ownership.compact .progress { display: block; height: 8px; border-radius: var(--radius-pill); background: var(--chrome-label); }
 
-
 .empty-state { min-height: 300px; border: 1px dashed var(--line-strong); border-radius: var(--radius-8); display: grid; place-items: center; align-content: center; gap: var(--space-8); color: var(--muted); }
 .empty-state strong { padding-inline: var(--space-24); color: var(--text); text-align: center; }
 /* The message under the heading. Without a measure or alignment of its own,
@@ -803,8 +799,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .request-list-bar .search-missing-button { position: relative; flex: none; min-height: var(--control-height-sm); padding-inline: var(--space-12); }
 /* 32px drawn, 44px to a thumb. */
 .request-list-bar .search-missing-button::after { content: ""; position: absolute; inset: -6px 0; }
-/* The search's question and answer sit between the bar and the list. */
-.request-list-bar ~ :is(.request-search-confirm, .request-search-result) { margin: 0 0 var(--space-12); }
+.request-list-bar ~ .request-search-result { margin: 0 0 var(--space-12); }
 /* A pull is the Comics list's card (.series-row): cover, title and year,
    publisher, the run's badges and its ownership bar, with the whole row the
    button that opens its issues underneath. */
@@ -998,8 +993,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comparison-row strong { color: var(--muted); }
 .comparison-source { min-height: 38px; padding: var(--space-8) var(--space-12); border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
 .comparison-source a { color: var(--color-violet-400); font-size: var(--text-sm); }
-
-
 
 /* --- Settings (SettingsView) -----------------------------------------------------
    Above 640px: one panel, the sections listed down its left and the open one's
@@ -1920,7 +1913,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .release-query input { font-size: var(--text-input); }
   .filter-button, .view-toggle button { font-size: var(--text-md); }
 
-
   /* #2: this card is a two-column grid (text | action) with no mobile
      treatment, so at 375px the copy was crushed into a narrow column beside a
      button taking half the width, and its heading wrapped to four lines. Stack
@@ -2486,7 +2478,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    scroll sideways where the six do not fit. */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-
 /* First-run setup. A full-screen takeover rather than a view inside the nav:
    until a library folder exists there is nothing for the nav to lead to. */
 .setup-shell { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: var(--space-40) var(--space-20) var(--space-64); background: var(--bg); }
@@ -2753,18 +2744,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   background: var(--violet-soft); color: var(--violet-text);
   font-size: var(--text-sm);
 }
-
-/* The Wanted search says what it is about to cost before it costs it. */
-.request-search-confirm {
-  margin: calc(var(--space-4) * -1) 0 0; padding: var(--space-12) var(--space-16);
-  border: 1px solid var(--violet-border); border-radius: var(--radius-4);
-  background: var(--violet-soft);
-  display: flex; flex-wrap: wrap; gap: var(--space-14);
-  align-items: center; justify-content: space-between;
-}
-.request-search-confirm strong { display: block; color: var(--muted-strong); font-size: var(--text-sm); }
-.request-search-confirm small { display: block; margin-top: var(--space-4); color: var(--muted-strong); font-size: var(--text-sm); }
-.request-search-confirm > span { display: flex; gap: var(--space-8); flex: none; }
 /* Failed is the only tab that appears because something is wrong, so its count
    carries the weight rather than the tab reading like the other three. */
 .segmented-tab.request-tab-failed b { background: var(--badge-red-bg); color: var(--color-neutral-0); }
@@ -2907,7 +2886,6 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .glass-button.modal-close, .glass-button.library-sheet-close { width: 44px; height: 44px; }
   .glass-button.modal-back { right: auto; left: var(--space-12); }
 }
-
 
 /* --- Pop-up buttons and glass menus (2026-09-19) ---------------------------------
    GlassSelect replaces the native select: a capsule on the standard fill
@@ -3107,7 +3085,6 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .issue-catalog-card.error > div:first-child > strong::before { background: var(--red); }
 .issue-catalog-card.ready > div:first-child > strong::before { background: var(--violet); }
 .issue-catalog-card.pending > div:first-child > strong::before { background: var(--muted-weak); }
-
 
 /* --- Pull List and Settings take the drawer's card (2026-09-19) -------------------
    No outlines: a card is a fill one step lighter than what it sits on, with
