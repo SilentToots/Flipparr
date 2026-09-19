@@ -181,6 +181,8 @@
   --scroll-edge-blur: 12px;
   /* A band inside a drawer toned from its art: the art's colour, darker. */
   --art-band: rgb(0 0 0 / .24);
+  /* A rule between rows on a toned drawer: light over the tone, not grey. */
+  --art-line: rgb(255 255 255 / .1);
   /* A drawer's pinned top bar (DrawerTopBar). */
   --drawer-bar-height: 60px;
   /* The page's side inset, which the header's scroll edge bleeds across. */

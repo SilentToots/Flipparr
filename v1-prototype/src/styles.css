@@ -2161,7 +2161,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .comic-drawer.toned .comic-drawer-scrim { background: linear-gradient(180deg, color-mix(in srgb, var(--art-tone) 35%, transparent) 0%, var(--art-tone) 92%); }
 .comic-drawer.toned .comic-drawer-hero::before { background: var(--art-tone); }
 .comic-drawer.toned .comic-drawer-tabs.drawer-tabs { background: color-mix(in srgb, var(--art-tone) 70%, var(--bg)); }
-.comic-drawer.toned :is(.comic-drawer-follow, .comic-drawer-creators) { background: var(--art-band); }
+/* Panels on a toned drawer are the tone, darkened -- the same translucent band
+   as Following and Creators -- rather than a grey card over it, so Discover's
+   facts, chips and rows shift with the art the way the Comics drawer's do. */
+.comic-drawer.toned :is(.comic-drawer-follow, .comic-drawer-creators, .drawer-facts span, .discover-chip) { background: var(--art-band); }
+.comic-drawer.toned .discover-issue-row { border-bottom-color: var(--art-line); }
 .series-drawer.comic-drawer.discover-drawer.toned > .discover-drawer-actions { background: var(--art-tone-deep); }
 .comic-drawer.toned .comic-drawer-bar::before { background: color-mix(in srgb, var(--art-tone) 82%, transparent); }
 /* The run's tabs pin under the bar. */
