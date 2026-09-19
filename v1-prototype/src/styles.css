@@ -3012,3 +3012,53 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .scope-toggle button, .follow-switch, .setup-pill { font-size: var(--text-md); }
   .did-you-mean button, .ui-button--sm, .issue-catalog-card button { font-size: var(--text-md); }
 }
+
+/* --- Buttons and close controls in Liquid Glass (2026-09-19) ---------------------
+   Every button is a capsule, of three kinds: prominent (the violet fill, one
+   per view; Pull is this), standard (a soft translucent fill with no outline;
+   secondary and ghost are both this now) and destructive (red on the standard
+   fill). Buttons in content stay solid; glass is for the close and back
+   controls, which float over what they close. Last in the file, so it
+   outranks the older per-component shapes. */
+.primary-button, .secondary-button, .ghost-button, .danger-button, .ui-button, .pull-button,
+.shelf-message > button, .did-you-mean button, .path-input button, .file-problem button,
+.request-job-actions button, .release-error button, .advanced-card button, .advanced-collection-tools button,
+.placement-callout button, .issue-catalog-card button, .file-row-actions button, .contents-list article button,
+.advanced-run-toolbar button, .build-collection-bar button, .family-members article button,
+.structure-groups header > button, .sign-out-button, .provider-row > button, .cover-option-grid button {
+  border: 0; border-radius: var(--radius-pill); box-shadow: none;
+}
+.primary-button, .ui-button--primary, .pull-button-idle, .pull-button-pending, .build-collection-bar button.primary-button { background: var(--button-primary-bg); color: var(--button-primary-text); }
+.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost, .pull-button-queued, .pull-button-owned,
+.shelf-message > button, .did-you-mean button, .path-input button, .file-problem button:not(.primary-button),
+.request-job-actions button, .advanced-card button, .advanced-collection-tools button, .placement-callout button,
+.issue-catalog-card button, .file-row-actions button, .contents-list article button, .advanced-run-toolbar button,
+.build-collection-bar button:not(.primary-button), .structure-groups header > button, .sign-out-button,
+.provider-row > button, .cover-option-grid button { background: var(--button-standard-bg); }
+.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost { color: var(--text); }
+.danger-button, .ui-button--danger, .release-error button, .family-members article button,
+.request-job-actions button.request-job-delete, .advanced-card.danger button { background: var(--button-standard-bg); color: var(--red-text); }
+.pull-button-queued, .pull-button-owned { color: var(--muted); }
+@media (hover: hover) {
+  .primary-button:not(:disabled):hover, .ui-button--primary:not(:disabled):hover, .pull-button-idle:not(:disabled):hover { background: var(--button-primary-bg-hover); transform: none; }
+  :is(.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost):not(:disabled):hover { background: var(--button-standard-bg-hover); color: var(--text); }
+  :is(.danger-button, .ui-button--danger):not(:disabled):hover { background: var(--button-danger-bg-hover); }
+}
+:is(.secondary-button, .ghost-button, .ui-button--secondary, .ui-button--ghost):not(:disabled):active { background: var(--button-standard-bg-pressed); }
+.primary-button:not(:disabled):active, .pull-button-idle:not(:disabled):active { background: var(--button-primary-bg-pressed); filter: none; }
+
+/* Close and back: a glass circle in the corner, 44px on a phone. A drawer's
+   is a back arrow on a phone, at the top left (DialogCloseButton). */
+.glass-button.modal-close, .glass-button.library-sheet-close {
+  width: 36px; height: 36px; min-width: 0; margin: 0; padding: 0;
+  border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-bg); color: var(--text);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-button.modal-close, .glass-button.library-sheet-close { background: var(--glass-solid); }
+}
+@media (hover: hover) { :is(.glass-button.modal-close, .glass-button.library-sheet-close):hover { background: var(--glass-bg-hover); color: var(--text); } }
+@media (max-width: 640px) {
+  .glass-button.modal-close, .glass-button.library-sheet-close { width: 44px; height: 44px; }
+  .glass-button.modal-back { right: auto; left: var(--space-12); }
+}
+

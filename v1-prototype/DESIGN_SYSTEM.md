@@ -75,9 +75,18 @@ that lines up with a row's text is computed from the row's parts — see
 `--radius-4`, `--radius-6`, `--radius-8`, `--radius-12`, `--radius-16`,
 `--radius-pill`; `50%` only for a true circle.
 
-- **Buttons are 8px**, the design's control radius.
-- A button **nested inside another control** — a toggle's segment, a menu's
-  row — is 4px inside its 8px frame.
+- **Buttons are capsules** (`--radius-pill`, since 2026-09-19, after Liquid
+  Glass), of three kinds: **prominent** (`.primary-button`, the violet fill,
+  one per view; the Pull button is this), **standard** (`.secondary-button` and
+  `.ghost-button`: a translucent `--button-standard-bg` fill, no outline, so it
+  reads on any surface) and **destructive** (`.danger-button`: red on the
+  standard fill). Buttons in content stay solid.
+- **Close and back** are glass circles in the dialog's corner
+  (`DialogCloseButton`, 36px, 44px on a phone). On a phone a drawer's is a
+  back arrow at the top left, because a drawer there is a page pushed over
+  the last; above 640px it is the X.
+- A button **nested inside another control** — a menu's row — is 8px inside
+  its frame; a segment inside a capsule is a capsule.
 - Pills stay pills, circles stay circles.
 - Covers and thumbnails are 4px, cards 8px, dialogs and sheets 16px.
 

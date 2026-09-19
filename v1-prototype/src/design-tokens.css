@@ -368,6 +368,12 @@
   --button-danger-bg-hover: color-mix(in srgb, var(--red-text) 18%, transparent);
   --button-danger-bg-pressed: color-mix(in srgb, var(--red-text) 26%, transparent);
   --button-press-scale: .97;
+  /* The standard button (2026-09-19): a translucent fill rather than an
+     outline, so it reads on every surface -- page, card, sheet or a drawer's
+     tone -- as iOS's fill colours do. */
+  --button-standard-bg: color-mix(in srgb, var(--color-neutral-0) 12%, transparent);
+  --button-standard-bg-hover: color-mix(in srgb, var(--color-neutral-0) 17%, transparent);
+  --button-standard-bg-pressed: color-mix(in srgb, var(--color-neutral-0) 22%, transparent);
   --card-press-scale: .99;
 
   /* Status component tokens */
