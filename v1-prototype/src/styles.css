@@ -3129,3 +3129,48 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    drawer never scrolls sideways whatever its content does. */
 .comic-drawer-hero { overflow-x: clip; }
 .series-drawer { overflow-x: hidden; }
+
+/* --- Sheets on a phone (2026-09-19) ---------------------------------------------
+   As iOS 26 draws them: a dialog is a sheet from the bottom, floating 8px in
+   from the screen's edges with 24px corners, over the tab bar, with a grabber
+   along its top (SheetGrabber) it follows under a finger. The View & sort
+   sheet can rest at half height and be pulled to full. */
+.sheet-grabber { display: none; }
+@media (max-width: 640px) {
+  .modal-backdrop { place-items: end stretch; padding: var(--space-48) var(--space-8) calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .modal {
+    max-height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom));
+    padding-top: var(--space-28); border-radius: var(--radius-24);
+    animation: sheet-in var(--motion-duration-standard) var(--motion-ease-spring);
+  }
+  .sheet-grabber {
+    display: block; position: absolute; z-index: 2; top: 0; left: 25%; right: 25%; height: var(--space-28);
+    touch-action: none; cursor: grab;
+  }
+  .sheet-grabber::before {
+    content: ""; position: absolute; top: var(--space-8); left: 50%; width: 36px; height: 5px;
+    translate: -50% 0; border-radius: var(--radius-pill); background: var(--line-strong);
+  }
+  .library-sheet-backdrop { padding: 0 var(--space-8) calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .library-sheet {
+    position: relative; max-height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom));
+    padding: var(--space-20) var(--space-16) var(--space-16);
+    border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-24);
+    animation: sheet-in var(--motion-duration-standard) var(--motion-ease-spring);
+    transition: max-height var(--motion-duration-standard) var(--motion-ease-spring);
+  }
+  .library-sheet[data-detent="medium"] { max-height: 50dvh; }
+}
+@keyframes sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .modal, .library-sheet { animation: none; transition: none; } }
+
+/* The View & sort sheet's rows: segmented controls as the desktop's tools
+   row, and the sort as an iOS grouped list with a check on the chosen one. */
+.library-sheet-segmented { width: 100%; }
+.library-sheet-segmented .segmented-tab { flex: 1 1 0; justify-content: center; min-height: 40px; }
+.library-sheet .library-sheet-options { gap: 0; overflow: hidden; border-radius: var(--radius-12); background: var(--button-standard-bg); }
+.library-sheet .library-sheet-options button { min-height: 48px; border-radius: 0; background: transparent; font-weight: var(--weight-regular); }
+.library-sheet .library-sheet-options button + button { box-shadow: inset 0 1px 0 var(--line); }
+.library-sheet .library-sheet-options button[aria-checked="true"] { background: transparent; font-weight: var(--weight-semibold); }
+.library-sheet .follow-switch { border: 0; border-radius: var(--radius-12); background: var(--button-standard-bg); }
+.library-sheet .library-sheet-done { border-radius: var(--radius-pill); background: var(--button-primary-bg); }

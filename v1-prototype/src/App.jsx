@@ -1484,29 +1484,28 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
   const dialogRef = useDialog(onClose);
   return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
     <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
+      <SheetGrabber onClose={onClose} detents />
       <header>
         <h2 id="library-sheet-title">View &amp; sort</h2>
         <button type="button" className="glass-button glass-button--icon library-sheet-close" onClick={onClose} aria-label="Close"><X size={20} /></button>
       </header>
+      {/* The desktop tools row's controls: segmented, with the sliding thumb. */}
       {editionsOn ? <fieldset>
         <legend>Show</legend>
-        <div className="library-sheet-segments">
-          {[["runs", "Runs"], ["collections", "Collections"]].map(([id, label]) => <button type="button" aria-pressed={scope === id} onClick={() => onScope(id)} key={id}>{label}</button>)}
-        </div>
+        <GlassSegmented label="Show" value={scope} onChange={onScope} className="library-sheet-segmented"
+          items={[{ id: "runs", label: "Runs", icon: <ListBullets size={17} /> }, { id: "collections", label: "Collections", icon: <Books size={17} /> }]} />
       </fieldset> : null}
       {scope === "runs" ? <fieldset>
         <legend>View</legend>
-        <div className="library-sheet-segments">
-          <button type="button" aria-pressed={view === "grid"} onClick={() => onView("grid")}><GridViewIcon /> Grid</button>
-          <button type="button" aria-pressed={view === "list"} onClick={() => onView("list")}><ListViewIcon /> List</button>
-        </div>
+        <GlassSegmented label="View" value={view} onChange={onView} className="library-sheet-segmented"
+          items={[{ id: "grid", label: "Grid", icon: <GridViewIcon /> }, { id: "list", label: "List", icon: <ListViewIcon /> }]} />
       </fieldset> : null}
       <fieldset>
         <legend>Sort by</legend>
         <div className="library-sheet-options" role="radiogroup" aria-label="Sort by">
           {SORT_OPTIONS.map((option) => <button type="button" role="radio" aria-checked={option.value === sort} onClick={() => onSort(option.value)} key={option.value}>
             {option.label}
-            {option.value === sort ? <CheckCircle size={20} weight="fill" aria-hidden="true" /> : null}
+            {option.value === sort ? <Check size={18} weight="bold" aria-hidden="true" /> : null}
           </button>)}
         </div>
       </fieldset>
@@ -1983,8 +1982,82 @@ function toneProps(tone) {
 function DialogCloseButton({ onClose, label, drawer = false }) {
   const phone = usePhoneWidth();
   const back = drawer && phone;
-  return <button type="button" className={`glass-button glass-button--icon modal-close${back ? " modal-back" : ""}`}
-    onClick={onClose} aria-label={back ? "Back" : label}>{back ? <ArrowLeft size={20} /> : <X size={20} />}</button>;
+  return <>
+    {drawer ? null : <SheetGrabber onClose={onClose} />}
+    <button type="button" className={`glass-button glass-button--icon modal-close${back ? " modal-back" : ""}`}
+      onClick={onClose} aria-label={back ? "Back" : label}>{back ? <ArrowLeft size={20} /> : <X size={20} />}</button>
+  </>;
+}
+
+// On a phone a dialog is a sheet from the bottom, as iOS 26 draws one: inset
+// from the screen's edges, and with a grabber along its top that it follows
+// under a finger. Let go past a quarter of its height, or with a flick, and it
+// leaves; otherwise it settles back. A sheet taller than most of the screen
+// (`detents`) opens at half height and is pulled up to full, then down to half
+// and away. Above 640px dialogs are centred and the grabber is not drawn.
+const SHEET_QUERY = "(max-width: 640px)";
+function SheetGrabber({ onClose, detents = false }) {
+  const ref = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const grabber = ref.current;
+    const sheet = grabber?.parentElement;
+    if (!grabber || !sheet || !window.matchMedia?.(SHEET_QUERY).matches) return undefined;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // Half height only when the whole sheet would take most of the screen;
+    // a shorter one opens at its own height, with nothing to pull up.
+    if (detents && sheet.scrollHeight > window.innerHeight * 0.75) sheet.dataset.detent = "medium";
+    let drag = null;
+    function settle(transform, then) {
+      sheet.style.transition = still ? "none" : "transform var(--motion-duration-standard) var(--motion-ease-spring)";
+      sheet.style.transform = transform;
+      const done = () => { sheet.style.transition = ""; then?.(); };
+      if (still) done(); else window.setTimeout(done, 280);
+    }
+    function onDown(event) {
+      if (event.button !== 0) return;
+      drag = { y: event.clientY, at: performance.now(), dy: 0 };
+      grabber.setPointerCapture(event.pointerId);
+      sheet.style.transition = "none";
+    }
+    function onMove(event) {
+      if (!drag) return;
+      const dy = event.clientY - drag.y;
+      // Down follows the finger; up past where it rests stiffens, unless there
+      // is a taller detent to pull it to.
+      drag.dy = dy;
+      sheet.style.transform = `translateY(${dy > 0 ? dy : dy / (sheet.dataset.detent === "medium" ? 1.4 : 4)}px)`;
+    }
+    function onUp() {
+      if (!drag) return;
+      const { dy, at } = drag;
+      drag = null;
+      const speed = dy / Math.max(1, performance.now() - at);
+      if (sheet.dataset.detent === "medium" && dy < -48) {
+        sheet.dataset.detent = "large";
+        settle("translateY(0)");
+      } else if (sheet.dataset.detent === "large" && detents && dy > 48 && dy < sheet.offsetHeight * 0.5 && speed < 0.9) {
+        sheet.dataset.detent = "medium";
+        settle("translateY(0)");
+      } else if (dy > sheet.offsetHeight * 0.25 || speed > 0.9) {
+        settle("translateY(110%)", () => closeRef.current?.());
+      } else {
+        settle("translateY(0)");
+      }
+    }
+    grabber.addEventListener("pointerdown", onDown);
+    grabber.addEventListener("pointermove", onMove);
+    grabber.addEventListener("pointerup", onUp);
+    grabber.addEventListener("pointercancel", onUp);
+    return () => {
+      grabber.removeEventListener("pointerdown", onDown);
+      grabber.removeEventListener("pointermove", onMove);
+      grabber.removeEventListener("pointerup", onUp);
+      grabber.removeEventListener("pointercancel", onUp);
+    };
+  }, [detents]);
+  return <div className="sheet-grabber" ref={ref} aria-hidden="true" />;
 }
 
 // On a phone a drawer is a page pushed over the one it came from, so it
@@ -3470,7 +3543,7 @@ function AcquisitionServiceSettingsModal({ service, onClose, onSaved }) {
       await onSaved();
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="acquisition-service-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close acquisition service settings" /><span className="eyebrow">{service.kind}</span><h2 id="acquisition-service-title">Connect {service.name}</h2><p className="workbench-intro">{service.description}</p><form onSubmit={save}><label className="form-field"><span>Server URL</span><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={service.id === "prowlarr" ? "http://nas:9696" : "http://nas:8080"} required /></label><label className="form-field"><span>API key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={service.configured ? "Saved locally · enter a new key to replace it" : `Enter your ${service.name} API key…`} /></label>{service.id === "sabnzbd" ? <label className="form-field"><span>SABnzbd category</span><input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="comics" required /><small>Flipparr will use this category to identify and monitor its downloads.</small></label> : null}<Toggle checked={enabled} onChange={setEnabled} title={`Use ${service.name}`} description={service.id === "prowlarr" ? "Search configured Usenet indexers for wanted comics." : "Send selected NZBs to SABnzbd and monitor their progress."} />{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{service.configured ? <button type="button" className="danger-button" onClick={disconnect} disabled={Boolean(busy)}>Disconnect</button> : null}<button className="primary-button" disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div><small className="provider-credential-help">The API key is stored locally and is never returned to the browser after saving.</small></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="acquisition-service-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close acquisition service settings" /><span className="eyebrow">{service.kind}</span><h2 id="acquisition-service-title">Connect {service.name}</h2><p className="workbench-intro">{service.description}</p><form onSubmit={save}><label className="form-field"><span>Server URL</span><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={service.id === "prowlarr" ? "http://nas:9696" : "http://nas:8080"} required /></label><label className="form-field"><span>API key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={service.configured ? "Saved · type to replace" : `Enter your ${service.name} API key…`} /></label>{service.id === "sabnzbd" ? <label className="form-field"><span>SABnzbd category</span><input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="comics" required /><small>Flipparr will use this category to identify and monitor its downloads.</small></label> : null}<Toggle checked={enabled} onChange={setEnabled} title={`Use ${service.name}`} description={service.id === "prowlarr" ? "Search configured Usenet indexers for wanted comics." : "Send selected NZBs to SABnzbd and monitor their progress."} />{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{service.configured ? <button type="button" className="danger-button" onClick={disconnect} disabled={Boolean(busy)}>Disconnect</button> : null}<button className="primary-button" disabled={Boolean(busy) || !url.trim() || (!apiKey && !service.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div><small className="provider-credential-help">The API key is stored locally and is never returned to the browser after saving.</small></form></section></div>;
 }
 
 function ProviderSettingsModal({ provider, onClose, onSaved }) {
@@ -3508,7 +3581,7 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
       await onSaved();
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved locally · enter a new value to replace it" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><div className="form-field provider-priority-field"><span>Provider priority</span><GlassSelect label="Provider priority" value={priority} onChange={(next) => setPriority(Number(next))} options={[{ value: 15, label: "Before other optional providers" }, { value: 20, label: "Normal priority" }, { value: 30, label: "Fallback priority" }]} /><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved · type to replace" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><div className="form-field provider-priority-field"><span>Provider priority</span><GlassSelect label="Provider priority" value={priority} onChange={(next) => setPriority(Number(next))} options={[{ value: 15, label: "Before other optional providers" }, { value: 20, label: "Normal priority" }, { value: 30, label: "Fallback priority" }]} /><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
 }
 
 function GroupedIssueInventory({ issues, onEditIssue, medium }) {

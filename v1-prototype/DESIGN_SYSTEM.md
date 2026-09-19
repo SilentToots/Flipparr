@@ -225,6 +225,12 @@ Motion tokens:
   request -- it was unnecessary). A drawer's tab
   content slides in from the side the tab lies on. The scrim fades its colour
   rather than its opacity, since the drawer is inside it.
+- **Sheets on a phone.** A dialog is a sheet from the bottom, 8px in from
+  the screen's edges with 24px corners, over the tab bar, with a grabber
+  (`SheetGrabber`): the sheet follows a finger on it, and leaves past a
+  quarter of its height or on a flick, otherwise settling back. A sheet with
+  `detents` taller than three-quarters of the screen opens at half height and
+  is pulled up to full.
 - Reduced motion collapses every duration.
 
 ## Breakpoints

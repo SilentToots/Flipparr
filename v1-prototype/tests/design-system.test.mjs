@@ -237,3 +237,17 @@ test("backdrop blur is only on the navigation layer", () => {
     .map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+// A custom property that is used but never defined falls back to nothing, and
+// nothing fails: a padding of var(--space-56) is silently 0. Every var() must
+// name something the stylesheets define, or the app sets from script.
+test("every custom property used is defined", () => {
+  const css = read("styles.css") + read("design-tokens.css");
+  const script = read("App.jsx");
+  const defined = new Set([...css.matchAll(/(--[\w-]+)\s*:/g), ...css.matchAll(/@property\s+(--[\w-]+)/g),
+    ...script.matchAll(/["'`](--[\w-]+)["'`]/g)].map((m) => m[1]));
+  const missing = [...new Set([...read("styles.css").matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]))]
+    .filter((name) => !defined.has(name));
+  assert.deepEqual(missing, []);
+});
+
