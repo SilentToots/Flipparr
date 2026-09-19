@@ -3081,13 +3081,15 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
     <PageHeader title={phone ? open.label : "Settings"}
       leading={phone ? <button type="button" className="glass-button glass-button--icon" onClick={() => onSectionChange("")} aria-label="Back to Settings"><ArrowLeft size={20} /></button> : null} />
     <div className={`settings-shell${current === "health" ? " settings-shell--wide" : ""}`}>
-      {phone ? null : <nav className="settings-nav" aria-label="Settings sections">
+      {/* The column runs the panel's full height, for its rule; the list in
+          it stays in view as a long section scrolls. */}
+      {phone ? null : <nav className="settings-nav" aria-label="Settings sections"><div>
         {SETTINGS_SECTIONS.map(({ id, label }) => <button type="button" key={id}
           className={id === current ? "active" : ""} aria-current={id === current ? "page" : undefined}
           onClick={() => onSectionChange(id)}>
           <span>{label}</span>{id === "health" && needAttention ? <b>{needAttention}</b> : null}
         </button>)}
-      </nav>}
+      </div></nav>}
       <div className="settings-pane">
         <header className="settings-pane-header">
           {phone ? null : <h2>{open.label}</h2>}
