@@ -225,6 +225,13 @@ Motion tokens:
   request -- it was unnecessary). A drawer's tab
   content slides in from the side the tab lies on. The scrim fades its colour
   rather than its opacity, since the drawer is inside it.
+- **Text fields** are filled (`--field-bg`, a shade lighter than a standard
+  button's fill), 12px corners, no outline; focus turns the edge violet. On a
+  phone a `.field-group` is one rounded panel of rows, each a label and its
+  field, divided by hairlines, with one focus ring around the panel.
+- **The toast** is a glass capsule centred at the foot of the page (over the
+  content area above 640px, above the tab bar on a phone). It springs up,
+  sinks away after about three seconds, and a new one replaces it.
 - **Sheets on a phone.** A dialog is a sheet from the bottom, 8px in from
   the screen's edges with 24px corners, over the tab bar, with a grabber
   (`SheetGrabber`): the sheet follows a finger on it, and leaves past a

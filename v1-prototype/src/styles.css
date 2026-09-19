@@ -455,9 +455,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    hairline, a rim of light along the top and a soft shadow. Solid where the
    browser cannot blur. Buttons are capsules, or circles when they hold only an
    icon; one per page may be the violet primary. */
-.glass-button, .glass-field, .glass-capsule, .glass-menu { border: 1px solid var(--glass-border); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); }
+.glass-button, .glass-field, .glass-capsule, .glass-menu, .toast { border: 1px solid var(--glass-border); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass-button, .glass-field, .glass-capsule, .glass-menu { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .glass-button, .glass-field, .glass-capsule, .glass-menu, .toast { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
 .glass-button {
   position: relative; flex: none; box-sizing: border-box;
@@ -3174,3 +3174,54 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .library-sheet .library-sheet-options button[aria-checked="true"] { background: transparent; font-weight: var(--weight-semibold); }
 .library-sheet .follow-switch { border: 0; border-radius: var(--radius-12); background: var(--button-standard-bg); }
 .library-sheet .library-sheet-done { border-radius: var(--radius-pill); background: var(--button-primary-bg); }
+
+/* --- Text fields (2026-09-19) ------------------------------------------------------
+   Every place text is typed is a filled field with 12px corners and no
+   outline, as iOS draws one; focus shows the violet ring. On a phone a group
+   of fields (Settings' credentials) is one rounded panel of rows, each a
+   label and its field, divided by hairlines. */
+:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar, .build-collection-bar,
+  .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]) {
+  box-sizing: border-box; border: 1px solid transparent; border-radius: var(--radius-12); background: var(--field-bg); color: var(--text);
+  transition: background var(--motion-duration-fast) ease, border-color var(--motion-duration-fast) ease;
+}
+:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar, .build-collection-bar,
+  .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):focus {
+  border-color: var(--violet-border); background: var(--field-bg-focus);
+}
+:is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar, .build-collection-bar,
+  .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input::placeholder { color: var(--muted-weak); }
+.field-group { display: grid; gap: var(--space-12); }
+@media (max-width: 640px) {
+  .field-group { gap: 0; overflow: hidden; border-radius: var(--radius-12); background: var(--field-bg); }
+  .field-group > .form-field { grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: var(--space-12); min-height: 48px; padding-left: var(--space-16); color: var(--text); }
+  .field-group > .form-field + .form-field { box-shadow: inset 0 1px 0 var(--line); }
+  /* As specific as the field rule above, which it overrides inside a group. */
+  .field-group > .form-field input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+  .field-group > .form-field input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):focus { min-height: 48px; padding-left: 0; border: 0; border-radius: 0; background: transparent; }
+  .field-group:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  /* The group's ring marks focus; one inside it as well would be two. */
+  .field-group input:focus-visible { outline: none; }
+}
+
+/* --- Toast (2026-09-19) --------------------------------------------------------------
+   A glass capsule that springs up at the foot of the page, centred, above the
+   phone's tab bar, and sinks away when its time is up. */
+.toast {
+  left: 50%; right: auto; bottom: var(--space-24); translate: -50% 0;
+  width: max-content; max-width: calc(100vw - var(--space-24)); box-sizing: border-box; min-height: 44px;
+  padding: 0 var(--space-20) 0 var(--space-14); border-radius: var(--radius-pill); color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-medium);
+  animation: toast-in var(--motion-duration-morph) var(--motion-ease-spring);
+}
+/* The older rule's green outline and solid fill give way to the glass. */
+.toast { border-color: var(--glass-border); background: var(--glass-menu-bg); box-shadow: var(--glass-rim), var(--glass-shadow); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .toast { background: var(--glass-solid); } }
+.toast > svg { flex: none; color: var(--green); }
+.toast.leaving { animation: toast-out var(--motion-duration-exit) ease forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(24px) scale(.9); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(12px) scale(.96); } }
+@media (min-width: 641px) { .toast { left: calc(var(--sidebar-inset) + var(--sidebar-width) + (100vw - var(--sidebar-inset) - var(--sidebar-width)) / 2); } }
+@media (min-width: 641px) and (max-width: 900px) { .toast { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed) + (100vw - var(--sidebar-inset) - var(--sidebar-width-collapsed)) / 2); } }
+@media (max-width: 640px) { .toast { left: 50%; right: auto; bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom)); max-width: calc(100vw - var(--space-24)); } }
+@media (prefers-reduced-motion: reduce) { .toast, .toast.leaving { animation: none; } }
+

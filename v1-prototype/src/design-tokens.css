@@ -372,6 +372,10 @@
      with an icon took its height from the 12px icon and one without from the
      font's line box, and Safari rounds the two apart. */
   --chip-height: 18px;
+  /* A text field is a soft fill, as iOS draws one, a shade lighter than the
+     standard button's so the two are not mistaken for each other. */
+  --field-bg: color-mix(in srgb, var(--color-neutral-0) 7%, transparent);
+  --field-bg-focus: color-mix(in srgb, var(--color-neutral-0) 10%, transparent);
   --chip-height-lg: 22px;
   /* The standard button (2026-09-19): a translucent fill rather than an
      outline, so it reads on every surface -- page, card, sheet or a drawer's
