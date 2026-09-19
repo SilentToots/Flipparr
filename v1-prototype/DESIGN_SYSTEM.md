@@ -190,6 +190,14 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
 
 ## Glass and motion
 
+A choice from a list is `GlassSelect`, never a native select: a capsule on
+the standard fill showing the value, opening a glass menu (drawn over
+everything, placed from the button, flipped above it when there is more room
+there) with a check on the chosen option. It joins the dialog stack, so
+Escape closes the menu and not the dialog under it; arrow keys, Home, End and
+type-ahead move through it, and choosing or Escape returns focus to the
+button. The notifications menu is the same glass.
+
 Settings chosen from a few (grid or list, runs or collections) are
 `GlassSegmented`: SegmentedTabs' track and sliding glass thumb, as radios.
 Comics' tools row is two of those on the left and a Sort + Following

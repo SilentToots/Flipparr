@@ -1,8 +1,10 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FlipparrMark } from "./brand.jsx";
 import {
   ArrowsClockwise,
   CaretRight,
+  CaretUpDown,
   Heartbeat,
   LockSimple,
   Sparkle,
@@ -759,6 +761,125 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   );
 }
 
+// A choice from a list, as iOS 26's pop-up button: a capsule showing the
+// current value, which opens a glass menu of the options with a check on the
+// chosen one. It replaces the native select, whose open list the browser
+// draws in its own style. The menu is drawn over everything (a portal, placed
+// from the button's position) so a dialog's scrolling body cannot clip it,
+// and it joins the dialog stack, so Escape closes the menu and not the dialog
+// under it. `label` names the control for assistive technology.
+function GlassSelect({ value, options, onChange, label, disabled = false, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef(null);
+  const current = options.find((option) => String(option.value) === String(value)) || options[0];
+  // Choosing or Escape hands focus back to the button, as a native select
+  // does; a tap elsewhere leaves it where the tap put it. Safari does not
+  // focus a button on click, so nothing can be left to the browser.
+  function close(refocus) {
+    setOpen(false);
+    if (refocus) requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+  function openWith(event) {
+    if (disabled) return;
+    if (event.type === "keydown") {
+      if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+      event.preventDefault();
+    }
+    setOpen(true);
+  }
+  return <>
+    <button type="button" ref={triggerRef} className={`glass-select ${className}`.trim()} disabled={disabled}
+      aria-haspopup="listbox" aria-expanded={open} aria-label={`${label}: ${current?.label ?? ""}`}
+      onClick={() => (open ? setOpen(false) : openWith({ type: "click" }))} onKeyDown={openWith}>
+      <span>{current?.label}</span><CaretUpDown size={16} aria-hidden="true" />
+    </button>
+    {open ? <GlassSelectMenu options={options} value={current?.value} label={label} anchor={triggerRef}
+      onChoose={(next) => { close(true); if (String(next) !== String(value)) onChange(next); }}
+      onClose={() => close(true)} onDismiss={() => close(false)} /> : null}
+  </>;
+}
+
+function GlassSelectMenu({ options, value, label, anchor, onChoose, onClose, onDismiss }) {
+  const menuRef = useDialog(onClose);
+  const [place, setPlace] = useState(null);
+  // Under the button, or over it when there is more room above; never wider
+  // than the window, and scrolling past its own height.
+  useLayoutEffect(() => {
+    const button = anchor.current?.getBoundingClientRect();
+    const menu = menuRef.current;
+    if (!button || !menu) return;
+    const gap = 6;
+    const margin = 12;
+    const below = window.innerHeight - button.bottom - gap - margin;
+    const above = button.top - gap - margin;
+    const height = menu.scrollHeight;
+    const up = height > below && above > below;
+    const maxHeight = Math.max(120, up ? above : below);
+    const width = Math.min(Math.max(button.width, 220), window.innerWidth - margin * 2);
+    const left = Math.min(Math.max(margin, button.left), window.innerWidth - margin - width);
+    setPlace({
+      left, width, maxHeight,
+      ...(up ? { bottom: window.innerHeight - button.top + gap } : { top: button.bottom + gap }),
+      transformOrigin: up ? "bottom left" : "top left",
+    });
+  }, []);
+  // The chosen option has focus once placed, as a native list opens on it.
+  useEffect(() => {
+    if (!place) return;
+    (menuRef.current?.querySelector('[aria-selected="true"]') || menuRef.current?.querySelector('[role="option"]'))?.focus();
+  }, [place]);
+  // A tap outside closes it; so does the page or dialog scrolling under it,
+  // which would leave it hanging away from its button.
+  useEffect(() => {
+    function outside(event) {
+      if (menuRef.current?.contains(event.target) || anchor.current?.contains(event.target)) return;
+      onDismiss();
+    }
+    function scrolled(event) {
+      if (!menuRef.current?.contains(event.target)) onDismiss();
+    }
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("scroll", scrolled, true);
+    window.addEventListener("resize", onDismiss);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("scroll", scrolled, true);
+      window.removeEventListener("resize", onDismiss);
+    };
+  }, [onDismiss]);
+  function onKeyDown(event) {
+    const items = [...(menuRef.current?.querySelectorAll('[role="option"]') || [])];
+    const index = items.indexOf(document.activeElement);
+    let next = null;
+    if (event.key === "ArrowDown") next = index + 1;
+    else if (event.key === "ArrowUp") next = index - 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    else if (event.key.length === 1 && /\S/.test(event.key)) {
+      // Type-ahead: the next option starting with the letter pressed.
+      const letter = event.key.toLowerCase();
+      const order = [...items.slice(index + 1), ...items.slice(0, index + 1)];
+      order.find((item) => item.textContent.trim().toLowerCase().startsWith(letter))?.focus();
+      return;
+    }
+    if (next === null) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]?.focus();
+  }
+  return createPortal(<div className="glass-menu glass-select-menu" ref={menuRef} role="listbox" aria-label={label}
+    style={place ? { ...place } : { visibility: "hidden", top: 0, left: 0 }} onKeyDown={onKeyDown}
+    onMouseDown={(event) => event.stopPropagation()}>
+    {options.map((option) => {
+      const chosen = String(option.value) === String(value);
+      return <button type="button" role="option" aria-selected={chosen} className={chosen ? "selected" : ""}
+        onClick={() => onChoose(option.value)} key={String(option.value)}>
+        <span className="sort-menu-check" aria-hidden="true">{chosen ? <Check size={16} weight="bold" /> : null}</span>
+        <span>{option.label}</span>
+      </button>;
+    })}
+  </div>, document.body);
+}
+
 // The app's first popover. It borrows useDialog for Escape and the focus
 // trap, and adds the outside-click that a menu needs and a modal gets from
 // its backdrop. It must be mounted and unmounted rather than hidden: the
@@ -782,7 +903,7 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
   const actionable = items.filter((item) => item.kind !== "acquired").length;
   const heading = actionable ? "Needs attention" : "Recently added";
   const shown = items.slice(0, 5);
-  return <div className="notifications-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
+  return <div className="notifications-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
     <header><strong id="notifications-title">{heading}</strong>{items.length ? <b>{items.length}</b> : null}</header>
     {blocking ? <p className="notifications-summary">
       <WarningCircle size={15} weight="fill" className="severity-error" />
@@ -3160,7 +3281,9 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             </SettingsCard>
             {roots.length ? <SettingsCard title="Automatic scans">
               <Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Checks your library folders in the background, so comics added outside Flipparr appear without a manual scan." />
-              {autoScan ? <label className="form-field settings-language settings-scan-interval"><span>How often</span><select value={autoScanInterval} onChange={(event) => saveAutoScan({ autoScanIntervalMinutes: Number(event.target.value) })} disabled={savingAutoScan}><option value={15}>Every 15 minutes</option><option value={60}>Every hour</option><option value={360}>Every 6 hours</option><option value={1440}>Once a day</option></select></label> : null}
+              {autoScan ? <div className="form-field settings-language settings-scan-interval"><span>How often</span><GlassSelect label="How often" value={autoScanInterval} disabled={savingAutoScan}
+                onChange={(next) => saveAutoScan({ autoScanIntervalMinutes: Number(next) })}
+                options={[{ value: 15, label: "Every 15 minutes" }, { value: 60, label: "Every hour" }, { value: 360, label: "Every 6 hours" }, { value: 1440, label: "Once a day" }]} /></div> : null}
             </SettingsCard> : null}
           </> : null}
         {current === "matching" ? <>
@@ -3179,7 +3302,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             {serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}
           </SettingsCard>
           <SettingsCard title="Language">
-            <label className="form-field settings-language"><span>Language wanted</span><select value={language} onChange={(event) => changeLanguage(event.target.value)} disabled={savingLanguage}>{languageOptions.map(([value, label]) => <option value={value} key={value || "none"}>{label}</option>)}</select><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></label>
+            <div className="form-field settings-language"><span>Language wanted</span><GlassSelect label="Language wanted" value={language} disabled={savingLanguage} onChange={changeLanguage}
+              options={languageOptions.map(([value, label]) => ({ value, label }))} /><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></div>
           </SettingsCard>
         </> : null}
         {current === "metadata" ? <>
@@ -3380,7 +3504,7 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
       await onSaved();
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved locally · enter a new value to replace it" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><label className="form-field provider-priority-field"><span>Provider priority</span><select value={priority} onChange={(event) => setPriority(Number(event.target.value))}><option value="15">Before other optional providers</option><option value="20">Normal priority</option><option value="30">Fallback priority</option></select><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></label>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved locally · enter a new value to replace it" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><div className="form-field provider-priority-field"><span>Provider priority</span><GlassSelect label="Provider priority" value={priority} onChange={(next) => setPriority(Number(next))} options={[{ value: 15, label: "Before other optional providers" }, { value: 20, label: "Normal priority" }, { value: 30, label: "Fallback priority" }]} /><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
 }
 
 function GroupedIssueInventory({ issues, onEditIssue, medium }) {
