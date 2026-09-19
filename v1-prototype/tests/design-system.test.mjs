@@ -219,7 +219,6 @@ for (const file of ["design-tokens.css", "styles.css"]) {
 // the controls and bars named here, each with its reason.
 const GLASS = new Map([
   [".sidebar", "the floating sidebar above 640px"],
-  [".masthead", "the top bar above 640px, frosting what scrolls under it"],
   [".glass-button, .glass-field", "the page header's controls and search field"],
   [".glass-indicator", "the sliding thumb in the tab bar, segmented tabs and drawer tabs"],
   [".sidebar nav", "the phone's floating tab bar"],

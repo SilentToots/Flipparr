@@ -46,7 +46,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import {
-  SearchIcon, ViewOptionsIcon, NotificationsIcon,
+  SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
   GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
@@ -60,6 +60,10 @@ import {
 } from "./discover.js";
 
 const NAV_ITEMS = [
+  // Above 640px only, as the Apple TV app's sidebar leads with Search: its
+  // own page, over your library and the catalogs. A phone searches from
+  // Discover and keeps four tabs.
+  { id: "search", label: "Search", icon: MobileSearchIcon, desktopOnly: true },
   { id: "library", label: "Comics", icon: ComicsIcon },
   { id: "discover", label: "Discover", icon: DiscoverIcon },
   { id: "requests", label: "Pull List", icon: PullListIcon },
@@ -775,17 +779,6 @@ function useCollapsingTabBar(resetKey) {
 // number, on the library skeleton's shimmer.
 const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAlign: "middle" };
 
-// Above 640px, the bar across the top of the page, after YouTube's masthead:
-// the one search, centred over the page, and the bell. It starts where the
-// sidebar ends, and is frosted, so the page fades under it as it scrolls. A
-// phone has none: its pages carry their own tops.
-function Masthead() {
-  return <header className="masthead">
-    <div className="masthead-search"><HeaderSearchField /></div>
-    <div className="masthead-end"><HeaderBell /></div>
-  </header>;
-}
-
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
   const [collapsed, setCollapsed] = useCollapsingTabBar(active);
   const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active, collapsed]);
@@ -807,8 +800,8 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
         onFocusCapture={(event) => { if (event.target.matches?.(":focus-visible")) setCollapsed(false); }}>
         {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}
         <span className="nav-glass glass-indicator" aria-hidden="true" style={navGlass || { opacity: 0 }} />
-        {NAV_ITEMS.map(({ id, label, icon: Icon, count }) => (
-          <button className={`nav-item ${active === id ? "active" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
+        {NAV_ITEMS.map(({ id, label, icon: Icon, count, desktopOnly }) => (
+          <button className={`nav-item ${active === id ? "active" : ""}${desktopOnly ? " nav-item--desktop" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
             <Icon size={null} /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
           </button>
         ))}
@@ -937,11 +930,11 @@ const LoadingSpinner = LoadingIndicator;
 // passing under it blurs away, the way iOS 26 treats its bars. Its height does
 // not change as it condenses, so the page never jumps under a scroll.
 //
-// search: "desktop" is the app's search, a field above 640px only; "page" is
-// the page's own field (Comics filters your comics, Discover searches the
-// catalogs) at every width, on a row of its own on a phone; "none" leaves it
-// out.
-function PageHeader({ title, leading, actions, primary, search = "desktop", field, tools, toolsClassName = "", narrow = false }) {
+// search: "page" is the page's own field at every width, on a row of its own
+// on a phone (the Search page); "phone" is a field on a phone only (Comics
+// filters your comics, Discover searches the catalogs -- above 640px the
+// sidebar's Search does both); "none" leaves it out.
+function PageHeader({ title, leading, actions, primary, search = "none", field, tools, toolsClassName = "", narrow = false }) {
   const sentinelRef = useRef(null);
   const headerRef = useRef(null);
   const [condensed, setCondensed] = useState(false);
@@ -983,8 +976,8 @@ function PageHeader({ title, leading, actions, primary, search = "desktop", fiel
 }
 
 // The header's search field. Without `field` it keeps its own draft, starts
-// from the app's current query, and Enter takes the search to Discover; a page
-// whose search it is (Discover) passes `field` to own the value instead.
+// from the app's current query, and Enter runs the app's search; a page whose
+// search it is passes `field` to own the value instead.
 function HeaderSearchField({ field }) {
   const header = useContext(HeaderContext);
   const query = header?.query || "";
@@ -1009,7 +1002,7 @@ function HeaderSearchField({ field }) {
   return <form className="glass-field page-header-search" role="search" onSubmit={(event) => { event.preventDefault(); submit(); }}>
     <SearchIcon />
     <input
-      ref={inputRef} type="search" enterKeyHint="search" value={value}
+      ref={inputRef} type="search" enterKeyHint="search" value={value} autoFocus={field?.autoFocus}
       onChange={(event) => change(event.target.value)}
       aria-label={field?.label || "Search your library and comic catalogs"}
       placeholder={field?.placeholder || "Search comics…"}
@@ -1536,7 +1529,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
     <>
       <PageHeader
         title="Comics"
-        search="page"
+        search="phone"
         field={{
           value: query,
           onChange: setQuery,
@@ -1566,7 +1559,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
-      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>Discover can look through the comic catalogs for it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search Discover</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
+      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>The comic catalogs may have it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </div>
     </>
@@ -1581,8 +1574,11 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, cat
  * screen a reader landed on could only be used by people who already knew what
  * they wanted.
  */
+// Two pages in one. mode "discover" is the week's releases, with a phone's
+// search over them; mode "search" is the Search page above 640px -- the same
+// results, over your library and the catalogs, and nothing else.
 function DiscoverView({
-  query, catalog, backendStatus, onSearch, onClearSearch,
+  mode = "discover", query, catalog, backendStatus, onSearch, onClearSearch,
   onOpenSeries, onOpenCollection, onDiscoverRequest, onPullIssue, onPullIssues,
 }) {
   const [draft, setDraft] = useState(query || "");
@@ -1611,9 +1607,9 @@ function DiscoverView({
     }
   }
   useEffect(() => {
-    if (searching || backendStatus === "offline") return;
+    if (searching || mode === "search" || backendStatus === "offline") return;
     loadReleases();
-  }, [searching, backendStatus]);
+  }, [searching, mode, backendStatus]);
 
   async function searchProviders(value = query) {
     const cleaned = String(value || "").trim();
@@ -1681,15 +1677,16 @@ function DiscoverView({
 
   return <>
     <PageHeader
-      title="Discover"
-      search="page"
+      title={mode === "search" ? "Search" : "Discover"}
+      search={mode === "search" ? "page" : "phone"}
       field={{
         value: draft,
         onChange: setDraft,
         onSubmit: () => onSearch(draft),
         onClear: () => { setDraft(""); if (searching) onClearSearch(); },
-        label: "Search comic catalogs",
+        label: mode === "search" ? "Search your library and comic catalogs" : "Search comic catalogs",
         placeholder: "Title, creator or publisher…",
+        autoFocus: mode === "search" && !query,
       }}
     />
 
@@ -1752,7 +1749,11 @@ function DiscoverView({
           {discovery.didYouMean.map((name) => <button type="button" key={name} onClick={() => onSearch(name)}>{name}</button>)}
         </p> : null}
       </section>
-    </> : <>
+    </> : mode === "search" ? <div className="empty-state search-empty">
+      <MagnifyingGlass size={35} weight="duotone" />
+      <strong>Search your library and the comic catalogs</strong>
+      <span>Try a title, a creator's full name or a publisher, and add a four-digit year to narrow it.</span>
+    </div> : <>
       <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
         state={shelfState(data.latest, data.available, releases.state === "loading")}
         issues={data.latest?.issues} error={data.latest?.error || data.error}
@@ -4092,6 +4093,7 @@ function LoginView({ onSignedIn }) {
 // a login form can render, so these can be real paths rather than hash
 // fragments. Hand-rolled because seven routes do not justify a router.
 const ROUTE_BY_VIEW = {
+  search: "/search",
   library: "/library",
   discover: "/discover",
   requests: "/pull-list",
@@ -4099,9 +4101,8 @@ const ROUTE_BY_VIEW = {
   import: "/import",
 };
 // Paths this app used to answer on. A bookmark to one lands where it meant
-// to rather than silently on the library. /search was its own view until
-// Discover grew the results it was showing.
-const RETIRED_ROUTES = { "/requests": "requests", "/search": "discover", "/health": "settings" };
+// to rather than silently on the library.
+const RETIRED_ROUTES = { "/requests": "requests", "/health": "settings" };
 const VIEW_BY_ROUTE = Object.fromEntries(
   Object.entries(ROUTE_BY_VIEW).map(([view, path]) => [path, view])
 );
@@ -4109,11 +4110,29 @@ const VIEW_BY_ROUTE = Object.fromEntries(
 // The drawer rides as a query parameter rather than a path segment: it can be
 // open over the library, a search or a collection, so it is orthogonal to which
 // view is showing.
+// The views that carry a query: the Search page above 640px, and Discover,
+// where a phone searches.
+const SEARCH_VIEWS = new Set(["search", "discover"]);
+const PHONE_QUERY = "(max-width: 640px)";
+const isPhoneWidth = () => Boolean(window.matchMedia?.(PHONE_QUERY).matches);
+function usePhoneWidth() {
+  const [phone, setPhone] = useState(isPhoneWidth);
+  useEffect(() => {
+    const query = window.matchMedia?.(PHONE_QUERY);
+    if (!query) return undefined;
+    const change = () => setPhone(query.matches);
+    change();
+    query.addEventListener("change", change);
+    return () => query.removeEventListener("change", change);
+  }, []);
+  return phone;
+}
+
 function locationForState({ active, settingsSection, searchQuery, seriesId }) {
   let path = ROUTE_BY_VIEW[active] || ROUTE_BY_VIEW.library;
   if (active === "settings" && settingsSection) path += `/${settingsSection}`;
   const params = new URLSearchParams();
-  if (active === "discover" && searchQuery) params.set("q", searchQuery);
+  if (SEARCH_VIEWS.has(active) && searchQuery) params.set("q", searchQuery);
   if (seriesId) params.set("series", String(seriesId));
   const query = params.toString();
   return query ? `${path}?${query}` : path;
@@ -4130,7 +4149,7 @@ function stateFromLocation(pathname, search) {
     settingsSection: active === "settings" && SETTINGS_SECTIONS.some((item) => item.id === requestedSection)
       ? requestedSection
       : "health",
-    searchQuery: active === "discover" ? params.get("q") || "" : "",
+    searchQuery: SEARCH_VIEWS.has(active) ? params.get("q") || "" : "",
     seriesId: params.get("series") || "",
   };
 }
@@ -4140,6 +4159,15 @@ const BOOT_ROUTE = stateFromLocation(window.location.pathname, window.location.s
 export function App() {
   const [active, setActive] = useState(BOOT_ROUTE.active);
   const [searchQuery, setSearchQuery] = useState(BOOT_ROUTE.searchQuery);
+  // A phone has no Search page, and above 640px Discover shows only the week's
+  // releases -- so a search follows the width it is read at: a /search link
+  // opens on a phone as Discover's results, and Discover's results widen into
+  // the Search page.
+  const phoneWidth = usePhoneWidth();
+  useEffect(() => {
+    if (phoneWidth && active === "search") setActive("discover");
+    else if (!phoneWidth && active === "discover" && searchQuery) setActive("search");
+  }, [phoneWidth, active]);
   // A ?series= link cannot be honoured until the catalog it refers to exists.
   const [pendingSeriesId, setPendingSeriesId] = useState(BOOT_ROUTE.seriesId);
   // Bumped when the address no longer names an open drawer, so the drawer can
@@ -4286,7 +4314,7 @@ export function App() {
     // An empty value is the clear button, not a rejected search.
     if (cleaned && cleaned.length < 2) return;
     setSearchQuery(cleaned);
-    navigate("discover");
+    navigate(isPhoneWidth() ? "discover" : "search");
     if (!cleaned) return;
     // The two halves of this screen read different libraries otherwise. The
     // "in your library" list filters the catalog this client last fetched,
@@ -5177,9 +5205,9 @@ export function App() {
   const logicalSeriesCount = logicalSeries.length;
   const header = {
     notifications, onOpenNotification: openNotification, onDismissNotification: dismissNotification,
-    query: active === "discover" ? searchQuery : "", onSearch: openSearch, onClearSearch: () => openSearch(""),
+    query: SEARCH_VIEWS.has(active) ? searchQuery : "", onSearch: openSearch, onClearSearch: () => openSearch(""),
   };
-  const navActive = active === "discover" ? "discover" : active === "import" ? "settings" : active;
+  const navActive = active === "import" ? "settings" : active;
   useEffect(() => { loadAuthStatus(); }, []);
   if (authStatus && authStatus.method === "forms" && !authStatus.authenticated) {
     return <LoginView onSignedIn={async () => { await loadAuthStatus(); await loadCatalog(); }} />;
@@ -5198,5 +5226,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Masthead /><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" ? <DiscoverView query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
+  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content">{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={searchQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</main>{selectedSeries ? <SeriesDrawer series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{toast ? <div className="toast"><CheckCircle size={20} weight="fill" /> {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
 }

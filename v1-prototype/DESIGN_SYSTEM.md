@@ -21,7 +21,7 @@ enforcement; this file is the explanation.
 ## Brand
 
 The brand is the F bubble mark (`FlipparrMark`), and only that: in the
-masthead, on sign-in and setup, and anywhere else the app names itself. The
+sidebar's foot, on sign-in and setup, and anywhere else the app names itself. The
 full wordmark is not used.
 
 ## Type
@@ -128,39 +128,41 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   bold `h1`, alone: nothing sits under a title, so every page's reads the
   same (the library's size is in the rail's foot and Settings › Library
   folders). On the right: the page's actions and one primary action, as glass
-  controls; on a phone, search and the bell too (above 640px they are the
-  masthead's).
+  controls, then the bell.
   Under them, an optional tools row (tabs, or view and sort). The header is
   sticky. Once the page moves it *condenses*: the title scales to 18px and,
   on a desktop, the header rises into its top padding.
   Its height never changes, so nothing under a scroll jumps. Content under it
   meets a scroll edge: solid to the header's bottom, then a 24px blurred fade.
   The header itself is never a glass panel.
-  - `search="page"`: the page's own field on a phone, on a row of its own. On
-    Comics it filters your comics as you type, and a query with no match
-    offers Discover; on Discover it searches the catalogs. Above 640px the
-    masthead's search replaces it.
+  - `search="phone"`: the page's own field on a phone only, on a row of its
+    own. On Comics it filters your comics as you type, and a query with no
+    match offers the catalogs; on Discover it searches your library and the
+    catalogs. Above 640px the sidebar's Search page does both.
+  - `search="page"`: the field at every width -- the Search page's.
   - `narrow`: a form page's column (`--page-narrow`, 920px), so the header
     stops where its content does.
   - `leading`: a back button, before the title in the same cell.
   - Every first row shares one centre line (`--page-header-row`). Content starts at the header's own spacing, never with a
     top margin of its own.
-- **The frame above 640px** (since 2026-09-19) follows YouTube's structure and
-  the Apple TV app's sidebar.
-  - The **masthead** (`Masthead`) runs across the page, from the sidebar's
-    edge, frosted: one search centred over the page, then the bell. The
-    search always searches everything and shows its results on Discover.
-    Both sides are at least `--masthead-side`, so the search stays centred
-    and gives up width first.
+- **The frame above 640px** (since 2026-09-19) follows the Apple TV app's
+  sidebar. There is no top bar: each page's header carries its bell.
   - The **sidebar** is a Liquid Glass panel floating the full height of the
     window, inset `--sidebar-inset` from its edges, with 24px corners. Rows
     are 44px pills with an icon and a label; the open one is a filled violet
-    pill. Its foot holds the F mark beside the library's size and the scan
-    control. It does not fold: there is no menu control.
+    pill. It leads with **Search**, its own page (`/search?q=`): your library
+    and the catalogs, the results a phone sees on Discover. Its foot holds the
+    F mark beside the library's size and the scan control. It does not fold.
+  - **Discover** above 640px is the week's releases only; its field and
+    results are a phone's. A search crosses over with the width: `/search`
+    on a phone opens as Discover's results, and Discover's results above
+    640px open as the Search page.
+  - A **phone** has no Search tab: its tab bar keeps four, and searches from
+    Discover.
   - A **tablet** (641-900px) shows the rail instead: 76px, each icon over a
     10px label, as YouTube's mini guide, without the foot.
-  - `layout:check` holds the centred search, the bell on the masthead's line,
-    the sidebar's inset, and a tablet's rail showing no F mark.
+  - `layout:check` holds the sidebar's inset, Search first in the sidebar and
+    absent from a phone's tab bar, and a tablet's rail showing no F mark.
 
 ## Glass and motion
 

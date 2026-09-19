@@ -144,20 +144,13 @@
      it is named once. */
   --sidebar-width: 240px;
   --sidebar-width-collapsed: 76px;
-  /* Above 640px, after YouTube's masthead and the Apple TV app's sidebar: a
-     top bar the width of the window, and a glass sidebar floating under it,
-     inset from the window's edges. The menu control sits on the column the
-     nav icons sit on, which is the collapsed rail's centre line. */
-  --masthead-height: 72px;
-  /* The masthead's side columns match, so the search stays centred over the
-     page and gives up width first; each is at least wide enough for the bell. */
-  --masthead-side: 48px;
+  /* Above 640px, after the Apple TV app's sidebar: a glass sidebar floating
+     inset from the window's edges. */
   --sidebar-inset: var(--space-12);
   --sidebar-pad: var(--space-8);
   --nav-icon: 20px;
   --nav-icon-centre: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed) / 2);
   --sidebar-glass-bg: color-mix(in srgb, var(--color-ios-gray6) 72%, transparent);
-  --masthead-bg: color-mix(in srgb, var(--bg) 80%, transparent);
   /* The active tab's glass (node 69:793). Figma's Glass effect does not
      export, so these stand for its panel: light angle and intensity, splay,
      depth and frost (as a CSS blur, half Figma's value). The angle is where
@@ -195,6 +188,9 @@
   --scroll-edge-blur: 12px;
   /* A band inside a drawer toned from its art: the art's colour, darker. */
   --art-band: rgb(0 0 0 / .24);
+  /* The Following band under a toned drawer's tabs: well darker than the tabs'
+     own shade of the tone, so the two read as separate bands. */
+  --art-band-strong: rgb(0 0 0 / .55);
   /* A rule between rows on a toned drawer: light over the tone, not grey. */
   --art-line: rgb(255 255 255 / .1);
   /* A drawer's pinned top bar (DrawerTopBar). */

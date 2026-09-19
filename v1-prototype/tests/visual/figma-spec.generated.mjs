@@ -979,7 +979,7 @@ export const icons = [
     "name": "heroicons-solid/magnifying-glass",
     "size": 16,
     "where": ".page-header-search > svg",
-    "route": "/library"
+    "route": "/search"
   },
   {
     "node": "1:96",
