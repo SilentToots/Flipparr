@@ -3106,3 +3106,12 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 @media (prefers-reduced-motion: reduce) { .glass-menu.glass-select-menu, .notifications-menu.glass-menu { animation: none; } }
 /* A menu takes focus only to hold it; the ring belongs on its items. */
 .glass-menu:focus { outline: none; }
+/* A pop-up button keeps its own look inside containers that style every
+   button of theirs (a collection's Assign row, a workbench form). */
+button.glass-select { min-height: 44px; margin: 0; padding: 0 var(--space-12) 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: var(--button-standard-bg); color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-medium); }
+@media (hover: hover) { button.glass-select:not(:disabled):hover { background: var(--button-standard-bg-hover); } }
+button.glass-select[aria-expanded="true"] { background: var(--button-standard-bg-pressed); }
+/* In a form, the width of its field; in a tight row (a story group), small. */
+button.glass-select--fill { flex: 1 1 auto; width: 100%; min-width: 0; max-width: none; }
+button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--space-8) 0 var(--space-12); font-size: var(--text-xs); }
+.glass-select-placeholder { color: var(--muted); }
