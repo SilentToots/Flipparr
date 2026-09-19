@@ -7,14 +7,13 @@
 //
 // Coverage is enforced at generation time: a node that is neither mapped to a
 // selector nor skipped with a reason in node-map.json fails the run. 365 nodes
-// accounted for, 83 style assertions, 12 frame assertions, 25 icons.
+// accounted for, 80 style assertions, 12 frame assertions, 25 icons.
 
 export const spec = [
   {
     "sel": ".sidebar",
     "node": "1:122",
     "props": {
-      "padding": "16px",
       "rowGap": "8px"
     },
     "route": "/library"
@@ -24,44 +23,7 @@ export const spec = [
     "node": "1:144",
     "props": {
       "fontSize": "16px",
-      "color": "rgb(255, 255, 255)",
-      "fontWeight": "400"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": "[data-nav=\"discover\"]",
-    "node": "1:157",
-    "props": {
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "12px",
-      "paddingTop": "12px",
-      "columnGap": "4px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": "[data-nav=\"requests\"]",
-    "node": "1:167",
-    "props": {
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "12px",
-      "paddingTop": "12px",
-      "columnGap": "4px"
-    },
-    "route": "/library"
-  },
-  {
-    "sel": "[data-nav=\"settings\"]",
-    "node": "1:174",
-    "props": {
-      "paddingRight": "8px",
-      "paddingLeft": "8px",
-      "paddingBottom": "12px",
-      "paddingTop": "12px",
-      "columnGap": "4px"
+      "color": "rgb(255, 255, 255)"
     },
     "route": "/library"
   },
@@ -101,9 +63,7 @@ export const spec = [
     "sel": "[data-nav=\"discover\"] > span",
     "node": "I1:157;1:150",
     "props": {
-      "fontSize": "16px",
-      "color": "rgb(255, 255, 255)",
-      "fontWeight": "400"
+      "fontSize": "16px"
     },
     "route": "/library"
   },
@@ -111,9 +71,7 @@ export const spec = [
     "sel": "[data-nav=\"requests\"] > span",
     "node": "I1:167;1:150",
     "props": {
-      "fontSize": "16px",
-      "color": "rgb(255, 255, 255)",
-      "fontWeight": "400"
+      "fontSize": "16px"
     },
     "route": "/library"
   },
@@ -121,9 +79,7 @@ export const spec = [
     "sel": "[data-nav=\"settings\"] > span",
     "node": "I1:174;1:384",
     "props": {
-      "fontSize": "16px",
-      "color": "rgb(255, 255, 255)",
-      "fontWeight": "400"
+      "fontSize": "16px"
     },
     "route": "/library"
   },
@@ -885,8 +841,6 @@ export const frames = [
     "sel": ".sidebar",
     "node": "1:122",
     "route": "/library",
-    "w": 228,
-    "x": 0,
     "within": null
   },
   {
@@ -899,7 +853,6 @@ export const frames = [
     "sel": ".main-content",
     "node": "1:492",
     "route": "/library",
-    "x": 228,
     "within": null
   },
   {
@@ -1025,7 +978,7 @@ export const icons = [
     "node": "1:89",
     "name": "heroicons-mini/bars-3",
     "size": 20,
-    "where": ".sidebar-toggle svg",
+    "where": ".masthead-menu svg",
     "route": "/library"
   },
   {

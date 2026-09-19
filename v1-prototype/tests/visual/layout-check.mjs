@@ -60,16 +60,24 @@ function audit({ page }) {
   const row = box(".page-header-title")?.cy;
   near("bell, centre", box(".page-header .appbar-bell")?.cy, row);
   near("primary action, centre", box(".page-header .glass-button--primary")?.cy, row);
-  if (!document.querySelector(".page-header--search-page")) near("search, centre", box(".page-header-search")?.cy, row);
-  near("rail toggle, centre", box(".sidebar-toggle")?.cy, row);
-  near("rail mark, centre", box(".sidebar-mark-top")?.cy, row);
-  near("rail wordmark, left", box(".sidebar-wordmark")?.l, box(".sidebar .nav-item > svg")?.l);
+  if (!document.querySelector(".page-header--search-page")) near("search, centre", box(".page-header .page-header-search")?.cy, row);
+  // Above 640px: the masthead's menu control sits on the nav icons' column,
+  // its search on the window's centre line, and its controls on one line;
+  // the sidebar floats on its inset.
+  if (window.innerWidth > 640) {
+    const menu = box(".masthead-menu");
+    const icon = document.querySelector(".sidebar .nav-item > svg")?.getBoundingClientRect();
+    if (menu && icon) near("menu over the nav icons", (menu.l + menu.r) / 2, icon.left + icon.width / 2);
+    const search = box(".masthead-search .glass-field");
+    if (search) near("masthead search, centred", (search.l + search.r) / 2, window.innerWidth / 2);
+    near("masthead bell, centre", box(".masthead .appbar-bell")?.cy, menu?.cy);
+    near("sidebar, inset", box(".sidebar")?.l, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--space-12")));
+  }
   // The phone's tab bar sits on the page's edges.
   if (window.innerWidth <= 640 && !document.querySelector(".tab-bar-collapsed")) {
     near("tab bar, left", box(".sidebar nav")?.l, left);
     near("tab bar, right", box(".sidebar nav")?.r, right);
   }
-  if (window.innerWidth > 900) near("rail toggle, right", box(".sidebar-toggle")?.r, box(".sidebar .nav-item")?.r);
 
   const ctx = document.createElement("canvas").getContext("2d");
   for (const field of document.querySelectorAll("input[placeholder], textarea[placeholder]")) {

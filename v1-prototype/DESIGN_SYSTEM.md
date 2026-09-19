@@ -121,29 +121,41 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   (since 2026-09-17; the violet app bar is gone). The page's name is a 24px
   bold `h1`, alone: nothing sits under a title, so every page's reads the
   same (the library's size is in the rail's foot and Settings › Library
-  folders). On the right: search,
-  the page's actions, one primary action and the bell, all glass controls.
+  folders). On the right: the page's actions and one primary action, as glass
+  controls; on a phone, search and the bell too (above 640px they are the
+  masthead's).
   Under them, an optional tools row (tabs, or view and sort). The header is
   sticky. Once the page moves it *condenses*: the title scales to 18px and,
   on a desktop, the header rises into its top padding.
   Its height never changes, so nothing under a scroll jumps. Content under it
   meets a scroll edge: solid to the header's bottom, then a 24px blurred fade.
   The header itself is never a glass panel.
-  - `search="desktop"`: the app's search, a field above 640px only, which
-    takes a query to Discover (Pull List, Settings).
-  - `search="page"`: the page's own field at every width, on a row of its own
-    on a phone. On Comics it filters your comics as you type, and a query with
-    no match offers Discover. On Discover it searches the catalogs.
+  - `search="page"`: the page's own field on a phone, on a row of its own. On
+    Comics it filters your comics as you type, and a query with no match
+    offers Discover; on Discover it searches the catalogs. Above 640px the
+    masthead's search replaces it.
   - `narrow`: a form page's column (`--page-narrow`, 920px), so the header
     stops where its content does.
   - `leading`: a back button, before the title in the same cell.
-  - Every first row shares one centre line (`--page-header-row`), and so does
-    the rail's head. Content starts at the header's own spacing, never with a
+  - Every first row shares one centre line (`--page-header-row`). Content starts at the header's own spacing, never with a
     top margin of its own.
-- **The rail's head** holds the wordmark and the fold control on the page
-  title's centre line. The wordmark starts where the nav icons do, and the
-  control ends where the items do. Folded, it shows the control alone; on a
-  tablet, the mark.
+- **The frame above 640px** (since 2026-09-19) follows YouTube's structure and
+  the Apple TV app's sidebar.
+  - The **masthead** (`Masthead`) spans the window, frosted: the menu control,
+    then the wordmark, then one search centred on the window, then the bell.
+    The search always searches everything and shows its results on Discover.
+    Both sides of the masthead are at least `--masthead-side`, so the search
+    stays centred and gives up width first.
+  - The **sidebar** is a Liquid Glass panel floating under it, inset
+    `--sidebar-inset` from the window's edges, with 24px corners. Rows are
+    44px pills with an icon and a label; the open one is a filled violet pill.
+  - Folded (`.nav-rail`), it is a 76px rail with each icon over a 10px label,
+    as YouTube's mini guide. A tablet shows the rail, and the menu control
+    opens the full sidebar over the page (`.nav-overlay`); tapping the page
+    closes it. Wider, the control folds and unfolds it, and remembers.
+  - The nav icons sit on `--nav-icon-centre` in both shapes, and so does the
+    menu control. `layout:check` holds that, the centred search, and the
+    inset.
 - **Fields never truncate.** A placeholder is written to fit the narrowest
   field it appears in; if it doesn't fit, reword it. `npm run layout:check`
   measures every one.

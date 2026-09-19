@@ -91,6 +91,9 @@ const SMALLEST_TEXT = new Set([
   ".series-card-byline",
   ".ownership.compact .ownership-label",
   ".sidebar .nav-item > b",
+  // The collapsed rail's labels, under their icons, as YouTube's mini guide.
+  ".app-shell.nav-rail .nav-item",
+  ".app-shell.nav-rail .nav-item > b",
 ]);
 
 test("every font-size is a step on the ladder", () => {
@@ -137,7 +140,7 @@ test("every padding, margin and gap is on the spacing scale", () => {
 });
 
 test("every border-radius is a radius token, a circle, or none", () => {
-  const ok = (part) => /^var\(--radius-(4|6|8|12|16|pill)\)$/.test(part) || ["0", "50%", "inherit"].includes(part);
+  const ok = (part) => /^var\(--radius-(4|6|8|12|16|24|pill)\)$/.test(part) || ["0", "50%", "inherit"].includes(part);
   const bad = styles()
     .filter((d) => d.property === "border-radius" && !d.value.split(/\s+/).every(ok))
     .map((d) => where("styles.css", d));
@@ -215,6 +218,8 @@ for (const file of ["design-tokens.css", "styles.css"]) {
 // stays solid, and glass never sits on glass, so a blur may only appear on
 // the controls and bars named here, each with its reason.
 const GLASS = new Map([
+  [".sidebar", "the floating sidebar above 640px"],
+  [".masthead", "the top bar above 640px, frosting what scrolls under it"],
   [".glass-button, .glass-field", "the page header's controls and search field"],
   [".glass-indicator", "the sliding thumb in the tab bar, segmented tabs and drawer tabs"],
   [".sidebar nav", "the phone's floating tab bar"],
