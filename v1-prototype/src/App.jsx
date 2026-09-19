@@ -2955,15 +2955,21 @@ function SettingsCard({ title, action, className = "", children }) {
 }
 
 // A phone's first level of Settings, after iPhone Settings: grouped rows of
-// an icon and a name, each opening its section as a page.
-function SettingsIndex({ onOpen }) {
+// an icon and a name, each opening its section as a page. A count rides
+// beside the name rather than in a column of its own, which would set every
+// row's columns differently and stagger the chevrons.
+function SettingsIndex({ counts = {}, onOpen }) {
   const groups = [...new Set(SETTINGS_SECTIONS.map((item) => item.group))];
   return <nav className="settings-index" aria-label="Settings sections">
     {groups.map((group) => <ul key={group}>
       {SETTINGS_SECTIONS.filter((item) => item.group === group).map(({ id, label, icon: Icon }) => <li key={id}>
-        <button type="button" onClick={() => onOpen(id)}>
+        <button type="button" onClick={() => onOpen(id)}
+          aria-label={counts[id] ? `${label}. ${counts[id]} need${counts[id] === 1 ? "s" : ""} a decision` : undefined}>
           <span className={`settings-index-icon settings-index-icon--${id}`} aria-hidden="true"><Icon size={18} weight="fill" /></span>
-          <span className="settings-index-label">{label}</span>
+          <span className="settings-index-label">
+            <span>{label}</span>
+            {counts[id] ? <b className="settings-index-badge">{counts[id]}</b> : null}
+          </span>
           <CaretRight size={16} aria-hidden="true" />
         </button>
       </li>)}
@@ -3303,7 +3309,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   </>;
   if (!open) {
     return <><PageHeader title="Settings" />
-      <SettingsIndex onOpen={onSectionChange} />
+      <SettingsIndex onOpen={onSectionChange} counts={{ health: needAttention }} />
       {modals}
     </>;
   }
