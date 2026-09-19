@@ -3115,3 +3115,9 @@ button.glass-select[aria-expanded="true"] { background: var(--button-standard-bg
 button.glass-select--fill { flex: 1 1 auto; width: 100%; min-width: 0; max-width: none; }
 button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--space-8) 0 var(--space-12); font-size: var(--text-xs); }
 .glass-select-placeholder { color: var(--muted); }
+
+/* Every status chip in a row is one height, icon or not (see --chip-height). */
+.publication-status, .monitoring-status, .run-status, .status-badge, .status-chip, .provider-state, .discover-chip { box-sizing: border-box; height: var(--chip-height); padding-block: 0; }
+/* Text only, and it may need to cut off with an ellipsis, so a line box the chip's height rather than flex centring. */
+.discover-chip { display: inline-block; line-height: var(--chip-height); }
+.comic-drawer-statuses :is(.publication-status, .monitoring-status, .run-status, .status-badge) { height: var(--chip-height-lg); padding-block: 0; }

@@ -368,6 +368,11 @@
   --button-danger-bg-hover: color-mix(in srgb, var(--red-text) 18%, transparent);
   --button-danger-bg-pressed: color-mix(in srgb, var(--red-text) 26%, transparent);
   --button-press-scale: .97;
+  /* Status chips have a set height, not one their contents decide: a chip
+     with an icon took its height from the 12px icon and one without from the
+     font's line box, and Safari rounds the two apart. */
+  --chip-height: 18px;
+  --chip-height-lg: 22px;
   /* The standard button (2026-09-19): a translucent fill rather than an
      outline, so it reads on every surface -- page, card, sheet or a drawer's
      tone -- as iOS's fill colours do. */
