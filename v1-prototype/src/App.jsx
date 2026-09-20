@@ -4746,6 +4746,8 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
   const surfaceRef = useRef(null);
   const chromeTimer = useRef(null);
   const arrowTimer = useRef(null);
+  const held = useRef(false);
+  const onArrow = useRef(false);
   // Where the place is kept: `open` guards against saving page 0 over a real
   // place before the comic has finished opening, and `saved` against writing
   // the same page twice.
@@ -4821,16 +4823,38 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
    * a trackpad used to keep the bars awake for as long as you read, and
    * bringing them back on every page turn covers the page you just turned to.
    */
+  // Brightness and warmth belong to the chrome, so they leave with it. Left
+  // to itself the panel sat over the comic until the gear was pressed again.
+  const hideChrome = useCallback(() => {
+    setChrome(false);
+    setSettingsOpen(false);
+  }, []);
   const wakeChrome = useCallback(() => {
     setChrome(true);
     window.clearTimeout(chromeTimer.current);
-    chromeTimer.current = window.setTimeout(() => setChrome(false), 1800);
-  }, []);
+    // Nothing counts down while the pointer is resting on the bars or the
+    // panel: a control that slides out from under the cursor on its way to
+    // being clicked is worse than one that never appeared.
+    if (held.current) return;
+    chromeTimer.current = window.setTimeout(hideChrome, 1800);
+  }, [hideChrome]);
   const wakeArrows = useCallback(() => {
     setArrows(true);
     window.clearTimeout(arrowTimer.current);
+    if (onArrow.current) return;
     arrowTimer.current = window.setTimeout(() => setArrows(false), 1400);
   }, []);
+  // Held open while a pointer rests on them, released when it leaves.
+  const hold = useCallback((ref) => {
+    // Waking again is what cancels the countdown already running: setting the
+    // flag alone left the timer ticking, so the bar still slid away a moment
+    // after the pointer landed on it.
+    const wake = () => (ref === onArrow ? wakeArrows : wakeChrome)();
+    return {
+      onMouseEnter: () => { ref.current = true; wake(); },
+      onMouseLeave: () => { ref.current = false; wake(); },
+    };
+  }, [wakeArrows, wakeChrome]);
   useEffect(() => {
     wakeChrome();
     return () => {
@@ -4897,7 +4921,10 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
     const box = surfaceRef.current?.getBoundingClientRect();
     if (!box) return;
     const action = tapAction(event.clientX - box.left, box.width, direction);
-    if (action === "chrome") { setChrome((open) => !open); return; }
+    if (action === "chrome") {
+      if (chrome) hideChrome(); else wakeChrome();
+      return;
+    }
     go(action);
   }
 
@@ -4974,12 +5001,12 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
     {count && !contents ? <>
       <button type="button" className={`reader-arrow reader-arrow--back${arrows || chrome ? " shown" : ""}`}
         onClick={() => go(direction === READING_DIRECTIONS.rtl ? "next" : "previous")}
-        onMouseMove={wakeArrows} aria-label={direction === READING_DIRECTIONS.rtl ? "Next page" : "Previous page"}>
+        onMouseMove={wakeArrows} {...hold(onArrow)} aria-label={direction === READING_DIRECTIONS.rtl ? "Next page" : "Previous page"}>
         <ArrowLeft size={22} />
       </button>
       <button type="button" className={`reader-arrow reader-arrow--on${arrows || chrome ? " shown" : ""}`}
         onClick={() => go(direction === READING_DIRECTIONS.rtl ? "previous" : "next")}
-        onMouseMove={wakeArrows} aria-label={direction === READING_DIRECTIONS.rtl ? "Previous page" : "Next page"}>
+        onMouseMove={wakeArrows} {...hold(onArrow)} aria-label={direction === READING_DIRECTIONS.rtl ? "Previous page" : "Next page"}>
         <ArrowRight size={22} />
       </button>
     </> : null}
@@ -5010,20 +5037,20 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
       </aside>
     </div> : null}
 
-    <header className="reader-bar reader-bar--top" onPointerDown={wakeChrome} onFocusCapture={wakeChrome}>
+    <header className="reader-bar reader-bar--top" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
       <button type="button" className="glass-button glass-button--icon" onClick={onClose} aria-label="Close the reader"><X size={20} /></button>
       <span className="reader-title">{title}</span>
       {onOpenRun ? <button type="button" className="glass-button glass-button--icon" onClick={onOpenRun}
-        aria-label="Open this run" title="This run"><ListBullets size={20} /></button> : null}
+        aria-label="Open this run" title="This run"><DotsThree size={22} weight="bold" /></button> : null}
       {count ? <button type="button" className={`glass-button glass-button--icon${contents ? " active" : ""}`}
         aria-expanded={contents} aria-label="All pages" title="All pages"
         onClick={() => { setContents((open) => !open); wakeChrome(); }}><GridViewIcon /></button> : null}
       <button type="button" className={`glass-button glass-button--icon${settingsOpen ? " active" : ""}`}
         aria-expanded={settingsOpen} aria-label="Reading settings"
-        onClick={() => setSettingsOpen((open) => !open)}><Gear size={20} /></button>
+        onClick={() => { setSettingsOpen((open) => !open); wakeChrome(); }}><Gear size={20} /></button>
     </header>
 
-    {settingsOpen ? <div className="reader-settings glass-menu">
+    {settingsOpen ? <div className="reader-settings glass-menu" {...hold(held)}>
       <label><span>Brightness</span>
         <input type="range" min="0.35" max="1" step="0.05" value={night.dim}
           onChange={(event) => setNight((current) => ({ ...current, dim: Number(event.target.value) }))} />
@@ -5035,7 +5062,7 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
       <p className="reader-settings-note">{direction === "rtl" ? "Reading right to left." : "Reading left to right."}</p>
     </div> : null}
 
-    <footer className="reader-bar reader-bar--bottom" onPointerDown={wakeChrome} onFocusCapture={wakeChrome}>
+    <footer className="reader-bar reader-bar--bottom" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
       <span className="reader-count">{count ? `${index + 1} of ${count}` : "—"}{spread ? " · spread" : ""}</span>
       {count ? <div className="reader-scrubber">
         {/* The page under the thumb, before letting go: skimming back for the
