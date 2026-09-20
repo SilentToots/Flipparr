@@ -148,8 +148,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .continue-card { padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
 .continue-card-art { position: relative; display: block; }
 .continue-card .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: var(--radius-4); }
-.continue-card-bar { position: absolute; inset: auto var(--space-4) var(--space-4); height: 4px; border-radius: var(--radius-pill); background: var(--status-muted-bg); overflow: hidden; }
-.continue-card-bar i { display: block; height: 100%; border-radius: var(--radius-pill); background: var(--violet); }
 /* The pull card's title box is two fixed lines so a row of buttons stays
    level; nothing sits under these, so the page line follows the title. */
 .continue-card h3 { height: auto; text-align: left; }
@@ -1365,12 +1363,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 @media (hover: hover) { .issue-tile:not(:disabled):hover .issue-tile-edit { opacity: var(--button-disabled-opacity); } }
 /* No hover on touch, so the action has to stay put. */
 @media (hover: none) { .issue-tile-edit { opacity: 1; } }
+/* Read, opposite the pencil: the badge is centred over the cover and the
+   "Single + volume" state has both a badge and a file to read, so a centred
+   Read would land on top of it. Same idiom as the pencil -- an overlay
+   control, never glass, because a cover is content and not navigation. */
+.issue-tile-read, .comic-drawer-card-art .issue-tile-read { position: absolute; top: auto; bottom: 6px; right: 6px; width: 27px; height: 27px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
+.issue-tile-read:focus-visible { opacity: 1; }
+@media (hover: hover) { .issue-tile:hover .issue-tile-read, .pull-card:has(.discover-open:hover) .issue-tile-read { opacity: 1; } }
+@media (hover: none) { .issue-tile-read { opacity: 1; } }
+/* How far through a comic is, across the foot of its cover. One rule for the
+   issue tiles, the Overview cards and the Continue shelf. */
+.read-progress-bar { position: absolute; inset: auto var(--space-4) var(--space-4); height: 4px; border-radius: var(--radius-pill); background: var(--status-muted-bg); overflow: hidden; pointer-events: none; }
+.read-progress-bar i { display: block; height: 100%; border-radius: var(--radius-pill); background: var(--violet); }
 .issue-run-group article > div { display: grid; gap: var(--space-4); }
 .issue-run-group article > div strong { font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-4); }
 .issue-run-group article > div small { color: var(--muted-weak); font-size: var(--text-xs); }
 .issue-local-lock { flex: 0 0 auto; color: var(--green); }
 .issue-row-actions { display: flex !important; grid-auto-flow: column; align-items: center; justify-content: end; gap: var(--space-6) !important; }
 .issue-row-actions button { width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-8); background: transparent; color: var(--muted-weak); display: grid; place-items: center; cursor: pointer; }
+/* Read is violet and filled; the pencil stays quiet. Reading a comic and
+   correcting its metadata are not the same size of act. */
+.issue-row-read { color: var(--violet-text) !important; }
 @media (hover: hover) { .issue-row-actions button:not(:disabled):hover { border-color: var(--line-strong); background: var(--status-muted-bg); color: var(--violet-text); } }
 .edition-inventory { gap: var(--space-10); }
 .edition-inventory > article { border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface-raised); padding: var(--space-14); display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: var(--space-12); align-items: start; }

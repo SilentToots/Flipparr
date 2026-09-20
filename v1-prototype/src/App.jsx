@@ -1664,7 +1664,7 @@ function ContinueCard({ item, onRead }) {
   return <button type="button" className="pull-card continue-card" onClick={() => onRead(item.fileId)}>
     <span className="continue-card-art">
       <DiscoverCover src={`/api/v1/files/${item.fileId}/pages/0`} alt="" />
-      {started ? <span className="continue-card-bar" aria-hidden="true">
+      {started ? <span className="read-progress-bar" aria-hidden="true">
         <i style={{ width: `${Math.round(((item.page + 1) / item.pageCount) * 100)}%` }} />
       </span> : null}
     </span>
@@ -3693,7 +3693,29 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved · type to replace" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><div className="form-field provider-priority-field"><span>Provider priority</span><GlassSelect label="Provider priority" value={priority} onChange={(next) => setPriority(Number(next))} options={[{ value: 15, label: "Before other optional providers" }, { value: 20, label: "Normal priority" }, { value: 30, label: "Fallback priority" }]} /><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
 }
 
-function GroupedIssueInventory({ issues, onEditIssue, medium }) {
+/**
+ * What an issue's Read control says, from the file behind it.
+ *
+ * Simpler than a run's: an issue is one comic, so it is unread, part-read or
+ * finished. Nothing is offered for an issue with no readable file -- missing,
+ * upcoming, a PDF, or owned only inside a volume, which the row already says.
+ */
+function issueReadState(issue, readingFiles) {
+  const file = issue?.fileId ? readingFiles?.[String(issue.fileId)] : null;
+  if (!file?.readable) return null;
+  // The same rule the server's resolver uses for a run: a record that is not
+  // finished is a place to continue from, whatever page it is on. Two rules
+  // for one question is exactly what the resolver exists to prevent.
+  const place = file.stale ? null : file;
+  if (!place?.pageCount) return { label: "Read", fraction: 0, detail: "" };
+  if (place.finishedAt) return { label: "Read again", fraction: 0, detail: "" };
+  return {
+    label: "Continue", fraction: Math.min(1, (place.page + 1) / place.pageCount),
+    detail: `page ${place.page + 1} of ${place.pageCount}`,
+  };
+}
+
+function GroupedIssueInventory({ issues, onEditIssue, onRead, readingFiles, medium }) {
   // Covers are why the tab exists, so posters lead. A long run is also less
   // scrolling this way than as tall rows: four across beats one down.
   const [view, setView] = useState("grid");
@@ -3741,6 +3763,7 @@ function GroupedIssueInventory({ issues, onEditIssue, medium }) {
           : issue.releaseState === "upcoming" ? "Upcoming"
           : issue.releaseState === "unknown" ? "Date needed" : "Missing";
         const owned = issue.ownership !== "unowned";
+        const read = issueReadState(issue, readingFiles);
         if (view === "grid") {
           // A missing issue keeps its tile, dimmed, so a gap in a run is
           // visible rather than silently absent from the grid.
@@ -3750,13 +3773,19 @@ function GroupedIssueInventory({ issues, onEditIssue, medium }) {
             <span className="issue-tile-art">
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
               {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}
+              {/* Inside the cover's box, not the tile's: anchored to the tile
+                  it would sit under the issue title. */}
+              {read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
+                aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
+                title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
+              {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
             </span>
             {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
             <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong>
             {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
           </article>;
         }
-        return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}</small></div><div className="issue-row-actions">{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{onEditIssue ? <button type="button" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}</div></article>;
+        return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}</small></div><div className="issue-row-actions">{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}</div></article>;
       })}</div>
     </section>;
   })}</div>;
@@ -4041,18 +4070,27 @@ function ComicDrawerRow({ title, count, children }) {
 
 // An issue you do not own keeps its card, dimmed, with the same state badge
 // the Issues tab gives it -- a gap in a run should look like a gap.
-function ComicDrawerIssueCard({ issue, medium, onOpen }) {
+function ComicDrawerIssueCard({ issue, medium, onOpen, onRead, readingFiles }) {
   const owned = issue.ownership !== "unowned";
   const state = issue.ownership === "collection" ? "In volume"
     : owned ? null
     : issue.releaseState === "upcoming" ? "Upcoming"
     : issue.releaseState === "unknown" ? "Date needed" : "Missing";
   const label = issueCardLabel(issue, medium);
+  // A cover you can read opens the comic; one you cannot still opens the list.
+  // The two are told apart by the label, which is what Komga and Kavita do.
+  const read = onRead ? issueReadState(issue, readingFiles) : null;
   return <article className={`pull-card comic-drawer-card${owned ? "" : " unowned"}`}>
-    <button type="button" className="discover-open" onClick={onOpen} aria-label={`${label}${state ? `, ${state.toLowerCase()}` : ""}. Show all issues`}>
+    <button type="button" className="discover-open"
+      onClick={read ? () => onRead({ id: issue.fileId }) : onOpen}
+      aria-label={read
+        ? `${read.label} ${label}${read.detail ? `, ${read.detail}` : ""}`
+        : `${label}${state ? `, ${state.toLowerCase()}` : ""}. Show all issues`}>
       <span className="comic-drawer-card-art">
         <DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={30} />
         {state ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{state}</span> : null}
+        {read ? <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span> : null}
+        {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
       </span>
     </button>
     <div className="pull-card-body"><h3 title={label}>{label}</h3></div>
@@ -4144,6 +4182,9 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       .catch(() => { if (live) setReading(null); });
     return () => { live = false; };
   }, [series?.id, readingVersion]);
+  const readingFiles = useMemo(() => Object.fromEntries(
+    [...(reading?.issues || []), ...(reading?.volumes || [])].map((file) => [String(file.id), file]),
+  ), [reading]);
   const issueCatalog = series?.issueCatalog || { status: "unknown" };
   const catalogKnown = ["complete", "complete_to_date"].includes(issueCatalog.status);
   const repairableIssueDetails = (series?.issues || []).filter((issue) => (
@@ -4288,12 +4329,12 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
       {tab === "overview" ? <>
         <RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} sourcePrefix="Source:" key={series.id} />
-        {series.issues?.length ? <ComicDrawerRow title="Issues" count={series.issues.length}>{series.issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium={series.medium} onOpen={() => setTab("issues")} key={issue.id || issue.number} />)}</ComicDrawerRow> : null}
+        {series.issues?.length ? <ComicDrawerRow title="Issues" count={series.issues.length}>{series.issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium={series.medium} onOpen={() => setTab("issues")} onRead={onRead} readingFiles={readingFiles} key={issue.id || issue.number} />)}</ComicDrawerRow> : null}
         {creators.length ? <ComicDrawerCreators creators={creators} key={`creators-${series.id}`} /> : null}
         {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
         {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
       </> : null}
-      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} medium={series.medium} /> : null}
+      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} onRead={onRead} readingFiles={readingFiles} medium={series.medium} /> : null}
       {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
       {tab === "files" ? <FileInventory files={series.fileDetails} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
       {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
