@@ -11996,6 +11996,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        # POST with a null clears, the way progress does. The plan said PUT and
+        # DELETE; this server has no do_PUT and clears everything else this
+        # way, and one idiom beats a tidier verb.
+        rating_post = re.fullmatch(r"/api/v1/(issues|series)/(\d+)/rating", parsed_url.path)
+        if rating_post:
+            kind = "issue" if rating_post.group(1) == "issues" else "series"
+            try:
+                result = catalog_store().set_rating(kind, int(rating_post.group(2)), payload.get("rating"))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
         file_progress_post = re.fullmatch(r"/api/v1/files/(\d+)/progress", parsed_url.path)
         if file_progress_post:
             file_id = int(file_progress_post.group(1))

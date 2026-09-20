@@ -3987,6 +3987,64 @@ class ReadingProgressTests(LibraryFixture):
             reading = store.run_reading_files(run)
             self.assertEqual((reading["medium"], reading["readingDirection"]), ("manga", "ltr"))
 
+    def test_a_run_keeps_its_own_rating_apart_from_its_issues(self):
+        """A run whose issues average four has not been given four stars by
+        anyone. Collapsing the two would invent an opinion nobody held."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            series = store.catalog()["series"][0]
+            self.assertIsNone(series["yourRating"])
+            self.assertIsNone(series["issueRating"], "nothing rated says nothing")
+
+            issues = series["issues"]
+            store.set_rating("issue", int(issues[0]["id"]), 4)
+            store.set_rating("issue", int(issues[1]["id"]), 5)
+            series = store.catalog()["series"][0]
+            self.assertIsNone(series["yourRating"], "the run itself is still unrated")
+            self.assertEqual(series["issueRating"], {"average": 4.5, "count": 2})
+            self.assertEqual(store.catalog()["series"][0]["issues"][0]["yourRating"], 4)
+
+            store.set_rating("series", run, 3)
+            series = store.catalog()["series"][0]
+            self.assertEqual(series["yourRating"], 3, "and its own rating is its own")
+            self.assertEqual(series["issueRating"]["average"], 4.5)
+
+    def test_a_rating_can_be_taken_back(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            store.set_rating("issue", issue, 4)
+            # Pressing the star you already gave means "actually, no".
+            self.assertIsNone(store.set_rating("issue", issue, None)["yourRating"])
+            self.assertIsNone(store.catalog()["series"][0]["issues"][0]["yourRating"])
+            self.assertIsNone(store.catalog()["series"][0]["issueRating"])
+
+    def test_only_whole_stars_between_one_and_five_are_a_rating(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            for bad in (0, 6, -1, "three", 3.5, True):
+                with self.assertRaises(ValueError, msg=f"{bad!r} was accepted"):
+                    store.set_rating("issue", issue, bad)
+            with self.assertRaises(ValueError):
+                store.set_rating("publisher", issue, 3)
+            with self.assertRaises(LookupError):
+                store.set_rating("issue", 999999, 3)
+            with self.assertRaises(LookupError):
+                store.set_rating("series", 999999, 3)
+
+    def test_deleting_an_issue_takes_its_rating_with_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            store.set_rating("issue", issue, 5)
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("DELETE FROM issues WHERE id=?", (issue,))
+                left = connection.execute("SELECT COUNT(*) FROM issue_ratings").fetchone()[0]
+            self.assertEqual(left, 0, "no rating pointing at an issue that has gone")
+
     def test_reading_order_is_issue_order_with_volumes_kept_apart(self):
         """The backdrop picker's list sorts by float(issue_number), so every
         volume becomes infinity and lands after the last issue. A reader

@@ -948,6 +948,23 @@ class HttpContractTests(unittest.TestCase):
                             {"format": "manga", "readingDirection": "sideways"})
         self.assertEqual(refused.status, 400)
 
+    def test_a_rating_is_posted_and_taken_back_the_same_way_progress_is(self):
+        import app as app_module
+
+        run = self._series_run(app_module.catalog_store(), "Rating Contract")
+        given = self.post(f"/api/v1/series/{run}/rating", {"rating": 4})
+        self.assertEqual(given.status, 200)
+        self.assertEqual(given.json()["yourRating"], 4)
+
+        cleared = self.post(f"/api/v1/series/{run}/rating", {"rating": None})
+        self.assertEqual(cleared.status, 200)
+        self.assertIsNone(cleared.json()["yourRating"])
+
+        self.assertEqual(self.post(f"/api/v1/series/{run}/rating", {"rating": 6}).status, 400)
+        self.assertEqual(self.post(f"/api/v1/series/{run}/rating", {"rating": "five"}).status, 400)
+        self.assertEqual(self.post("/api/v1/series/999999/rating", {"rating": 3}).status, 404)
+        self.assertEqual(self.post("/api/v1/issues/999999/rating", {"rating": 3}).status, 404)
+
     def test_an_unknown_run_has_nothing_to_read(self):
         self.assertEqual(self.get("/api/v1/series/999999/reading").status, 404)
 

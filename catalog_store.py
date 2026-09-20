@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 42
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -147,6 +147,19 @@ class _ClosingConnection(sqlite3.Connection):
             return super().__exit__(exc_type, exc_value, traceback)
         finally:
             self.close()
+
+
+def _issue_rating_summary(issues: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """What a run's rated issues average to, and how many said so.
+
+    Kept apart from the run's own rating: a run nobody has rated, whose issues
+    average four, has not been given four stars by anyone, and a card that
+    said so would be inventing an opinion.
+    """
+    given = [issue["yourRating"] for issue in issues if issue.get("yourRating")]
+    if not given:
+        return None
+    return {"average": round(sum(given) / len(given), 2), "count": len(given)}
 
 
 def _utc_now() -> str:
@@ -1132,6 +1145,21 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS reading_progress_recent
                     ON reading_progress(updated_at DESC);
+                /* Your own rating, and nobody else's. No provider Flipparr
+                   talks to carries a quality score -- Comic Vine has none,
+                   Metron's is an age rating, GCD is bibliographic -- so this
+                   is the only rating there is, and it never arrives from a
+                   scan or a sync. Whole stars, one through five. */
+                CREATE TABLE IF NOT EXISTS issue_ratings (
+                    issue_id INTEGER PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
+                    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS series_run_ratings (
+                    series_run_id INTEGER PRIMARY KEY REFERENCES series_runs(id) ON DELETE CASCADE,
+                    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -3321,6 +3349,37 @@ class CatalogStore:
                 "stale": row["file_signature"] != row["scanned_signature"],
             }
         return by_run
+
+    def set_rating(self, kind: str, target_id: int, rating: int | None) -> dict[str, Any]:
+        """Rate an issue or a run, or take the rating back.
+
+        `None` clears it, which is how a star control undoes itself: pressing
+        the star you already gave means "actually, no", not "three again".
+        """
+        if kind not in ("issue", "series"):
+            raise ValueError("Only an issue or a run can be rated")
+        table, column = (
+            ("issue_ratings", "issue_id") if kind == "issue" else ("series_run_ratings", "series_run_id")
+        )
+        if rating is not None and (not isinstance(rating, int) or isinstance(rating, bool)
+                                   or not 1 <= rating <= 5):
+            raise ValueError("A rating is one to five stars")
+        with self._write_lock, self._connect() as connection:
+            exists = connection.execute(
+                f"SELECT 1 FROM {'issues' if kind == 'issue' else 'series_runs'} WHERE id=?", (target_id,)
+            ).fetchone()
+            if exists is None:
+                raise LookupError("That is not in the catalog")
+            if rating is None:
+                connection.execute(f"DELETE FROM {table} WHERE {column}=?", (target_id,))
+            else:
+                connection.execute(
+                    f"""INSERT INTO {table}({column}, rating, updated_at) VALUES (?, ?, ?)
+                        ON CONFLICT({column}) DO UPDATE SET
+                            rating=excluded.rating, updated_at=excluded.updated_at""",
+                    (target_id, rating, _utc_now()),
+                )
+        return {"id": str(target_id), "yourRating": rating}
 
     def clear_series_backdrop(self, series_run_id: int) -> None:
         with self._write_lock, self._connect() as connection:
@@ -7877,6 +7936,14 @@ class CatalogStore:
             # wrong download is visible at a glance rather than only to someone
             # who already knows to open the file. Deliberately unfiltered by
             # language: seeing the French cover is how the mistake is spotted.
+            issue_ratings = {
+                int(row["issue_id"]): int(row["rating"])
+                for row in connection.execute("SELECT issue_id, rating FROM issue_ratings")
+            }
+            run_ratings = {
+                int(row["series_run_id"]): int(row["rating"])
+                for row in connection.execute("SELECT series_run_id, rating FROM series_run_ratings")
+            }
             issue_file_covers: dict[int, str] = {}
             # The file behind an issue, so something can be read from it. Two
             # copies of one issue are possible -- a scan and a reprint -- and
@@ -7974,6 +8041,7 @@ class CatalogStore:
                         "cover": issue["cover"],
                         "fileCover": issue_file_covers.get(int(issue["id"])),
                         "fileId": issue_file_ids.get(int(issue["id"])),
+                        "yourRating": issue_ratings.get(int(issue["id"])),
                         "metadataLocked": bool(issue["metadata_locked"]),
                         "directOwned": direct, "collectionOwned": collected,
                         "ownership": ownership, "releaseState": release_state,
@@ -8104,6 +8172,7 @@ class CatalogStore:
                 # Null unless someone said otherwise; the reader falls back to
                 # the medium, and an English manga edition is why it can.
                 "readingDirection": run["reading_direction"],
+                "yourRating": run_ratings.get(int(run["id"])),
                 "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
                 "updatedAt": run["updated_at"], "addedAt": None,
@@ -8319,6 +8388,8 @@ class CatalogStore:
                     "monitoringStatus": group["monitoringStatus"],
                     "medium": group.get("medium") or "comic",
                     "readingDirection": group.get("readingDirection"),
+                    "yourRating": group.get("yourRating"),
+                    "issueRating": _issue_rating_summary(group.get("issues") or []),
                     "monitorRefresh": {
                         "status": group["monitorRefresh"]["status"],
                         "lastCheckedAt": group["monitorRefresh"]["last_checked_at"],
