@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 40
+SCHEMA_VERSION = 41
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -31,6 +31,8 @@ _SCENE_ISSUE_NAME = re.compile(r"(?:^|[.\s_])No[.\s_]?\d{1,4}(?=[.\s_]|$)", re.I
 # comic's volume is a collected edition of issues -- every step from search to
 # import has to know which rule applies.
 SERIES_FORMATS = ("comic", "manga")
+# Which way the pages turn. Null on a run means "follow the medium".
+READING_DIRECTIONS = frozenset({"ltr", "rtl"})
 # Bumped when local analysis starts producing something it did not before, so
 # the next scan re-reads files it would otherwise reuse on their fingerprint.
 # 3: comics that are not zip archives yield covers and embedded metadata.
@@ -1286,6 +1288,14 @@ class CatalogStore:
                 connection.execute(
                     "ALTER TABLE acquisition_requests ADD COLUMN coverage TEXT NOT NULL DEFAULT 'run'"
                 )
+            series_run_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(series_runs)")
+            }
+            if "reading_direction" not in series_run_columns:
+                # Null means "decide from the medium". Manga reads right to
+                # left, but an English edition of one may be flipped, and no
+                # provider records which -- so it is the reader's to say.
+                connection.execute("ALTER TABLE series_runs ADD COLUMN reading_direction TEXT")
             coverage_claim_columns = {
                 row["name"] for row in connection.execute(
                     "PRAGMA table_info(edition_coverage_claims)"
@@ -3210,9 +3220,9 @@ class CatalogStore:
                 "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
             ).fetchone() is None:
                 raise LookupError("That series run is not in the catalog")
-            medium = connection.execute(
-                "SELECT format FROM series_runs WHERE id=?", (series_run_id,)
-            ).fetchone()["format"]
+            run = connection.execute(
+                "SELECT format, reading_direction FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone()
             rows = list(connection.execute(
                 """SELECT files.id, files.path, files.filename, files.extension,
                           file_identities.issue_number, file_identities.identity_kind,
@@ -3244,7 +3254,10 @@ class CatalogStore:
             volumes.append(item)
         issues.sort(key=lambda item: (_natural_issue_key(item["issueNumber"]), item["filename"].casefold()))
         volumes.sort(key=lambda item: item["volumeLabel"].casefold())
-        return {"medium": medium, "issues": issues, "volumes": volumes}
+        return {
+            "medium": run["format"], "readingDirection": run["reading_direction"],
+            "issues": issues, "volumes": volumes,
+        }
 
     def reading_progress_for_run(self, series_run_id: int) -> dict[str, dict[str, Any]]:
         """Where every comic in one run was left, keyed by file id.
@@ -5503,19 +5516,53 @@ class CatalogStore:
                 "UPDATE series_runs SET creators_synced_at=NULL WHERE id=?", (series_run_id,)
             )
 
-    def set_series_format(self, series_run_id: int, run_format: str) -> dict[str, Any]:
-        """Say a run is manga or a comic, for the publishers that print both."""
+    def set_series_format(
+        self, series_run_id: int, run_format: str, reading_direction: str | None = "",
+    ) -> dict[str, Any]:
+        """Say a run is manga or a comic, for the publishers that print both.
+
+        `reading_direction` is separate because the two are not the same
+        question: the medium decides how a run is searched and filed, and the
+        direction decides how its pages turn. They agree by default and an
+        English edition of a manga is why they have to be able to disagree.
+        Passing "" leaves the direction alone; None restores "follow the
+        medium".
+        """
         desired = str(run_format or "").strip().casefold()
         if desired not in SERIES_FORMATS:
             raise ValueError("A run is either a comic or manga")
+        direction = reading_direction
+        if direction not in ("", None):
+            direction = str(direction).strip().casefold()
+            if direction not in READING_DIRECTIONS:
+                raise ValueError("A run reads left to right or right to left")
         with self._write_lock, self._connect() as connection:
-            changed = connection.execute(
-                "UPDATE series_runs SET format=?, updated_at=? WHERE id=?",
-                (desired, _utc_now(), series_run_id),
-            ).rowcount
+            if direction == "":
+                changed = connection.execute(
+                    "UPDATE series_runs SET format=?, updated_at=? WHERE id=?",
+                    (desired, _utc_now(), series_run_id),
+                ).rowcount
+            else:
+                changed = connection.execute(
+                    "UPDATE series_runs SET format=?, reading_direction=?, updated_at=? WHERE id=?",
+                    (desired, direction, _utc_now(), series_run_id),
+                ).rowcount
         if not changed:
             raise LookupError("Series run was not found")
-        return {"id": str(series_run_id), "format": desired}
+        return self.series_reading_format(series_run_id)
+
+    def series_reading_format(self, series_run_id: int) -> dict[str, Any]:
+        """How a run is filed, and which way its pages turn."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT format, reading_direction FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone()
+        if row is None:
+            raise LookupError("Series run was not found")
+        return {
+            "id": str(series_run_id), "format": row["format"],
+            "readingDirection": row["reading_direction"],
+        }
 
     def get_acquisition_job_context(self, job_id: int) -> dict[str, Any]:
         """Return the trusted comic identity needed to search for one wanted issue."""
@@ -8054,6 +8101,9 @@ class CatalogStore:
                 # "medium", not "format": the series payload already uses
                 # "format" for the shape of its files ("Single issues").
                 "medium": run["format"] or "comic",
+                # Null unless someone said otherwise; the reader falls back to
+                # the medium, and an English manga edition is why it can.
+                "readingDirection": run["reading_direction"],
                 "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
                 "updatedAt": run["updated_at"], "addedAt": None,
@@ -8268,6 +8318,7 @@ class CatalogStore:
                     "acquisitionPreference": group["acquisitionPreference"],
                     "monitoringStatus": group["monitoringStatus"],
                     "medium": group.get("medium") or "comic",
+                    "readingDirection": group.get("readingDirection"),
                     "monitorRefresh": {
                         "status": group["monitorRefresh"]["status"],
                         "lastCheckedAt": group["monitorRefresh"]["last_checked_at"],

@@ -3951,6 +3951,42 @@ class ReadingProgressTests(LibraryFixture):
                 {"Example 001.cbz": "1", "Example 002.cbz": "2", "Example 003.cbz": "3"},
             )
 
+    def test_a_run_can_read_against_its_medium(self):
+        """Manga reads right to left, except an English edition of one, which
+        is printed the other way round. No provider records which, so the
+        direction is kept apart from the medium rather than derived from it."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            self.assertIsNone(store.catalog()["series"][0]["readingDirection"],
+                              "nothing said, so the reader follows the medium")
+
+            store.set_series_format(run, "manga", "ltr")
+            series = store.catalog()["series"][0]
+            self.assertEqual((series["medium"], series["readingDirection"]), ("manga", "ltr"))
+
+            # Filing it again says nothing about direction, so it keeps it.
+            store.set_series_format(run, "comic")
+            self.assertEqual(store.catalog()["series"][0]["readingDirection"], "ltr")
+
+            store.set_series_format(run, "comic", None)
+            self.assertIsNone(store.catalog()["series"][0]["readingDirection"],
+                              "and it can be handed back to the medium")
+
+            with self.assertRaises(ValueError):
+                store.set_series_format(run, "comic", "sideways")
+            with self.assertRaises(LookupError):
+                store.set_series_format(run + 1000, "comic")
+
+    def test_the_reader_is_told_which_way_a_run_turns(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            self.assertIsNone(store.run_reading_files(run)["readingDirection"])
+            store.set_series_format(run, "manga", "ltr")
+            reading = store.run_reading_files(run)
+            self.assertEqual((reading["medium"], reading["readingDirection"]), ("manga", "ltr"))
+
     def test_reading_order_is_issue_order_with_volumes_kept_apart(self):
         """The backdrop picker's list sorts by float(issue_number), so every
         volume becomes infinity and lands after the last issue. A reader

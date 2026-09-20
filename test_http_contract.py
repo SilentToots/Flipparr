@@ -923,6 +923,31 @@ class HttpContractTests(unittest.TestCase):
                          "a PDF named .cbz is not offered")
         self.assertNotIn("path", by_id[str(readable)], "the library's paths stay on the server")
 
+    def test_reading_direction_is_set_beside_the_format_and_can_be_handed_back(self):
+        import app as app_module
+
+        store = app_module.catalog_store()
+        run = self._series_run(store, "Direction Contract")
+        self.assertEqual(self.post(f"/api/v1/series/{run}/format", {"format": "manga"}).status, 200)
+
+        set_ltr = self.post(f"/api/v1/series/{run}/format",
+                            {"format": "manga", "readingDirection": "ltr"})
+        self.assertEqual(set_ltr.status, 200)
+        self.assertEqual(set_ltr.json()["readingDirection"], "ltr")
+        # An English edition stays flipped while it is still filed as manga.
+        self.assertEqual(self.get(f"/api/v1/series/{run}/reading").json()["readingDirection"], "ltr")
+
+        # Absent leaves it alone; an explicit null hands it back to the medium.
+        kept = self.post(f"/api/v1/series/{run}/format", {"format": "manga"})
+        self.assertEqual(kept.json()["readingDirection"], "ltr")
+        cleared = self.post(f"/api/v1/series/{run}/format",
+                            {"format": "manga", "readingDirection": None})
+        self.assertIsNone(cleared.json()["readingDirection"])
+
+        refused = self.post(f"/api/v1/series/{run}/format",
+                            {"format": "manga", "readingDirection": "sideways"})
+        self.assertEqual(refused.status, 400)
+
     def test_an_unknown_run_has_nothing_to_read(self):
         self.assertEqual(self.get("/api/v1/series/999999/reading").status, 404)
 

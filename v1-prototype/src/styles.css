@@ -2339,6 +2339,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comic-drawer-edit { gap: var(--space-20); }
 .edit-heading { display: grid; gap: var(--space-4); }
 .edit-heading .eyebrow { margin-bottom: 0; font-size: var(--text-xs); }
+/* Three segments are wider than a card's button slot, and sharing the row
+   squeezed the sentence beside them down to one word a line. It stacks. */
+.edit-direction { grid-template-columns: minmax(0, 1fr); }
+.edit-direction .direction-toggle { justify-self: start; }
 .edit-heading h3 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .edit-index { display: grid; gap: var(--space-16); }
 .edit-section { display: grid; gap: var(--space-16); }

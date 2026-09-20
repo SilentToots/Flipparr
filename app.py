@@ -9201,6 +9201,7 @@ def series_reading(series_run_id: int) -> dict[str, Any]:
     volumes = [described(item) for item in files["volumes"]]
     return {
         "seriesRunId": str(series_run_id), "medium": files["medium"],
+        "readingDirection": files["readingDirection"],
         "resume": reading_target(issues, volumes, progress),
         "issues": [{k: v for k, v in item.items() if k != "path"} for item in issues],
         "volumes": [{k: v for k, v in item.items() if k != "path"} for item in volumes],
@@ -11728,8 +11729,11 @@ class Handler(BaseHTTPRequestHandler):
         series_format = re.fullmatch(r"/api/v1/series/(\d+)/format", parsed_url.path)
         if series_format:
             try:
+                # Absent leaves the direction alone; an explicit null means
+                # "follow the medium" again.
+                direction = payload["readingDirection"] if "readingDirection" in payload else ""
                 result = catalog_store().set_series_format(
-                    int(series_format.group(1)), str(payload.get("format") or "")
+                    int(series_format.group(1)), str(payload.get("format") or ""), direction,
                 )
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
