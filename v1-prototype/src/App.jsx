@@ -4111,13 +4111,17 @@ function ReadRunOverlay({ run, reading, onRead }) {
   if (!onRead) return null;
   const place = reading?.[String(run.id)];
   const started = place && !place.finished && place.pageCount;
+  // The verb the drawer's button would use, in one word: a card that says
+  // Read on a run you are halfway through would be telling you to start it.
+  const verb = started ? "Continue" : place?.finished ? "Restart" : "Read";
   const label = started
     ? `Continue ${issueLabel(place.issueNumber, run.medium)} of ${run.title}, page ${place.page + 1} of ${place.pageCount}`
-    : `Read ${run.title}`;
+    : `${verb} ${run.title}`;
   return <>
-    <button type="button" className="series-card-read" title={started ? "Continue" : "Read"}
+    <button type="button" className="series-card-read" title={verb}
       onClick={() => onRead(place ? { id: place.fileId } : { runId: run.id })} aria-label={label}>
       <BookOpen size={16} weight="fill" />
+      <b>{verb}</b>
     </button>
     {started ? <span className="read-progress-bar" aria-hidden="true">
       <i style={{ width: `${Math.round(Math.min(1, (place.page + 1) / place.pageCount) * 100)}%` }} />

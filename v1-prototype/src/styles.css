@@ -707,7 +707,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .series-card .cover-placeholder { width: 100%; aspect-ratio: var(--cover-ratio); }
 /* Above the card's own button, or it could not be clicked. Same overlay
    idiom as an issue tile: never glass, because a cover is content. */
-.series-card-read { position: absolute; right: var(--space-8); bottom: var(--space-8); z-index: 2; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
+.series-card-read { position: absolute; right: var(--space-8); bottom: var(--space-8); z-index: 2; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: inline-flex; align-items: center; justify-content: center; gap: 0; overflow: hidden; opacity: 0; transition: opacity var(--motion-duration-fast) ease, width var(--motion-duration-fast) var(--motion-ease-standard); cursor: pointer; }
+/* The icon says what it is; the word says what pressing it does. It grows
+   into the label where there is a pointer, the way Follow does in a drawer. */
+.series-card-read b { max-width: 0; font-size: var(--text-xs); font-weight: var(--weight-semibold); white-space: nowrap; opacity: 0; transition: max-width var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) ease, margin var(--motion-duration-fast) var(--motion-ease-standard); }
+@media (hover: hover) {
+  /* Hovering the comic is enough. Asking for the cursor to find a 32px
+     square in the corner of a cover is asking for the label never to be
+     seen. */
+  .series-card:hover .series-card-read, .series-card-read:focus-visible { width: auto; padding-inline: var(--space-8); }
+  .series-card:hover .series-card-read b, .series-card-read:focus-visible b { max-width: 96px; margin-left: var(--space-6); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .series-card-read, .series-card-read b { transition: none; } }
 .series-card-read:focus-visible { opacity: 1; }
 @media (hover: hover) { .series-card:hover .series-card-read { opacity: 1; } }
 @media (hover: none) { .series-card-read { opacity: 1; } }
