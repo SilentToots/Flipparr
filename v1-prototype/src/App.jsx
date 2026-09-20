@@ -1441,7 +1441,7 @@ function scanCounts(scan) {
   return { total, processed, percent: total ? Math.min(99, Math.round((processed / total) * 100)) : 0 };
 }
 
-function LibraryLoadingSkeleton({ scan = null }) {
+function LibraryLoadingSkeleton({ scan = null, view = "grid" }) {
   const { total, processed } = scanCounts(scan);
   return <div className="library-loading" role="status" aria-live="polite" aria-busy="true">
     <section className="library-loading-message">
@@ -1451,10 +1451,21 @@ function LibraryLoadingSkeleton({ scan = null }) {
         : <span><strong>Loading your library…</strong><small>Bringing in your comic runs, covers, and collection status.</small></span>}
     </section>
     <div className="library-loading-tools" aria-hidden="true"><i /><i /><i /></div>
-    <section className="library-loading-table" aria-hidden="true">
-      <header><i /><i /><i /><i /></header>
-      {[0, 1, 2, 3, 4].map((item) => <article key={item}><span className="library-loading-cover" /><span className="library-loading-copy"><i /><i /><i /></span><span className="library-loading-progress"><i /><i /></span><span className="library-loading-cell" /><span className="library-loading-cell short" /></article>)}
-    </section>
+    {/* The shape the comics will arrive in. It drew a table whichever view
+        was chosen, left over from when the list was the default, so a grid
+        library rearranged itself the moment it loaded. */}
+    {view === "grid"
+      ? <section className="library-loading-grid series-grid" aria-hidden="true">
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((item) => <span className="library-loading-card" key={item}>
+          <span className="library-loading-cover" />
+          <span className="library-loading-copy"><i /><i /></span>
+          <span className="library-loading-progress"><i /><i /></span>
+        </span>)}
+      </section>
+      : <section className="library-loading-table" aria-hidden="true">
+        <header><i /><i /><i /><i /></header>
+        {[0, 1, 2, 3, 4].map((item) => <article key={item}><span className="library-loading-cover" /><span className="library-loading-copy"><i /><i /><i /></span><span className="library-loading-progress"><i /><i /></span><span className="library-loading-cell" /><span className="library-loading-cell short" /></article>)}
+      </section>}
   </div>;
 }
 
@@ -1780,8 +1791,8 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
         onClose={() => setViewSheetOpen(false)}
       /> : null}
       <div className="dashboard-body">
-      {initialLoading ? <LibraryLoadingSkeleton /> : null}
-      {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} /> : null}
+      {initialLoading ? <LibraryLoadingSkeleton view={view} /> : null}
+      {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} view={view} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
       {/* Above the grid, and only while searching is not: a filtered library

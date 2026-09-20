@@ -536,12 +536,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .library-loading-message > span:last-child { display: grid; gap: var(--space-4); }
 .library-loading-message strong { color: var(--text); font-size: var(--text-md); }
 .library-loading-message small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
-.library-loading-tools i, .library-loading-table i, .library-loading-cover, .library-loading-cell { display: block; border-radius: var(--radius-6); background: linear-gradient(90deg, var(--skeleton-base) 20%, var(--skeleton-highlight) 45%, var(--skeleton-base) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite; }
+.library-loading-tools i, .library-loading-table i, .library-loading-grid i, .library-loading-cover, .library-loading-cell { display: block; border-radius: var(--radius-6); background: linear-gradient(90deg, var(--skeleton-base) 20%, var(--skeleton-highlight) 45%, var(--skeleton-base) 70%); background-size: 220% 100%; animation: library-skeleton 1.35s ease-in-out infinite; }
 .library-loading-tools { min-height: 71px; display: flex; align-items: center; gap: var(--space-12); }
 .library-loading-tools i { width: 108px; height: 38px; }
 .library-loading-tools i:nth-child(2) { width: 76px; }
 .library-loading-tools i:last-child { width: 146px; margin-left: var(--space-6); }
 .library-loading-table { border-top: 1px solid var(--line); }
+/* A card's shape, so the covers land where the skeletons were standing. */
+.library-loading-card { padding: 0 0 var(--space-20); border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--surface); overflow: hidden; display: flex; flex-direction: column; gap: var(--space-12); }
+.library-loading-card .library-loading-cover { width: 100%; height: auto; aspect-ratio: var(--cover-ratio); border-radius: 0; }
+.library-loading-card .library-loading-copy, .library-loading-card .library-loading-progress { padding: 0 var(--space-12); }
 .library-loading-table header, .library-loading-table article { display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(160px, .85fr) minmax(120px, .72fr) minmax(130px, .7fr); gap: var(--space-20); align-items: center; }
 .library-loading-table header { min-height: 37px; }
 .library-loading-table header i { width: 74px; height: 8px; }
