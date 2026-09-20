@@ -3210,11 +3210,17 @@ class CatalogStore:
                 "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
             ).fetchone() is None:
                 raise LookupError("That series run is not in the catalog")
+            medium = connection.execute(
+                "SELECT format FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone()["format"]
             rows = list(connection.execute(
                 """SELECT files.id, files.path, files.filename, files.extension,
-                          file_identities.issue_number, file_identities.identity_kind
+                          file_identities.issue_number, file_identities.identity_kind,
+                          editions.title AS edition_title, editions.volume_number
                    FROM files
                    JOIN file_identities ON file_identities.file_id=files.id
+                   LEFT JOIN file_edition_links ON file_edition_links.file_id=files.id
+                   LEFT JOIN editions ON editions.id=file_edition_links.edition_id
                    WHERE file_identities.series_run_id=? AND files.present=1""",
                 (series_run_id,),
             ))
@@ -3225,10 +3231,20 @@ class CatalogStore:
                 "extension": row["extension"], "issueNumber": row["issue_number"],
                 "identityKind": row["identity_kind"],
             }
-            (issues if row["issue_number"] else volumes).append(item)
+            if row["issue_number"]:
+                issues.append(item)
+                continue
+            # What to call a collection on a button. Its volume number if the
+            # edition has one, else its title; never the issue it might
+            # contain, because nothing records where that issue begins.
+            item["volumeLabel"] = (
+                f"Vol. {row['volume_number']}" if row["volume_number"] is not None
+                else row["edition_title"] or "volume"
+            )
+            volumes.append(item)
         issues.sort(key=lambda item: (_natural_issue_key(item["issueNumber"]), item["filename"].casefold()))
-        volumes.sort(key=lambda item: item["filename"].casefold())
-        return {"issues": issues, "volumes": volumes}
+        volumes.sort(key=lambda item: item["volumeLabel"].casefold())
+        return {"medium": medium, "issues": issues, "volumes": volumes}
 
     def reading_progress_for_run(self, series_run_id: int) -> dict[str, dict[str, Any]]:
         """Where every comic in one run was left, keyed by file id.

@@ -2245,9 +2245,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* 73:1743. The file draws the switch on; off, the track is the grey that
    still reaches 3:1 against the drawer. */
 .comic-drawer-follow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8) var(--space-16); }
-/* A black band the width of the drawer, like Creators', directly under the
-   tabs: it cancels the body's top and side padding and puts its own back. */
-.comic-drawer-follow { margin: calc(var(--space-32) * -1) calc(var(--space-32) * -1) 0; padding: var(--space-16) var(--space-32); background: var(--color-black); }
+/* Reading and following, in one black band above the tabs rather than inside
+   Overview: they are what the drawer is for, and burying reading three tabs
+   down while following sat on one of them said the opposite. It sits outside
+   the body now, so it no longer cancels padding it is not inside. */
+.comic-drawer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-12) var(--space-16); padding: var(--space-16) var(--space-32); background: var(--color-black); }
+.comic-drawer-read { flex: none; display: inline-flex; align-items: center; gap: var(--space-8); }
+/* The page you are on, under the label rather than beside it: "Continue #7"
+   is the action and "page 12 of 24" is a footnote to it. */
+.comic-drawer-read span { display: grid; justify-items: start; line-height: var(--leading-tight); }
+.comic-drawer-read small { color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-regular); }
 .comic-drawer-follow .follow-switch { min-height: 36px; padding: 0; border: 0; gap: var(--space-8); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .comic-drawer-follow .follow-switch > i { background: var(--chrome-label); }
 /* Settings' switch, now that the label beside it is 16px: a 40x23 track and
@@ -2372,7 +2379,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .comic-drawer-card.pull-card { width: 104px; }
   .comic-drawer-card .discover-cover { width: 104px; height: 146px; }
   .comic-drawer-creators { margin: 0 calc(var(--space-16) * -1); padding: var(--space-20) var(--space-16); }
-  .comic-drawer-follow { margin: calc(var(--space-24) * -1) calc(var(--space-16) * -1) 0; padding: var(--space-12) var(--space-16); }
+  .comic-drawer-actions { padding: var(--space-12) var(--space-16); }
 }
 
 /* The phone's View & sort sheet: from the bottom edge, above the tab bar, with

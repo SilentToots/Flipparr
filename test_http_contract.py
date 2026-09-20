@@ -784,13 +784,26 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(past_the_end.status, 404)
         self.assertEqual(unknown_size.status, 422)
 
-    def _library_file(self, path: Path) -> int:
+    def _series_run(self, store, title: str) -> int:
+        import sqlite3
+
+        with sqlite3.connect(store.database_path) as connection:
+            return connection.execute(
+                """INSERT INTO series_runs(canonical_title, canonical_key, format, created_at, updated_at)
+                   VALUES (?, ?, 'comic', ?, ?)
+                   ON CONFLICT(canonical_key) DO UPDATE SET updated_at=excluded.updated_at
+                   RETURNING id""",
+                (title, title.lower(), "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            ).fetchone()[0]
+
+    def _library_file(self, path: Path, run: int | None = None, issue: str | None = None) -> int:
         """A real row in the contract database, so progress can be stored
         against it: the table keys on a file id and cascades from it."""
         import sqlite3
         import app as app_module
 
         store = app_module.catalog_store()
+        stat = path.stat()
         with sqlite3.connect(store.database_path) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
             root = connection.execute(
@@ -798,12 +811,24 @@ class HttpContractTests(unittest.TestCase):
                 " ON CONFLICT(path) DO UPDATE SET path=excluded.path RETURNING id",
                 (str(path.parent), "2026-01-01T00:00:00+00:00"),
             ).fetchone()[0]
-            return connection.execute(
+            file_id = connection.execute(
                 """INSERT INTO files(root_id, path, filename, extension, size_bytes, mtime_ns,
                                      fingerprint, parsed_json, result_json, created_at, updated_at)
-                   VALUES (?, ?, ?, '.cbz', 0, 0, 'fingerprint', '{}', '{}', ?, ?) RETURNING id""",
-                (root, str(path), path.name, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+                   VALUES (?, ?, ?, '.cbz', ?, ?, 'fingerprint', '{}', '{}', ?, ?) RETURNING id""",
+                # The real size and mtime, as a scan would record them: the
+                # staleness check compares them against the signature the
+                # reader stores, so zeroes would read as "replaced".
+                (root, str(path), path.name, stat.st_size, stat.st_mtime_ns,
+                 "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
             ).fetchone()[0]
+            if run is not None:
+                connection.execute(
+                    """INSERT INTO file_identities(file_id, series_run_id, raw_title, normalized_title,
+                                                   identity_kind, issue_number, match_basis_json, updated_at)
+                       VALUES (?, ?, ?, ?, 'issue', ?, '[]', ?)""",
+                    (file_id, run, path.stem, path.stem.lower(), issue, "2026-01-01T00:00:00+00:00"),
+                )
+            return file_id
 
     def test_a_reading_place_is_kept_and_the_last_page_finishes_the_comic(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -867,6 +892,39 @@ class HttpContractTests(unittest.TestCase):
             self.assertIsNotNone(entry, "a part-read comic is something to continue")
             self.assertEqual((entry["page"], entry["pageCount"]), (2, 6))
             self.assertEqual(entry["resume"], "continue")
+
+    def test_a_run_reports_what_can_be_read_and_where_it_was_left(self):
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "run.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(4):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            # A PDF wearing a .cbz suffix: the extension says read me, the
+            # bytes say otherwise, and only the bytes are believed.
+            impostor = Path(folder) / "not-a-comic.cbz"
+            impostor.write_bytes(b"%PDF-1.7\n")
+
+            import app as app_module
+            store = app_module.catalog_store()
+            run = self._series_run(store, "Reading Contract")
+            readable = self._library_file(comic, run=run, issue="1")
+            self._library_file(impostor, run=run, issue="2")
+
+            self.post(f"/api/v1/files/{readable}/progress", {"page": 1})
+            response = self.get(f"/api/v1/series/{run}/reading")
+        self.assertEqual(response.status, 200)
+        body = response.json()
+        self.assertEqual(body["resume"]["fileId"], str(readable))
+        self.assertEqual(body["resume"]["state"], "continue")
+        self.assertEqual((body["resume"]["page"], body["resume"]["pageCount"]), (1, 4))
+        by_id = {item["id"]: item for item in body["issues"]}
+        self.assertTrue(by_id[str(readable)]["readable"])
+        self.assertFalse([item for item in body["issues"] if not item["readable"]][0]["readable"],
+                         "a PDF named .cbz is not offered")
+        self.assertNotIn("path", by_id[str(readable)], "the library's paths stay on the server")
+
+    def test_an_unknown_run_has_nothing_to_read(self):
+        self.assertEqual(self.get("/api/v1/series/999999/reading").status, 404)
 
     def test_progress_can_only_be_kept_for_comics_the_library_holds(self):
         self.assertEqual(self.get("/api/v1/files/999999/progress").status, 404)

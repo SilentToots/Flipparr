@@ -9096,6 +9096,107 @@ def next_unread_file(run_files: list[dict[str, Any]], after_file_id: str, progre
     return None
 
 
+READING_STATES = {"unstarted", "continue", "next", "finished", "volume-only", "none"}
+
+
+def reading_target(
+    issues: list[dict[str, Any]], volumes: list[dict[str, Any]], progress: dict[str, Any],
+) -> dict[str, Any]:
+    """Which comic a run's Read button opens, and what state the run is in.
+
+    Decided here rather than in the browser because the Comics grid needs one
+    of these per run and cannot be sent every run's file list to work it out.
+    The frontend only words the answer (`src/reading-target.js`).
+
+    Two of the six states are arguments rather than mechanics:
+
+    `finished` resolves to the comic read last, from its first page, instead of
+    the newest issue. Mihon's one button always jumps to the first unread, and
+    its own users complain that going back to re-read a run is ignored.
+
+    `volume-only` offers the collection and is labelled as one. Nothing records
+    where an issue begins inside an omnibus, so an offer of "#7" that opens
+    page 1 of 1,100 pages would be a lie.
+    """
+    def place(item: dict[str, Any]) -> dict[str, Any] | None:
+        record = progress.get(str(item["id"]))
+        # A place kept against a file replaced since it was read points at a
+        # page that may not exist. It is not a place, and not evidence that
+        # the comic was ever started.
+        return record if record and not record.get("stale") else None
+
+    def answer(state: str, item: dict[str, Any] | None, record: dict[str, Any] | None = None) -> dict[str, Any]:
+        if item is None:
+            return {"state": "none", "fileId": None, "issueNumber": None, "page": 0, "pageCount": 0}
+        return {
+            "state": state, "fileId": str(item["id"]), "issueNumber": item.get("issueNumber"),
+            "filename": item.get("filename"), "volumeLabel": item.get("volumeLabel"),
+            "page": int(record["page"]) if record else 0,
+            "pageCount": int(record["pageCount"]) if record else 0,
+        }
+
+    comics = [item for item in issues if item.get("readable", True)]
+    if not comics:
+        editions = [item for item in volumes if item.get("readable", True)]
+        return answer("volume-only", editions[0]) if editions else answer("none", None)
+
+    resume = last = None
+    for item in comics:
+        record = place(item)
+        if record is None:
+            continue
+        if last is None or str(record.get("updatedAt") or "") > str(last[1].get("updatedAt") or ""):
+            last = (item, record)
+        if not record.get("finishedAt") and (
+            resume is None or str(record.get("updatedAt") or "") > str(resume[1].get("updatedAt") or "")
+        ):
+            resume = (item, record)
+
+    # A comic left part-read is the answer whatever else is true: it is the one
+    # thing that can be resumed rather than begun.
+    if resume:
+        return answer("continue", resume[0], resume[1])
+    if last is None:
+        return answer("unstarted", comics[0])
+
+    after = [item for item in comics[comics.index(last[0]) + 1:] if place(item) is None]
+    if after:
+        return answer("next", after[0])
+    return answer("finished", last[0])
+
+
+def series_reading(series_run_id: int) -> dict[str, Any]:
+    """A run's comics, what is readable, and where each was left.
+
+    `readable` is sniffed here rather than stored: opening a drawer is a
+    deliberate act against a few dozen files, and `archive_kind` reads 264
+    bytes. The alternative -- a column on every file -- is a schema change
+    bought for a flag that only this surface asks about.
+    """
+    store = catalog_store()
+    files = store.run_reading_files(series_run_id)
+    progress = store.reading_progress_for_run(series_run_id)
+
+    def described(item: dict[str, Any]) -> dict[str, Any]:
+        record = progress.get(str(item["id"])) or {}
+        path = Path(item["path"])
+        return {
+            **item,
+            "readable": path.is_file() and archive_kind(path) is not None,
+            "page": record.get("page", 0), "pageCount": record.get("pageCount", 0),
+            "finishedAt": record.get("finishedAt"), "stale": record.get("stale", False),
+        }
+
+    issues = [described(item) for item in files["issues"]]
+    volumes = [described(item) for item in files["volumes"]]
+    return {
+        "seriesRunId": str(series_run_id), "medium": files["medium"],
+        "resume": reading_target(issues, volumes, progress),
+        "issues": [{k: v for k, v in item.items() if k != "path"} for item in issues],
+        "volumes": [{k: v for k, v in item.items() if k != "path"} for item in volumes],
+    }
+
+
 def continue_reading(limit: int = 12) -> dict[str, Any]:
     """What to carry on with: what is part-read, then what comes next.
 
@@ -11270,6 +11371,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/reading":
             self.send_json(continue_reading())
+            return
+        series_reading_match = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
+        if series_reading_match:
+            try:
+                payload = series_reading(int(series_reading_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
             return
         file_progress_match = re.fullmatch(r"/api/v1/files/(\d+)/progress", parsed_url.path)
         if file_progress_match:

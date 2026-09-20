@@ -2631,6 +2631,75 @@ class FilenameParserTests(unittest.TestCase):
         self.assertIsNone(next_unread_file(run, "99", {}), "a comic no longer in the run")
         self.assertIsNone(next_unread_file([], "1", {}))
 
+    def test_read_opens_the_first_issue_of_a_run_nobody_has_opened(self):
+        from app import reading_target
+
+        run = [{"id": "1", "issueNumber": "1"}, {"id": "2", "issueNumber": "2"}]
+        target = reading_target(run, [], {})
+        self.assertEqual((target["state"], target["fileId"]), ("unstarted", "1"))
+        self.assertEqual(target["page"], 0)
+
+    def test_a_part_read_comic_is_what_read_resumes(self):
+        from app import reading_target
+
+        run = [{"id": "1", "issueNumber": "1"}, {"id": "2", "issueNumber": "2"}, {"id": "3", "issueNumber": "3"}]
+        progress = {
+            "1": {"page": 3, "pageCount": 24, "updatedAt": "2026-09-01T00:00:00+00:00", "finishedAt": None},
+            "3": {"page": 9, "pageCount": 24, "updatedAt": "2026-09-19T00:00:00+00:00", "finishedAt": None},
+        }
+        target = reading_target(run, [], progress)
+        self.assertEqual(target["state"], "continue")
+        self.assertEqual(target["fileId"], "3", "the one read most recently")
+        self.assertEqual((target["page"], target["pageCount"]), (9, 24))
+
+    def test_a_run_read_to_the_end_offers_a_re_read_rather_than_its_last_page(self):
+        """Mihon's one button always jumps to the first unread, which is why
+        re-reading a finished run there is a standing complaint."""
+        from app import reading_target
+
+        run = [{"id": "1", "issueNumber": "1"}, {"id": "2", "issueNumber": "2"}]
+        done = lambda when: {"page": 23, "pageCount": 24, "updatedAt": when, "finishedAt": when}
+        target = reading_target(run, [], {
+            "1": done("2026-09-01T00:00:00+00:00"), "2": done("2026-09-19T00:00:00+00:00")})
+        self.assertEqual(target["state"], "finished")
+        self.assertEqual(target["fileId"], "2", "the one read last")
+        self.assertEqual(target["page"], 0, "from its first page")
+
+    def test_a_place_kept_against_a_replaced_file_is_not_a_place(self):
+        from app import reading_target
+
+        run = [{"id": "1", "issueNumber": "1"}, {"id": "2", "issueNumber": "2"}]
+        target = reading_target(run, [], {
+            "1": {"page": 11, "pageCount": 24, "updatedAt": "2026-09-19T00:00:00+00:00",
+                  "finishedAt": None, "stale": True}})
+        self.assertEqual(target["state"], "unstarted", "it starts again rather than resuming a lost page")
+        self.assertEqual(target["page"], 0)
+
+    def test_a_run_owned_only_as_a_collection_offers_the_collection(self):
+        """There is no record of where an issue starts inside an omnibus, so
+        the offer is the volume, and it is named as one."""
+        from app import reading_target
+
+        target = reading_target([], [{"id": "9", "issueNumber": None, "volumeLabel": "Vol. 2"}], {})
+        self.assertEqual(target["state"], "volume-only")
+        self.assertEqual((target["fileId"], target["volumeLabel"]), ("9", "Vol. 2"))
+
+    def test_nothing_readable_offers_nothing(self):
+        """Not a disabled button: that would claim the library holds something
+        it does not."""
+        from app import reading_target
+
+        self.assertEqual(reading_target([], [], {})["state"], "none")
+        self.assertIsNone(reading_target([], [], {})["fileId"])
+        unreadable = [{"id": "1", "issueNumber": "1", "readable": False}]
+        self.assertEqual(reading_target(unreadable, [], {})["state"], "none")
+
+    def test_an_unreadable_file_is_skipped_rather_than_offered(self):
+        from app import reading_target
+
+        run = [{"id": "1", "issueNumber": "1", "readable": False}, {"id": "2", "issueNumber": "2"}]
+        self.assertEqual(reading_target(run, [], {})["fileId"], "2")
+
     def test_finishing_an_issue_never_offers_the_omnibus_as_the_next_one(self):
         """The backdrop picker's list sorts volumes last, so walking it for
         "the next issue" hands back a collected edition once the singles run
