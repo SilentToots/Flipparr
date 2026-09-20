@@ -652,6 +652,11 @@ function useGlassIndicator(selector, deps) {
     const container = containerRef.current;
     if (!container) return undefined;
     function place() {
+      // A container taken out of the document reports every size as zero, and
+      // the observer fires on the way out. Measuring then threw the pill's
+      // position away, so a tab strip that unmounted and came back -- the run
+      // drawer's, while Edit is open -- returned with no tab marked at all.
+      if (!container.isConnected) return;
       const active = container.querySelector(selector);
       if (!active || !active.offsetWidth) {
         setStyle(null);
@@ -4304,7 +4309,9 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   const toned = toneProps(useArtTone(coverArt));
   const related = useMemo(() => (series ? relatedRuns(series, allSeries || []) : null), [series, allSeries]);
   const creators = useMemo(() => orderedCreators(series?.creators), [series?.creators]);
-  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, series?.id, editionsOn]);
+  // `edit` is a dependency because the strip is unmounted while editing: the
+  // pill has to be measured again against the node that comes back.
+  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, series?.id, editionsOn, edit]);
   useEffect(() => { dialogRef.current?.scrollTo?.({ top: 0 }); }, [series?.id]);
   if (!series) return null;
   const identityStrength = series.identityConfidence == null ? "Unknown" : series.identityConfidence >= 85 ? "High" : series.identityConfidence >= 65 ? "Medium" : "Low";
