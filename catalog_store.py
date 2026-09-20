@@ -3532,6 +3532,24 @@ class CatalogStore:
                 )
             }
 
+    def issue_provider_ids(self, issue_id: int) -> dict[str, str]:
+        """An issue's provider ids, by provider.
+
+        Unlike a run's, these have no `confirmed` column: an issue id is written
+        by a scan or an issue sync that already knows which run it belongs to,
+        so there is nothing here for a human to confirm and nothing to filter.
+        """
+        with self._connect() as connection:
+            if not connection.execute("SELECT 1 FROM issues WHERE id=?", (issue_id,)).fetchone():
+                raise LookupError("Issue was not found")
+            return {
+                row["provider"]: str(row["provider_id"])
+                for row in connection.execute(
+                    "SELECT provider, provider_id FROM issue_provider_ids WHERE issue_id=?",
+                    (issue_id,),
+                )
+            }
+
     def get_series_sync_context(self, series_run_id: int) -> dict[str, Any]:
         with self._connect() as connection:
             series = connection.execute("SELECT * FROM series_runs WHERE id=?", (series_run_id,)).fetchone()

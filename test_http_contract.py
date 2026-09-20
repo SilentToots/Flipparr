@@ -1016,6 +1016,26 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(response.status, 404)
         self.assertIn("error", json.loads(response.body))
 
+    def test_an_unknown_issue_has_no_detail(self):
+        response = self.get("/api/v1/issues/999999/detail")
+        self.assertEqual(response.status, 404)
+        self.assertIn("error", json.loads(response.body))
+
+    def test_a_provider_problem_is_still_a_200_with_a_status(self):
+        """The blurb is decoration. An unconfigured or failing catalog must not
+        reach the reader as an error on a screen that works without it."""
+        with patch("app.catalog_store") as store:
+            store.return_value.issue_provider_ids.return_value = {"metron": "901"}
+            with patch("app._provider_credential", side_effect=ValueError("not configured")):
+                response = self.get("/api/v1/issues/1/detail")
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(set(payload), {
+            "issueId", "status", "provider", "providerName", "storyTitles",
+            "description", "creators", "pageCount", "price", "coverDate", "storeDate",
+        })
+
     def test_an_unknown_run_has_no_cover_workbench(self):
         response = self.get("/api/v1/series/999999/cover")
         self.assertEqual(response.status, 404)

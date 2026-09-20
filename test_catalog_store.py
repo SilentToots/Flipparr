@@ -4816,6 +4816,49 @@ class MangaRunTests(unittest.TestCase):
                 store.set_series_format(9999, "manga")
 
 
+class IssueProviderIdTests(unittest.TestCase):
+    """Which catalogs can be asked about one issue."""
+
+    def _seed(self, store, ids):
+        now = _utc_now()
+        with store._connect() as connection:
+            run_id = connection.execute(
+                """INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at)
+                   VALUES ('Saga', 'saga', ?, ?)""", (now, now),
+            ).lastrowid
+            issue_id = connection.execute(
+                """INSERT INTO issues(series_run_id, issue_number, created_at, updated_at)
+                   VALUES (?, '1', ?, ?)""", (run_id, now, now),
+            ).lastrowid
+            for provider, provider_id in ids.items():
+                connection.execute(
+                    """INSERT INTO issue_provider_ids(issue_id, provider, provider_id, updated_at)
+                       VALUES (?, ?, ?, ?)""", (issue_id, provider, provider_id, now),
+                )
+        return int(issue_id)
+
+    def test_every_catalog_that_knows_the_issue_is_returned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            issue_id = self._seed(store, {"metron": "901", "comic_vine": "5507", "gcd": "42"})
+            self.assertEqual(store.issue_provider_ids(issue_id), {
+                "metron": "901", "comic_vine": "5507", "gcd": "42",
+            })
+
+    def test_an_issue_no_catalog_knows_is_empty_rather_than_missing(self):
+        # 132 of the library's issues have no Metron id; that is a blurb we
+        # cannot fetch, not an issue that does not exist.
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            self.assertEqual(store.issue_provider_ids(self._seed(store, {})), {})
+
+    def test_an_issue_that_is_not_ours_is_a_lookup_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            with self.assertRaisesRegex(LookupError, "Issue was not found"):
+                store.issue_provider_ids(9999)
+
+
 class SeriesRemovalTests(unittest.TestCase):
     """A run can be removed, with everything recorded about it."""
 

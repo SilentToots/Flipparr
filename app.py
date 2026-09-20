@@ -8911,6 +8911,73 @@ def series_synopsis(series_run_id: int) -> dict[str, Any]:
     return {"synopsis": None, "provider": None, "providerName": None}
 
 
+def _comic_vine_issue_description(provider_issue_id: str) -> str | None:
+    """Comic Vine's blurb for one issue, asked for only when Metron has none."""
+    credential = _provider_credential("comic_vine")
+    url = f"{COMIC_VINE_API_BASE}/issue/4000-{provider_issue_id}/?" + urllib.parse.urlencode({
+        "api_key": credential, "format": "json", "field_list": "deck,description",
+    })
+    # An issue's description is a wiki article like a volume's, so the deck or
+    # the opening paragraph is the part that says what the issue is about.
+    return _comic_vine_synopsis(
+        fetch_provider_json("comic_vine", url, credential).get("results") or {}
+    )
+
+
+_EMPTY_ISSUE_DETAIL: dict[str, Any] = {
+    "storyTitles": [], "description": None, "creators": [],
+    "pageCount": None, "price": None, "coverDate": None, "storeDate": None,
+}
+
+
+def issue_detail(issue_id: int) -> dict[str, Any]:
+    """What a catalog says about one of our own issues.
+
+    Fetched when a screen opens rather than stored, for `series_synopsis`'s
+    reason: a blurb is not worth a migration and a re-sync of every issue to
+    backfill it. Metron answers with the whole shape; Comic Vine is asked only
+    for a description, and only when Metron has not already given one. Between
+    them they reach 1,480 of the library's 1,482 issues, where Metron alone
+    reaches 1,350 -- which is why this does not stop at one provider.
+
+    `status` is the whole point of the contract. A provider being down,
+    rate-limited or unconfigured is not the client's mistake and must never
+    arrive as a 4xx: every failure is a 200 saying `unavailable`, on a screen
+    that reads perfectly well without a blurb.
+    """
+    ids = catalog_store().issue_provider_ids(issue_id)
+    detail: dict[str, Any] = {
+        "issueId": str(issue_id), "provider": None, "providerName": None, **_EMPTY_ISSUE_DETAIL,
+    }
+    asked = False
+    failed = False
+    for provider in _SYNOPSIS_ORDER:
+        provider_id = str(ids.get(provider) or "")
+        if detail["description"] or not re.fullmatch(r"\d+", provider_id):
+            continue
+        asked = True
+        try:
+            if provider == "metron":
+                detail.update(discovered_issue_detail(provider_id))
+                detail.pop("providerIssueId", None)
+            else:
+                detail["description"] = _comic_vine_issue_description(provider_id)
+        except Exception:  # noqa: BLE001 -- see the docstring: a blurb is not an error page
+            failed = True
+            continue
+        if detail["description"]:
+            detail["provider"] = provider
+            detail["providerName"] = _DISCOVERY_PROVIDERS.get(provider, provider)
+    if detail["description"] or (asked and not failed):
+        # Everyone we could ask answered, even if the answer was "nothing known".
+        detail["status"] = "ok"
+    elif failed:
+        detail["status"] = "unavailable"
+    else:
+        detail["status"] = "unmatched"
+    return detail
+
+
 def _file_signature(path: Path) -> str:
     stat = path.stat()
     return f"{stat.st_mtime_ns:x}-{stat.st_size:x}"
@@ -11461,6 +11528,17 @@ class Handler(BaseHTTPRequestHandler):
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
+            self.send_json(payload)
+            return
+        issue_detail_match = re.fullmatch(r"/api/v1/issues/(\d+)/detail", parsed_url.path)
+        if issue_detail_match:
+            try:
+                payload = issue_detail(int(issue_detail_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            # No 502 branch: `issue_detail` answers a provider failure with
+            # `status: "unavailable"` rather than raising.
             self.send_json(payload)
             return
         series_cover_match = re.fullmatch(r"/api/v1/series/(\d+)/cover", parsed_url.path)

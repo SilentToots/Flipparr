@@ -6145,6 +6145,77 @@ class RunSynopsisTests(unittest.TestCase):
         self.assertIsNone(result["synopsis"])
 
 
+class IssueDetailTests(unittest.TestCase):
+    """What one of our own issues is about, for the screen you see when you
+    finish the one before it. The blurb is decoration: nothing here may turn a
+    provider's bad day into an error the reader has to read."""
+
+    def detail(self, ids, responses, credential="t"):
+        store = Mock()
+        store.issue_provider_ids.return_value = ids
+
+        def fetch(provider, url, credential):
+            value = responses[provider]
+            if isinstance(value, Exception):
+                raise value
+            return value
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._provider_credential", side_effect=(
+                 credential if isinstance(credential, Exception) else lambda _p: credential)), \
+             patch("app.fetch_provider_json", side_effect=fetch):
+            return app.issue_detail(41)
+
+    def test_metron_answers_with_the_whole_issue(self):
+        result = self.detail({"metron": "9", "comic_vine": "5"}, {
+            "metron": {"name": ["The Gauntlet"], "desc": "<p>Batman <b>runs</b>.</p>",
+                       "page": 22, "price": "3.99", "cover_date": "2024-01-01"}})
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["description"], "Batman runs.")
+        self.assertEqual(result["storyTitles"], ["The Gauntlet"])
+        self.assertEqual((result["provider"], result["pageCount"]), ("metron", 22))
+        self.assertNotIn("providerIssueId", result, "the shape is the same whoever answered")
+
+    def test_comic_vine_covers_the_issues_metron_does_not(self):
+        """130 of the 132 issues with no Metron id have a Comic Vine one."""
+        for metron in ({}, {"metron": "9"}):
+            with self.subTest(metron=metron):
+                result = self.detail({**metron, "comic_vine": "5"}, {
+                    "metron": {"desc": ""}, "comic_vine": {"results": {"deck": "From CV."}}})
+                self.assertEqual(
+                    (result["status"], result["description"], result["provider"]),
+                    ("ok", "From CV.", "comic_vine"))
+
+    def test_an_issue_no_catalog_knows_is_not_asked_about(self):
+        with patch("app.catalog_store") as store, \
+             patch("app.discovered_issue_detail") as metron, \
+             patch("app.fetch_provider_json") as fetch:
+            store.return_value.issue_provider_ids.return_value = {"gcd": "3"}
+            result = app.issue_detail(41)
+        self.assertEqual(result["status"], "unmatched")
+        self.assertIsNone(result["description"])
+        metron.assert_not_called()
+        fetch.assert_not_called()
+
+    def test_a_catalog_with_nothing_to_say_is_not_a_failure(self):
+        result = self.detail({"metron": "9"}, {"metron": {"desc": ""}})
+        self.assertEqual((result["status"], result["description"]), ("ok", None))
+
+    def test_a_provider_that_breaks_says_so_without_raising(self):
+        for responses in ({"metron": RuntimeError("Metron is down")},
+                          {"metron": {"desc": ""}, "comic_vine": TimeoutError("slow")}):
+            with self.subTest(responses=responses):
+                ids = {"metron": "9", "comic_vine": "5"} if len(responses) > 1 else {"metron": "9"}
+                result = self.detail(ids, responses)
+                self.assertEqual((result["status"], result["description"]), ("unavailable", None))
+
+    def test_an_unconfigured_provider_is_the_same_as_a_broken_one(self):
+        """`_provider_credential` raises ValueError, which a route would turn
+        into a 400 about a request the reader never made."""
+        result = self.detail({"metron": "9"}, {},
+                             credential=ValueError("Metron is not configured"))
+        self.assertEqual(result["status"], "unavailable")
+
+
 class ASearchCannotStallThePassTests(unittest.TestCase):
     """Ultimate Spider-Man, 134 issues: the automatic pass asked Prowlarr for
     #050, Prowlarr logged the request, and the answer never came. The pass sat
