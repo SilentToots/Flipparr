@@ -2700,6 +2700,43 @@ class FilenameParserTests(unittest.TestCase):
         run = [{"id": "1", "issueNumber": "1", "readable": False}, {"id": "2", "issueNumber": "2"}]
         self.assertEqual(reading_target(run, [], {})["fileId"], "2")
 
+    def test_the_grid_is_told_the_part_read_comic_before_the_finished_one(self):
+        """A card should say "Continue #2" while #1 sits finished beside it."""
+        from app import reading_by_run
+
+        class Store:
+            def reading_progress_by_run(self):
+                return {"9": {
+                    "1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
+                          "finishedAt": "2026-09-19T00:00:00+00:00", "updatedAt": "2026-09-19T00:00:00+00:00"},
+                    "2": {"page": 5, "pageCount": 24, "issueNumber": "2", "stale": False,
+                          "finishedAt": None, "updatedAt": "2026-09-18T00:00:00+00:00"},
+                }, "12": {
+                    "7": {"page": 3, "pageCount": 24, "issueNumber": "7", "stale": True,
+                          "finishedAt": None, "updatedAt": "2026-09-19T00:00:00+00:00"},
+                }}
+
+        with patch("app.catalog_store", return_value=Store()):
+            runs = reading_by_run()["runs"]
+        self.assertEqual(runs["9"]["fileId"], "2", "even though #1 was read more recently")
+        self.assertEqual(runs["9"]["state"], "continue")
+        self.assertEqual((runs["9"]["page"], runs["9"]["pageCount"]), (5, 24))
+        self.assertNotIn("12", runs, "a run whose only record is against a replaced file")
+
+    def test_a_run_read_to_the_end_reports_itself_finished_to_the_grid(self):
+        from app import reading_by_run
+
+        class Store:
+            def reading_progress_by_run(self):
+                return {"9": {"1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
+                                    "finishedAt": "2026-09-19T00:00:00+00:00",
+                                    "updatedAt": "2026-09-19T00:00:00+00:00"}}}
+
+        with patch("app.catalog_store", return_value=Store()):
+            run = reading_by_run()["runs"]["9"]
+        self.assertTrue(run["finished"], "so the card draws no progress across a comic that is done")
+        self.assertEqual(run["state"], "finished")
+
     def test_finishing_an_issue_never_offers_the_omnibus_as_the_next_one(self):
         """The backdrop picker's list sorts volumes last, so walking it for
         "the next issue" hands back a collected edition once the singles run

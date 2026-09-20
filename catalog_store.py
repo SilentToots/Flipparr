@@ -3278,6 +3278,37 @@ class CatalogStore:
             for row in rows
         }
 
+    def reading_progress_by_run(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Every run that has been read in, and where each of its comics sits.
+
+        One query for the whole library, because the Comics grid asks about
+        every run at once and a request per card would be a request per card.
+        Runs nobody has opened are absent rather than empty: the grid draws
+        nothing for them, so there is nothing to say.
+
+        Staleness is decided the same way as `reading_progress_for_run`, and
+        carries the same caveat -- the columns are as fresh as the last scan.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT reading_progress.*, file_identities.series_run_id,
+                          file_identities.issue_number,
+                          printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
+                   FROM reading_progress
+                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE file_identities.series_run_id IS NOT NULL"""
+            ).fetchall()
+        by_run: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in rows:
+            by_run.setdefault(str(row["series_run_id"]), {})[str(row["file_id"])] = {
+                "page": int(row["page"]), "pageCount": int(row["page_count"]),
+                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
+                "issueNumber": row["issue_number"],
+                "stale": row["file_signature"] != row["scanned_signature"],
+            }
+        return by_run
+
     def clear_series_backdrop(self, series_run_id: int) -> None:
         with self._write_lock, self._connect() as connection:
             connection.execute(

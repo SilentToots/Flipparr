@@ -926,6 +926,27 @@ class HttpContractTests(unittest.TestCase):
     def test_an_unknown_run_has_nothing_to_read(self):
         self.assertEqual(self.get("/api/v1/series/999999/reading").status, 404)
 
+    def test_the_library_reports_where_each_run_was_left_in_one_request(self):
+        """One request for the whole grid: a request per card would be a
+        request per card."""
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "grid.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(8):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            import app as app_module
+            run = self._series_run(app_module.catalog_store(), "Grid Contract")
+            file_id = self._library_file(comic, run=run, issue="4")
+            self.post(f"/api/v1/files/{file_id}/progress", {"page": 3})
+
+            response = self.get("/api/v1/reading/runs")
+        self.assertEqual(response.status, 200)
+        entry = response.json()["runs"][str(run)]
+        self.assertEqual(entry["fileId"], str(file_id))
+        self.assertEqual((entry["page"], entry["pageCount"]), (3, 8))
+        self.assertEqual(entry["issueNumber"], "4")
+        self.assertFalse(entry["finished"])
+
     def test_progress_can_only_be_kept_for_comics_the_library_holds(self):
         self.assertEqual(self.get("/api/v1/files/999999/progress").status, 404)
         self.assertEqual(self.post("/api/v1/files/999999/progress", {"page": 1}).status, 404)

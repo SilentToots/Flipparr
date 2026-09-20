@@ -678,12 +678,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    ownership -- and only the copy is inset, so the cover bleeds to the border.
    The rule is a real <hr>, not a border on the block below it, because the
    design puts it full-bleed while the ownership block stays inset. */
-.series-card { padding: 0 0 var(--space-20); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-8); overflow: hidden; text-align: left; cursor: pointer; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-12); }
-@media (hover: hover) { .series-card:not(:disabled):hover { border-color: var(--violet-border); transform: translateY(-2px); } }
+/* The card is no longer the button. It holds its content as plain markup,
+   with a full-bleed button over all of it -- so the whole card still opens
+   the run -- and Read above that, with a target of its own. */
+.series-card { position: relative; padding: 0 0 var(--space-20); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-8); overflow: hidden; text-align: left; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-12); }
+.series-card-open { position: absolute; inset: 0; z-index: 1; width: auto; border-radius: inherit; cursor: pointer; }
+.series-card-open:focus-visible { outline-offset: -2px; }
+@media (hover: hover) { .series-card:has(.series-card-open:hover) { border-color: var(--violet-border); transform: translateY(-2px); } }
 /* Covers come from the comics themselves now, so they are not all exactly
    2:3. Filling the box keeps the shelf even; the crop is off the bottom. */
-.series-card > img { width: 100%; height: auto; aspect-ratio: var(--cover-ratio); object-fit: cover; object-position: top center; display: block; background: var(--surface-soft); }
-.series-card > .cover-placeholder { width: 100%; aspect-ratio: var(--cover-ratio); }
+.series-card-art { position: relative; display: block; }
+.series-card img { width: 100%; height: auto; aspect-ratio: var(--cover-ratio); object-fit: cover; object-position: top center; display: block; background: var(--surface-soft); }
+.series-card .cover-placeholder { width: 100%; aspect-ratio: var(--cover-ratio); }
+/* Above the card's own button, or it could not be clicked. Same overlay
+   idiom as an issue tile: never glass, because a cover is content. */
+.series-card-read { position: absolute; right: var(--space-8); bottom: var(--space-8); z-index: 2; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
+.series-card-read:focus-visible { opacity: 1; }
+@media (hover: hover) { .series-card:hover .series-card-read { opacity: 1; } }
+@media (hover: none) { .series-card-read { opacity: 1; } }
+.series-card-art .read-progress-bar { z-index: 2; }
 .series-card-identity { min-width: 0; padding: 0 var(--space-12); display: grid; gap: var(--space-2); }
 .series-card-identity > strong { min-width: 0; color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-bold); line-height: var(--leading-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .series-card-rule { display: block; width: 100%; height: 1px; background: var(--line); }
@@ -2848,7 +2861,7 @@ button:disabled { cursor: default; }
 
 /* Pressed. */
 button:not(:disabled):active { scale: var(--button-press-scale); }
-.series-card:active, .series-row:active, .library-match:active, .discover-open:active, .notifications-open:active,
+.series-card:has(.series-card-open:active), .series-row:active, .library-match:active, .discover-open:active, .notifications-open:active,
 .drawer-cover-button:active, .family-summary:active { scale: var(--card-press-scale); }
 .drawer-tabs button:active, .segmented-tab:active, .nav-item:active { scale: none; }
 .primary-button:not(:disabled):active, .candidate-select:not(:disabled):active { background: var(--button-primary-bg-pressed); }

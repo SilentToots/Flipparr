@@ -9197,6 +9197,35 @@ def series_reading(series_run_id: int) -> dict[str, Any]:
     }
 
 
+def reading_by_run() -> dict[str, Any]:
+    """Where each run in the library was left, for the Comics grid.
+
+    Only runs with a reading history appear. A card for a run nobody has
+    opened wants a plain "Read", and that is resolved when it is clicked --
+    working it out here would mean sniffing every archive in the library to
+    find which comic is readable, on a request the grid makes on every visit.
+    """
+    runs = {}
+    for run_id, progress in catalog_store().reading_progress_by_run().items():
+        live = {
+            file_id: record for file_id, record in progress.items() if not record["stale"]
+        }
+        if not live:
+            continue
+        started = [record for record in live.values() if not record["finishedAt"]]
+        latest = max(
+            started or live.values(), key=lambda record: str(record["updatedAt"] or ""),
+        )
+        file_id = next(key for key, record in live.items() if record is latest)
+        runs[run_id] = {
+            "state": "continue" if started else "finished",
+            "fileId": file_id, "issueNumber": latest["issueNumber"],
+            "page": latest["page"], "pageCount": latest["pageCount"],
+            "finished": len(started) == 0,
+        }
+    return {"runs": runs}
+
+
 def continue_reading(limit: int = 12) -> dict[str, Any]:
     """What to carry on with: what is part-read, then what comes next.
 
@@ -11371,6 +11400,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/reading":
             self.send_json(continue_reading())
+            return
+        if parsed_url.path == "/api/v1/reading/runs":
+            self.send_json(reading_by_run())
             return
         series_reading_match = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
         if series_reading_match:
