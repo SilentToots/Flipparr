@@ -1,9 +1,10 @@
 # Flipparr
 
-Flipparr is a pre-release, self-hosted comic catalog and acquisition product:
-it inventories the comics you already own, matches them against metadata
-providers, and can search and download missing issues through Prowlarr and
-SABnzbd.
+Flipparr is a pre-release, self-hosted comic catalog, acquisition product and
+reader: it inventories the comics you already own, matches them against
+metadata providers, can search and download missing issues through Prowlarr and
+SABnzbd, and reads them — full screen, right to left for manga, remembering
+where you left off.
 
 **Start here: [`docs/OPERATING.md`](docs/OPERATING.md)** — install,
 configuration, authentication, backup and restore, upgrade and rollback,

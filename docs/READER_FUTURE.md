@@ -1,12 +1,26 @@
-# A built-in reader — deferred
+# A built-in reader — superseded, 2026-09-20
 
-Not scheduled. Written down after looking at what it would take, so the
-assessment does not have to be made twice.
+**This assessment was acted on and is now history.** The reader is built and in
+production: a full-screen viewer with progress kept per file, manga read right
+to left, spreads shown alone, zoom and pan, a scrubber that previews the page
+under your thumb, a jump-to-page field, and night reading. Read is offered on
+the Comics grid, in a run's drawer, on its issue cards and rows, and in the
+Files tab; `docs/` keeps this page for the reasoning that led there.
 
-`PROJECT.md` puts an integrated reader out of the initial user release, and
-`AGENTS.md` positions Kavita and friends as optional downstream readers rather
-than something to replace. Building one is therefore a scope decision, not a gap
-to fill.
+The estimate below ("roughly two focused days") was close. What it missed is
+recorded in the commits: the CBR extract-window optimisation turned out to be
+unnecessary (110ms against 90ms for zip on this library, measured), and the
+part that actually needed care was where a comic's place is saved, not how its
+pages are drawn.
+
+Written down after looking at what it would take, so the assessment did not
+have to be made twice.
+
+At the time, `PROJECT.md` put an integrated reader out of the initial user
+release, and `AGENTS.md` positioned Kavita and friends as optional downstream
+readers rather than something to replace. Building one was therefore a scope
+decision rather than a gap to fill — and the decision was taken on 2026-09-20.
+Both documents now say so.
 
 ## Most of it already exists
 

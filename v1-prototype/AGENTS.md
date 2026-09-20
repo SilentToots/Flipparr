@@ -16,14 +16,15 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Product direction
 
-- This is a desktop-first standalone comic catalog, request portal, and metadata workbench. It must not depend on Omnibus or another reader.
+- This is a desktop-first standalone comic catalog, request portal, metadata workbench and comic reader. It must not depend on Omnibus or another reader.
 - The selected visual direction is the dark, library-first “Library Command Center” concept: persistent left navigation, restrained violet actions, green ownership states, red file-health warnings, and cover-forward series rows.
 - Mobile layouts preserve information while reducing persistent chrome: keep summary metrics in compact single rows, move dense secondary file operations behind one clearly labeled Actions menu, and center dialogs within the usable viewport above mobile navigation without wrapping button labels.
-- The primary user journeys are library inventory, series ownership, requests, metadata review, collection coverage, activity, and settings.
+- The primary user journeys are library inventory, series ownership, requests, reading, metadata review, collection coverage, activity, and settings.
+- Acquisition and reading are the two primary actions. Customizing covers and backgrounds is secondary: it lives behind Edit on a run, not in a surface's prominent slot.
 - Favor explainable states and source provenance. Never hide damaged files or metadata conflicts behind a successful catalog match.
 - Comic covers are real image assets. Standard interface icons use Phosphor Icons; do not replace them with text glyphs, emoji, CSS drawings, or handcrafted SVGs.
 - Normal users should add and monitor one full comic series without maintaining provider runs, story-arc links, or edition-to-issue relationships. Discover and maintain those relationships automatically; expose individual runs and structural editing only under an explicit advanced path.
-- The primary series action is “Find full series” / “Add & monitor.” Users choose only an acquisition preference (volumes, single issues, or either) and whether specials are included. Manual metadata review is exception handling, not a prerequisite for useful ownership or request totals.
+- The primary series action for a run you do not own is “Find full series” / “Add & monitor”; for one you do, it is Read. Users choose only an acquisition preference (volumes, single issues, or either) and whether specials are included. Manual metadata review is exception handling, not a prerequisite for useful ownership or request totals.
 - Treat a collected edition's series placement and its issue coverage as separate facts. An edition already attached to the correct publication run is not a metadata-placement error merely because its underlying issue range is unknown; keep it in that run and describe its contents as unverified until coverage evidence is found.
 - Every issue view must preserve the same hierarchy: group issues under their series run, miniseries, or special instead of flattening repeated numbering into one list. A single-run title uses the same component with one run section. Show provider issue/story titles and publication dates when available; never repeat a generic “Issue 1” label beside “#1.”
 - Metadata must remain correctable after ingestion. Issue-level title and date corrections are catalog-only, visibly locked against provider refreshes, and reversible back to retained provider values from the issue row.

@@ -80,7 +80,9 @@ that lines up with a row's text is computed from the row's parts — see
   one per view; the Pull button is this), **standard** (`.secondary-button` and
   `.ghost-button`: a translucent `--button-standard-bg` fill, no outline, so it
   reads on any surface) and **destructive** (`.danger-button`: red on the
-  standard fill). Buttons in content stay solid.
+  standard fill). Buttons in content stay solid. A drawer counts as its own
+  view: a run's drawer carries one prominent button (Read, in the band above
+  its tabs) whatever the page behind it carries.
 - **Close and back** are glass circles in the dialog's corner
   (`DialogCloseButton`, 36px, 44px on a phone). On a phone a drawer's is a
   back arrow at the top left, because a drawer there is a page pushed over
