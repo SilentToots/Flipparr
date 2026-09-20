@@ -3397,17 +3397,44 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* A page's shape, held before it loads, so the preview does not pop open. */
 .reader-scrub-preview img { width: 92px; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; border-radius: var(--radius-6); background: var(--surface-raised); display: block; }
 .reader-scrub-preview b { color: var(--text); font-size: var(--text-xs); }
-/* The end of a comic: what you thought of it, and what comes next. Shown
-   when you page on from the last page, which is the moment a reader has
-   decided they are done -- not when the last page merely appears. */
+/* The end of a comic: what you just read, what you thought of it, and what
+   comes next. Shown when you page on from the last page, which is the moment
+   a reader has decided they are done -- not when the last page appears.
+
+   A card on a desktop and a sheet from the bottom on a phone, the same shape
+   All pages takes. Not a toast: a toast times out, and it would take the next
+   issue with it at exactly the moment someone is deciding whether to read it. */
 .reader-finish-backdrop { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; padding: var(--space-20); background: var(--scrim-strong); }
-.reader-finish { width: min(420px, 100%); display: grid; gap: var(--space-16); padding: var(--space-24); border: 1px solid var(--line-strong); border-radius: var(--radius-16); background: var(--surface-raised); box-shadow: 0 24px 90px var(--shadow-strong); text-align: center; justify-items: center; }
-.reader-finish .eyebrow { margin-bottom: 0; }
+.reader-finish {
+  position: relative; width: min(420px, 100%); max-height: 100%; overflow-y: auto;
+  display: grid; gap: var(--space-20); padding: var(--space-24);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-16);
+  background: var(--surface-raised); box-shadow: 0 24px 90px var(--shadow-strong);
+}
+.reader-finish-done { display: grid; gap: var(--space-4); text-align: center; }
+.reader-finish-done .eyebrow { margin-bottom: 0; }
 .reader-finish h2 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .reader-finish-rating { display: grid; justify-items: center; gap: var(--space-8); }
 .reader-finish-rating p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
-.reader-finish-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-8); }
-.reader-finish-back { min-height: 36px; }
+/* The next issue reads as a comic, not as a button with a number on it. */
+.reader-finish-next { display: grid; gap: var(--space-8); }
+.reader-finish-next .eyebrow { margin-bottom: 0; }
+.reader-finish-next-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-12); align-items: center; }
+.reader-finish-next-card .discover-cover { width: 64px; height: 92px; border: 1px solid var(--line); border-radius: var(--radius-4); }
+.reader-finish-next-card > div { display: grid; gap: var(--space-4); justify-items: start; min-width: 0; }
+.reader-finish-next-card strong { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-bold); }
+.reader-finish-next-card small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-snug); }
+.reader-finish-next-card button { margin-top: var(--space-4); }
+.reader-finish-last { margin: 0; color: var(--muted); font-size: var(--text-sm); text-align: center; }
+.reader-finish-exits { display: flex; justify-content: center; gap: var(--space-8); }
+@media (max-width: 640px) {
+  .reader-finish-backdrop { place-items: end stretch; padding: var(--space-48) var(--space-8) calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .reader-finish {
+    width: 100%; padding-top: var(--space-28); border-radius: var(--radius-24);
+    max-height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom));
+    animation: sheet-in var(--motion-duration-standard) var(--motion-ease-spring);
+  }
+}
 
 /* Moving a pointer gets the way on and the way back, and nothing else. The
    full interface is asked for by clicking the middle of the page. */

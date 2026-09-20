@@ -5105,25 +5105,40 @@ function ReaderView({
     {finished ? <div className="reader-finish-backdrop" onMouseDown={() => setFinished(false)}>
       <section className="reader-finish" role="dialog" aria-label={`Finished ${title}`}
         onMouseDown={(event) => event.stopPropagation()}>
-        <span className="eyebrow">Finished</span>
-        <h2>{issue ? `${issueLabel(issue.number, medium)}${issue.title ? ` · ${issue.title}` : ""}` : title}</h2>
+        <span className="sheet-grabber" aria-hidden="true" />
+        <header className="reader-finish-done">
+          <span className="eyebrow">You finished</span>
+          <h2>{issue ? `${issueLabel(issue.number, medium)}${issue.title ? ` · ${issue.title}` : ""}` : title}</h2>
+        </header>
+
         {issue && onRateIssue ? <div className="reader-finish-rating">
-          <p>How was it?</p>
-          <StarRating size={26} title={issue.title || `Issue ${issue.number}`}
+          <p>Rate it</p>
+          <StarRating size={28} title={issue.title || `Issue ${issue.number}`}
             rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }}
             onRate={(value) => onRateIssue(issue, value)} />
         </div> : null}
-        <div className="reader-finish-actions">
-          {nextIssue && onRead ? <button type="button" className="primary-button"
-            onClick={() => onRead({ id: nextIssue.fileId })}>
-            <BookOpen size={18} weight="fill" /> Read {issueLabel(nextIssue.number, medium)}
-          </button> : null}
-          {onOpenRun ? <button type="button" className="ghost-button" onClick={onOpenRun}>This run</button> : null}
-          <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+
+        {/* The next issue as a comic rather than a button: its cover and its
+            title, so taking it is a decision about a comic. */}
+        {nextIssue && onRead ? <div className="reader-finish-next">
+          <span className="eyebrow">Next in this run</span>
+          <div className="reader-finish-next-card">
+            <DiscoverCover src={nextIssue.fileCover || nextIssue.cover} alt="" glyph={24} />
+            <div>
+              <strong>{issueLabel(nextIssue.number, medium)}</strong>
+              {nextIssue.title ? <small>{nextIssue.title}</small> : null}
+              <button type="button" className="primary-button" onClick={() => onRead({ id: nextIssue.fileId })}>
+                <BookOpen size={18} weight="fill" /> Read {issueLabel(nextIssue.number, medium)}
+              </button>
+            </div>
+          </div>
+        </div> : <p className="reader-finish-last">That is the last comic this run has.</p>}
+
+        {/* One pair of exits: back into the comic, or out of the reader. */}
+        <div className="reader-finish-exits">
+          <button type="button" className="ghost-button" onClick={() => setFinished(false)}>Keep reading</button>
+          <button type="button" className="ghost-button" onClick={onClose}>Done</button>
         </div>
-        {/* Not a dead end, and not a trap: the last page is still there. */}
-        <button type="button" className="comic-drawer-link reader-finish-back"
-          onClick={() => setFinished(false)}>Back to the last page</button>
       </section>
     </div> : null}
 
