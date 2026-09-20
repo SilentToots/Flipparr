@@ -2446,13 +2446,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .finish-section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); padding: var(--space-20); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface-raised); }
 .finish-section--rating { align-items: center; text-align: center; }
 .series-drawer.comic-drawer .finish-section h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
-/* The next issue reads as a comic, not as a button with a number on it. */
-.finish-next { width: 100%; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); align-items: center; }
-.finish-next .discover-cover { width: 96px; height: 140px; border-radius: var(--radius-6); }
-.finish-next-copy { display: grid; justify-items: start; gap: var(--space-4); min-width: 0; }
+/* The next issue reads as a comic, not as a button with a number on it: the
+   cover down the side, the run and number, the story's title, three lines of
+   what it is about, and one button the width of the copy. */
+.finish-next { width: 100%; display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: var(--space-20); align-items: start; }
+.finish-next .discover-cover { width: 132px; aspect-ratio: 2 / 3; border-radius: var(--radius-8); }
+.finish-next-copy { display: grid; justify-items: stretch; gap: var(--space-6); min-width: 0; }
 .finish-next-copy strong { color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
-.finish-next-copy small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-snug); }
-.finish-next-copy .primary-button { margin-top: var(--space-8); }
+.finish-next-title { color: var(--color-neutral-0); font-size: var(--text-lg); font-weight: var(--weight-regular); line-height: var(--leading-snug); }
+.finish-next .run-synopsis { margin-top: var(--space-4); }
+.finish-next .run-synopsis p.clamped { -webkit-line-clamp: 3; line-clamp: 3; }
+/* Read more and the source, told apart by a hairline rather than a gap. */
+.finish-next .run-synopsis footer button + small { padding-left: var(--space-12); border-left: 1px solid var(--line-strong); }
+.finish-next-copy .primary-button { margin-top: var(--space-12); width: 100%; }
 .finish-last { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 
 /* 73:1573: the band runs the drawer's full width, past the body's inset. */
@@ -2538,6 +2544,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--drawer-inset); -webkit-mask-image: none; mask-image: none; }
   .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-2); }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--drawer-inset); }
+  .finish-next { grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); }
+  .finish-next .discover-cover { width: 96px; }
   .comic-drawer-row { gap: var(--space-14); }
   .comic-drawer-shelf { gap: var(--space-12); }
   .comic-drawer-card.pull-card { width: 104px; }

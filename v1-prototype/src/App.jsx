@@ -4617,8 +4617,10 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
           <div className="finish-next">
             <DiscoverCover src={nextIssue.fileCover || nextIssue.cover} alt="" glyph={24} />
             <div className="finish-next-copy">
-              <strong>{issueLabel(nextIssue.number, medium)}</strong>
-              {nextIssue.title ? <small>{nextIssue.title}</small> : null}
+              {/* Named the way a shelf names it: the run and the number, then
+                  the story's own title as the thing you are being offered. */}
+              <strong>{[series?.title, issueLabel(nextIssue.number, medium)].filter(Boolean).join(" ")}</strong>
+              {nextIssue.title ? <span className="finish-next-title">{nextIssue.title}</span> : null}
               {detail.state === "loading" ? <RunSynopsis loading heading={null} />
                 : detail.data?.description
                   ? <RunSynopsis heading={null} text={detail.data.description} source={detail.data.providerName} />
@@ -4626,7 +4628,8 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
                     ? "This issue’s details are unavailable right now."
                     : "No description on record for this issue."}</p>}
               <button type="button" className="primary-button" onClick={() => onRead({ id: nextIssue.fileId })}>
-                <BookOpen size={18} weight="fill" /> Read {issueLabel(nextIssue.number, medium)}
+                {/* "Read Issue #2" for a comic; a volume label already names itself. */}
+                Read {issueLabel(nextIssue.number, medium).startsWith("#") ? "Issue " : ""}{issueLabel(nextIssue.number, medium)}
               </button>
             </div>
           </div>
