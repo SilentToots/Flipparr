@@ -5434,12 +5434,17 @@ export function App() {
    * visit to know what is readable.
    */
   const readComic = useCallback(async (target) => {
+    // Opening a comic puts the drawer away. The reader sits *under* an open
+    // drawer -- that is what lets the drawer open over a comic you are
+    // reading -- so leaving it up would mean pressing Read and watching
+    // nothing happen, with the reader hidden behind it.
+    const open = (fileId) => { setReadFileId(String(fileId)); setSelectedSeries(null); };
     const fileId = typeof target === "string" ? target : target?.id;
-    if (fileId) { setReadFileId(String(fileId)); return; }
+    if (fileId) { open(fileId); return; }
     if (!target?.runId) return;
     try {
       const data = await apiRequest(`/api/v1/series/${target.runId}/reading`);
-      if (data?.resume?.fileId) setReadFileId(String(data.resume.fileId));
+      if (data?.resume?.fileId) open(data.resume.fileId);
       else showToast("There is nothing here that can be read yet.", "error");
     } catch (error) { showToast(error.message, "error"); }
   }, []);
