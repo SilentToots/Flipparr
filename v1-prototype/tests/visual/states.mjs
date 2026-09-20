@@ -127,6 +127,39 @@ export const states = [
   // at all -- from one run to the next, and a shelf that loads in one capture
   // and not the other buries anything a style change did under two thousand
   // elements. They are stubbed (stubs.mjs).
+  {
+    // The end of an issue. Reached by seeding the last page, not by paging
+    // through a comic, which is thirty-odd requests and flaky. The place is
+    // *routed*, not written: this harness runs against the shared library, and
+    // a capture that left a finished record on someone's comic would be a
+    // capture that changed what it photographs. The POST is swallowed for the
+    // same reason.
+    name: "reader-finish",
+    path: "/library",
+    waitForCatalog: true,
+    require: [".finish-drawer", ".finish-section", ".finish-next"],
+    async setup(page) {
+      const origin = new URL(page.url()).origin;
+      const catalog = await (await page.request.get(`${origin}/api/v1/catalog`)).json();
+      // A run with at least two readable issues, so there is a next one.
+      const run = (catalog.series || []).find((item) => (item.issues || []).filter((issue) => issue.fileId).length >= 2);
+      if (!run) throw new Error("reader-finish: no run with two readable issues in this library");
+      const fileId = run.issues.find((issue) => issue.fileId).fileId;
+      const pages = await (await page.request.get(`${origin}/api/v1/files/${fileId}/pages`)).json();
+      const last = Number(pages.pageCount) - 1;
+      await page.route(`**/api/v1/files/${fileId}/progress`, (route) => route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify(route.request().method() === "GET"
+          ? { fileId: String(fileId), page: last, pageCount: pages.pageCount, finishedAt: null }
+          : {}),
+      }));
+      await page.goto(`${origin}/?read=${fileId}`, { waitUntil: "networkidle", timeout: 45000 });
+      await page.waitForSelector('.reader-bar--bottom:has-text("Last page")', { timeout: 30000 });
+      await page.keyboard.press("ArrowRight");
+      await page.waitForSelector(".finish-drawer", { timeout: 15000 });
+      await settle(page, 800);
+    },
+  },
   { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
