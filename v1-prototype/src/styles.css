@@ -2437,6 +2437,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Each section is a card, heading included, so the two read as two things to
    do. The rating one is centred: five stars are a gesture, not a row of text. */
 .finish-section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); padding: var(--space-20); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface-raised); }
+.finish-cards { display: grid; gap: var(--space-16); }
 .finish-section--rating { align-items: center; text-align: center; }
 .series-drawer.comic-drawer .finish-section h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
 /* The next issue reads as a comic, not as a button with a number on it: the
@@ -3404,6 +3405,9 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader--reading .reader-bar { opacity: 0; pointer-events: none; }
 .reader--reading .reader-bar--top { translate: 0 -100%; }
 .reader--reading .reader-bar--bottom { translate: 0 100%; }
+/* "esc" beside the close button: a key drawn as a key, in the app's own type. */
+.reader-esc-hint { flex: none; margin-left: calc(var(--space-8) * -1); padding: var(--space-2) var(--space-6); border: 1px solid var(--line-strong); border-radius: var(--radius-4); color: var(--muted); font: inherit; font-size: var(--text-xs); font-weight: var(--weight-semibold); line-height: var(--leading-tight); text-transform: lowercase; }
+@media (max-width: 640px) { .reader-esc-hint { display: none; } }
 .reader-title { flex: 1; min-width: 0; overflow: hidden; color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; text-align: center; }
 .reader-count, .reader-left { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
 .reader-scrubber { position: relative; flex: 1 1 240px; min-width: 0; display: flex; align-items: center; }

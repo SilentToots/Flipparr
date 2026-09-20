@@ -4607,6 +4607,9 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
         <span className="finish-done"><CheckCircle size={15} weight="fill" /> Finished</span>
       </DiscoverDrawerHero>
       <div className="comic-drawer-body">
+        {/* The two cards sit close, as one pair of things to do; the shelf
+            below keeps the body's own distance. */}
+        <div className="finish-cards">
         {issue && onRateIssue ? <section className="finish-section finish-section--rating" aria-label="Your rating">
           <h3>What did you think?</h3>
           <StarRating size={28} title={issue.title || issueLabel(issue.number, medium)}
@@ -4636,6 +4639,7 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
             </div>
           </div>
         </section> : <p className="finish-last">That is the last comic this run has.</p>}
+        </div>
 
         {rest.length ? <ComicDrawerRow title="More from this run" count={rest.length}>
           {rest.map((item) => <ComicDrawerIssueCard key={item.id} issue={item} medium={medium}
@@ -4935,7 +4939,14 @@ function ReaderView({
       .then(([data, place]) => {
         if (!live) return;
         const list = data.pages || [];
-        const asked = startPage === null ? Number(place?.page) || 0 : startPage;
+        // A comic already finished opens from its beginning: every Read on it
+        // -- the finish drawer's, a card's "Read again", the run's Restart --
+        // means reading it again, and its last page is not a place to resume.
+        // Nothing is written until a page is turned, so the record stays
+        // finished until the re-read has actually begun.
+        const asked = startPage !== null ? startPage
+          : place?.finishedAt ? 0
+          : Number(place?.page) || 0;
         const start = Math.min(Math.max(0, asked), Math.max(0, list.length - 1));
         setPages({ state: "done", list, error: "" });
         setIndex(start);
@@ -5221,6 +5232,9 @@ function ReaderView({
 
     <header className="reader-bar reader-bar--top" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
       <button type="button" className="glass-button glass-button--icon" onClick={onClose} aria-label="Close the reader"><X size={20} /></button>
+      {/* A keyboard's way out, said once beside the button. Phones have no
+          Escape, so it is not drawn there. */}
+      <kbd className="reader-esc-hint" aria-hidden="true">esc</kbd>
       <span className="reader-title">{title}</span>
       {onOpenRun ? <button type="button" className="glass-button glass-button--icon" onClick={onOpenRun}
         aria-label="Open this run" title="This run"><DotsThree size={22} weight="bold" /></button> : null}
