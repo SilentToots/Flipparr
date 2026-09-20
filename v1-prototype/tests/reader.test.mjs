@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
-  pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, pageFromInput, pagesLeft, pageFilter,
+  pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, pagesLeft, pageFilter,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -86,17 +86,6 @@ test("zoom stays between the whole page and the letters, and pan cannot lose the
   assert.deepEqual(clampPan({ x: 500, y: -900 }, 2, viewport), { x: 200, y: -400 }, "each edge stops at its own limit");
   assert.deepEqual(clampPan({ x: 10, y: 10 }, 1, viewport), { x: 0, y: 0 }, "nothing to pan at 1x");
   assert.deepEqual(clampPan({ x: 50, y: 50 }, 2, viewport), { x: 50, y: 50 });
-});
-
-test("a page number someone typed is theirs, one-based, and refused when it is not a page", () => {
-  assert.equal(pageFromInput("1", 24), 0);
-  assert.equal(pageFromInput("24", 24), 23);
-  assert.equal(pageFromInput(" 7 ", 24), 6);
-  assert.equal(pageFromInput("0", 24), null);
-  assert.equal(pageFromInput("25", 24), null, "clamping to the last page is not what was asked");
-  assert.equal(pageFromInput("-3", 24), null);
-  assert.equal(pageFromInput("twelve", 24), null);
-  assert.equal(pageFromInput("", 24), null);
 });
 
 test("what is left is counted in pages, and the last page says so", () => {

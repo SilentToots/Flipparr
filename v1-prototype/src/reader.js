@@ -100,22 +100,6 @@ export function clampPan({ x = 0, y = 0 } = {}, scale, { width = 0, height = 0 }
   };
 }
 
-/**
- * A page number someone typed, as an index.
- *
- * People count pages from one, and a comic's pages are numbered from zero
- * here. Anything that is not a page in this comic is refused rather than
- * clamped: jumping to page 4 because you asked for 400 is worse than nothing
- * happening.
- */
-export function pageFromInput(text, count) {
-  const digits = String(text ?? "").trim();
-  if (!/^\d+$/.test(digits)) return null;
-  const page = Number.parseInt(digits, 10);
-  if (page < 1 || page > count) return null;
-  return page - 1;
-}
-
 /** "3 pages left", the way a reader counts what is in front of them. */
 export function pagesLeft(index, count) {
   const left = Math.max(0, count - index - 1);

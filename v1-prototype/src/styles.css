@@ -3341,7 +3341,6 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   background: linear-gradient(to top, var(--scrim-strong), transparent);
 }
 .reader-bar--bottom .reader-count, .reader-bar--bottom .reader-left { color: var(--color-neutral-0); }
-.reader-go { min-height: 36px; padding-inline: var(--space-16); }
 /* Reading: the chrome leaves rather than dimming, so nothing sits over the art. */
 .reader--reading .reader-bar { opacity: 0; pointer-events: none; }
 .reader--reading .reader-bar--top { translate: 0 -100%; }
@@ -3359,13 +3358,40 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* A page's shape, held before it loads, so the preview does not pop open. */
 .reader-scrub-preview img { width: 92px; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; border-radius: var(--radius-6); background: var(--surface-raised); display: block; }
 .reader-scrub-preview b { color: var(--text); font-size: var(--text-xs); }
-.reader-jump { display: flex; align-items: center; gap: var(--space-6); }
-.reader-jump input {
-  width: 72px; min-height: 36px; box-sizing: border-box; padding: 0 var(--space-12);
-  border: 1px solid transparent; border-radius: var(--radius-pill); background: var(--field-bg); color: var(--text); font-size: var(--text-sm);
+/* Moving a pointer gets the way on and the way back, and nothing else. The
+   full interface is asked for by clicking the middle of the page. */
+.reader-arrow {
+  position: absolute; z-index: 2; top: 50%; translate: 0 -50%;
+  width: 44px; height: 92px; padding: 0; border: 0; border-radius: var(--radius-8);
+  background: var(--overlay-control); color: var(--color-neutral-0);
+  display: grid; place-items: center; opacity: 0; pointer-events: none;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  cursor: pointer;
 }
-.reader-jump input:focus { border-color: var(--violet-border); background: var(--field-bg-focus); }
-.reader-jump button { min-height: 36px; }
+.reader-arrow--back { left: var(--space-8); }
+.reader-arrow--on { right: var(--space-8); }
+.reader-arrow.shown { opacity: 1; pointer-events: auto; }
+.reader-arrow:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* A phone has no pointer to move, and its tap zones do this already. */
+@media (hover: none) { .reader-arrow { display: none; } }
+@media (prefers-reduced-motion: reduce) { .reader-arrow { transition: none; } }
+
+/* Every page at once. A grid of the pages themselves, rather than a box to
+   type a number into: you are looking for the page with the splash on it,
+   and you do not know its number -- that is why you are looking. */
+.reader-contents {
+  position: absolute; z-index: 4; inset: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: calc(var(--space-64) + env(safe-area-inset-top)) var(--space-16) var(--space-32);
+  background: var(--scrim-strong);
+}
+.reader-contents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: var(--space-16); }
+.reader-contents-page { padding: 0; border: 0; background: none; display: grid; gap: var(--space-6); justify-items: center; cursor: pointer; }
+.reader-contents-page img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; display: block; border: 2px solid transparent; border-radius: var(--radius-6); background: var(--surface-raised); }
+.reader-contents-page b { color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-regular); }
+.reader-contents-page.current img { border-color: var(--violet); }
+.reader-contents-page.current b { font-weight: var(--weight-bold); }
+.reader-contents-page:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-6); }
+@media (hover: hover) { .reader-contents-page:hover img { border-color: var(--violet-border); } }
 .reader-settings {
   position: absolute; z-index: 3; top: calc(var(--space-48) + env(safe-area-inset-top)); right: var(--space-16);
   width: min(280px, calc(100vw - var(--space-32))); display: grid; gap: var(--space-12);
