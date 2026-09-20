@@ -2339,6 +2339,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comic-drawer-restart { flex: none; width: 56px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface-raised); color: var(--color-neutral-0); display: grid; place-items: center; cursor: pointer; }
 /* Left to right from the same edge as everything else, at their own width:
    spreading two actions across a phone would put them nowhere in particular. */
+/* Stars. Filled and violet when they are yours; outlined and quiet when they
+   are an average of a run's issues, which is a summary rather than a verdict
+   and cannot be pressed. */
+.star-rating { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--violet-text); }
+.star-rating button { padding: 0; border: 0; background: transparent; color: inherit; display: grid; place-items: center; cursor: pointer; }
+.star-rating button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-4); }
+.star-rating.average { color: var(--muted); }
+.star-rating.average small { margin-left: var(--space-4); color: var(--muted); font-size: var(--text-xs); }
+@media (max-width: 640px) { .star-rating button { min-width: 28px; min-height: 28px; } }
+
 .comic-drawer-follow-button.active { border-color: var(--violet-border); background: var(--glass-primary-bg); color: var(--color-neutral-0); }
 /* A bookmark says the state but not what clicking it does. Where there is a
    pointer, the button grows its verb on hover -- Unfollow when it is on --
