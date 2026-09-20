@@ -3397,6 +3397,18 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* A page's shape, held before it loads, so the preview does not pop open. */
 .reader-scrub-preview img { width: 92px; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; border-radius: var(--radius-6); background: var(--surface-raised); display: block; }
 .reader-scrub-preview b { color: var(--text); font-size: var(--text-xs); }
+/* The end of a comic: what you thought of it, and what comes next. Shown
+   when you page on from the last page, which is the moment a reader has
+   decided they are done -- not when the last page merely appears. */
+.reader-finish-backdrop { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; padding: var(--space-20); background: var(--scrim-strong); }
+.reader-finish { width: min(420px, 100%); display: grid; gap: var(--space-16); padding: var(--space-24); border: 1px solid var(--line-strong); border-radius: var(--radius-16); background: var(--surface-raised); box-shadow: 0 24px 90px var(--shadow-strong); text-align: center; justify-items: center; }
+.reader-finish .eyebrow { margin-bottom: 0; }
+.reader-finish h2 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
+.reader-finish-rating { display: grid; justify-items: center; gap: var(--space-8); }
+.reader-finish-rating p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.reader-finish-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-8); }
+.reader-finish-back { min-height: 36px; }
+
 /* Moving a pointer gets the way on and the way back, and nothing else. The
    full interface is asked for by clicking the middle of the page. */
 .reader-arrow {
