@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import concurrent.futures
+import contextlib
 import datetime as dt
 import difflib
 import email.message
@@ -97,6 +98,16 @@ COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-
 BACKDROP_MAX_DIMENSION = 1200
 # How far into an issue an automatic background looks for a double-page spread.
 BACKDROP_SPREAD_SCAN_LIMIT = 40
+# A page to read rather than to glance at. A phone reads a page height-bound
+# (852pt at 3x is ~2556px) and 1536 looks soft; 2400 costs about twice the
+# bytes for a difference only visible zoomed in. 1800 is where that curve
+# bends: roughly 250-450KB a page at the quality above.
+READING_PAGE_MAX_DIMENSION = 1800
+# What the rendered pages of comics you have read may occupy before the oldest
+# are dropped. They live beside the catalog rather than in /tmp: the container
+# mounts a 256MB tmpfs there and shares it with SQLite and the cover cache, and
+# one issue at reading size is ~10MB.
+READING_CACHE_MAX_BYTES = max(64, int(_env("READING_CACHE_MB", "2048") or 2048)) * 1024 * 1024
 _LEGACY_USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
 _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
 
@@ -562,6 +573,17 @@ def user_cover_dir(kind: str = "files") -> Path:
     configured = _configured_path("USER_COVERS", catalog_database_path().parent / "user-covers")
     _adopt_legacy_user_covers(configured)
     return configured / kind
+
+
+def reading_cache_dir() -> Path:
+    """Where rendered reading pages are kept, beside the catalog.
+
+    For the reason in `user_cover_dir`: the container's root is read-only and
+    only the config, comics and download directories are mounted. A function
+    rather than a constant so a caller that sets its environment after
+    importing this module is still heard.
+    """
+    return _configured_path("READING_CACHE", catalog_database_path().parent / "reading-cache")
 
 
 # A comic a person fetched themselves. Larger than any single issue needs, and
@@ -5750,8 +5772,61 @@ def inspect_file_health(path: Path) -> dict[str, str]:
     return {"status": "ok", "code": "readable", "message": "File passed basic structural checks."}
 
 
-def render_file_cover_thumbnail(path: Path, member: str, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION) -> bytes:
+_CACHE_SWEEP_LOCK = threading.Lock()
+_CACHE_SWEPT_AT: dict[str, float] = {}
+
+
+def sweep_image_cache(cache_dir: Path, budget: int, interval: float = 60.0) -> int:
+    """Drop the least recently used files until the cache fits its budget.
+
+    Reading a comic writes a page at a time, so without this the directory
+    grows for as long as someone keeps reading. Rate-limited because eight
+    preloads arriving together should walk the directory once, not eight
+    times, and every filesystem error is swallowed: a cache that cannot be
+    swept must degrade to rendering again, never to a failed page.
+
+    Returns the bytes removed, for the test and for nothing else.
+    """
+    key = str(cache_dir)
+    now = time.monotonic()
+    with _CACHE_SWEEP_LOCK:
+        if now - _CACHE_SWEPT_AT.get(key, 0.0) < interval:
+            return 0
+        _CACHE_SWEPT_AT[key] = now
+    try:
+        entries = []
+        total = 0
+        with os.scandir(cache_dir) as listing:
+            for entry in listing:
+                if not entry.is_file():
+                    continue
+                stat = entry.stat()
+                entries.append((stat.st_mtime, stat.st_size, entry.path))
+                total += stat.st_size
+    except OSError:
+        return 0
+    if total <= budget:
+        return 0
+    # Down to four fifths, so a sweep is not triggered again by the next page.
+    target = int(budget * 0.8)
+    removed = 0
+    for _, size, candidate in sorted(entries):
+        if total - removed <= target:
+            break
+        try:
+            os.unlink(candidate)
+        except OSError:
+            continue
+        removed += size
+    return removed
+
+
+def render_file_cover_thumbnail(
+    path: Path, member: str, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION,
+    cache_dir: Path | None = None, budget: int | None = None,
+) -> bytes:
     """Extract and cache a web-sized JPEG without modifying the comic archive."""
+    cache_dir = COVER_CACHE_DIR if cache_dir is None else cache_dir
     stat = path.stat()
     fingerprint = "\0".join(
         (
@@ -5760,20 +5835,27 @@ def render_file_cover_thumbnail(path: Path, member: str, max_dimension: int = CO
         )
     )
     cache_key = hashlib.sha256(fingerprint.encode()).hexdigest()
-    cached = COVER_CACHE_DIR / f"{cache_key}.jpg"
+    cached = cache_dir / f"{cache_key}.jpg"
     try:
         if cached.is_file():
-            return cached.read_bytes()
+            body = cached.read_bytes()
+            # Touched on a hit, so the sweep above drops what is truly unused
+            # rather than what was rendered longest ago.
+            with contextlib.suppress(OSError):
+                os.utime(cached)
+            return body
     except OSError:
         pass
 
     source_bytes = read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
     body = normalize_image_to_jpeg(source_bytes, max_dimension)
     try:
-        COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_temp = COVER_CACHE_DIR / f".{cache_key}-{threading.get_ident()}.tmp"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_temp = cache_dir / f".{cache_key}-{threading.get_ident()}.tmp"
         cache_temp.write_bytes(body)
         os.replace(cache_temp, cached)
+        if budget:
+            sweep_image_cache(cache_dir, budget)
     except OSError:
         pass
     return body
@@ -8885,6 +8967,49 @@ def automatic_backdrop_page(path: Path) -> str | None:
     return interior[min(len(interior) - 1, len(pages) // 3)]
 
 
+# A page render lists the archive's members to find the page asked for, and a
+# reader asks for page after page. Listing a zip is cheap; listing a CBR is a
+# `bsdtar` process that scans the whole file, so remembering the answer for as
+# long as the file is unchanged is what keeps paging quick.
+#
+# Measured on the NAS (2026-09-20, 600px, cold cache): 110ms a page from a CBR
+# against 90ms from a CBZ. The subprocess costs about 20ms on these archives,
+# which is why pages are still read one at a time rather than the whole
+# archive being unpacked for a reading session.
+_PAGE_MEMBER_CACHE: dict[str, tuple[str, list[str]]] = {}
+_PAGE_MEMBER_CACHE_LIMIT = 64
+_PAGE_MEMBER_LOCK = threading.Lock()
+
+
+def cached_page_members(path: Path) -> list[str]:
+    """`archive_page_members`, remembered while the file on disk is unchanged."""
+    key = str(path)
+    try:
+        signature = _file_signature(path)
+    except OSError:
+        return archive_page_members(path)
+    with _PAGE_MEMBER_LOCK:
+        remembered = _PAGE_MEMBER_CACHE.get(key)
+        if remembered and remembered[0] == signature:
+            return remembered[1]
+    members = archive_page_members(path)
+    with _PAGE_MEMBER_LOCK:
+        if len(_PAGE_MEMBER_CACHE) >= _PAGE_MEMBER_CACHE_LIMIT:
+            _PAGE_MEMBER_CACHE.pop(next(iter(_PAGE_MEMBER_CACHE)), None)
+        _PAGE_MEMBER_CACHE[key] = (signature, members)
+    return members
+
+
+# The sizes a page may be asked for. A caller that asks for anything else is
+# refused rather than quietly served a thumbnail: each size is a separate set
+# of cached files, so an open list of sizes is an open-ended cache.
+PAGE_SIZES = {
+    "": COVER_THUMBNAIL_MAX_DIMENSION,
+    "backdrop": BACKDROP_MAX_DIMENSION,
+    "read": READING_PAGE_MAX_DIMENSION,
+}
+
+
 def _page_url(file_id: str, index: int, path: Path, size: str = "") -> str:
     query = {"v": _file_signature(path)}
     if size:
@@ -8954,10 +9079,19 @@ def file_pages(file_id: int) -> dict[str, Any]:
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("Pages can only be read from comic archives")
-    pages = archive_page_members(path)
+    pages = cached_page_members(path)
     return {
         "fileId": str(file_id), "pageCount": len(pages),
-        "pages": [{"index": index, "url": _page_url(str(file_id), index, path)} for index in range(len(pages))],
+        # `url` is the thumbnail the page picker draws; `readUrl` is the same
+        # page at reading size. Both are given so the picker is untouched.
+        "pages": [
+            {
+                "index": index,
+                "url": _page_url(str(file_id), index, path),
+                "readUrl": _page_url(str(file_id), index, path, "read"),
+            }
+            for index in range(len(pages))
+        ],
     }
 
 
@@ -8965,11 +9099,19 @@ def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("Pages can only be read from comic archives")
-    pages = archive_page_members(path)
+    if size not in PAGE_SIZES:
+        raise ValueError("That is not a page size this library renders")
+    pages = cached_page_members(path)
     if not 0 <= index < len(pages):
         raise LookupError("That page is not in this comic")
-    limit = BACKDROP_MAX_DIMENSION if size == "backdrop" else COVER_THUMBNAIL_MAX_DIMENSION
-    return render_file_cover_thumbnail(path, pages[index], limit)
+    # Reading pages are kept beside the catalog under their own budget, so a
+    # long sitting cannot evict the covers of a whole library.
+    reading = size == "read"
+    return render_file_cover_thumbnail(
+        path, pages[index], PAGE_SIZES[size],
+        cache_dir=reading_cache_dir() if reading else None,
+        budget=READING_CACHE_MAX_BYTES if reading else None,
+    )
 
 
 def _gcd_run_preview(provider_series_id: str) -> dict[str, Any]:

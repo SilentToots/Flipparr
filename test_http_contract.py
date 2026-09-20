@@ -17,6 +17,7 @@ import io
 import json
 import os
 import tempfile
+import zipfile
 import threading
 import time
 import unittest
@@ -746,6 +747,52 @@ class HttpContractTests(unittest.TestCase):
             response = self.post("/api/v1/files/763/replacement", {"reason": "wrong_release"})
         self.assertEqual(response.status, 201)
         grabs.assert_called_once_with({"id": "34"})
+
+    def test_a_comics_pages_are_listed_with_a_thumbnail_and_a_reading_url(self):
+        """The page picker draws thumbnails; a reader wants the same page
+        larger. Both URLs are given so neither caller has to build one."""
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "pages.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("01.jpg", _png_bytes())
+                archive.writestr("02.jpg", _png_bytes())
+            with patch("app.catalog_store") as store:
+                store.return_value.library_file_path.return_value = comic
+                response = self.get("/api/v1/files/12/pages")
+        self.assertEqual(response.status, 200)
+        body = response.json()
+        self.assertEqual(body["pageCount"], 2)
+        first = body["pages"][0]
+        self.assertIn("/api/v1/files/12/pages/0", first["url"])
+        self.assertIn("size=read", first["readUrl"])
+        self.assertNotIn("size=", first["url"])
+
+    def test_a_page_is_served_as_an_image_and_an_unknown_size_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "pages.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("01.jpg", _png_bytes())
+            with patch("app.catalog_store") as store:
+                store.return_value.library_file_path.return_value = comic
+                with patch("app.reading_cache_dir", return_value=Path(folder) / "cache"):
+                    page = self.get("/api/v1/files/12/pages/0?size=read")
+                    past_the_end = self.get("/api/v1/files/12/pages/9?size=read")
+                    unknown_size = self.get("/api/v1/files/12/pages/0?size=enormous")
+        self.assertEqual(page.status, 200)
+        self.assertEqual(page.headers["Content-Type"], "image/jpeg")
+        self.assertTrue(page.body.startswith(b"\xff\xd8"), "a JPEG, whatever the page was")
+        self.assertEqual(past_the_end.status, 404)
+        self.assertEqual(unknown_size.status, 422)
+
+    def test_pages_can_only_be_read_from_comics_the_library_holds(self):
+        """Pages are addressed by file id through the catalog, never by a path
+        in the request, so this is the whole boundary."""
+        with patch("app.catalog_store") as store:
+            store.return_value.library_file_path.side_effect = LookupError("not in the library")
+            listing = self.get("/api/v1/files/999999/pages")
+            page = self.get("/api/v1/files/999999/pages/0?size=read")
+        self.assertEqual(listing.status, 404)
+        self.assertEqual(page.status, 404)
 
     def test_an_unknown_run_cannot_be_removed(self):
         self.assertEqual(self.get("/api/v1/series/999999/removal").status, 404)

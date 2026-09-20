@@ -12,6 +12,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import traceback
+import time
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -2509,6 +2510,111 @@ class FilenameParserTests(unittest.TestCase):
                 archive.writestr("__MACOSX/._2.jpg", b"fork")
                 archive.writestr(".hidden.jpg", b"hidden")
             self.assertEqual(archive_page_members(path), ["2.jpg", "10.jpg"])
+
+    def test_a_page_is_rendered_at_the_size_asked_for_and_no_other(self):
+        """Reading wants a bigger page than a backdrop, and an unknown size is
+        refused: each size is its own set of cached files, so an open list of
+        sizes is an open-ended cache."""
+        import io
+        from PIL import Image
+        from app import PAGE_SIZES, READING_PAGE_MAX_DIMENSION, render_file_page
+
+        def png(width, height):
+            buffer = io.BytesIO()
+            Image.new("RGB", (width, height), "blue").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        self.assertEqual(PAGE_SIZES["read"], READING_PAGE_MAX_DIMENSION)
+        self.assertGreater(PAGE_SIZES["read"], PAGE_SIZES["backdrop"])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "read.cbz"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("01.jpg", png(2400, 3600))
+            with patch("app.catalog_store") as store:
+                store.return_value.library_file_path.return_value = path
+                with patch("app.reading_cache_dir", return_value=Path(folder) / "cache"):
+                    with Image.open(io.BytesIO(render_file_page(1, 0, "read"))) as page:
+                        self.assertEqual(max(page.size), READING_PAGE_MAX_DIMENSION)
+                    with Image.open(io.BytesIO(render_file_page(1, 0, "backdrop"))) as page:
+                        self.assertEqual(max(page.size), PAGE_SIZES["backdrop"])
+                    with Image.open(io.BytesIO(render_file_page(1, 0))) as page:
+                        self.assertEqual(max(page.size), PAGE_SIZES[""])
+                    with self.assertRaises(ValueError):
+                        render_file_page(1, 0, "enormous")
+                    with self.assertRaises(LookupError):
+                        render_file_page(1, 9, "read")
+
+    def test_reading_pages_are_cached_beside_the_catalog_under_a_budget(self):
+        """The container's /tmp is a 256MB tmpfs shared with SQLite and the
+        cover cache, and one issue at reading size is ~10MB -- so reading pages
+        live beside the catalog and the oldest are dropped."""
+        import io
+        from PIL import Image
+        from app import render_file_page, sweep_image_cache
+
+        def png(width, height):
+            buffer = io.BytesIO()
+            Image.new("RGB", (width, height), "green").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder) / "reading-cache"
+            path = Path(folder) / "read.cbz"
+            with zipfile.ZipFile(path, "w") as archive:
+                for index in range(3):
+                    archive.writestr(f"{index:02d}.jpg", png(1200, 1800))
+            with patch("app.catalog_store") as store:
+                store.return_value.library_file_path.return_value = path
+                with patch("app.reading_cache_dir", return_value=cache):
+                    for index in range(3):
+                        render_file_page(1, index, "read")
+            rendered = sorted(cache.glob("*.jpg"))
+            self.assertEqual(len(rendered), 3, "every page read is kept")
+
+            # Oldest first, and a sweep leaves the cache under its budget.
+            for age, cached in enumerate(rendered):
+                os.utime(cached, (1_700_000_000 + age, 1_700_000_000 + age))
+            total = sum(item.stat().st_size for item in rendered)
+            removed = sweep_image_cache(cache, total - 1, interval=0)
+            self.assertGreater(removed, 0)
+            left = sorted(item.name for item in cache.glob("*.jpg"))
+            self.assertLessEqual(sum(item.stat().st_size for item in cache.glob("*.jpg")), total * 0.8)
+            self.assertEqual(left[-1], rendered[-1].name, "the newest page survives")
+            # A cache already inside its budget is left alone, and so is a
+            # directory that is not there at all.
+            self.assertEqual(sweep_image_cache(cache, 10 ** 9, interval=0), 0)
+            self.assertEqual(sweep_image_cache(Path(folder) / "missing", 1, interval=0), 0)
+
+    def test_a_pages_listing_is_remembered_until_the_file_changes(self):
+        """Listing a CBR is a process that scans the whole archive, and a
+        reader asks page after page."""
+        import app as app_module
+        from app import cached_page_members
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pages.cbz"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("1.jpg", b"one")
+            app_module._PAGE_MEMBER_CACHE.clear()
+            calls = []
+            real = app_module.archive_page_members
+
+            def counted(target):
+                calls.append(target)
+                return real(target)
+
+            with patch("app.archive_page_members", side_effect=counted):
+                self.assertEqual(cached_page_members(path), ["1.jpg"])
+                self.assertEqual(cached_page_members(path), ["1.jpg"])
+                self.assertEqual(len(calls), 1, "the second read is remembered")
+                # A replaced file has a new signature, so the answer is looked
+                # up again rather than resumed from a stale listing.
+                time.sleep(0.01)
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("1.jpg", b"one")
+                    archive.writestr("2.jpg", b"two")
+                self.assertEqual(cached_page_members(path), ["1.jpg", "2.jpg"])
+                self.assertEqual(len(calls), 2)
 
     def test_automatic_backdrop_prefers_the_first_spread_after_the_cover(self):
         import io
