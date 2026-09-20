@@ -1503,10 +1503,6 @@ function sortLibrary(items, sort) {
   if (sort === "added") {
     return sorted.sort((a, b) => String(b.addedAt ?? "").localeCompare(String(a.addedAt ?? "")) || byTitle(a, b));
   }
-  if (sort === "attention") {
-    const rank = (item) => (item.status === "warning" ? 0 : 1);
-    return sorted.sort((a, b) => rank(a) - rank(b) || (b.unowned ?? 0) - (a.unowned ?? 0) || byTitle(a, b));
-  }
   return sorted.sort(byTitle);
 }
 
@@ -1539,10 +1535,12 @@ const PULL_LIST_COPY = {
   },
 };
 
+// Sorting the whole library by "needs attention" was from when library health
+// lived on this page. It is triaged in Settings now, one problem at a time and
+// with the file in front of you, which is more than a reorder ever gave.
 const SORT_OPTIONS = [
   { value: "title", label: "Title A–Z" },
   { value: "added", label: "Recently added" },
-  { value: "attention", label: "Needs attention" },
 ];
 
 // Everything the phone's toolbar used to hold, in one sheet from the bottom of
