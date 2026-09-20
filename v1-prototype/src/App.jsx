@@ -63,7 +63,7 @@ import {
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
   PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon,
 } from "./design-icons.jsx";
-import { readingLabel, readingIssue, readingAriaLabel, READING_STATES } from "./reading-target.js";
+import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel, byRating } from "./ratings.js";
 import {
@@ -4149,27 +4149,20 @@ function ReadRunOverlay({ run, reading, onRead }) {
  * would say the library holds a comic it does not, and "why is this disabled"
  * is a worse question than "where is the button".
  */
-function ReadRunButton({ reading, title, medium, onRead, onRestart }) {
+function ReadRunButton({ reading, title, medium, onRead }) {
   const target = reading?.resume;
-  const label = readingLabel(target);
-  if (!label || !onRead) return null;
-  const issue = readingIssue(target, medium);
-  // Restart sits beside Continue rather than replacing it, the way a player
-  // offers "from the beginning" next to Resume. There is nothing to go back
-  // to before a run has been started, so it only appears once there is.
-  const first = reading?.issues?.find((file) => file.readable);
-  const restartable = target.state === READING_STATES.continue || target.state === READING_STATES.next;
-  return <div className="comic-drawer-primary">
-    <button type="button" className="primary-button comic-drawer-read"
-      onClick={() => onRead({ id: target.fileId })}
-      aria-label={readingAriaLabel(target, medium, title)}>
-      <BookOpen size={20} weight="fill" />
-      <span>{label}{issue ? <b>{issue}</b> : null}</span>
-    </button>
-    {restartable && first && first.id !== target.fileId ? <button type="button" className="comic-drawer-restart"
-      onClick={() => onRestart(first)} title="Start from the first issue"
-      aria-label={`Start ${title} from its first issue`}><ArrowCounterClockwise size={20} /></button> : null}
-  </div>;
+  // "Continue Issue #7", about the comic that opens rather than the run: the
+  // verb bright, the comic it names beside it. Starting the run over lives in
+  // Advanced -- it is a tool, not something a reader reaches for mid-run.
+  const verb = readingVerb(target);
+  if (!verb || !onRead) return null;
+  const issue = readingNoun(target, medium);
+  return <button type="button" className="primary-button comic-drawer-read"
+    onClick={() => onRead({ id: target.fileId })}
+    aria-label={readingAriaLabel(target, medium, title)}>
+    <BookOpen size={20} weight="fill" />
+    <span>{verb}{issue ? <b>{issue}</b> : null}</span>
+  </button>;
 }
 
 /**
@@ -4412,6 +4405,12 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     contextType: "main",
   }));
   const isFollowing = series.monitoringStatus === "monitored";
+  // Starting over is offered once the run has been started at all; before
+  // that there is nothing to go back to.
+  const restartFile = reading?.resume
+    && [READING_STATES.continue, READING_STATES.next, READING_STATES.finished].includes(reading.resume.state)
+    ? reading.issues?.find((file) => file.readable) || null
+    : null;
   const wantedIssueCount = Math.max(0, Number(series.releaseSummary?.releasedMissing ?? series.unowned ?? Math.max(0, (series.total || 0) - (series.owned || 0))));
   // Volumes and Collection belong to collected-edition support; the counts
   // live on the tabs, so the header does not repeat them.
@@ -4491,8 +4490,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       />
     </div> : <>
     <div className="comic-drawer-actions">
-      <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead}
-        onRestart={(file) => onRead({ id: file.id, fromStart: true })} />
+      <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead} />
     </div>
     <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
@@ -4519,6 +4517,10 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
           <div><strong>Edit this run</strong><p>Its cover, header background, alternate titles, how it is filed, and the run it is matched to.</p></div>
           <button type="button" onClick={() => setEdit("")}><PencilSimple size={16} /> Edit</button>
         </section>
+        {restartFile && onRead ? <section className="advanced-card">
+          <div><strong>Start from the beginning</strong><p>Opens the run&rsquo;s first issue from its first page. Your place in the run moves once you turn a page there.</p></div>
+          <button type="button" onClick={() => onRead({ id: restartFile.id, fromStart: true })}><ArrowCounterClockwise size={16} /> Restart</button>
+        </section> : null}
         <section className="advanced-card">
           <div><strong>Combine duplicate run</strong><p>One run split into two entries? Merge them. Files on disk aren&rsquo;t changed.</p></div>
           <button type="button" onClick={() => onMergeRun(series)}><Books size={16} /> Combine</button>

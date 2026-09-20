@@ -2315,7 +2315,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    width, the way Resume is, with the rest as quiet icon actions under it. A
    violet pill sharing a row with a switch read as an afterthought. */
 .comic-drawer-actions { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-12); padding: var(--space-16) var(--drawer-inset); background: var(--art-band-strong); }
-.comic-drawer-primary { display: flex; align-items: stretch; gap: var(--space-8); }
 .comic-drawer-actions .comic-drawer-read { flex: 1; min-height: 56px; padding: 0 var(--space-20); border-radius: var(--radius-pill); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-10); font-size: clamp(var(--text-sm), calc(var(--text-sm) + (100vw - 320px) * 0.0364), var(--text-md)); }
 /* One line. Two lines of text in a pill stop reading as a button. */
 .comic-drawer-read span { display: inline-flex; align-items: baseline; gap: var(--space-6); min-width: 0; white-space: nowrap; line-height: var(--leading-tight); }
@@ -2326,17 +2325,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    pointer and presses back under a tap. */
 @media (hover: hover) {
   .comic-drawer-actions .comic-drawer-read:not(:disabled):hover { transform: translateY(-1px); }
-  .comic-drawer-actions .comic-drawer-restart:hover { transform: translateY(-1px); }
 }
 .comic-drawer-actions .comic-drawer-read:not(:disabled):active { transform: translateY(0); scale: var(--button-press-scale); }
-.comic-drawer-restart { transition: transform var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard), scale var(--motion-duration-fast) var(--motion-ease-standard); }
-.comic-drawer-restart:active { transform: translateY(0); scale: var(--button-press-scale); }
 @media (prefers-reduced-motion: reduce) {
-  .comic-drawer-actions .comic-drawer-read, .comic-drawer-restart { transition: none; }
+  .comic-drawer-actions .comic-drawer-read { transition: none; }
 }
 
-/* From the beginning, beside Resume, exactly where a player puts it. */
-.comic-drawer-restart { flex: none; width: 56px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface-raised); color: var(--color-neutral-0); display: grid; place-items: center; cursor: pointer; }
 /* Left to right from the same edge as everything else, at their own width:
    spreading two actions across a phone would put them nowhere in particular. */
 /* Stars. Filled and violet when they are yours; outlined and quiet when they
@@ -2361,7 +2355,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .comic-drawer-follow-button:hover b, .comic-drawer-follow-button:focus-visible b { max-width: 120px; margin-left: var(--space-6); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .comic-drawer-follow-button, .comic-drawer-follow-button b { transition: none; } }
-@media (hover: hover) { .comic-drawer-restart:hover { border-color: var(--violet-border); } }
 
 /* Edit, pushed over the drawer's tabs rather than opened as a second window.
    One scrim stays on screen, so tapping outside still dismisses the drawer,
