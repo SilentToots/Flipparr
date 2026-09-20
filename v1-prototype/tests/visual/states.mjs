@@ -21,8 +21,7 @@ async function drawerTab(page, label) {
 }
 
 // `phone: false` keeps a state to the desktop pass: the list toggle and the
-// Following filter live in a sheet on a phone, and the drawer's Files tab is a
-// table built for width.
+// Following filter live in a sheet on a phone.
 export const states = [
   {
     name: "library-grid",
@@ -77,8 +76,9 @@ export const states = [
     setup: (page) => drawerTab(page, "Issues"),
   },
   {
+    // Photographed on a phone now: it is the one surface that has had a Read
+    // button all along, and it had never been captured at 375px.
     name: "drawer-files",
-    phone: false,
     path: "/library",
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Files"),

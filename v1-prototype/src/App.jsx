@@ -3821,20 +3821,21 @@ function VolumeInventory({ editions }) {
   return <div className="edition-inventory">{editions.map((edition) => { const title = edition.subtitle ? `${edition.title}: ${edition.subtitle}` : edition.title; return <article key={edition.logicalVolumeKey || edition.id}><span className="edition-cover"><CoverArt id={`edition-${edition.id}`} title={title} cover={edition.cover} decorative placeholderSize={20} /></span><div className="edition-card-content"><header><div><strong>{title}</strong><small>{[edition.publisher, edition.publicationYear, edition.format].filter(Boolean).join(" · ") || "Volume details incomplete"}</small></div><span><b>{editionKindLabel(edition.editionKind)}{edition.volume ? ` · Vol. ${edition.volume}` : ""}</b><small>{edition.copyCount > 1 ? `${edition.copyCount} library files` : edition.source || "Local metadata"}</small>{edition.coverageOverrideCount ? <small>{edition.coverageOverrideCount} local contents correction{edition.coverageOverrideCount === 1 ? "" : "s"}</small> : null}</span></header>{edition.isbns?.length ? <p><b>ISBN</b> {edition.isbns.join(", ")}</p> : null}<div className="coverage-groups">{edition.coverageGroups?.length ? edition.coverageGroups.map((coverage) => <div className={coverage.resolved ? "resolved" : "unresolved"} key={`${coverage.seriesLabel}-${coverage.issueLabel}-${coverage.source}`}><span><strong>{coverage.seriesLabel} #{coverage.issueLabel}</strong><small>{coverage.resolved ? "Counts toward canonical ownership" : "Visible claim; canonical numbering unresolved"}</small></span><b>{coverage.confidence}</b><p>{coverage.source}{coverage.evidence ? ` · ${volumeTerminology(coverage.evidence)}` : ""}</p></div>) : <div className="no-coverage"><WarningCircle size={18} /><span><strong>Contents not established</strong><small>{volumeTerminology(edition.coverageStatus) || "No structured issue coverage was returned by the current sources."}</small></span></div>}</div></div></article>; })}</div>;
 }
 
-function FileActionButtons({ file, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
+function FileActionButtons({ file, readable, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
   const editionsOn = useCollectedEditions();
   // Editing a collected edition's issue contents is an edition-management
   // surface; the file itself stays visible and fixable either way.
   // Read comes first: it is the only thing here you would do for pleasure.
-  // Only for archives -- a PDF or an EPUB cannot be paged, and offering it
-  // then failing is worse than not offering it.
-  const readable = PAGE_ARCHIVE_EXTENSIONS.has(String(file.extension || "").replace(".", "").toLowerCase());
-  return <>{readable ? <button onClick={() => onRead(file)}><BookOpen size={14} /> Read</button> : null}{file.identityKind === "edition" && editionsOn ? <button onClick={() => onOpenContents(file)}><ListBullets size={14} /> Issues</button> : null}<button onClick={() => onReplace(file)}><CloudArrowDown size={14} /> Replace</button><button onClick={() => onChangeRun(file)}><Books size={14} /> Change run</button><button onClick={() => onOpenCover(file)}><BookOpen size={14} /> Cover</button><button onClick={() => onOpenWorkbench(file, "match")}><ArrowsClockwise size={14} /> Fix match</button><button onClick={() => onOpenWorkbench(file, "edit")}><PencilSimple size={14} /> Metadata</button></>;
+  // Whether it can be read is the server's answer, from the file's first
+  // bytes -- the suffix lies in both directions. A .cb7 needs a tool the
+  // container may not carry, and a zip named .bin opens perfectly.
+  return <>{readable ? <button onClick={() => onRead(file)}><BookOpen size={14} /> Read</button>
+    : <small className="file-not-readable">Not a readable archive</small>}{file.identityKind === "edition" && editionsOn ? <button onClick={() => onOpenContents(file)}><ListBullets size={14} /> Issues</button> : null}<button onClick={() => onReplace(file)}><CloudArrowDown size={14} /> Replace</button><button onClick={() => onChangeRun(file)}><Books size={14} /> Change run</button><button onClick={() => onOpenCover(file)}><BookOpen size={14} /> Cover</button><button onClick={() => onOpenWorkbench(file, "match")}><ArrowsClockwise size={14} /> Fix match</button><button onClick={() => onOpenWorkbench(file, "edit")}><PencilSimple size={14} /> Metadata</button></>;
 }
 
-function FileInventory({ files, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
+function FileInventory({ files, readingFiles, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
   if (!files?.length) return <div className="drawer-empty"><HardDrive size={26} weight="duotone" /><strong>No local files linked</strong></div>;
-  return <div className="file-inventory">{files.map((file) => <article key={file.path}><HardDrive size={20} weight="duotone" /><div><strong>{file.filename}</strong><small>{file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)} · {(file.sizeBytes / 1024 / 1024).toFixed(1)} MB</small>{file.metadataLocked ? <small className="metadata-lock"><ShieldCheck size={13} weight="fill" /> Local corrections locked</small> : null}</div><span className="file-row-actions"><FileActionButtons file={file} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></span><details className="file-actions-menu"><summary><DotsThree size={17} weight="bold" /> Actions <CaretDown size={13} /></summary><div><FileActionButtons file={file} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></div></details></article>)}</div>;
+  return <div className="file-inventory">{files.map((file) => <article key={file.path}><HardDrive size={20} weight="duotone" /><div><strong>{file.filename}</strong><small>{file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)} · {(file.sizeBytes / 1024 / 1024).toFixed(1)} MB</small>{file.metadataLocked ? <small className="metadata-lock"><ShieldCheck size={13} weight="fill" /> Local corrections locked</small> : null}</div><span className="file-row-actions"><FileActionButtons file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></span><details className="file-actions-menu"><summary><DotsThree size={17} weight="bold" /> Actions <CaretDown size={13} /></summary><div><FileActionButtons file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></div></details></article>)}</div>;
 }
 
 function IssueCatalogCard({ series, catalogKnown, syncing, error, lastResult, onSync, onReviewFiles, onFindRun }) {
@@ -4004,7 +4005,7 @@ const EDIT_SECTIONS = [
  * change them, rather than as fields that would quietly discard what you type.
  */
 function SeriesEditPanel({
-  series, section, onSection, shownBackdrop, medium,
+  series, section, onSection, shownBackdrop, medium, readingFiles,
   cover, onSelectCover, onUploadCover, coverBusy, coverError,
   onChooseBackdrop, onAutomaticBackdrop, backdropBusy, backdropError,
   alternateTitles, aliasForm, onFixMatch, onSetFormat,
@@ -4020,7 +4021,7 @@ function SeriesEditPanel({
   if (section === "background") {
     return <div className="edit-section">
       <p className="edit-section-intro">Choose a page from {series.title} to show behind this header.</p>
-      <BackdropPicker series={series} current={shownBackdrop} busy={backdropBusy} error={backdropError}
+      <BackdropPicker series={series} current={shownBackdrop} busy={backdropBusy} error={backdropError} readable={readingFiles}
         onChoose={onChooseBackdrop} onAutomatic={onAutomaticBackdrop} />
     </div>;
   }
@@ -4360,6 +4361,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     {edit !== null ? <div className="comic-drawer-body comic-drawer-edit">
       <SeriesEditPanel
         series={series} section={edit} onSection={setEdit} shownBackdrop={shownBackdrop} medium={series.medium}
+        readingFiles={readingFiles}
         cover={coverOptions} coverBusy={coverBusy} coverError={coverError}
         onSelectCover={(source, url, fileId) => onSelectSeriesCover?.(source, url, fileId, series.id).then(loadCoverOptions)}
         onUploadCover={(file) => onUploadSeriesCover?.(file, series.id).then(loadCoverOptions)}
@@ -4388,7 +4390,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       </> : null}
       {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} onRead={onRead} readingFiles={readingFiles} medium={series.medium} /> : null}
       {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
-      {tab === "files" ? <FileInventory files={series.fileDetails} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
+      {tab === "files" ? <FileInventory files={series.fileDetails} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
       {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
       {tab === "advanced" ? <div className="advanced-tools">
         {/* Moved off the header: useful when repairing a run, noise when reading one. */}
@@ -4931,10 +4933,11 @@ function ReaderView({ fileId, title, medium, onClose }) {
 const PAGE_ARCHIVE_EXTENSIONS = new Set(["cbz", "cbr", "cb7", "cbt", "zip", "rar"]);
 
 /** The background picker, hosted by the modal below and by the Edit panel. */
-function BackdropPicker({ series, current, busy, error, onChoose, onAutomatic }) {
+function BackdropPicker({ series, current, busy, error, readable, onChoose, onAutomatic }) {
   const files = useMemo(() => [...(series.fileDetails || [])]
-    .filter((file) => PAGE_ARCHIVE_EXTENSIONS.has(String(file.extension || "").replace(".", "").toLowerCase()))
-    .sort((a, b) => String(a.filename).localeCompare(String(b.filename), undefined, { numeric: true, sensitivity: "base" })), [series.fileDetails]);
+    .filter((file) => (readable ? readable[String(file.id)]?.readable
+      : PAGE_ARCHIVE_EXTENSIONS.has(String(file.extension || "").replace(".", "").toLowerCase())))
+    .sort((a, b) => String(a.filename).localeCompare(String(b.filename), undefined, { numeric: true, sensitivity: "base" })), [series.fileDetails, readable]);
   const [fileId, setFileId] = useState(() => (files.some((file) => file.id === current?.fileId) ? current.fileId : files[0]?.id) || "");
   const [pages, setPages] = useState({ state: "loading", list: [], error: "" });
   useEffect(() => {
