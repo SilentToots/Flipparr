@@ -2279,7 +2279,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    Overview: they are what the drawer is for, and burying reading three tabs
    down while following sat on one of them said the opposite. It sits outside
    the body now, so it no longer cancels padding it is not inside. */
-.comic-drawer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-12) var(--space-16); padding: var(--space-16) var(--space-32); background: var(--color-black); }
+/* Inset to match the tab strip below it, so Read's edge lines up with the
+   Overview pill's rather than sitting a few pixels inside it. */
+.comic-drawer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-12) var(--space-16); padding: var(--space-16) var(--space-20); background: var(--color-black); }
 .comic-drawer-read { flex: none; display: inline-flex; align-items: center; gap: var(--space-8); }
 /* The page you are on, under the label rather than beside it: "Continue #7"
    is the action and "page 12 of 24" is a footnote to it. */
@@ -2435,7 +2437,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .comic-drawer-card.pull-card { width: 104px; }
   .comic-drawer-card .discover-cover { width: 104px; height: 146px; }
   .comic-drawer-creators { margin: 0 calc(var(--space-16) * -1); padding: var(--space-20) var(--space-16); }
-  .comic-drawer-actions { padding: var(--space-12) var(--space-16); }
+  .comic-drawer-actions { padding: var(--space-12) var(--space-10); }
 }
 
 /* The phone's View & sort sheet: from the bottom edge, above the tab bar, with
