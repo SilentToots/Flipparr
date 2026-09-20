@@ -196,6 +196,10 @@ const DIALOG_FOCUSABLE =
 // this — every dialog listens on document, and capture order favours the one
 // that mounted first, which is the one underneath.
 const openDialogs = [];
+// Whether a dialog is the one in front. Keys belong to the front layer only:
+// Escape closes one layer at a time, and the reader's page turns must not
+// reach it while a drawer is open over it.
+const isTopDialog = (node) => Boolean(node) && openDialogs[openDialogs.length - 1] === node;
 
 // While any dialog or drawer is open the page behind it does not scroll: only
 // the dialog does, and there is one scroll bar. The gutter stays reserved so
@@ -325,8 +329,7 @@ function useDialog(onClose) {
     openDialogs.push(node);
     lockPageScroll();
     function handleKeyDown(event) {
-      // Only the topmost dialog reacts, so Escape closes one layer at a time.
-      if (openDialogs[openDialogs.length - 1] !== node) return;
+      if (!isTopDialog(node)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -5042,6 +5045,11 @@ function ReaderView({
   useEffect(() => {
     function onKeyDown(event) {
       if (event.target.closest?.("input")) return;
+      // Pages turn only while the pages are in front. With the finish drawer
+      // or the run drawer open over the reader, Left, Right and Space used to
+      // page the comic underneath -- so Left-then-dismiss landed you a page
+      // short of where you had been.
+      if (!isTopDialog(dialogRef.current)) return;
       const action = actionForKey(event.key, direction);
       if (!action) return;
       event.preventDefault();
