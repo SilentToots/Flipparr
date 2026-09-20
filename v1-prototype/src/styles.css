@@ -2320,6 +2320,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* One line. Two lines of text in a pill stop reading as a button. */
 .comic-drawer-read span { display: inline-flex; align-items: baseline; gap: var(--space-6); min-width: 0; white-space: nowrap; line-height: var(--leading-tight); }
 .comic-drawer-read b { font-weight: var(--weight-regular); opacity: var(--button-disabled-opacity); }
+/* Primary buttons had their lift taken away everywhere (transform: none,
+   further down), which suits one sitting in a form. This one is the size of
+   the thing it does and wants to answer the hand: it rises a little under a
+   pointer and presses back under a tap. */
+@media (hover: hover) {
+  .comic-drawer-actions .comic-drawer-read:not(:disabled):hover { transform: translateY(-1px); }
+  .comic-drawer-actions .comic-drawer-restart:hover { transform: translateY(-1px); }
+}
+.comic-drawer-actions .comic-drawer-read:not(:disabled):active { transform: translateY(0); scale: var(--button-press-scale); }
+.comic-drawer-restart { transition: transform var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard), scale var(--motion-duration-fast) var(--motion-ease-standard); }
+.comic-drawer-restart:active { transform: translateY(0); scale: var(--button-press-scale); }
+@media (prefers-reduced-motion: reduce) {
+  .comic-drawer-actions .comic-drawer-read, .comic-drawer-restart { transition: none; }
+}
+
 /* From the beginning, beside Resume, exactly where a player puts it. */
 .comic-drawer-restart { flex: none; width: 56px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface-raised); color: var(--color-neutral-0); display: grid; place-items: center; cursor: pointer; }
 /* Left to right from the same edge as everything else, at their own width:
