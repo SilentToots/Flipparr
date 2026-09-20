@@ -2369,15 +2369,17 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
  */
 // What a run is about, in its catalog's own words. Clamped: Comic Vine's lead
 // paragraph can run long, and in both drawers the issues are the point.
-function RunSynopsis({ text, source, sourcePrefix = "From", loading = false }) {
+// `heading` is null where the text sits under a heading of its own already,
+// as the finish drawer's next-issue card does.
+function RunSynopsis({ text, source, sourcePrefix = "From", loading = false, heading = "Story" }) {
   const [open, setOpen] = useState(false);
   if (loading) return <section className="run-synopsis" role="status" aria-busy="true" aria-label="Loading the story">
     <span className="discover-drawer-lines" aria-hidden="true"><i /><i /><i /></span>
   </section>;
   if (!text) return null;
   const long = text.length > 220;
-  return <section className="run-synopsis" aria-label="Story">
-    <h3>Story</h3>
+  return <section className="run-synopsis" aria-label={heading || "Story"}>
+    {heading ? <h3>{heading}</h3> : null}
     <p className={long && !open ? "clamped" : ""}>{text}</p>
     <footer>
       {long ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>{open ? "Show less" : "Read more"}</button> : null}
@@ -4566,6 +4568,20 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
   const readingFiles = useMemo(() => Object.fromEntries(
     [...(reading?.issues || []), ...(reading?.volumes || [])].map((file) => [String(file.id), file]),
   ), [reading]);
+  // What the next issue is about, asked for when the drawer opens. It is the
+  // next issue's blurb, not this one's: a card offering a comic is where a
+  // description earns its place, and one about the comic you have just read
+  // is a recap. Nothing is asked when the run is over.
+  const [detail, setDetail] = useState({ state: "loading", data: null });
+  useEffect(() => {
+    if (!nextIssue?.id) return undefined;
+    let live = true;
+    setDetail({ state: "loading", data: null });
+    apiRequest(`/api/v1/issues/${nextIssue.id}/detail`)
+      .then((data) => { if (live) setDetail({ state: "done", data }); })
+      .catch(() => { if (live) setDetail({ state: "done", data: { status: "unavailable" } }); });
+    return () => { live = false; };
+  }, [nextIssue?.id]);
   const heading = issue
     ? `${issueLabel(issue.number, medium)}${issue.title ? ` · ${issue.title}` : ""}`
     : title;
@@ -4586,7 +4602,7 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
         <span className="finish-done"><CheckCircle size={15} weight="fill" /> Finished</span>
       </DiscoverDrawerHero>
       <div className="comic-drawer-body">
-        {issue && onRateIssue ? <section className="finish-section" aria-label="Your rating">
+        {issue && onRateIssue ? <section className="finish-section finish-section--rating" aria-label="Your rating">
           <h3>What did you think?</h3>
           <StarRating size={28} title={issue.title || issueLabel(issue.number, medium)}
             rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }}
@@ -4600,6 +4616,12 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
             <div className="finish-next-copy">
               <strong>{issueLabel(nextIssue.number, medium)}</strong>
               {nextIssue.title ? <small>{nextIssue.title}</small> : null}
+              {detail.state === "loading" ? <RunSynopsis loading heading={null} />
+                : detail.data?.description
+                  ? <RunSynopsis heading={null} text={detail.data.description} source={detail.data.providerName} />
+                  : <p className="discover-note">{detail.data?.status === "unavailable"
+                    ? "This issue’s details are unavailable right now."
+                    : "No description on record for this issue."}</p>}
               <button type="button" className="primary-button" onClick={() => onRead({ id: nextIssue.fileId })}>
                 <BookOpen size={18} weight="fill" /> Read {issueLabel(nextIssue.number, medium)}
               </button>
