@@ -145,7 +145,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    rather than under the title so a glance down the row reads as progress
    rather than as another line of text. */
 .continue-shelf .shelf-row { align-items: flex-start; }
+/* Clear of the grid under it: the shelf ran straight into the first row of
+   covers, so the two read as one block. */
+.continue-shelf { margin-bottom: var(--space-24); }
 .continue-card { padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+/* The same lift every other card has. It is a button rather than a card
+   wrapping one, so it never matched `.pull-card:has(.discover-open:hover)`. */
+@media (hover: hover) {
+  .continue-card:hover { transform: translateY(-2px); }
+  .continue-card:hover .discover-cover { border-color: var(--violet-border); }
+}
+.continue-card:active { scale: var(--card-press-scale); }
+.continue-card .issue-tile-read { opacity: 1; }
 .continue-card-art { position: relative; display: block; }
 .continue-card .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: var(--radius-4); }
 /* The pull card's title box is two fixed lines so a row of buttons stays
@@ -2202,9 +2213,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Panels on a toned drawer are the tone, darkened -- the same translucent band
    as Following and Creators -- rather than a grey card over it, so Discover's
    facts, chips and rows shift with the art the way the Comics drawer's do. */
-.comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip) { background: var(--art-band); }
-.comic-drawer.toned .comic-drawer-follow { background: var(--art-band-strong); }
+.comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip, .edit-identity, .edit-rows, .advanced-card) { background: var(--art-band); }
+.comic-drawer.toned .comic-drawer-actions { background: var(--art-band-strong); }
 .comic-drawer.toned .run-pull-option { background: var(--art-band); }
+.comic-drawer.toned :is(.edit-identity, .edit-rows, .advanced-card) { border-color: var(--art-line); }
+.comic-drawer.toned .edit-row { border-top-color: var(--art-line); }
 .comic-drawer.toned .discover-issue-row { border-bottom-color: var(--art-line); }
 .series-drawer.comic-drawer.discover-drawer.toned > .discover-drawer-actions { background: var(--art-tone-deep); }
 .comic-drawer.toned .comic-drawer-bar::before { background: color-mix(in srgb, var(--art-tone) 82%, transparent); }
@@ -2286,7 +2299,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    Shaped like a player's detail screen: one substantial action across the
    width, the way Resume is, with the rest as quiet icon actions under it. A
    violet pill sharing a row with a switch read as an afterthought. */
-.comic-drawer-actions { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-12); padding: var(--space-16) var(--drawer-inset); background: var(--color-black); }
+.comic-drawer-actions { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-12); padding: var(--space-16) var(--drawer-inset); background: var(--art-band-strong); }
 .comic-drawer-primary { display: flex; align-items: stretch; gap: var(--space-8); }
 .comic-drawer-actions .comic-drawer-read { flex: 1; min-height: 56px; padding: 0 var(--space-20); border-radius: var(--radius-pill); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-10); font-size: clamp(var(--text-sm), calc(var(--text-sm) + (100vw - 320px) * 0.0364), var(--text-md)); }
 /* One line. Two lines of text in a pill stop reading as a button. */
@@ -2297,12 +2310,32 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Left to right from the same edge as everything else, at their own width:
    spreading two actions across a phone would put them nowhere in particular. */
 .comic-drawer-follow-button.active { border-color: var(--violet-border); background: var(--glass-primary-bg); color: var(--color-neutral-0); }
+/* A bookmark says the state but not what clicking it does. Where there is a
+   pointer, the button grows its verb on hover -- Unfollow when it is on --
+   so the toggle never has to be guessed at. Touch keeps the icon and its
+   accessible name, which say the same thing. */
+.comic-drawer-follow-button { width: var(--control-height-md); overflow: hidden; gap: 0; transition: width var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard); }
+.comic-drawer-follow-button b { max-width: 0; font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap; opacity: 0; transition: max-width var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) var(--motion-ease-standard), margin var(--motion-duration-fast) var(--motion-ease-standard); }
+@media (hover: hover) {
+  .comic-drawer-follow-button:hover, .comic-drawer-follow-button:focus-visible { width: auto; padding-inline: var(--space-12); }
+  .comic-drawer-follow-button:hover b, .comic-drawer-follow-button:focus-visible b { max-width: 120px; margin-left: var(--space-6); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .comic-drawer-follow-button, .comic-drawer-follow-button b { transition: none; } }
 @media (hover: hover) { .comic-drawer-restart:hover { border-color: var(--violet-border); } }
 
 /* Edit, pushed over the drawer's tabs rather than opened as a second window.
    One scrim stays on screen, so tapping outside still dismisses the drawer,
    and Back in the top bar pops a section rather than the whole run. */
+/* Editing keeps the art and drops everything drawn on it. The panel already
+   names the run it is editing, so a cover, a title, two badges and an
+   ownership bar above it say the same thing a second time -- and they are a
+   screenful to scroll past before reaching the thing you came to change. */
+.comic-drawer--editing .comic-drawer-hero { min-height: 200px; }
+.comic-drawer--editing .comic-drawer-identity { display: none; }
 .comic-drawer-edit { gap: var(--space-20); }
+.edit-heading { display: grid; gap: var(--space-4); }
+.edit-heading .eyebrow { margin-bottom: 0; font-size: var(--text-xs); }
+.edit-heading h3 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .edit-index { display: grid; gap: var(--space-16); }
 .edit-section { display: grid; gap: var(--space-16); }
 .edit-section-intro { margin: 0; color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }

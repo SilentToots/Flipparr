@@ -1689,6 +1689,9 @@ function ContinueCard({ item, onRead }) {
   return <button type="button" className="pull-card continue-card" onClick={() => onRead(item.fileId)}>
     <span className="continue-card-art">
       <DiscoverCover src={`/api/v1/files/${item.fileId}/pages/0`} alt="" />
+      {/* Always shown here, unlike the tiles: every card on this shelf is a
+          comic to read, so the glyph is the point rather than a reveal. */}
+      <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span>
       {started ? <span className="read-progress-bar" aria-hidden="true">
         <i style={{ width: `${Math.round(((item.page + 1) / item.pageCount) * 100)}%` }} />
       </span> : null}
@@ -4342,7 +4345,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     tabMove.current = order.indexOf(tab) > order.indexOf(shownTab.current) ? "next" : "back";
     shownTab.current = tab;
   }
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
     <DrawerTopBar
       title={edit ? (EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title) : series.title}
       onClose={requestClose}
@@ -4356,6 +4359,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
           aria-label={isFollowing ? `Stop following ${series.title}` : `Follow ${series.title}`}
           title={isFollowing ? "Following" : "Follow run"}>
           {requestBusy || unfollowBusy ? <LoadingSpinner size={18} /> : <FollowedIcon size={20} />}
+          <b>{isFollowing ? "Unfollow" : "Follow"}</b>
         </button>
         <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => setEdit("")} aria-label={`Edit ${series.title}`} title="Edit"><PencilSimple size={20} /></button>
       </> : null}
@@ -4380,6 +4384,10 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     {/* Reading and following, together, above the tabs and on every one of
         them. They are what this drawer is for; everything below is detail. */}
     {edit !== null ? <div className="comic-drawer-body comic-drawer-edit">
+      <header className="edit-heading">
+        <span className="eyebrow">Editing</span>
+        <h3>{EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title}</h3>
+      </header>
       <SeriesEditPanel
         series={series} section={edit} onSection={setEdit} shownBackdrop={shownBackdrop} medium={series.medium}
         readingFiles={readingFiles}
