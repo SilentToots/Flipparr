@@ -2228,10 +2228,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Panels on a toned drawer are the tone, darkened -- the same translucent band
    as Following and Creators -- rather than a grey card over it, so Discover's
    facts, chips and rows shift with the art the way the Comics drawer's do. */
-.comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip, .edit-identity, .edit-rows, .advanced-card) { background: var(--art-band); }
+.comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip, .edit-identity, .edit-rows, .advanced-card, .finish-next) { background: var(--art-band); }
 .comic-drawer.toned .comic-drawer-actions { background: var(--art-band-strong); }
 .comic-drawer.toned .run-pull-option { background: var(--art-band); }
-.comic-drawer.toned :is(.edit-identity, .edit-rows, .advanced-card) { border-color: var(--art-line); }
+.comic-drawer.toned :is(.edit-identity, .edit-rows, .advanced-card, .finish-next) { border-color: var(--art-line); }
 .comic-drawer.toned .edit-row { border-top-color: var(--art-line); }
 .comic-drawer.toned .discover-issue-row { border-bottom-color: var(--art-line); }
 .series-drawer.comic-drawer.discover-drawer.toned > .discover-drawer-actions { background: var(--art-tone-deep); }
@@ -2435,6 +2435,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comic-drawer-card.unowned .discover-cover { opacity: .4; border-style: dashed; }
 .series-drawer.comic-drawer .comic-drawer-card.unowned h3 { color: var(--muted-strong); }
 .comic-drawer-card .ownership-source { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); overflow: hidden; border-radius: var(--radius-pill); box-shadow: 0 2px 8px var(--shadow-soft); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+
+/* The end of an issue, in the drawer every other contained surface uses. Its
+   hero is shorter than the run drawer's: that one is a destination and this
+   one is a receipt, so what comes next has to be on screen under it. */
+.finish-drawer .comic-drawer-hero { min-height: 380px; }
+.finish-done { display: inline-flex; align-items: center; gap: var(--space-6); padding: var(--space-4) var(--space-10); border-radius: var(--radius-pill); background: var(--art-band, var(--surface-sunken)); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-bold); }
+.finish-section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); }
+.series-drawer.comic-drawer .finish-section h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
+/* The next issue reads as a comic, not as a button with a number on it. */
+.finish-next { width: 100%; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); align-items: center; padding: var(--space-16); border: 1px solid var(--line); border-radius: var(--radius-16); }
+.finish-next .discover-cover { width: 96px; height: 140px; border-radius: var(--radius-6); }
+.finish-next-copy { display: grid; justify-items: start; gap: var(--space-4); min-width: 0; }
+.finish-next-copy strong { color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
+.finish-next-copy small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-snug); }
+.finish-next-copy .primary-button { margin-top: var(--space-8); }
+.finish-last { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 
 /* 73:1573: the band runs the drawer's full width, past the body's inset. */
 .comic-drawer-creators { margin: 0 calc(var(--drawer-inset) * -1); padding: var(--space-24) var(--drawer-inset); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); background: var(--color-black); color: var(--color-neutral-0); }
@@ -3397,45 +3413,6 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* A page's shape, held before it loads, so the preview does not pop open. */
 .reader-scrub-preview img { width: 92px; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; border-radius: var(--radius-6); background: var(--surface-raised); display: block; }
 .reader-scrub-preview b { color: var(--text); font-size: var(--text-xs); }
-/* The end of a comic: what you just read, what you thought of it, and what
-   comes next. Shown when you page on from the last page, which is the moment
-   a reader has decided they are done -- not when the last page appears.
-
-   A card on a desktop and a sheet from the bottom on a phone, the same shape
-   All pages takes. Not a toast: a toast times out, and it would take the next
-   issue with it at exactly the moment someone is deciding whether to read it. */
-.reader-finish-backdrop { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; padding: var(--space-20); background: var(--scrim-strong); }
-.reader-finish {
-  position: relative; width: min(420px, 100%); max-height: 100%; overflow-y: auto;
-  display: grid; gap: var(--space-20); padding: var(--space-24);
-  border: 1px solid var(--line-strong); border-radius: var(--radius-16);
-  background: var(--surface-raised); box-shadow: 0 24px 90px var(--shadow-strong);
-}
-.reader-finish-done { display: grid; gap: var(--space-4); text-align: center; }
-.reader-finish-done .eyebrow { margin-bottom: 0; }
-.reader-finish h2 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
-.reader-finish-rating { display: grid; justify-items: center; gap: var(--space-8); }
-.reader-finish-rating p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
-/* The next issue reads as a comic, not as a button with a number on it. */
-.reader-finish-next { display: grid; gap: var(--space-8); }
-.reader-finish-next .eyebrow { margin-bottom: 0; }
-.reader-finish-next-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-12); align-items: center; }
-.reader-finish-next-card .discover-cover { width: 64px; height: 92px; border: 1px solid var(--line); border-radius: var(--radius-4); }
-.reader-finish-next-card > div { display: grid; gap: var(--space-4); justify-items: start; min-width: 0; }
-.reader-finish-next-card strong { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-bold); }
-.reader-finish-next-card small { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-snug); }
-.reader-finish-next-card button { margin-top: var(--space-4); }
-.reader-finish-last { margin: 0; color: var(--muted); font-size: var(--text-sm); text-align: center; }
-.reader-finish-exits { display: flex; justify-content: center; gap: var(--space-8); }
-@media (max-width: 640px) {
-  .reader-finish-backdrop { place-items: end stretch; padding: var(--space-48) var(--space-8) calc(var(--space-8) + env(safe-area-inset-bottom)); }
-  .reader-finish {
-    width: 100%; padding-top: var(--space-28); border-radius: var(--radius-24);
-    max-height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom));
-    animation: sheet-in var(--motion-duration-standard) var(--motion-ease-spring);
-  }
-}
-
 /* Moving a pointer gets the way on and the way back, and nothing else. The
    full interface is asked for by clicking the middle of the page. */
 .reader-arrow {
