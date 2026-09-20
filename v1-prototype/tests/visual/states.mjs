@@ -45,7 +45,12 @@ export const states = [
     name: "library-following",
     phone: false,
     path: "/library",
-    require: [".filter-button"],
+    // The catalog takes seconds over the tunnel, and `.filter-button` is in
+    // the header before any of it arrives -- so this used to photograph the
+    // loading skeleton and pass, which is the false clean `require` exists to
+    // stop. A card has to be on screen for the shot to mean anything.
+    waitForCatalog: true,
+    require: [".filter-button", ".series-card"],
     async setup(page) {
       await page.waitForSelector(".filter-button", { timeout: 15000 });
       await page.locator(".filter-button").first().click();
@@ -60,7 +65,8 @@ export const states = [
     // The phone's bell is a different control in the Comics header.
     phone: false,
     path: "/library",
-    require: [".page-header", ".notifications-menu"],
+    waitForCatalog: true,
+    require: [".page-header", ".notifications-menu", ".series-card"],
     async setup(page) {
       await page.waitForSelector(".appbar-notifications button", { timeout: 15000 });
       await page.locator(".appbar-notifications button").first().click();

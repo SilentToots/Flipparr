@@ -2154,7 +2154,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    --------------------------------------------------------------------------- */
 .series-drawer.comic-drawer { width: min(606px, 100%); padding: 0; background: var(--surface); }
 
-.comic-drawer-hero { position: relative; isolation: isolate; min-height: 524px; padding: var(--space-96) var(--space-24) var(--space-24); display: flex; align-items: flex-end; clip-path: inset(calc(var(--hero-pull, 0px) * -1) 0 0 0); }
+.comic-drawer-hero { position: relative; isolation: isolate; min-height: 524px; padding: var(--space-96) var(--drawer-inset) var(--drawer-inset); display: flex; align-items: flex-end; clip-path: inset(calc(var(--hero-pull, 0px) * -1) 0 0 0); }
 /* The art drifts up at under half the page's pace, and when the drawer is
    pulled down past its top (iOS's rubber band) it grows to fill the gap. The
    values come from DrawerTopBar as the drawer scrolls. */
@@ -2173,7 +2173,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* The pinned top bar (DrawerTopBar): it overlays the art rather than pushing
    it down. Clear at the top of the drawer; frosted, with the title, once the
    title has scrolled under it. */
-.comic-drawer-bar { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: var(--control-height-md) minmax(0, 1fr) var(--control-height-md); align-items: center; gap: var(--space-8); height: var(--drawer-bar-height); margin-bottom: calc(var(--drawer-bar-height) * -1); padding: 0 var(--space-12); pointer-events: none; }
+.comic-drawer-bar { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: var(--control-height-md) minmax(0, 1fr) var(--control-height-md); align-items: center; gap: var(--space-8); height: var(--drawer-bar-height); margin-bottom: calc(var(--drawer-bar-height) * -1); padding: 0 var(--drawer-inset); pointer-events: none; }
 .comic-drawer-bar > button, .comic-drawer-bar-end > * { pointer-events: auto; }
 .comic-drawer-bar::before { content: ""; position: absolute; inset: 0; z-index: -1; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); opacity: 0; transition: opacity var(--motion-duration-standard) ease; }
 .comic-drawer-bar.pinned::before { opacity: 1; }
@@ -2229,7 +2229,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    control family. The file fills it with the bar's own violet, which left
    its weight as the only sign of the selection; the glass is the sign now,
    and the type is every other tab's, 16px regular. */
-.comic-drawer-tabs.drawer-tabs { gap: 0; justify-content: space-between; padding: var(--space-8) var(--space-20); border-bottom: 0; background: var(--violet); }
+.comic-drawer-tabs.drawer-tabs { gap: 0; justify-content: space-between; padding: var(--space-8) var(--drawer-inset); border-bottom: 0; background: var(--violet); }
 .comic-drawer-tabs.drawer-tabs button { min-height: 48px; padding: var(--space-12) var(--space-16); border: 0; border-radius: var(--radius-pill); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-regular); line-height: var(--leading-tight); }
 .comic-drawer-tabs.drawer-tabs { position: relative; isolation: isolate; }
 .comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; }
@@ -2269,7 +2269,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comic-drawer-tabs.drawer-tabs button:focus-visible { outline: 2px solid var(--color-neutral-0); outline-offset: -2px; }
 @media (hover: hover) { .comic-drawer-tabs.drawer-tabs button:not(.active):hover { background: var(--shade-hover); color: var(--color-neutral-0); } }
 
-.comic-drawer-body { display: flex; flex-direction: column; gap: var(--space-40); padding: var(--space-32); }
+.comic-drawer-body { display: flex; flex-direction: column; gap: var(--space-40); padding: var(--space-32) var(--drawer-inset); }
 .comic-drawer-body > * { min-width: 0; }
 
 /* 73:1743. The file draws the switch on; off, the track is the grey that
@@ -2281,7 +2281,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    the body now, so it no longer cancels padding it is not inside. */
 /* Inset to match the tab strip below it, so Read's edge lines up with the
    Overview pill's rather than sitting a few pixels inside it. */
-.comic-drawer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-12) var(--space-16); padding: var(--space-16) var(--space-20); background: var(--color-black); }
+.comic-drawer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-12) var(--space-16); padding: var(--space-16) var(--drawer-inset); background: var(--color-black); }
 .comic-drawer-read { flex: none; display: inline-flex; align-items: center; gap: var(--space-8); }
 /* The page you are on, under the label rather than beside it: "Continue #7"
    is the action and "page 12 of 24" is a footnote to it. */
@@ -2349,7 +2349,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comic-drawer-card .ownership-source { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); overflow: hidden; border-radius: var(--radius-pill); box-shadow: 0 2px 8px var(--shadow-soft); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 
 /* 73:1573: the band runs the drawer's full width, past the body's inset. */
-.comic-drawer-creators { margin: 0 calc(var(--space-32) * -1); padding: var(--space-24) var(--space-32); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); background: var(--color-black); color: var(--color-neutral-0); }
+.comic-drawer-creators { margin: 0 calc(var(--drawer-inset) * -1); padding: var(--space-24) var(--drawer-inset); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); background: var(--color-black); color: var(--color-neutral-0); }
 .series-drawer.comic-drawer .comic-drawer-creators h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
 .comic-drawer-creator-names { margin: 0; overflow: hidden; font-size: var(--text-sm); line-height: var(--leading-normal); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 .comic-drawer-creator-list { width: 100%; margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-12) var(--space-24); }
@@ -2416,8 +2416,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 
 @media (max-width: 640px) {
   .series-drawer.comic-drawer { width: 100%; padding: 0 0 env(safe-area-inset-bottom); border-left: 0; }
-  .comic-drawer-hero { min-height: 380px; padding: var(--space-64) var(--space-16) var(--space-16); }
-  .comic-drawer-bar { padding-inline: var(--space-8); }
+  .comic-drawer-hero { min-height: 380px; padding: var(--space-64) var(--drawer-inset) var(--drawer-inset); }
   .comic-drawer-hero .drawer-back-link { top: 10px; left: 56px; }
   .comic-drawer-identity { gap: var(--space-4); }
   .comic-drawer-cover { flex-basis: 120px; width: 120px; height: 168px; }
@@ -2429,15 +2428,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   /* The first and last labels sit on the drawer's 16px gutter -- 10px of
      bar and 6px of tab -- instead of 4px from the screen's edge. The four
      labels are 300px, so this fits a 375px phone. */
-  .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--space-10); -webkit-mask-image: none; mask-image: none; }
-  .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-6); }
-  .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--space-16); }
+  .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--drawer-inset); -webkit-mask-image: none; mask-image: none; }
+  .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-4); }
+  .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--drawer-inset); }
   .comic-drawer-row { gap: var(--space-14); }
   .comic-drawer-shelf { gap: var(--space-12); }
   .comic-drawer-card.pull-card { width: 104px; }
   .comic-drawer-card .discover-cover { width: 104px; height: 146px; }
-  .comic-drawer-creators { margin: 0 calc(var(--space-16) * -1); padding: var(--space-20) var(--space-16); }
-  .comic-drawer-actions { padding: var(--space-12) var(--space-10); }
+  .comic-drawer-creators { margin: 0 calc(var(--drawer-inset) * -1); padding: var(--space-20) var(--drawer-inset); }
+  .comic-drawer-actions { padding: var(--space-12) var(--drawer-inset); }
 }
 
 /* The phone's View & sort sheet: from the bottom edge, above the tab bar, with

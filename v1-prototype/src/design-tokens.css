@@ -198,6 +198,11 @@
   --art-line: rgb(255 255 255 / .1);
   /* A drawer's pinned top bar (DrawerTopBar). */
   --drawer-bar-height: 60px;
+  /* One left edge down a run's drawer: its top bar, the hero and its cover,
+     the Read/Follow band, the tabs, and the body. They each used to carry
+     their own inset -- 12, 24, 20 and 32 -- so nothing in the drawer lined
+     up with anything above or below it. */
+  --drawer-inset: var(--space-24);
   /* The page's side inset, which the header's scroll edge bleeds across. */
   --page-inset: 32px;
   /* The header's first row: the height of its controls, so every title sits
@@ -435,6 +440,7 @@
 @media (max-width: 640px) {
   :root {
     --control-height-md: 44px;
+    --drawer-inset: var(--space-16);
     --page-inset: 12px;
     --page-header-pad: 8px;
     --page-header-lift: 0px;
