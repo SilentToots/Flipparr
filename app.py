@@ -9120,10 +9120,18 @@ def reading_target(
     """
     def place(item: dict[str, Any]) -> dict[str, Any] | None:
         record = progress.get(str(item["id"]))
-        # A place kept against a file replaced since it was read points at a
-        # page that may not exist. It is not a place, and not evidence that
-        # the comic was ever started.
-        return record if record and not record.get("stale") else None
+        if not record or record.get("stale"):
+            # A place kept against a file replaced since it was read points at
+            # a page that may not exist. It is not a place, and not evidence
+            # that the comic was ever started.
+            return None
+        if not record["page"] and not record["finishedAt"]:
+            # Opened, nothing turned. The reader does not write this -- it
+            # saves nothing until a page moves -- but a cleared record and an
+            # older client both can, and "Continue Series, page 1 of 47" is
+            # not a thing anyone wants to be offered.
+            return None
+        return record
 
     def answer(state: str, item: dict[str, Any] | None, record: dict[str, Any] | None = None) -> dict[str, Any]:
         if item is None:
@@ -9162,7 +9170,9 @@ def reading_target(
     after = [item for item in comics[comics.index(last[0]) + 1:] if place(item) is None]
     if after:
         return answer("next", after[0])
-    return answer("finished", last[0])
+    # Everything readable has been read, so the offer is the run again from
+    # its first issue -- which is what "Restart" means.
+    return answer("finished", comics[0])
 
 
 def series_reading(series_run_id: int) -> dict[str, Any]:

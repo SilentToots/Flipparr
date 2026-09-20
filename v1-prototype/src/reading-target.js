@@ -19,30 +19,50 @@ export const READING_STATES = {
 };
 
 /**
- * What the button says.
+ * What the button says, about the run rather than about one comic.
  *
- * The number comes from the file the server picked, never from the run, and a
- * volume is named as a volume whatever the run's medium is: what opens is the
- * collection, not the issue somewhere inside it. Nothing records where an
- * issue begins in an omnibus, so a button offering "#7" that opens page 1 of
- * 1,100 would be a lie.
+ * "Continue Series" and "#7 · page 12 of 24" say two different things, and
+ * only the first is the action. The issue is the detail under it.
+ *
+ * Restart is offered once every readable issue is finished, and it means the
+ * run from its first issue -- not the last one read again, which is what the
+ * button used to do and what its label would now be lying about.
  */
-export function readingLabel(target, medium) {
-  if (!target || target.state === READING_STATES.none) return "";
-  const number = target.issueNumber;
-  const named = number ? ` ${issueLabel(number, medium)}` : "";
-  switch (target.state) {
-    case READING_STATES.continue: return `Continue${named}`;
-    case READING_STATES.finished: return `Read again${named}`;
-    case READING_STATES.volumeOnly: return `Read ${target.volumeLabel || "volume"}`;
-    default: return `Read${named}`;
+export function readingLabel(target) {
+  switch (target?.state) {
+    case READING_STATES.continue:
+    case READING_STATES.next: return "Continue Series";
+    case READING_STATES.finished: return "Restart Series";
+    case READING_STATES.none:
+    case undefined: return "";
+    default: return "Start Series";
   }
 }
 
-/** "page 12 of 24", or nothing when a comic has not been opened. */
-export function readingDetail(target) {
-  if (target?.state !== READING_STATES.continue || !target.pageCount) return "";
-  return `page ${target.page + 1} of ${target.pageCount}`;
+/**
+ * Just which comic opens: "#7", "Vol. 2", or nothing.
+ *
+ * The button is one line -- two lines of text stop reading as a button -- and
+ * at 320px one line holds the action and the issue but not the page. The page
+ * is still on the cover as a hairline, and in the button's accessible name.
+ */
+export function readingIssue(target, medium) {
+  if (!target || target.state === READING_STATES.none) return "";
+  // A volume is named as a volume whatever the run's medium is: what opens is
+  // the collection, and nothing records where an issue begins inside it.
+  return target.volumeLabel
+    || (target.issueNumber ? issueLabel(target.issueNumber, medium) : "");
+}
+
+/** Which comic that opens, and where in it: "#7 · page 12 of 24". */
+export function readingDetail(target, medium) {
+  if (!target || target.state === READING_STATES.none) return "";
+  const named = readingIssue(target, medium);
+  if (target.state === READING_STATES.continue && target.pageCount) {
+    const place = `page ${target.page + 1} of ${target.pageCount}`;
+    return named ? `${named} · ${place}` : place;
+  }
+  return named;
 }
 
 /** How far through a comic is, 0-1, for the hairline drawn across a cover. */
@@ -51,10 +71,10 @@ export function readingFraction(target) {
   return Math.min(1, (target.page + 1) / target.pageCount);
 }
 
-/** The whole label, as a screen reader should hear it. */
+/** The whole thing, as a screen reader should hear it. */
 export function readingAriaLabel(target, medium, title) {
-  const label = readingLabel(target, medium);
+  const label = readingLabel(target);
   if (!label) return "";
-  const detail = readingDetail(target);
-  return `${label} of ${title}${detail ? `, ${detail}` : ""}`;
+  const detail = readingDetail(target, medium);
+  return `${label}, ${title}${detail ? `, ${detail}` : ""}`;
 }

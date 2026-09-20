@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { FlipparrMark } from "./brand.jsx";
 import {
   ArrowsClockwise,
+  ArrowCounterClockwise,
   CaretRight,
   CaretUpDown,
   Heartbeat,
@@ -61,7 +62,7 @@ import {
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
   PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon,
 } from "./design-icons.jsx";
-import { readingLabel, readingDetail, readingAriaLabel } from "./reading-target.js";
+import { readingLabel, readingIssue, readingAriaLabel, READING_STATES } from "./reading-target.js";
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
@@ -4092,17 +4093,27 @@ function ReadRunOverlay({ run, reading, onRead }) {
  * would say the library holds a comic it does not, and "why is this disabled"
  * is a worse question than "where is the button".
  */
-function ReadRunButton({ reading, title, medium, onRead }) {
+function ReadRunButton({ reading, title, medium, onRead, onRestart }) {
   const target = reading?.resume;
-  const label = readingLabel(target, medium);
+  const label = readingLabel(target);
   if (!label || !onRead) return null;
-  const detail = readingDetail(target);
-  return <button type="button" className="primary-button comic-drawer-read"
-    onClick={() => onRead({ id: target.fileId })}
-    aria-label={readingAriaLabel(target, medium, title)}>
-    <BookOpen size={18} weight="fill" />
-    <span>{label}{detail ? <small>{detail}</small> : null}</span>
-  </button>;
+  const issue = readingIssue(target, medium);
+  // Restart sits beside Continue rather than replacing it, the way a player
+  // offers "from the beginning" next to Resume. There is nothing to go back
+  // to before a run has been started, so it only appears once there is.
+  const first = reading?.issues?.find((file) => file.readable);
+  const restartable = target.state === READING_STATES.continue || target.state === READING_STATES.next;
+  return <div className="comic-drawer-primary">
+    <button type="button" className="primary-button comic-drawer-read"
+      onClick={() => onRead({ id: target.fileId })}
+      aria-label={readingAriaLabel(target, medium, title)}>
+      <BookOpen size={20} weight="fill" />
+      <span>{label}{issue ? <b>{issue}</b> : null}</span>
+    </button>
+    {restartable && first && first.id !== target.fileId ? <button type="button" className="comic-drawer-restart"
+      onClick={() => onRestart(first)} title="Start from the first issue"
+      aria-label={`Start ${title} from its first issue`}><ArrowCounterClockwise size={20} /></button> : null}
+  </div>;
 }
 
 function ComicDrawerRow({ title, count, children }) {
@@ -4338,7 +4349,16 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       onBack={edit !== null ? () => setEdit(edit ? "" : null) : parentCollection ? onBack : undefined}
       stacked={edit !== null}
       closeLabel="Close series details">
-      {edit === null ? <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => setEdit("")} aria-label={`Edit ${series.title}`} title="Edit"><PencilSimple size={20} /></button> : null}
+      {edit === null ? <>
+        <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${isFollowing ? " active" : ""}`}
+          onClick={() => (isFollowing ? onUnfollow(series) : onRequest())}
+          disabled={requestBusy || unfollowBusy} aria-pressed={isFollowing}
+          aria-label={isFollowing ? `Stop following ${series.title}` : `Follow ${series.title}`}
+          title={isFollowing ? "Following" : "Follow run"}>
+          {requestBusy || unfollowBusy ? <LoadingSpinner size={18} /> : <FollowedIcon size={20} />}
+        </button>
+        <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => setEdit("")} aria-label={`Edit ${series.title}`} title="Edit"><PencilSimple size={20} /></button>
+      </> : null}
     </DrawerTopBar>
     <header className="comic-drawer-hero">
       {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={pageArt ? () => setBackdropFailed(true) : undefined} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
@@ -4353,6 +4373,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
           </div>
           <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
           <Ownership series={series} compact />
+          {isFollowing && wantedIssueCount ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
         </div>
       </div>
     </header>
@@ -4373,11 +4394,8 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       />
     </div> : <>
     <div className="comic-drawer-actions">
-      <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead} />
-      <div className="comic-drawer-follow">
-        <FollowSwitch following={isFollowing} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : isFollowing ? "Following Run" : "Follow Run"} onChange={(on) => (on ? onRequest() : onUnfollow(series))} />
-        {isFollowing && wantedIssueCount ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
-      </div>
+      <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead}
+        onRestart={(file) => onRead({ id: file.id })} />
     </div>
     <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>

@@ -2652,8 +2652,9 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(target["fileId"], "3", "the one read most recently")
         self.assertEqual((target["page"], target["pageCount"]), (9, 24))
 
-    def test_a_run_read_to_the_end_offers_a_re_read_rather_than_its_last_page(self):
-        """Mihon's one button always jumps to the first unread, which is why
+    def test_a_run_read_to_the_end_offers_it_again_from_its_first_issue(self):
+        """The button says "Restart Series", so it restarts the series. Mihon's
+        one button jumps to the first *unread* instead, which is why
         re-reading a finished run there is a standing complaint."""
         from app import reading_target
 
@@ -2662,8 +2663,8 @@ class FilenameParserTests(unittest.TestCase):
         target = reading_target(run, [], {
             "1": done("2026-09-01T00:00:00+00:00"), "2": done("2026-09-19T00:00:00+00:00")})
         self.assertEqual(target["state"], "finished")
-        self.assertEqual(target["fileId"], "2", "the one read last")
-        self.assertEqual(target["page"], 0, "from its first page")
+        self.assertEqual(target["fileId"], "1", "the first issue, not the one read last")
+        self.assertEqual(target["page"], 0)
 
     def test_a_place_kept_against_a_replaced_file_is_not_a_place(self):
         from app import reading_target
