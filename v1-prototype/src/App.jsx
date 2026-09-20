@@ -4812,11 +4812,11 @@ function ReaderView({ fileId, title, medium, directionOverride, onOpenRun, onClo
   /**
    * The chrome is asked for, not stumbled into.
    *
-   * It used to come back on any mouse move, which on a desktop means it never
-   * left: a hand resting on a trackpad kept it awake indefinitely. A Kindle
-   * shows only the page arrows when the pointer moves and waits to be asked
-   * before covering the comic, and that is what this does -- move for arrows,
-   * click the middle for everything.
+   * It shows once when a comic opens, to say what is here, and after that
+   * only when someone asks for it by tapping the middle of the page. Moving a
+   * pointer and turning a page both get the arrows instead: a hand resting on
+   * a trackpad used to keep the bars awake for as long as you read, and
+   * bringing them back on every page turn covers the page you just turned to.
    */
   const wakeChrome = useCallback(() => {
     setChrome(true);
@@ -4836,14 +4836,17 @@ function ReaderView({ fileId, title, medium, directionOverride, onOpenRun, onClo
     };
   }, [wakeChrome]);
 
+  // Turning a page shows the arrows, never the bars. The whole interface
+  // coming back on every page turn is the comic being covered up by the thing
+  // you turned the page to read.
   const go = useCallback((action) => {
     setIndex((current) => {
       const next = pageForAction(current, count, action);
       if (next !== current) { setZoom(1); setPan({ x: 0, y: 0 }); }
       return next;
     });
-    wakeChrome();
-  }, [count, wakeChrome]);
+    wakeArrows();
+  }, [count, wakeArrows]);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -4931,7 +4934,7 @@ function ReaderView({ fileId, title, medium, directionOverride, onOpenRun, onClo
     setContents(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    wakeChrome();
+    wakeArrows();
   }
 
   const filter = pageFilter(night);
