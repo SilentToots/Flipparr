@@ -2224,7 +2224,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 }
 .comic-drawer.toned .comic-drawer-scrim { background: linear-gradient(180deg, color-mix(in srgb, var(--art-tone) 35%, transparent) 0%, var(--art-tone) 92%); }
 .comic-drawer.toned .comic-drawer-hero::before { background: var(--art-tone); }
-.comic-drawer.toned .comic-drawer-tabs.drawer-tabs { background: color-mix(in srgb, var(--art-tone) 70%, var(--bg)); }
 /* Panels on a toned drawer are the tone, darkened -- the same translucent band
    as Following and Creators -- rather than a grey card over it, so Discover's
    facts, chips and rows shift with the art the way the Comics drawer's do. */
@@ -2257,7 +2256,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    control family. The file fills it with the bar's own violet, which left
    its weight as the only sign of the selection; the glass is the sign now,
    and the type is every other tab's, 16px regular. */
-.comic-drawer-tabs.drawer-tabs { gap: 0; justify-content: space-between; padding: var(--space-8) var(--drawer-inset); border-bottom: 0; background: var(--violet); }
+/* The strip is the drawer's tone, darkened. It used to fall back to brand
+   violet whenever the tone had not resolved -- a swatch that failed to load
+   left a solid purple bar until the next refresh. --art-tone always has a
+   value on the drawer (the surface, until the art says otherwise), so the
+   one rule covers both. */
+.comic-drawer-tabs.drawer-tabs { gap: 0; justify-content: space-between; padding: var(--space-8) var(--drawer-inset); border-bottom: 0; background: color-mix(in srgb, var(--art-tone) 70%, var(--bg)); }
 /* The labels ease from 16px down to 14 between 375 and 320: at the narrowest
    phone all four tabs fit rather than scrolling, and Read and Following stay
    on one row instead of the band growing to two. Nothing moves at 375 and

@@ -2103,8 +2103,12 @@ function useArtTone(src) {
       return undefined;
     }
     let live = true;
+    // Only a tone that resolved is kept. A swatch that failed to load -- a
+    // blip on the proxy, a container restarting -- used to be remembered as
+    // "no tone" for the rest of the session, so the run stayed untoned on
+    // every reopen until a refresh emptied the map.
     const settle = (value) => {
-      ART_TONES.set(src, value);
+      if (value) ART_TONES.set(src, value);
       if (live) setTone(value);
     };
     let local = false;
