@@ -2631,6 +2631,34 @@ class FilenameParserTests(unittest.TestCase):
         self.assertIsNone(next_unread_file(run, "99", {}), "a comic no longer in the run")
         self.assertIsNone(next_unread_file([], "1", {}))
 
+    def test_finishing_an_issue_never_offers_the_omnibus_as_the_next_one(self):
+        """The backdrop picker's list sorts volumes last, so walking it for
+        "the next issue" hands back a collected edition once the singles run
+        out. Reading asks for the issues on their own."""
+        from app import continue_reading
+
+        class Store:
+            def recent_reading(self, limit):
+                return [{
+                    "fileId": "1", "filename": "#1", "issueNumber": "1",
+                    "seriesRunId": "9", "seriesTitle": "Example", "medium": "comic",
+                    "page": 23, "pageCount": 24,
+                    "finishedAt": "2026-09-20T00:00:00+00:00", "updatedAt": "2026-09-20T00:00:00+00:00",
+                }]
+
+            def run_reading_files(self, run_id):
+                return {
+                    "issues": [{"id": "1", "filename": "#1", "issueNumber": "1"},
+                               {"id": "2", "filename": "#2", "issueNumber": "2"}],
+                    "volumes": [{"id": "9", "filename": "Omnibus.cbz", "issueNumber": None}],
+                }
+
+        with patch("app.catalog_store", return_value=Store()):
+            items = continue_reading()["items"]
+        self.assertEqual([item["fileId"] for item in items], ["2"])
+        self.assertEqual(items[0]["resume"], "next")
+        self.assertEqual(items[0]["issueNumber"], "2", "and it can say which issue it is")
+
     def test_automatic_backdrop_prefers_the_first_spread_after_the_cover(self):
         import io
         from PIL import Image

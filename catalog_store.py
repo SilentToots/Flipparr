@@ -3191,6 +3191,77 @@ class CatalogStore:
             for row in rows
         ]
 
+    def run_reading_files(self, series_run_id: int) -> dict[str, list[dict[str, Any]]]:
+        """A run's comics in reading order, issues apart from volumes.
+
+        Deliberately not `series_backdrop_files`, which looks like the same
+        list and is not. That one sorts by `float(issue_number)`, so every
+        volume -- whose issue number is null -- becomes infinity and lands
+        after the last issue, and "1AU" and "Annual 1" land there with them.
+        A reader walking that list offers an omnibus as the next issue.
+
+        Here the order is `_natural_issue_key`, the key the issue list itself
+        is sorted by, so the reader and the Issues tab agree; and volumes are
+        returned separately rather than sorted to the end, because a volume is
+        a different offer ("read Vol. 2"), not a later issue.
+        """
+        with self._connect() as connection:
+            if connection.execute(
+                "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
+            ).fetchone() is None:
+                raise LookupError("That series run is not in the catalog")
+            rows = list(connection.execute(
+                """SELECT files.id, files.path, files.filename, files.extension,
+                          file_identities.issue_number, file_identities.identity_kind
+                   FROM files
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE file_identities.series_run_id=? AND files.present=1""",
+                (series_run_id,),
+            ))
+        issues, volumes = [], []
+        for row in rows:
+            item = {
+                "id": str(row["id"]), "path": row["path"], "filename": row["filename"],
+                "extension": row["extension"], "issueNumber": row["issue_number"],
+                "identityKind": row["identity_kind"],
+            }
+            (issues if row["issue_number"] else volumes).append(item)
+        issues.sort(key=lambda item: (_natural_issue_key(item["issueNumber"]), item["filename"].casefold()))
+        volumes.sort(key=lambda item: item["filename"].casefold())
+        return {"issues": issues, "volumes": volumes}
+
+    def reading_progress_for_run(self, series_run_id: int) -> dict[str, dict[str, Any]]:
+        """Where every comic in one run was left, keyed by file id.
+
+        Staleness is decided in SQL rather than by opening the files: the
+        signature `app._file_signature` writes is the file's mtime and size in
+        hex, and both are columns here, so `printf('%x-%x', ...)` rebuilds it
+        exactly.
+
+        Those columns are only as fresh as the last scan, which makes this
+        good enough to decide whether to draw a progress bar in a list and not
+        good enough to decide where to open a comic. The reader's own check in
+        `file_reading_progress` stats the real file and stays authoritative.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT reading_progress.*,
+                          printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
+                   FROM reading_progress
+                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE file_identities.series_run_id=?""",
+                (series_run_id,),
+            ).fetchall()
+        return {
+            str(row["file_id"]): {
+                "page": int(row["page"]), "pageCount": int(row["page_count"]),
+                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
+                "stale": row["file_signature"] != row["scanned_signature"],
+            }
+            for row in rows
+        }
+
     def clear_series_backdrop(self, series_run_id: int) -> None:
         with self._write_lock, self._connect() as connection:
             connection.execute(
@@ -7713,6 +7784,12 @@ class CatalogStore:
             # who already knows to open the file. Deliberately unfiltered by
             # language: seeing the French cover is how the mistake is spotted.
             issue_file_covers: dict[int, str] = {}
+            # The file behind an issue, so something can be read from it. Two
+            # copies of one issue are possible -- a scan and a reprint -- and
+            # the lowest file id wins, which means "whichever was catalogued
+            # first". Arbitrary, but stable; there is no better signal, and a
+            # picker for it would be a feature of its own.
+            issue_file_ids: dict[int, str] = {}
             for link in connection.execute(
                 """SELECT file_issue_links.issue_id AS issue_id, files.id AS file_id,
                           files.result_json,
@@ -7725,6 +7802,10 @@ class CatalogStore:
                    ORDER BY files.id"""
             ):
                 issue_id = int(link["issue_id"])
+                # Claimed before the cover is resolved, and on its own key: a
+                # file whose cover cannot be drawn is still a file that can be
+                # read, and sharing the covers' key would have skipped it.
+                issue_file_ids.setdefault(issue_id, str(link["file_id"]))
                 if issue_id in issue_file_covers:
                     continue
                 url = self._resolved_file_cover(
@@ -7798,6 +7879,7 @@ class CatalogStore:
                         "providerPublicationDate": issue["publication_date"],
                         "cover": issue["cover"],
                         "fileCover": issue_file_covers.get(int(issue["id"])),
+                        "fileId": issue_file_ids.get(int(issue["id"])),
                         "metadataLocked": bool(issue["metadata_locked"]),
                         "directOwned": direct, "collectionOwned": collected,
                         "ownership": ownership, "releaseState": release_state,
@@ -8054,6 +8136,9 @@ class CatalogStore:
                 {
                     "id": str(row["id"]), "path": row["path"], "filename": row["filename"], "extension": row["extension"],
                     "sizeBytes": row["size_bytes"], "health": health,
+                    # Which issue this file is, so a Read button can say "#7"
+                    # rather than a scene-release filename. Null on a volume.
+                    "issueNumber": row["identity_issue"],
                     "identityKind": row["identity_kind"], "rawTitle": row["identity_raw_title"],
                     "editionKind": row["edition_kind"],
                     "metadataLocked": bool(row["override_fields_json"]),

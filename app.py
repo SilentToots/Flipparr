@@ -9119,7 +9119,10 @@ def continue_reading(limit: int = 12) -> dict[str, Any]:
         if not run_id:
             continue
         try:
-            run_files = store.series_backdrop_files(int(run_id))
+            # Issues only, in issue order. The backdrop picker's list sorts
+            # every volume to the end, which is how this used to offer an
+            # omnibus as the next issue of a run.
+            run_files = store.run_reading_files(int(run_id))["issues"]
         except LookupError:
             continue
         following = next_unread_file(run_files, record["fileId"], progress_by_file)

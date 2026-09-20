@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app import ParsedFile, _metron_reprint_coverage
 from catalog_core_v2.provider_evidence import native_issue_evidence
+import catalog_store
 from catalog_store import CatalogStore, _parse_timestamp, _utc_now
 
 
@@ -3634,7 +3635,7 @@ class WrongLanguageIsFlaggedTests(unittest.TestCase):
 class LibraryFixture(unittest.TestCase):
     """A scanned library of Example issues, for tests that need real files."""
 
-    def _library(self, root, files, preferred_language=""):
+    def _library(self, root, files, preferred_language="", provider_cover="https://provider/example.jpg"):
         parsed = []
         for name, issue, embedded, cover in files:
             (root / name).write_bytes(b"comic")
@@ -3652,7 +3653,7 @@ class LibraryFixture(unittest.TestCase):
                 "recommendation": {
                     "title": "Example", "issue": p.issue,
                     "record_type": "single_issue", "publisher": "Example Press",
-                    "source": "Test", "cover": "https://provider/example.jpg",
+                    "source": "Test", "cover": provider_cover,
                 },
                 "file_cover": {"url": by_path[p.path][1]} if by_path[p.path][1] else None,
             })
@@ -3927,6 +3928,90 @@ class ReadingProgressTests(LibraryFixture):
             self.assertEqual(store.recent_reading(), [])
             # Still remembered, so putting the file back resumes it.
             self.assertEqual(store.reading_progress(first)["page"], 3)
+
+    def test_an_issue_knows_its_file_even_when_no_cover_can_be_drawn(self):
+        """The file id and the cover are claimed from the same query, and it
+        used to be the cover's slot that decided both. A file whose cover
+        cannot be resolved is still a file that can be read."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library(
+                Path(folder), [("Example 001.cbz", "1", {}, None)], provider_cover=None)
+            issue = store.catalog()["series"][0]["issues"][0]
+            self.assertIsNone(issue["fileCover"], "nothing to draw")
+            self.assertEqual(issue["fileId"], str(self._file_id(store, "Example 001.cbz")),
+                             "but something to read")
+
+    def test_a_run_file_says_which_issue_it_is(self):
+        """Without this a Read button can only name a scene-release filename."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            details = store.catalog()["series"][0]["fileDetails"]
+            self.assertEqual(
+                {item["filename"]: item["issueNumber"] for item in details},
+                {"Example 001.cbz": "1", "Example 002.cbz": "2", "Example 003.cbz": "3"},
+            )
+
+    def test_reading_order_is_issue_order_with_volumes_kept_apart(self):
+        """The backdrop picker's list sorts by float(issue_number), so every
+        volume becomes infinity and lands after the last issue. A reader
+        walking that list offers an omnibus as the next issue."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._library(Path(folder), [
+                ("Example 010.cbz", "10", {}, None),
+                ("Example 002.cbz", "2", {}, None),
+                ("Example 001AU.cbz", "1AU", {}, None),
+                ("Example 001.cbz", "1", {}, None),
+            ])
+            run = self._run_id(store)
+            order = [item["issueNumber"] for item in store.run_reading_files(run)["issues"]]
+            self.assertEqual(order, ["1", "1AU", "2", "10"],
+                             "natural order, the same one the issue list is sorted by")
+            # The same key the Issues tab uses, so the two never disagree.
+            self.assertEqual(order, sorted(order, key=catalog_store._natural_issue_key))
+            with self.assertRaises(LookupError):
+                store.run_reading_files(run + 1000)
+
+    def test_reading_and_backdrop_lists_hold_the_same_files(self):
+        """They may differ in order and in how they are split. They must never
+        differ in which comics they contain -- the backdrop picker validates
+        against its own list, and a file missing from one is a bug in both."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            reading = store.run_reading_files(run)
+            self.assertEqual(
+                {item["id"] for item in reading["issues"] + reading["volumes"]},
+                {item["id"] for item in store.series_backdrop_files(run)},
+            )
+
+    def test_a_run_reports_where_each_of_its_comics_was_left(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            first = self._file_id(store, "Example 001.cbz")
+            second = self._file_id(store, "Example 002.cbz")
+            self.assertEqual(store.reading_progress_for_run(run), {})
+
+            # The signature the reader stores is the file's mtime and size in
+            # hex; the scan recorded both, so a match can be decided in SQL.
+            signature = self._scanned_signature(store, first)
+            store.set_reading_progress(first, 3, 24, signature)
+            store.set_reading_progress(second, 1, 24, "stale-signature")
+            progress = store.reading_progress_for_run(run)
+
+            self.assertEqual(progress[str(first)]["page"], 3)
+            self.assertFalse(progress[str(first)]["stale"])
+            self.assertTrue(progress[str(second)]["stale"],
+                            "a comic replaced since it was read says so")
+            self.assertNotIn(str(self._file_id(store, "Example 003.cbz")), progress,
+                             "a comic never opened has no entry")
+            self.assertEqual(store.reading_progress_for_run(run + 1000), {})
+
+    def _scanned_signature(self, store, file_id):
+        with sqlite3.connect(store.database_path) as connection:
+            return connection.execute(
+                "SELECT printf('%x-%x', mtime_ns, size_bytes) FROM files WHERE id=?", (file_id,)
+            ).fetchone()[0]
 
     def test_deleting_a_file_takes_its_place_with_it(self):
         with tempfile.TemporaryDirectory() as folder:
