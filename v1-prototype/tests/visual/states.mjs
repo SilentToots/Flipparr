@@ -83,6 +83,32 @@ export const states = [
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Files"),
   },
+  // Edit is pushed over the tabs rather than opened as a window, so both the
+  // list and a section have to be photographed: a click that lands before the
+  // panel renders captures the drawer underneath and the run reads clean.
+  {
+    name: "drawer-edit",
+    path: "/library",
+    require: [".edit-rows", ".edit-identity"],
+    async setup(page) {
+      await openFirstSeries(page);
+      await page.locator(".comic-drawer-edit-button").click();
+      await page.waitForSelector(".edit-rows", { timeout: 15000 });
+      await settle(page);
+    },
+  },
+  {
+    name: "drawer-edit-cover",
+    path: "/library",
+    require: [".cover-option-grid"],
+    async setup(page) {
+      await openFirstSeries(page);
+      await page.locator(".comic-drawer-edit-button").click();
+      await page.locator(".edit-row").first().click();
+      await page.waitForSelector(".cover-option-grid", { timeout: 15000 });
+      await settle(page, 800);
+    },
+  },
   // The drawer lost its Aliases tab to Advanced, and Collection only exists
   // with collected editions switched on, which the QA library leaves off.
   {
