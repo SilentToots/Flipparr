@@ -1656,12 +1656,17 @@ function ContinueReadingShelf({ version, onRead }) {
 
 function ContinueCard({ item, onRead }) {
   const started = item.resume === "continue" && item.pageCount > 0;
-  const title = item.seriesTitle || item.filename;
+  // Two issues of one run would otherwise be the same card twice: the run's
+  // title is on both, and only the number says which comic this is.
+  const number = item.issueNumber ? issueLabel(item.issueNumber, item.medium) : "";
+  const title = [item.seriesTitle, number].filter(Boolean).join(" ") || item.filename;
   return <button type="button" className="pull-card continue-card" onClick={() => onRead(item.fileId)}>
-    <DiscoverCover src={`/api/v1/files/${item.fileId}/pages/0`} alt="" />
-    {started ? <span className="continue-card-bar" aria-hidden="true">
-      <i style={{ width: `${Math.round(((item.page + 1) / item.pageCount) * 100)}%` }} />
-    </span> : null}
+    <span className="continue-card-art">
+      <DiscoverCover src={`/api/v1/files/${item.fileId}/pages/0`} alt="" />
+      {started ? <span className="continue-card-bar" aria-hidden="true">
+        <i style={{ width: `${Math.round(((item.page + 1) / item.pageCount) * 100)}%` }} />
+      </span> : null}
+    </span>
     <span className="pull-card-body">
       <h3 title={title}>{title}</h3>
       <p>{started ? `Page ${item.page + 1} of ${item.pageCount}` : "Start the next one"}</p>

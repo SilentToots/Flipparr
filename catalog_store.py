@@ -3168,6 +3168,7 @@ class CatalogStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT reading_progress.*, files.filename, files.path,
+                          file_identities.issue_number AS issue_number,
                           series_runs.id AS series_run_id, series_runs.canonical_title AS series_title,
                           series_runs.format AS medium
                    FROM reading_progress
@@ -3181,6 +3182,7 @@ class CatalogStore:
         return [
             {
                 "fileId": str(row["file_id"]), "filename": row["filename"],
+                "issueNumber": row["issue_number"],
                 "seriesRunId": str(row["series_run_id"]) if row["series_run_id"] else None,
                 "seriesTitle": row["series_title"], "medium": row["medium"],
                 "page": int(row["page"]), "pageCount": int(row["page_count"]),

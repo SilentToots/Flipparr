@@ -3913,6 +3913,7 @@ class ReadingProgressTests(LibraryFixture):
             self.assertEqual({item["seriesRunId"] for item in recent}, {run},
                              "each one says which run it belongs to")
             self.assertEqual(recent[0]["seriesTitle"], "Example")
+            self.assertEqual(recent[0]["issueNumber"], "2", "and which issue of it")
             self.assertEqual(store.recent_reading(1)[0]["filename"], "Example 002.cbz")
 
     def test_a_comic_that_left_the_library_is_not_offered_to_continue(self):

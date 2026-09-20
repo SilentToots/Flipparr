@@ -9128,6 +9128,7 @@ def continue_reading(limit: int = 12) -> dict[str, Any]:
         seen_runs.add(key)
         items.append({
             "fileId": str(following["id"]), "filename": following["filename"],
+            "issueNumber": following.get("issueNumber"),
             "seriesRunId": run_id, "seriesTitle": record["seriesTitle"], "medium": record["medium"],
             "page": 0, "pageCount": 0, "finishedAt": None,
             "updatedAt": record["updatedAt"], "resume": "next",
