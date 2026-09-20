@@ -3154,3 +3154,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   .page-view, .series-grid .series-card,
   :is(.series-grid, .series-table, .request-list, .discover-results, .release-shelf, .metadata-layout, .settings-pane, .settings-index, .library-sources-panel) { animation: none; }
 }
+/* A shelf may say what it is ranked on under its name; the name keeps the
+   row's height, so the line sits with it rather than pushing the cards down. */
+.release-shelf-heading { flex: 1; min-width: 0; display: grid; gap: var(--space-2); }
+.release-shelf-heading p { margin: 0; color: var(--muted); font-size: var(--text-sm); }

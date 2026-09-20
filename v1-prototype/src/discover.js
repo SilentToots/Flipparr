@@ -54,6 +54,113 @@ export function shelfState(shelf, available, loading) {
   return (shelf?.issues || []).length ? "ready" : "empty";
 }
 
+// The order the week's comics are worth looking at, by what this library
+// already says. Every signal below is already on the wire: the server attaches
+// following/inLibrary/owned/queued to each release row against the local
+// catalog, so this is presentation, not a second source of truth.
+//
+// It is deliberately not called trending. Nothing here knows what anyone else
+// is reading -- there is no popularity feed among the providers -- so the
+// shelf says what it actually ranks: this week against your library.
+//
+// What that means in practice, measured against a real week: of 233 issues
+// across the three weeks, 8 touched the library (all followed, and so already
+// queued) and 49 were first issues. So the shelf is a followed-runs block and
+// then the week's #1s, and the subtitle says so rather than implying that
+// anything here is popular.
+const PICK_WEIGHTS = {
+  following: 40,      // a run you follow shipping is the strongest signal there is
+  inLibrary: 20,      // a run you own, even unfollowed, is one you chose once
+  firstIssue: 8,      // a #1 is the only issue you can start without catching up
+  recurringWeek: 6,   // the same run shipping across weeks is a run mid-story
+  publisherShare: 4,  // a publisher you already read, weakly -- see below
+  latest: 6,          // this week beats
+  upcoming: 4,        // next week beats
+  previous: 0,        // last week
+  owned: -25,         // you have it; it is not news
+  queued: -10,        // already asked for; lowered rather than hidden
+  coverless: -15,     // a card with no art reads as broken in a shelf
+};
+
+const FIRST_ISSUE = new Set(["1", "01", "001"]);
+
+/** Ties break the way a person would order them: by title, then by number. */
+export function pickSortKey(issue) {
+  const number = Number.parseFloat(String(issue?.number ?? "").replace(/[^\d.]/g, ""));
+  return [String(issue?.seriesTitle || "").toLowerCase(), Number.isFinite(number) ? number : 0];
+}
+
+/**
+ * This week's comics, ranked against your library.
+ *
+ * Takes the whole releases payload because a run shipping in two of the three
+ * weeks is itself a signal, and that can only be seen across shelves.
+ *
+ * The state matters as much as the order. One shelf can fail while the others
+ * answer -- the endpoint fetches each week separately for exactly that reason
+ * -- and ranking the survivors while calling them "this week" would be a
+ * quiet lie, so a partial answer says it is partial.
+ */
+export function weeklyPicks(data, { limit = 12 } = {}) {
+  const shelves = ["latest", "upcoming", "previous"];
+  const present = shelves.filter((name) => data?.[name]);
+  const failed = present.filter((name) => data[name].error);
+  if (data?.available === false) return { state: "unavailable", issues: [], weeksUsed: 0, weeksTotal: present.length };
+  if (present.length && failed.length === present.length) {
+    return { state: "error", issues: [], error: data[failed[0]].error, weeksUsed: 0, weeksTotal: present.length };
+  }
+
+  const runs = new Map();
+  const seen = new Map();
+  for (const name of present) {
+    for (const issue of data[name].issues || []) {
+      const run = issue.providerSeriesId;
+      if (run) runs.set(run, (runs.get(run) || new Set()).add(name));
+      const key = issueKey(issue);
+      // Metron moves store dates, so the same issue can land in two weeks.
+      if (!seen.has(key)) seen.set(key, { issue, shelf: name });
+    }
+  }
+  const publishers = new Map();
+  let known = 0;
+  for (const { issue } of seen.values()) {
+    if (!issue.publisher) continue;
+    known += 1;
+    publishers.set(issue.publisher, (publishers.get(issue.publisher) || 0) + 1);
+  }
+
+  const scored = [...seen.values()]
+    .filter(({ issue }) => !issue.owned)
+    .map(({ issue, shelf }) => {
+      const weeks = runs.get(issue.providerSeriesId)?.size || 1;
+      const share = known && issue.publisher ? (publishers.get(issue.publisher) || 0) / known : 0;
+      const score = (issue.following ? PICK_WEIGHTS.following : 0)
+        + (issue.inLibrary ? PICK_WEIGHTS.inLibrary : 0)
+        + (FIRST_ISSUE.has(String(issue.number || "").trim()) ? PICK_WEIGHTS.firstIssue : 0)
+        + (weeks - 1) * PICK_WEIGHTS.recurringWeek
+        + share * PICK_WEIGHTS.publisherShare
+        + PICK_WEIGHTS[shelf]
+        + (issue.queued ? PICK_WEIGHTS.queued : 0)
+        + (issue.cover ? 0 : PICK_WEIGHTS.coverless);
+      return { issue, score };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const [leftTitle, leftNumber] = pickSortKey(a.issue);
+      const [rightTitle, rightNumber] = pickSortKey(b.issue);
+      return leftTitle.localeCompare(rightTitle) || leftNumber - rightNumber;
+    })
+    .slice(0, limit)
+    .map((entry) => entry.issue);
+
+  const weeksUsed = present.length - failed.length;
+  if (!scored.length) return { state: "empty", issues: [], weeksUsed, weeksTotal: present.length };
+  return {
+    state: failed.length ? "partial" : "ready",
+    issues: scored, weeksUsed, weeksTotal: present.length,
+  };
+}
+
 /**
  * The runs worth offering, and how many were left out because you have them.
  *

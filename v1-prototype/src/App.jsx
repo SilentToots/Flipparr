@@ -60,7 +60,7 @@ import {
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
-  selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
+  selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
   runModes, completeRunToPull, issueLabel, libraryRunMatches,
 } from "./discover.js";
 
@@ -1288,12 +1288,12 @@ const SHELF_COPY = {
  * The chevrons page by the visible width rather than by a card, because a row
  * that moves 120px on a click reads as a twitch rather than as navigation.
  */
-function ReleaseShelf({ title, date, state, issues = [], error, pulled, onPull, onOpen, onRetry }) {
+function ReleaseShelf({ title, date, subtitle, state, issues = [], error, pulled, onPull, onOpen, onRetry }) {
   const { scroller, atStart, atEnd, measure, page } = useShelfPaging([issues.length, state]);
   const heading = date ? `${title} - ${date}` : title;
   return <section className="release-shelf" aria-label={heading}>
     <header>
-      <h2>{heading}</h2>
+      <div className="release-shelf-heading"><h2>{heading}</h2>{subtitle ? <p>{subtitle}</p> : null}</div>
       {state === "ready" ? <div className="shelf-scroll">
         <button type="button" onClick={() => page(-1)} disabled={atStart} aria-label={`Scroll ${title} back`}><ShelfBackIcon /></button>
         <button type="button" onClick={() => page(1)} disabled={atEnd} aria-label={`Scroll ${title} forward`}><ShelfNextIcon /></button>
@@ -1827,6 +1827,7 @@ function DiscoverView({
 
   const libraryState = libraryMatchState(catalog, backendStatus, libraryMatches);
   const data = releases.data || {};
+  const picks = useMemo(() => weeklyPicks(data), [data]);
   const { fresh, ownedCount } = splitSearchResults(discovery.results);
   const progress = providerProgress(discovery);
   const outstanding = progress.filter((item) => item.status === "searching");
@@ -1918,6 +1919,16 @@ function DiscoverView({
         onOpenSeries={(item) => { remember("series", item); openLibraryRun(item); }}
         onOpenRun={(run) => { remember("run", run); openCatalogRun(run); }} />
     </> : <>
+      {/* What this week is worth looking at, ranked against the library. It is
+          only drawn when there is something to say: when Metron is not
+          connected, or a week failed, the weeks below already say so, and
+          saying it twice on one screen is noise. */}
+      {picks.issues.length ? <ReleaseShelf title="Worth a look this week"
+        subtitle={picks.state === "partial"
+          ? `Runs you follow, then new #1s — from ${picks.weeksUsed} of ${picks.weeksTotal} weeks, one could not be fetched.`
+          : "New issues of runs you follow, then this week's #1s."}
+        state="ready" issues={picks.issues}
+        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })} /> : null}
       <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
         state={shelfState(data.latest, data.available, releases.state === "loading")}
         issues={data.latest?.issues} error={data.latest?.error || data.error}

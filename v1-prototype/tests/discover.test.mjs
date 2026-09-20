@@ -5,7 +5,7 @@ import {
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
   runModes, completeRunToPull, issueLabel,
-  searchFold, libraryRunMatches,
+  searchFold, libraryRunMatches, weeklyPicks,
 } from "../src/discover.js";
 
 test("a manga volume reads as a volume, a comic issue as an issue", () => {
@@ -212,3 +212,102 @@ test("a library run matches by title, publisher or one of its creators", () => {
   assert.ok(!libraryRunMatches(run, { title: "Tynion", year: "" }));
   assert.ok(!libraryRunMatches({ title: "Saga" }, { title: "", year: "" }));
 });
+
+// --- This week, ranked against the library ---------------------------------
+
+const release = (overrides) => ({
+  providerSeriesId: "s1", providerIssueId: String(Math.random()), seriesTitle: "A Comic",
+  number: "5", cover: "https://example.test/cover.jpg", ...overrides,
+});
+const payload = (shelves) => ({
+  available: true,
+  latest: { date: "2026-09-16", issues: [], ...(shelves.latest || {}) },
+  upcoming: { date: "2026-09-23", issues: [], ...(shelves.upcoming || {}) },
+  previous: { date: "2026-09-09", issues: [], ...(shelves.previous || {}) },
+});
+const titles = (result) => result.issues.map((issue) => issue.seriesTitle);
+
+test("a run you follow outranks one you merely own, which outranks a stranger", () => {
+  const result = weeklyPicks(payload({ latest: { issues: [
+    release({ providerSeriesId: "a", seriesTitle: "Stranger" }),
+    release({ providerSeriesId: "b", seriesTitle: "Owned", inLibrary: true }),
+    release({ providerSeriesId: "c", seriesTitle: "Followed", following: true, inLibrary: true }),
+  ] } }));
+  assert.equal(result.state, "ready");
+  assert.deepEqual(titles(result), ["Followed", "Owned", "Stranger"]);
+});
+
+test("a first issue is worth offering, but never beats a run you follow", () => {
+  const result = weeklyPicks(payload({ latest: { issues: [
+    release({ providerSeriesId: "a", seriesTitle: "Debut", number: "1" }),
+    release({ providerSeriesId: "b", seriesTitle: "Ongoing", following: true }),
+    release({ providerSeriesId: "c", seriesTitle: "Middle", number: "7" }),
+  ] } }));
+  assert.deepEqual(titles(result), ["Ongoing", "Debut", "Middle"]);
+});
+
+test("a comic you already own is not news, and a queued one is lowered rather than hidden", () => {
+  const result = weeklyPicks(payload({ latest: { issues: [
+    release({ providerSeriesId: "a", seriesTitle: "Have it", owned: true, following: true }),
+    release({ providerSeriesId: "b", seriesTitle: "Asked for", queued: true }),
+    release({ providerSeriesId: "c", seriesTitle: "New to me" }),
+  ] } }));
+  assert.deepEqual(titles(result), ["New to me", "Asked for"], "owned drops out entirely");
+});
+
+test("a run shipping across weeks is mid-story, and counts for more than one week alone", () => {
+  const result = weeklyPicks(payload({
+    latest: { issues: [
+      release({ providerSeriesId: "recurring", seriesTitle: "Mid story", number: "4" }),
+      release({ providerSeriesId: "once", seriesTitle: "One off", number: "4" }),
+    ] },
+    previous: { issues: [release({ providerSeriesId: "recurring", seriesTitle: "Mid story", number: "3" })] },
+  }));
+  assert.equal(titles(result)[0], "Mid story");
+});
+
+test("the same issue in two weeks is listed once", () => {
+  const twice = release({ providerSeriesId: "a", providerIssueId: "i1", seriesTitle: "Moved" });
+  const result = weeklyPicks(payload({ latest: { issues: [twice] }, previous: { issues: [{ ...twice }] } }));
+  assert.deepEqual(titles(result), ["Moved"]);
+});
+
+test("a week that could not be fetched is admitted, not papered over", () => {
+  const partial = weeklyPicks(payload({
+    latest: { issues: [release({ seriesTitle: "Came back" })] },
+    upcoming: { error: "Metron timed out" },
+  }));
+  assert.equal(partial.state, "partial");
+  assert.equal(partial.weeksUsed, 2);
+  assert.equal(partial.weeksTotal, 3);
+  assert.deepEqual(titles(partial), ["Came back"]);
+
+  const allFailed = weeklyPicks(payload({
+    latest: { error: "Metron timed out" }, upcoming: { error: "Metron timed out" }, previous: { error: "Metron timed out" },
+  }));
+  assert.equal(allFailed.state, "error");
+  assert.equal(allFailed.error, "Metron timed out");
+  assert.deepEqual(allFailed.issues, []);
+});
+
+test("no Metron is its own answer, and nothing to show is another", () => {
+  assert.equal(weeklyPicks({ available: false }).state, "unavailable");
+  assert.equal(weeklyPicks(payload({})).state, "empty");
+  assert.equal(weeklyPicks(payload({ latest: { issues: [release({ owned: true })] } })).state, "empty");
+});
+
+test("the shelf is capped, and ties read alphabetically", () => {
+  const issues = ["Delta", "Alpha", "Charlie", "Bravo"].map((seriesTitle, index) =>
+    release({ providerSeriesId: `s${index}`, seriesTitle }));
+  assert.deepEqual(titles(weeklyPicks(payload({ latest: { issues } }))), ["Alpha", "Bravo", "Charlie", "Delta"]);
+  assert.equal(weeklyPicks(payload({ latest: { issues } }), { limit: 2 }).issues.length, 2);
+});
+
+test("a card with no art sinks: it reads as broken in a shelf", () => {
+  const result = weeklyPicks(payload({ latest: { issues: [
+    release({ providerSeriesId: "a", seriesTitle: "No art", cover: null }),
+    release({ providerSeriesId: "b", seriesTitle: "Has art" }),
+  ] } }));
+  assert.deepEqual(titles(result), ["Has art", "No art"]);
+});
+
