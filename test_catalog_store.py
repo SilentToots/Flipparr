@@ -3631,12 +3631,8 @@ class WrongLanguageIsFlaggedTests(unittest.TestCase):
             )
 
 
-class SeriesCoverPreferenceTests(unittest.TestCase):
-    """A run's face was whatever the alphabetically-first file carried.
-
-    That is how a French DC Saga edition became the face of an English
-    Image run, and there was no way to say otherwise.
-    """
+class LibraryFixture(unittest.TestCase):
+    """A scanned library of Example issues, for tests that need real files."""
 
     def _library(self, root, files, preferred_language=""):
         parsed = []
@@ -3675,6 +3671,22 @@ class SeriesCoverPreferenceTests(unittest.TestCase):
     def _series(self, store):
         return store.catalog()["series"][0]
 
+    def _three_files(self, root, **kwargs):
+        return self._library(root, [
+            ("Example 001.cbz", "1", {}, "/api/file-cover?path=one.cbz"),
+            ("Example 002.cbz", "2", {}, "/api/file-cover?path=two.cbz"),
+            ("Example 003.cbz", "3", {}, "/api/file-cover?path=three.cbz"),
+        ], **kwargs)
+
+
+
+class SeriesCoverPreferenceTests(LibraryFixture):
+    """A run's face was whatever the alphabetically-first file carried.
+
+    That is how a French DC Saga edition became the face of an English
+    Image run, and there was no way to say otherwise.
+    """
+
     def test_a_header_background_can_only_come_from_this_run(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
@@ -3698,13 +3710,6 @@ class SeriesCoverPreferenceTests(unittest.TestCase):
             self.assertEqual(store.library_file_path(int(files[0]["id"])).name, "Example 001.cbz")
             with self.assertRaises(LookupError):
                 store.library_file_path(999999)
-
-    def _three_files(self, root, **kwargs):
-        return self._library(root, [
-            ("Example 001.cbz", "1", {}, "/api/file-cover?path=one.cbz"),
-            ("Example 002.cbz", "2", {}, "/api/file-cover?path=two.cbz"),
-            ("Example 003.cbz", "3", {}, "/api/file-cover?path=three.cbz"),
-        ], **kwargs)
 
     def test_options_name_the_issue_each_cover_came_from(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -3862,6 +3867,75 @@ class SeriesCoverPreferenceTests(unittest.TestCase):
             store.set_series_cover_preference(
                 run, "file", file_id=self._file_id(store, "Example 002.cbz"))
             self.assertIn("french.cbz", self._series(store)["cover"])
+
+
+class ReadingProgressTests(LibraryFixture):
+    """Where a comic was left, kept between sittings."""
+
+    def test_a_page_is_kept_per_file_and_the_last_write_wins(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            self.assertIsNone(store.reading_progress(first))
+            kept = store.set_reading_progress(first, 4, 24, "sig-a")
+            self.assertEqual((kept["page"], kept["pageCount"]), (4, 24))
+            self.assertIsNone(kept["finishedAt"])
+            self.assertEqual(store.reading_progress(first)["page"], 4)
+            # Turning another page overwrites rather than accumulating rows.
+            store.set_reading_progress(first, 5, 24, "sig-a")
+            self.assertEqual(store.reading_progress(first)["page"], 5)
+            self.assertEqual(len(store.recent_reading()), 1)
+
+            finished = store.set_reading_progress(first, 23, 24, "sig-a", finished=True)
+            self.assertIsNotNone(finished["finishedAt"])
+            # Opening it again puts it back in progress.
+            self.assertIsNone(store.set_reading_progress(first, 2, 24, "sig-a")["finishedAt"])
+
+            with self.assertRaises(ValueError):
+                store.set_reading_progress(first, 24, 24, "sig-a")
+            with self.assertRaises(ValueError):
+                store.set_reading_progress(first, -1, 24, "sig-a")
+
+            store.clear_reading_progress(first)
+            self.assertIsNone(store.reading_progress(first))
+
+    def test_what_was_read_lately_comes_back_newest_first_with_its_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = str(self._run_id(store))
+            first = self._file_id(store, "Example 001.cbz")
+            second = self._file_id(store, "Example 002.cbz")
+            store.set_reading_progress(first, 3, 24, "sig-a")
+            store.set_reading_progress(second, 1, 24, "sig-b")
+            recent = store.recent_reading()
+            self.assertEqual([item["filename"] for item in recent],
+                             ["Example 002.cbz", "Example 001.cbz"])
+            self.assertEqual({item["seriesRunId"] for item in recent}, {run},
+                             "each one says which run it belongs to")
+            self.assertEqual(recent[0]["seriesTitle"], "Example")
+            self.assertEqual(store.recent_reading(1)[0]["filename"], "Example 002.cbz")
+
+    def test_a_comic_that_left_the_library_is_not_offered_to_continue(self):
+        """Half-read and gone is not something to carry on with."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            store.set_reading_progress(first, 3, 24, "sig-a")
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("UPDATE files SET present=0 WHERE id=?", (first,))
+            self.assertEqual(store.recent_reading(), [])
+            # Still remembered, so putting the file back resumes it.
+            self.assertEqual(store.reading_progress(first)["page"], 3)
+
+    def test_deleting_a_file_takes_its_place_with_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            store.set_reading_progress(first, 3, 24, "sig-a")
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("DELETE FROM files WHERE id=?", (first,))
+            self.assertIsNone(store.reading_progress(first), "no row pointing at nothing")
 
 
 class ReplacementStaysItsOwnRequestTests(unittest.TestCase):

@@ -9075,6 +9075,66 @@ def choose_series_backdrop(series_run_id: int, file_id: str, page: int) -> dict[
     return series_backdrop(series_run_id)
 
 
+def next_unread_file(run_files: list[dict[str, Any]], after_file_id: str, progress: dict[str, Any]) -> dict[str, Any] | None:
+    """The next comic in a run nobody has started, after the one just finished.
+
+    Finishing an issue is the moment to offer the next one; offering the issue
+    just read instead is what makes a "continue" shelf feel like it is not
+    paying attention. A comic already started is skipped, because it is
+    offered on its own account.
+    """
+    seen = False
+    for item in run_files:
+        if str(item["id"]) == str(after_file_id):
+            seen = True
+            continue
+        if not seen:
+            continue
+        record = progress.get(str(item["id"]))
+        if record is None:
+            return item
+    return None
+
+
+def continue_reading(limit: int = 12) -> dict[str, Any]:
+    """What to carry on with: what is part-read, then what comes next.
+
+    Each run appears once. A part-read comic is the run's entry; a run whose
+    last read comic is finished offers the next issue instead.
+    """
+    store = catalog_store()
+    recent = store.recent_reading(limit * 3)
+    progress_by_file = {item["fileId"]: item for item in recent}
+    items: list[dict[str, Any]] = []
+    seen_runs: set[str] = set()
+    for record in recent:
+        run_id = record["seriesRunId"]
+        key = run_id or f"file:{record['fileId']}"
+        if key in seen_runs:
+            continue
+        if not record["finishedAt"]:
+            seen_runs.add(key)
+            items.append({**record, "resume": "continue"})
+            continue
+        if not run_id:
+            continue
+        try:
+            run_files = store.series_backdrop_files(int(run_id))
+        except LookupError:
+            continue
+        following = next_unread_file(run_files, record["fileId"], progress_by_file)
+        if following is None:
+            continue
+        seen_runs.add(key)
+        items.append({
+            "fileId": str(following["id"]), "filename": following["filename"],
+            "seriesRunId": run_id, "seriesTitle": record["seriesTitle"], "medium": record["medium"],
+            "page": 0, "pageCount": 0, "finishedAt": None,
+            "updatedAt": record["updatedAt"], "resume": "next",
+        })
+    return {"items": items[:limit]}
+
+
 def file_pages(file_id: int) -> dict[str, Any]:
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
@@ -9093,6 +9153,42 @@ def file_pages(file_id: int) -> dict[str, Any]:
             for index in range(len(pages))
         ],
     }
+
+
+def file_reading_progress(file_id: int) -> dict[str, Any]:
+    """Where a comic was left, and whether that place still exists.
+
+    The page is kept with the file's signature, so a file replaced since it
+    was read starts again rather than opening at a page it may not have.
+    """
+    path = catalog_store().library_file_path(file_id)
+    record = catalog_store().reading_progress(file_id)
+    try:
+        signature = _file_signature(path)
+    except OSError:
+        signature = None
+    if record and signature and record["fileSignature"] == signature:
+        return record
+    return {
+        "fileId": str(file_id), "page": 0, "pageCount": 0, "fileSignature": signature,
+        "startedAt": None, "finishedAt": None, "updatedAt": None,
+        "stale": bool(record),
+    }
+
+
+def set_file_reading_progress(file_id: int, page: int) -> dict[str, Any]:
+    """Remember the page. The count and the signature are the server's to know."""
+    path = catalog_store().library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    if not pages:
+        raise ValueError("This comic has no pages")
+    if not 0 <= page < len(pages):
+        raise ValueError("That page is not in this comic")
+    return catalog_store().set_reading_progress(
+        file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1,
+    )
 
 
 def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
@@ -11168,6 +11264,18 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if parsed_url.path == "/api/v1/reading":
+            self.send_json(continue_reading())
+            return
+        file_progress_match = re.fullmatch(r"/api/v1/files/(\d+)/progress", parsed_url.path)
+        if file_progress_match:
+            try:
+                payload = file_reading_progress(int(file_progress_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
         file_pages_match = re.fullmatch(r"/api/v1/files/(\d+)/pages", parsed_url.path)
         if file_pages_match:
             try:
@@ -11720,6 +11828,26 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("providerSeriesId") or ""),
                     payload.get("query"),
                 )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        file_progress_post = re.fullmatch(r"/api/v1/files/(\d+)/progress", parsed_url.path)
+        if file_progress_post:
+            file_id = int(file_progress_post.group(1))
+            page = payload.get("page")
+            try:
+                if page is None:
+                    catalog_store().clear_reading_progress(file_id)
+                    result = file_reading_progress(file_id)
+                else:
+                    if not isinstance(page, int) or isinstance(page, bool):
+                        raise ValueError("A page is a whole number")
+                    result = set_file_reading_progress(file_id, page)
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return

@@ -2616,6 +2616,21 @@ class FilenameParserTests(unittest.TestCase):
                 self.assertEqual(cached_page_members(path), ["1.jpg", "2.jpg"])
                 self.assertEqual(len(calls), 2)
 
+    def test_a_finished_comic_offers_the_next_one_in_the_run(self):
+        """Offering the issue just finished is what makes a continue shelf
+        look like it is not paying attention."""
+        from app import next_unread_file
+
+        run = [{"id": "1", "filename": "#1"}, {"id": "2", "filename": "#2"},
+               {"id": "3", "filename": "#3"}, {"id": "4", "filename": "#4"}]
+        self.assertEqual(next_unread_file(run, "1", {})["id"], "2")
+        # One already started is offered on its own account, not here.
+        started = {"2": {"fileId": "2", "page": 4, "finishedAt": None}}
+        self.assertEqual(next_unread_file(run, "1", started)["id"], "3")
+        self.assertIsNone(next_unread_file(run, "4", {}), "the end of a run offers nothing")
+        self.assertIsNone(next_unread_file(run, "99", {}), "a comic no longer in the run")
+        self.assertIsNone(next_unread_file([], "1", {}))
+
     def test_automatic_backdrop_prefers_the_first_spread_after_the_cover(self):
         import io
         from PIL import Image

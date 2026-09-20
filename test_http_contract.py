@@ -784,6 +784,94 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(past_the_end.status, 404)
         self.assertEqual(unknown_size.status, 422)
 
+    def _library_file(self, path: Path) -> int:
+        """A real row in the contract database, so progress can be stored
+        against it: the table keys on a file id and cascades from it."""
+        import sqlite3
+        import app as app_module
+
+        store = app_module.catalog_store()
+        with sqlite3.connect(store.database_path) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            root = connection.execute(
+                "INSERT INTO library_roots(path, created_at) VALUES (?, ?)"
+                " ON CONFLICT(path) DO UPDATE SET path=excluded.path RETURNING id",
+                (str(path.parent), "2026-01-01T00:00:00+00:00"),
+            ).fetchone()[0]
+            return connection.execute(
+                """INSERT INTO files(root_id, path, filename, extension, size_bytes, mtime_ns,
+                                     fingerprint, parsed_json, result_json, created_at, updated_at)
+                   VALUES (?, ?, ?, '.cbz', 0, 0, 'fingerprint', '{}', '{}', ?, ?) RETURNING id""",
+                (root, str(path), path.name, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            ).fetchone()[0]
+
+    def test_a_reading_place_is_kept_and_the_last_page_finishes_the_comic(self):
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "progress.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(3):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            file_id = self._library_file(comic)
+
+            fresh = self.get(f"/api/v1/files/{file_id}/progress")
+            self.assertEqual(fresh.status, 200)
+            self.assertEqual(fresh.json()["page"], 0, "an unread comic opens at the cover")
+
+            saved = self.post(f"/api/v1/files/{file_id}/progress", {"page": 1})
+            self.assertEqual(saved.status, 200)
+            self.assertEqual(saved.json()["pageCount"], 3, "the count is the server's to know")
+            self.assertIsNone(saved.json()["finishedAt"])
+            self.assertEqual(self.get(f"/api/v1/files/{file_id}/progress").json()["page"], 1)
+
+            finished = self.post(f"/api/v1/files/{file_id}/progress", {"page": 2})
+            self.assertIsNotNone(finished.json()["finishedAt"], "the last page finishes it")
+
+            self.assertEqual(self.post(f"/api/v1/files/{file_id}/progress", {"page": 9}).status, 400)
+            self.assertEqual(self.post(f"/api/v1/files/{file_id}/progress", {"page": "two"}).status, 400)
+
+            cleared = self.post(f"/api/v1/files/{file_id}/progress", {"page": None})
+            self.assertEqual(cleared.json()["page"], 0)
+            self.assertFalse(cleared.json()["stale"], "cleared on purpose is not stale")
+
+    def test_a_comic_replaced_since_it_was_read_opens_at_the_start(self):
+        """The page was kept against a file that no longer exists; page 40 of
+        a shorter replacement is a blank screen."""
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "replaced.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(4):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            file_id = self._library_file(comic)
+            self.post(f"/api/v1/files/{file_id}/progress", {"page": 2})
+
+            time.sleep(0.01)
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("0.jpg", _png_bytes())
+            resumed = self.get(f"/api/v1/files/{file_id}/progress").json()
+            self.assertEqual(resumed["page"], 0)
+            self.assertTrue(resumed["stale"], "and it says why it starts again")
+
+    def test_what_to_carry_on_with_is_listed_on_its_own_route(self):
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "continue.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(6):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            file_id = self._library_file(comic)
+            self.post(f"/api/v1/files/{file_id}/progress", {"page": 2})
+
+            response = self.get("/api/v1/reading")
+            self.assertEqual(response.status, 200)
+            entry = next(
+                (item for item in response.json()["items"] if item["fileId"] == str(file_id)), None)
+            self.assertIsNotNone(entry, "a part-read comic is something to continue")
+            self.assertEqual((entry["page"], entry["pageCount"]), (2, 6))
+            self.assertEqual(entry["resume"], "continue")
+
+    def test_progress_can_only_be_kept_for_comics_the_library_holds(self):
+        self.assertEqual(self.get("/api/v1/files/999999/progress").status, 404)
+        self.assertEqual(self.post("/api/v1/files/999999/progress", {"page": 1}).status, 404)
+
     def test_pages_can_only_be_read_from_comics_the_library_holds(self):
         """Pages are addressed by file id through the catalog, never by a path
         in the request, so this is the whole boundary."""

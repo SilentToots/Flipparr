@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -1113,6 +1113,23 @@ class CatalogStore:
                     file_signature TEXT,
                     updated_at TEXT NOT NULL
                 );
+                -- Where you are in a comic (schema 40). Keyed by file, because
+                -- a file is the thing you read; an issue may have several. The
+                -- file's signature is kept with the page: this app replaces
+                -- files, and page 40 of a 24-page replacement is a blank
+                -- screen, so a page from a file that has changed is not
+                -- offered back.
+                CREATE TABLE IF NOT EXISTS reading_progress (
+                    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                    page INTEGER NOT NULL,
+                    page_count INTEGER NOT NULL,
+                    file_signature TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS reading_progress_recent
+                    ON reading_progress(updated_at DESC);
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -3092,6 +3109,85 @@ class CatalogStore:
                        updated_at=excluded.updated_at""",
                 (series_run_id, int(file_id), member, source, file_signature, _utc_now()),
             )
+
+    def reading_progress(self, file_id: int) -> dict[str, Any] | None:
+        """Where this comic was left, if it is still the comic it was."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM reading_progress WHERE file_id=?", (int(file_id),)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fileId": str(row["file_id"]), "page": int(row["page"]),
+            "pageCount": int(row["page_count"]), "fileSignature": row["file_signature"],
+            "startedAt": row["started_at"], "finishedAt": row["finished_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def set_reading_progress(
+        self, file_id: int, page: int, page_count: int, file_signature: str,
+        finished: bool = False,
+    ) -> dict[str, Any]:
+        """Remember the page, and when a comic was finished.
+
+        Two things write this -- turning a page, and closing the reader -- and
+        the last write wins. That is correct here: both carry the page the
+        reader was on, and a page number is not a value two writers can
+        disagree about the way a counter would be.
+        """
+        if page < 0 or page_count < 0 or page > max(0, page_count - 1):
+            raise ValueError("That page is not in this comic")
+        now = _utc_now()
+        finished_at = now if finished else None
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO reading_progress(
+                       file_id, page, page_count, file_signature, started_at, finished_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(file_id) DO UPDATE SET
+                       page=excluded.page, page_count=excluded.page_count,
+                       file_signature=excluded.file_signature,
+                       -- Going back into a comic you finished makes it unfinished again.
+                       finished_at=excluded.finished_at,
+                       updated_at=excluded.updated_at""",
+                (int(file_id), int(page), int(page_count), file_signature, now, finished_at, now),
+            )
+        return self.reading_progress(file_id)
+
+    def clear_reading_progress(self, file_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute("DELETE FROM reading_progress WHERE file_id=?", (int(file_id),))
+
+    def recent_reading(self, limit: int = 24) -> list[dict[str, Any]]:
+        """What was read lately, newest first, with what it belongs to.
+
+        Only comics the library still holds: a file that has gone is not
+        something to offer to continue.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT reading_progress.*, files.filename, files.path,
+                          series_runs.id AS series_run_id, series_runs.canonical_title AS series_title,
+                          series_runs.format AS medium
+                   FROM reading_progress
+                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
+                   LEFT JOIN file_identities ON file_identities.file_id=files.id
+                   LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
+                   ORDER BY reading_progress.updated_at DESC
+                   LIMIT ?""",
+                (int(limit),),
+            ).fetchall()
+        return [
+            {
+                "fileId": str(row["file_id"]), "filename": row["filename"],
+                "seriesRunId": str(row["series_run_id"]) if row["series_run_id"] else None,
+                "seriesTitle": row["series_title"], "medium": row["medium"],
+                "page": int(row["page"]), "pageCount": int(row["page_count"]),
+                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
+            }
+            for row in rows
+        ]
 
     def clear_series_backdrop(self, series_run_id: int) -> None:
         with self._write_lock, self._connect() as connection:
