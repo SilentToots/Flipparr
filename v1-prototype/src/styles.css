@@ -3409,15 +3409,17 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-contents-bar span { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
 .reader-contents-grid { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--space-12); align-content: start; padding: var(--space-16) var(--space-16) calc(var(--space-24) + env(safe-area-inset-bottom)); }
 .reader-contents-page { padding: 0; border: 0; background: none; display: grid; gap: var(--space-6); justify-items: center; cursor: pointer; }
+.reader-contents-art { position: relative; display: block; width: 100%; }
 .reader-contents-page img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; display: block; border: 2px solid transparent; border-radius: var(--radius-6); background: var(--surface-raised); }
+/* Centred on the page, like an issue tile's Upcoming or Missing. */
+.reader-contents-art .ownership-source { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); border-radius: var(--radius-pill); box-shadow: 0 2px 8px var(--shadow-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .reader-contents-page b { color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-regular); }
 /* A 2px outline was not enough to find yourself among forty-odd covers: the
    page being read is ringed, brightened while the rest step back, and says so
    in words under its number. */
 .reader-contents-page img { opacity: var(--button-disabled-opacity); transition: opacity var(--motion-duration-fast) ease; }
 .reader-contents-page.current img { border-color: var(--violet); box-shadow: 0 0 0 3px var(--violet-soft), var(--glass-shadow); opacity: 1; }
-.reader-contents-page.current b { color: var(--text); font-weight: var(--weight-bold); display: grid; justify-items: center; gap: var(--space-2); }
-.reader-contents-page.current i { color: var(--violet-text); font-size: var(--text-xs); font-style: normal; font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: .08em; }
+.reader-contents-page.current b { color: var(--text); font-weight: var(--weight-bold); }
 @media (hover: hover) { .reader-contents-page:hover img { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .reader-contents-page img { transition: none; } }
 .reader-contents-page:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-6); }

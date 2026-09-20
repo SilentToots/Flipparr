@@ -5028,8 +5028,13 @@ function ReaderView({ fileId, title, medium, directionOverride, behind = false, 
           // this grid exists to save.
           ref={page.index === index ? (node) => node?.scrollIntoView({ block: "center" }) : undefined}
           onClick={() => goToPage(page.index)}>
-          <img src={page.url} alt="" loading="lazy" decoding="async" />
-          <b>{page.index + 1}{page.index === index ? <i>Reading</i> : null}</b>
+          <span className="reader-contents-art">
+            <img src={page.url} alt="" loading="lazy" decoding="async" />
+            {/* On the page, the way an issue tile says Upcoming or Missing on
+                its cover rather than underneath it. */}
+            {page.index === index ? <span className="ownership-source collection">Reading</span> : null}
+          </span>
+          <b>{page.index + 1}</b>
         </button>)}
       </div>
       </aside>
