@@ -4614,16 +4614,16 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
         {/* The two cards sit close, as one pair of things to do; the shelf
             below keeps the body's own distance. */}
         <div className="finish-cards">
-        {issue && onRateIssue ? <section className="finish-section finish-section--rating" aria-label="Your rating">
+        {issue && onRateIssue ? <section className="finish-card finish-card--rating" aria-label="Your rating">
           <h3>What did you think?</h3>
           <StarRating size={28} title={issue.title || issueLabel(issue.number, medium)}
             rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }}
             onRate={(value) => onRateIssue(issue, value)} />
         </section> : null}
 
-        {nextIssue && onRead ? <section className="finish-section" aria-label="Next in this run">
+        {nextIssue && onRead ? <section className="finish-next-block" aria-label="Next in this run">
           <h3>Next in this run</h3>
-          <div className="finish-next">
+          <div className="finish-card finish-next">
             <DiscoverCover src={nextIssue.fileCover || nextIssue.cover} alt="" glyph={24} />
             <div className="finish-next-copy">
               {/* Named the way a shelf names it: the run and the number, then

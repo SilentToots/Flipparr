@@ -2227,10 +2227,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Panels on a toned drawer are the tone, darkened -- the same translucent band
    as Following and Creators -- rather than a grey card over it, so Discover's
    facts, chips and rows shift with the art the way the Comics drawer's do. */
-.comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip, .edit-identity, .edit-rows, .advanced-card, .finish-section) { background: var(--art-band); }
+.comic-drawer.toned :is(.comic-drawer-creators, .drawer-facts span, .discover-chip, .edit-identity, .edit-rows, .advanced-card, .finish-card) { background: var(--art-band); }
 .comic-drawer.toned .comic-drawer-actions { background: var(--art-band-strong); }
 .comic-drawer.toned .run-pull-option { background: var(--art-band); }
-.comic-drawer.toned :is(.edit-identity, .edit-rows, .advanced-card, .finish-section) { border-color: var(--art-line); }
+.comic-drawer.toned :is(.edit-identity, .edit-rows, .advanced-card, .finish-card) { border-color: var(--art-line); }
 .comic-drawer.toned .edit-row { border-top-color: var(--art-line); }
 .comic-drawer.toned .discover-issue-row { border-bottom-color: var(--art-line); }
 .series-drawer.comic-drawer.discover-drawer.toned > .discover-drawer-actions { background: var(--art-tone-deep); }
@@ -2440,10 +2440,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .finish-done { display: inline-flex; align-items: center; gap: var(--space-6); padding: var(--space-4) var(--space-10); border-radius: var(--radius-pill); background: var(--art-band, var(--surface-sunken)); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-bold); }
 /* Each section is a card, heading included, so the two read as two things to
    do. The rating one is centred: five stars are a gesture, not a row of text. */
-.finish-section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); padding: var(--space-20); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface-raised); }
+.finish-card { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); padding: var(--space-20); border: 1px solid var(--line); border-radius: var(--radius-16); background: var(--surface-raised); }
 .finish-cards { display: grid; gap: var(--space-16); }
-.finish-section--rating { align-items: center; text-align: center; }
-.series-drawer.comic-drawer .finish-section h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
+.finish-card--rating { align-items: center; text-align: center; }
+/* The next issue's heading stands above its card, centred, rather than inside it. */
+.finish-next-block { display: grid; gap: var(--space-12); }
+.finish-next-block > h3 { text-align: center; }
+.series-drawer.comic-drawer :is(.finish-card, .finish-next-block) > h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
 /* The next issue reads as a comic, not as a button with a number on it: the
    cover down the side, the run and number, the story's title, three lines of
    what it is about, and one button the width of the copy. */
