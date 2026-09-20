@@ -4453,7 +4453,11 @@ function ReaderView({ fileId, title, medium, onClose }) {
         const start = Math.min(Math.max(0, Number(place?.page) || 0), Math.max(0, list.length - 1));
         setPages({ state: "done", list, error: "" });
         setIndex(start);
+        // Both refs move with the resumed page, not with the render that
+        // follows: closing the reader in the frame between the two would
+        // otherwise save the cover over the place just restored.
         saved.current = start;
+        at.current = start;
         open.current = true;
       })
       .catch((error) => { if (live) setPages({ state: "done", list: [], error: error.message }); });
@@ -4474,6 +4478,12 @@ function ReaderView({ fileId, title, medium, onClose }) {
   }, [fileId]);
 
   useEffect(() => {
+    // Nothing is saved while the comic is still opening. A timer started at
+    // page zero and a place arriving a moment later is a race the reader
+    // loses: the timer fires with the cover's number and writes it over the
+    // page you were on. Waiting for the place to land costs one page turn's
+    // delay and cannot lose anything.
+    if (!open.current) return undefined;
     const timer = window.setTimeout(() => keepPlace(index), 900);
     return () => window.clearTimeout(timer);
   }, [index, keepPlace]);
