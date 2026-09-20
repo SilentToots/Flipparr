@@ -712,11 +712,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    into the label where there is a pointer, the way Follow does in a drawer. */
 .series-card-read b { max-width: 0; font-size: var(--text-xs); font-weight: var(--weight-semibold); white-space: nowrap; opacity: 0; transition: max-width var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) ease, margin var(--motion-duration-fast) var(--motion-ease-standard); }
 @media (hover: hover) {
-  /* Hovering the comic is enough. Asking for the cursor to find a 32px
-     square in the corner of a cover is asking for the label never to be
-     seen. */
-  .series-card:hover .series-card-read, .series-card-read:focus-visible { width: auto; padding-inline: var(--space-8); }
-  .series-card:hover .series-card-read b, .series-card-read:focus-visible b { max-width: 96px; margin-left: var(--space-6); opacity: 1; }
+  /* Hovering the comic brings the button out; hovering the button itself is
+     what asks what it does. A label that unfurled across the cover every time
+     the pointer crossed a card would be noise on a shelf of forty. */
+  .series-card-read:hover, .series-card-read:focus-visible { width: auto; padding-inline: var(--space-8); }
+  .series-card-read:hover b, .series-card-read:focus-visible b { max-width: 96px; margin-left: var(--space-6); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .series-card-read, .series-card-read b { transition: none; } }
 .series-card-read:focus-visible { opacity: 1; }
