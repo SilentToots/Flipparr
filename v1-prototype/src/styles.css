@@ -3158,3 +3158,91 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    row's height, so the line sits with it rather than pushing the cards down. */
 .release-shelf-heading { flex: 1; min-width: 0; display: grid; gap: var(--space-2); }
 .release-shelf-heading p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+
+/* --- The reader (2026-09-20) --------------------------------------------------------
+   A comic, full screen, over whatever opened it. The page is the only thing
+   lit: the surface behind it is black rather than the app's near-black, so a
+   white page in a dark room is the brightest thing on screen and nothing
+   around it competes. The chrome is glass, and gets out of the way while
+   reading. */
+.reader {
+  position: fixed; z-index: 90; inset: 0; background: var(--color-black);
+  /* One full-width column, said explicitly: left implicit, the column takes
+     the width of its narrowest row -- the bottom bar -- and the page shrinks
+     to 95px on a phone. */
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
+  animation: reader-in var(--motion-duration-standard) var(--motion-ease-standard) backwards;
+}
+@keyframes reader-in { from { opacity: 0; } to { opacity: 1; } }
+.reader-surface {
+  grid-row: 1 / -1; grid-column: 1; width: 100%; position: relative; overflow: hidden;
+  display: grid; place-items: center; touch-action: pan-y; cursor: pointer;
+}
+.reader-page {
+  grid-area: 1 / 1; max-width: 100%; max-height: 100dvh; width: auto; height: auto;
+  object-fit: contain; visibility: hidden; user-select: none;
+  transition: scale var(--motion-duration-fast) var(--motion-ease-standard), translate var(--motion-duration-fast) var(--motion-ease-standard);
+}
+/* The page being read; the neighbours stay mounted so a turn is instant. */
+.reader-page.shown { visibility: visible; }
+/* A spread is read across the width rather than squeezed into the height. */
+.reader-page.spread.shown { max-width: 100%; max-height: none; width: 100%; }
+.reader-status { display: flex; align-items: center; gap: var(--space-12); color: var(--muted); font-size: var(--text-sm); }
+.reader-status--error { color: var(--red-text); }
+
+.reader-bar {
+  /* In the page's column, not beside it: the surface spans every row, so a
+     bar left to auto-placement lands in an implicit second column and the
+     page's column collapses to nothing. */
+  grid-column: 1;
+  position: relative; z-index: 2; display: flex; align-items: center; gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  transition: opacity var(--motion-duration-standard) var(--motion-ease-standard), translate var(--motion-duration-standard) var(--motion-ease-standard);
+}
+/* The bars sit over the page, so each carries its own shade: white lettering
+   on a light page is unreadable otherwise, and a solid bar would crop the art. */
+.reader-bar--top {
+  grid-row: 1; padding-top: calc(var(--space-12) + env(safe-area-inset-top));
+  background: linear-gradient(to bottom, var(--scrim-strong), transparent);
+}
+.reader-bar--bottom {
+  grid-row: 3; flex-wrap: wrap; justify-content: space-between; padding-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--scrim-strong), transparent);
+}
+.reader-bar--bottom .reader-count, .reader-bar--bottom .reader-left { color: var(--color-neutral-0); }
+.reader-go { min-height: 36px; padding-inline: var(--space-16); }
+/* Reading: the chrome leaves rather than dimming, so nothing sits over the art. */
+.reader--reading .reader-bar { opacity: 0; pointer-events: none; }
+.reader--reading .reader-bar--top { translate: 0 -100%; }
+.reader--reading .reader-bar--bottom { translate: 0 100%; }
+.reader-title { flex: 1; min-width: 0; overflow: hidden; color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.reader-count, .reader-left { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
+.reader-scrubber { position: relative; flex: 1 1 240px; min-width: 0; display: flex; align-items: center; }
+.reader-scrubber input { width: 100%; accent-color: var(--violet); }
+/* The page under the thumb, above it, while dragging. */
+.reader-scrub-preview {
+  position: absolute; bottom: calc(100% + var(--space-8)); left: 50%; translate: -50% 0;
+  display: grid; justify-items: center; gap: var(--space-4); padding: var(--space-6);
+  border-radius: var(--radius-12); background: var(--glass-menu-bg); box-shadow: var(--glass-rim), var(--glass-shadow);
+}
+/* A page's shape, held before it loads, so the preview does not pop open. */
+.reader-scrub-preview img { width: 92px; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; border-radius: var(--radius-6); background: var(--surface-raised); display: block; }
+.reader-scrub-preview b { color: var(--text); font-size: var(--text-xs); }
+.reader-jump { display: flex; align-items: center; gap: var(--space-6); }
+.reader-jump input {
+  width: 72px; min-height: 36px; box-sizing: border-box; padding: 0 var(--space-12);
+  border: 1px solid transparent; border-radius: var(--radius-pill); background: var(--field-bg); color: var(--text); font-size: var(--text-sm);
+}
+.reader-jump input:focus { border-color: var(--violet-border); background: var(--field-bg-focus); }
+.reader-jump button { min-height: 36px; }
+.reader-settings {
+  position: absolute; z-index: 3; top: calc(var(--space-48) + env(safe-area-inset-top)); right: var(--space-16);
+  width: min(280px, calc(100vw - var(--space-32))); display: grid; gap: var(--space-12);
+  padding: var(--space-16); border-radius: var(--radius-16); background: var(--glass-menu-bg); box-shadow: var(--glass-rim), var(--glass-shadow);
+}
+.reader-settings label { display: grid; gap: var(--space-6); color: var(--text); font-size: var(--text-sm); }
+.reader-settings input[type="range"] { width: 100%; accent-color: var(--violet); }
+.reader-settings-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+@media (prefers-reduced-motion: reduce) {
+  .reader, .reader-page, .reader-bar { animation: none; transition: none; }
+}
