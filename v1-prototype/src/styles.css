@@ -707,7 +707,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .series-card .cover-placeholder { width: 100%; aspect-ratio: var(--cover-ratio); }
 /* Above the card's own button, or it could not be clicked. Same overlay
    idiom as an issue tile: never glass, because a cover is content. */
-.series-card-read { position: absolute; right: var(--space-8); bottom: var(--space-8); z-index: 2; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: inline-flex; align-items: center; justify-content: center; gap: 0; overflow: hidden; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
+.series-card-read { position: absolute; left: var(--space-8); top: var(--space-8); z-index: 2; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: inline-flex; align-items: center; justify-content: center; gap: 0; overflow: hidden; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
 /* The icon says what it is; the word says what pressing it does. It grows
    into the label where there is a pointer, the way Follow does in a drawer. */
 .series-card-read b { max-width: 0; font-size: var(--text-xs); font-weight: var(--weight-semibold); white-space: nowrap; opacity: 0; transition: max-width var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) ease, margin var(--motion-duration-fast) var(--motion-ease-standard); }
@@ -1406,7 +1406,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    "Single + volume" state has both a badge and a file to read, so a centred
    Read would land on top of it. Same idiom as the pencil -- an overlay
    control, never glass, because a cover is content and not navigation. */
-.issue-tile-read, .comic-drawer-card-art .issue-tile-read { position: absolute; top: auto; bottom: 6px; right: 6px; width: 27px; height: 27px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
+.issue-tile-read, .comic-drawer-card-art .issue-tile-read { position: absolute; top: 6px; left: 6px; right: auto; bottom: auto; width: 27px; height: 27px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
 .issue-tile-read:focus-visible { opacity: 1; }
 @media (hover: hover) { .issue-tile:hover .issue-tile-read, .pull-card:has(.discover-open:hover) .issue-tile-read { opacity: 1; } }
 @media (hover: none) { .issue-tile-read { opacity: 1; } }
