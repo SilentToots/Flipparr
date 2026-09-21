@@ -2445,8 +2445,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .finish-card--rating { align-items: center; text-align: center; }
 /* The next issue's heading stands above its card, centred, rather than inside it. */
 .finish-next-block { display: grid; gap: var(--space-12); }
-.finish-next-block > h3 { text-align: center; }
+/* The heading is a stripe the drawer's full width, in the action band's own
+   dark, so it reads as a shelf title over the card rather than a label on it.
+   Specific enough to take the margin back from the shared heading rule. */
 .series-drawer.comic-drawer :is(.finish-card, .finish-next-block) > h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
+.series-drawer.comic-drawer .finish-next-block > h3 { margin: 0 calc(var(--drawer-inset) * -1); padding: var(--space-12) var(--drawer-inset); background: var(--art-band-strong); text-align: center; }
 /* The next issue reads as a comic, not as a button with a number on it: the
    cover down the side, the run and number, the story's title, three lines of
    what it is about, and one button the width of the copy. */

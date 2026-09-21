@@ -137,7 +137,7 @@ export const states = [
     name: "reader-finish",
     path: "/library",
     waitForCatalog: true,
-    require: [".finish-drawer", ".finish-section", ".finish-next"],
+    require: [".finish-drawer", ".finish-card", ".finish-next"],
     async setup(page) {
       const origin = new URL(page.url()).origin;
       const catalog = await (await page.request.get(`${origin}/api/v1/catalog`)).json();
