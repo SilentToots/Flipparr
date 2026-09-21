@@ -2706,6 +2706,9 @@ class FilenameParserTests(unittest.TestCase):
         from app import reading_by_run
 
         class Store:
+            def issue_file_counts_by_run(self):
+                return {"9": 2, "12": 1}
+
             def reading_progress_by_run(self):
                 return {"9": {
                     "1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
@@ -2724,19 +2727,52 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual((runs["9"]["page"], runs["9"]["pageCount"]), (5, 24))
         self.assertNotIn("12", runs, "a run whose only record is against a replaced file")
 
-    def test_a_run_read_to_the_end_reports_itself_finished_to_the_grid(self):
+    def _finished_first_issue(self, owned):
         from app import reading_by_run
 
         class Store:
+            def issue_file_counts_by_run(self):
+                return {"9": owned}
+
             def reading_progress_by_run(self):
                 return {"9": {"1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
                                     "finishedAt": "2026-09-19T00:00:00+00:00",
                                     "updatedAt": "2026-09-19T00:00:00+00:00"}}}
 
         with patch("app.catalog_store", return_value=Store()):
+            return reading_by_run()["runs"]["9"]
+
+    def test_a_run_read_to_the_end_reports_itself_finished_to_the_grid(self):
+        run = self._finished_first_issue(owned=1)
+        self.assertEqual(run["state"], "finished", "so the cover offers Restart, not Continue")
+        self.assertNotIn("finished", run, "the state says it; a second flag would be a second rule")
+
+    def test_finishing_one_issue_of_many_is_between_issues_not_finished(self):
+        """The cover of a run with one issue read out of twenty-five used to
+        offer Restart. It is the drawer's "next" state: begin the next one."""
+        run = self._finished_first_issue(owned=25)
+        self.assertEqual(run["state"], "next")
+
+    def test_the_grid_is_told_when_a_run_was_last_read(self):
+        """Recent sorts on it, so it is the newest record's time, whichever comic."""
+        from app import reading_by_run
+
+        class Store:
+            def issue_file_counts_by_run(self):
+                return {"9": 3}
+
+            def reading_progress_by_run(self):
+                return {"9": {
+                    "1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
+                          "finishedAt": "2026-09-19T00:00:00+00:00", "updatedAt": "2026-09-20T10:00:00+00:00"},
+                    "2": {"page": 5, "pageCount": 24, "issueNumber": "2", "stale": False,
+                          "finishedAt": None, "updatedAt": "2026-09-18T00:00:00+00:00"},
+                }}
+
+        with patch("app.catalog_store", return_value=Store()):
             run = reading_by_run()["runs"]["9"]
-        self.assertTrue(run["finished"], "so the card draws no progress across a comic that is done")
-        self.assertEqual(run["state"], "finished")
+        self.assertEqual(run["lastReadAt"], "2026-09-20T10:00:00+00:00")
+        self.assertEqual(run["fileId"], "2", "but the place offered is still the part-read comic")
 
     def test_finishing_an_issue_never_offers_the_omnibus_as_the_next_one(self):
         """The backdrop picker's list sorts volumes last, so walking it for

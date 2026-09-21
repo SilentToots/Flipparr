@@ -9283,8 +9283,10 @@ def reading_by_run() -> dict[str, Any]:
     working it out here would mean sniffing every archive in the library to
     find which comic is readable, on a request the grid makes on every visit.
     """
+    store = catalog_store()
+    owned = store.issue_file_counts_by_run()
     runs = {}
-    for run_id, progress in catalog_store().reading_progress_by_run().items():
+    for run_id, progress in store.reading_progress_by_run().items():
         live = {
             file_id: record for file_id, record in progress.items() if not record["stale"]
         }
@@ -9295,11 +9297,22 @@ def reading_by_run() -> dict[str, Any]:
             started or live.values(), key=lambda record: str(record["updatedAt"] or ""),
         )
         file_id = next(key for key, record in live.items() if record is latest)
+        # The drawer's three states, so a cover says the same thing the run's
+        # button does. "Between issues" used to read as finished, and the cover
+        # of a run with one issue read out of twenty-five offered Restart.
+        finished_count = len(live) - len(started)
+        remaining = max(0, owned.get(run_id, 0) - finished_count)
+        if started:
+            state = "continue"
+        elif remaining:
+            state = "next"
+        else:
+            state = "finished"
         runs[run_id] = {
-            "state": "continue" if started else "finished",
+            "state": state,
             "fileId": file_id, "issueNumber": latest["issueNumber"],
             "page": latest["page"], "pageCount": latest["pageCount"],
-            "finished": len(started) == 0,
+            "lastReadAt": max(str(record["updatedAt"] or "") for record in live.values()) or None,
         }
     return {"runs": runs}
 

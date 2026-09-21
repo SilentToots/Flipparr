@@ -4118,6 +4118,21 @@ class ReadingProgressTests(LibraryFixture):
             self.assertIsNone(store.reading_progress(first), "no row pointing at nothing")
 
 
+class IssueFileCountTests(LibraryFixture):
+    """How many single issues a run owns, for the grid to know whether
+    anything is left unread once the finished ones are counted."""
+
+    def test_every_run_reports_how_many_issues_it_holds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            self.assertEqual(store.issue_file_counts_by_run(), {str(self._run_id(store)): 3})
+
+    def test_a_library_with_nothing_scanned_says_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            self.assertEqual(store.issue_file_counts_by_run(), {})
+
+
 class ReplacementStaysItsOwnRequestTests(unittest.TestCase):
     """Replacing one comic must not enrol the run it belongs to.
 

@@ -987,7 +987,9 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(entry["fileId"], str(file_id))
         self.assertEqual((entry["page"], entry["pageCount"]), (3, 8))
         self.assertEqual(entry["issueNumber"], "4")
-        self.assertFalse(entry["finished"])
+        self.assertEqual(entry["state"], "continue")
+        self.assertRegex(entry["lastReadAt"], r"^\d{4}-\d{2}-\d{2}T", "Recent sorts on it as a string")
+        self.assertEqual(set(entry), {"state", "fileId", "issueNumber", "page", "pageCount", "lastReadAt"})
 
     def test_progress_can_only_be_kept_for_comics_the_library_holds(self):
         self.assertEqual(self.get("/api/v1/files/999999/progress").status, 404)

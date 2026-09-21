@@ -3350,6 +3350,30 @@ class CatalogStore:
             }
         return by_run
 
+    def issue_file_counts_by_run(self) -> dict[str, int]:
+        """How many single-issue comics each run owns, for the Comics grid.
+
+        The run map needs to know whether anything is left unread after the
+        comics that have been finished, and this is the cheapest honest answer:
+        one query, present files only, and only files that are an issue --
+        volumes are read separately, as `run_reading_files` partitions them,
+        and an omnibus must not keep a run "in progress" forever. It is a file
+        count, not a readability sniff: a PDF counts as unread. That is the
+        same proxy the grid already accepts rather than opening every archive
+        on every visit.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT file_identities.series_run_id AS run_id, COUNT(*) AS files
+                   FROM files
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE files.present=1
+                     AND file_identities.series_run_id IS NOT NULL
+                     AND file_identities.issue_number IS NOT NULL
+                   GROUP BY file_identities.series_run_id"""
+            ).fetchall()
+        return {str(row["run_id"]): int(row["files"]) for row in rows}
+
     def set_rating(self, kind: str, target_id: int, rating: int | None) -> dict[str, Any]:
         """Rate an issue or a run, or take the rating back.
 
