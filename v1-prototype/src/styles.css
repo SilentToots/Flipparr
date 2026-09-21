@@ -2522,6 +2522,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      labels are 300px, so this fits a 375px phone. */
   .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--drawer-inset); -webkit-mask-image: none; mask-image: none; }
   .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-2); }
+  /* The pill hugged its word: the buttons have 2px of side padding because
+     four labels with counts fill a phone's width, and any more overflows the
+     row. So the room is the pill's own -- it is drawn from the button's
+     measured box, and grows past it without moving a label. 4px is what fits
+     at 320px, where the buttons nearly touch. */
+  .comic-drawer-tabs.drawer-tabs > .glass-indicator { box-sizing: content-box; padding: 0 var(--space-4); margin-left: calc(var(--space-4) * -1); }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--drawer-inset); }
   .finish-next { grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); }
   .finish-next .discover-cover { width: 96px; }
