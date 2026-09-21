@@ -2241,7 +2241,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    phone all four tabs fit rather than scrolling, and Read and Following stay
    on one row instead of the band growing to two. Nothing moves at 375 and
    above, where the clamp sits on --text-md. */
-.comic-drawer-tabs.drawer-tabs button { min-height: 48px; padding: var(--space-12) var(--space-16); border: 0; border-radius: var(--radius-pill); color: var(--color-neutral-0); font-size: clamp(var(--text-sm), calc(var(--text-sm) + (100vw - 320px) * 0.0364), var(--text-md)); font-weight: var(--weight-regular); line-height: var(--leading-tight); }
+.comic-drawer-tabs.drawer-tabs button { min-height: 48px; padding: var(--space-12) var(--space-16); border: 0; border-radius: var(--radius-pill); color: var(--color-neutral-0); font-size: clamp(var(--text-xs), calc(var(--text-xs) + (100vw - 320px) * 0.0727), var(--text-md)); font-weight: var(--weight-regular); line-height: var(--leading-tight); }
 .comic-drawer-tabs.drawer-tabs { position: relative; isolation: isolate; }
 .comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; }
 .comic-drawer-tabs.drawer-tabs button.active { background: transparent; color: var(--color-neutral-0); }
@@ -2525,9 +2525,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   /* The pill hugged its word: the buttons have 2px of side padding because
      four labels with counts fill a phone's width, and any more overflows the
      row. So the room is the pill's own -- it is drawn from the button's
-     measured box, and grows past it without moving a label. 4px is what fits
-     at 320px, where the buttons nearly touch. */
-  .comic-drawer-tabs.drawer-tabs > .glass-indicator { box-sizing: content-box; padding: 0 var(--space-4); margin-left: calc(var(--space-4) * -1); }
+     measured box, and grows past it without moving a label. The labels scale
+     down to 12px at 320px (16px from 375px up) so the row has the room. */
+  .comic-drawer-tabs.drawer-tabs > .glass-indicator { box-sizing: content-box; padding: 0 var(--space-6); margin-left: calc(var(--space-6) * -1); }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--drawer-inset); }
   .finish-next { grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); }
   .finish-next .discover-cover { width: 96px; }
