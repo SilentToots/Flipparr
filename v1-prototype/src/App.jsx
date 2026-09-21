@@ -1499,7 +1499,6 @@ function catalogPending(catalog, backendStatus) {
   return !catalog && backendStatus !== "offline";
 }
 
-
 // The four states a comic can be in on its way to the library, in the order
 // it moves through them. Following is not among them: monitoring is a property
 // of the run, shown on its card, not a place a run sits.
@@ -1528,7 +1527,6 @@ const PULL_LIST_COPY = {
     emptyDetail: "A download that cannot finish on its own waits here for you to retry it or pick another release.",
   },
 };
-
 
 // Everything the phone's toolbar used to hold, in one sheet from the bottom of
 // the screen: grid or list, the sort, the Following filter, and Runs or
@@ -1635,18 +1633,6 @@ function SortMenu({ value, onChange }) {
 // library's matching runs as you type with Discover's Library Matches cards.
 // Search (Enter) looks through the comic catalogs on Discover, as the desktop
 // bar does.
-/**
- * What you were part-way through, across every run.
- *
- * Reading progress is kept per file, so this is the one place the library
- * shows a comic rather than a run: carrying on is about the issue that was
- * open, not the shelf it sits on. The cover is the comic's own first page,
- * because a run's cover would be the wrong issue's.
- *
- * It says nothing at all when there is nothing to carry on with -- an empty
- * "Continue reading" heading on a fresh library is a promise of a feature
- * rather than a feature.
- */
 function useRunReading(version) {
   const [runs, setRuns] = useState({});
   useEffect(() => {
@@ -1657,55 +1643,6 @@ function useRunReading(version) {
     return () => { live = false; };
   }, [version]);
   return runs;
-}
-
-function ContinueReadingShelf({ version, onRead }) {
-  const [items, setItems] = useState([]);
-  useEffect(() => {
-    let live = true;
-    apiRequest("/api/v1/reading")
-      .then((data) => { if (live) setItems(data.items || []); })
-      .catch(() => { if (live) setItems([]); });
-    return () => { live = false; };
-  }, [version]);
-  const { scroller, atStart, atEnd, measure, page } = useShelfPaging([items.length]);
-  if (!items.length) return null;
-  const fits = atStart && atEnd;
-  return <section className="release-shelf continue-shelf" aria-label="Continue reading">
-    <header>
-      <div className="release-shelf-heading"><h2>Continue reading</h2></div>
-      {fits ? null : <div className="shelf-scroll">
-        <button type="button" onClick={() => page(-1)} disabled={atStart} aria-label="Scroll Continue reading back"><ShelfBackIcon /></button>
-        <button type="button" onClick={() => page(1)} disabled={atEnd} aria-label="Scroll Continue reading forward"><ShelfNextIcon /></button>
-      </div>}
-    </header>
-    <div className="shelf-row" ref={scroller} onScroll={measure}>
-      {items.map((item) => <ContinueCard key={item.fileId} item={item} onRead={onRead} />)}
-    </div>
-  </section>;
-}
-
-function ContinueCard({ item, onRead }) {
-  const started = item.resume === "continue" && item.pageCount > 0;
-  // Two issues of one run would otherwise be the same card twice: the run's
-  // title is on both, and only the number says which comic this is.
-  const number = item.issueNumber ? issueLabel(item.issueNumber, item.medium) : "";
-  const title = [item.seriesTitle, number].filter(Boolean).join(" ") || item.filename;
-  return <button type="button" className="pull-card continue-card" onClick={() => onRead(item.fileId)}>
-    <span className="continue-card-art">
-      <DiscoverCover src={`/api/v1/files/${item.fileId}/pages/0`} alt="" />
-      {/* Always shown here, unlike the tiles: every card on this shelf is a
-          comic to read, so the glyph is the point rather than a reveal. */}
-      <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span>
-      {started ? <span className="read-progress-bar" aria-hidden="true">
-        <i style={{ width: `${Math.round(((item.page + 1) / item.pageCount) * 100)}%` }} />
-      </span> : null}
-    </span>
-    <span className="pull-card-body">
-      <h3 title={title}>{title}</h3>
-      <p>{started ? `Page ${item.page + 1} of ${item.pageCount}` : "Start the next one"}</p>
-    </span>
-  </button>;
 }
 
 function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onRead, readingVersion, catalog, backendStatus }) {
@@ -1802,9 +1739,6 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} view={view} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
-      {/* Above the grid, and only while searching is not: a filtered library
-          is a question about a title, not about where you left off. */}
-      {!searching && backendStatus !== "offline" ? <ContinueReadingShelf version={readingVersion} onRead={onRead} /> : null}
       {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={runReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>The comic catalogs may have it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button></div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </div>
@@ -3094,7 +3028,6 @@ function ReplacementModal({ file, busy, error, onClose, onSubmit }) {
 function MetadataComparison({ comparison }) {
   return <div className="comparison"><div className="comparison-head"><span>Field</span><span>{comparison.catalogLabel}</span><span>{comparison.fileLabel}</span></div>{comparison.rows.map((row) => <div className="comparison-row" key={row.field}><strong>{row.field}</strong><span className={row.catalog ? "" : "missing"}>{row.catalog ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} />} {row.catalog || "Not available"}</span><span className={row.status}>{row.status === "match" ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} weight={row.status === "conflict" ? "fill" : "regular"} />} {row.file || "Not available"}</span></div>)}{comparison.catalogUrl ? <div className="comparison-source"><a href={comparison.catalogUrl} target="_blank" rel="noreferrer">Open metadata source</a></div> : null}</div>;
 }
-
 
 // Each section's name, the line under its title, and -- for a phone's list of
 // them, grouped as iOS Settings groups its rows -- its icon and group.

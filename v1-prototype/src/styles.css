@@ -140,30 +140,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .pull-card h3 { margin: 0; height: 32px; font-size: var(--text-xs); font-weight: var(--weight-medium); line-height: var(--leading-snug); color: var(--color-neutral-0); text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .pull-card-action { padding: var(--space-8) 0; }
 
-/* Continue reading: a pull card without the button, and with a bar across the
-   foot of the cover saying how far in you are. The bar sits on the cover
-   rather than under the title so a glance down the row reads as progress
-   rather than as another line of text. */
-.continue-shelf .shelf-row { align-items: flex-start; }
-/* Clear of the grid under it: the shelf ran straight into the first row of
-   covers, so the two read as one block. */
-.continue-shelf { margin-bottom: var(--space-24); }
-.continue-card { padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
-/* The same lift every other card has. It is a button rather than a card
-   wrapping one, so it never matched `.pull-card:has(.discover-open:hover)`. */
-@media (hover: hover) {
-  .continue-card:hover { transform: translateY(-2px); }
-  .continue-card:hover .discover-cover { border-color: var(--violet-border); }
-}
-.continue-card:active { scale: var(--card-press-scale); }
-.continue-card .issue-tile-read { opacity: 1; }
-.continue-card-art { position: relative; display: block; }
-.continue-card .discover-cover { width: 120px; height: 168px; border: 1px solid var(--color-neutral-500); border-radius: var(--radius-4); }
-/* The pull card's title box is two fixed lines so a row of buttons stays
-   level; nothing sits under these, so the page line follows the title. */
-.continue-card h3 { height: auto; text-align: left; }
-.continue-card p { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-snug); }
-
 .pull-button { width: 100%; padding: var(--space-4) var(--space-8); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-8); border: 1px solid var(--pull-border); border-radius: var(--radius-8); background: var(--pull-bg); box-shadow: inset 0 2px 0 0 var(--wash-active); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-medium); line-height: var(--leading-snug); white-space: nowrap; cursor: pointer; }
 .pull-button-md { font-size: var(--text-sm); line-height: var(--leading-normal); }
 .pull-button:disabled { cursor: default; }
@@ -3326,7 +3302,6 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 :is(.toggle-row, .follow-switch):not(:has(input:disabled)):active input:checked + i::after { transform: translateX(var(--switch-travel-pressed)); }
 .comic-drawer-follow .follow-switch > i::after { box-shadow: 0 1px 3px var(--shadow-faint); }
 @media (prefers-reduced-motion: reduce) { :is(.toggle-row, .follow-switch) > i, :is(.toggle-row, .follow-switch) > i::after { transition: none; } }
-
 
 /* --- Arrivals (2026-09-19) ---------------------------------------------------------
    Nothing snaps into place: a page fades up as it opens, content fades in
