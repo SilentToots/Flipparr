@@ -4053,6 +4053,9 @@ function ReadRunOverlay({ run, reading, onRead }) {
   if (!onRead) return null;
   const place = reading?.[String(run.id)];
   const started = place?.state === "continue" && place.pageCount;
+  // No progress hairline on a run's cover: a line across one issue's pages sat
+  // above the bar that means how much of the run is owned, and read as the
+  // same kind of thing. The place is still in the button's accessible name.
   // The drawer's verbs, in one word: Continue a comic mid-page, Begin the next
   // one when you are between issues, Restart a run read to its end. A run
   // never opened gets a plain Read and resolves when it is clicked.
@@ -4069,9 +4072,6 @@ function ReadRunOverlay({ run, reading, onRead }) {
       <BookOpen size={16} weight="fill" />
       <b>{verb}</b>
     </button>
-    {started ? <span className="read-progress-bar" aria-hidden="true">
-      <i style={{ width: `${Math.round(Math.min(1, (place.page + 1) / place.pageCount) * 100)}%` }} />
-    </span> : null}
   </>;
 }
 

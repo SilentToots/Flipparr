@@ -698,7 +698,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .series-card-read:focus-visible { opacity: 1; }
 @media (hover: hover) { .series-card:hover .series-card-read { opacity: 1; } }
 @media (hover: none) { .series-card-read { opacity: 1; } }
-.series-card-art .read-progress-bar { z-index: 2; }
 .series-card-identity { min-width: 0; padding: 0 var(--space-12); display: grid; gap: var(--space-2); }
 .series-card-identity > strong { min-width: 0; color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-bold); line-height: var(--leading-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .series-card-rule { display: block; width: 100%; height: 1px; background: var(--line); }
