@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
-  pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, pagesLeft, pageFilter,
+  pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -103,4 +103,33 @@ test("night reading dims and warms the page, and does nothing when it is off", (
   assert.match(pageFilter({ dim: 0.5, warm: 0.5 }), /brightness\(0\.50\) sepia\(0\.28\)/);
   assert.match(pageFilter({ dim: 0.01 }), /brightness\(0\.35\)/, "never dark enough to look broken");
   assert.equal(pageFilter({ dim: 2, warm: -1 }), "none", "out of range is ignored");
+});
+
+test("a swipe to the left turns the page forward in a comic and back in manga", () => {
+  // Dragging the page left is the same gesture as tapping the right edge.
+  assert.equal(swipeAction(-80, READING_DIRECTIONS.ltr), "next");
+  assert.equal(swipeAction(80, READING_DIRECTIONS.ltr), "previous");
+  assert.equal(swipeAction(-80, READING_DIRECTIONS.rtl), "previous");
+  assert.equal(swipeAction(80, READING_DIRECTIONS.rtl), "next");
+  assert.equal(swipeAction(0, READING_DIRECTIONS.ltr), null);
+});
+
+test("pan stops at the page's edges, not the window's", () => {
+  // A portrait page 300 wide in a 400 wide window: at 2x it is 600 wide,
+  // 100 past each side, so it can be pulled 100 either way and no further.
+  const viewport = { width: 400, height: 800 };
+  const page = { width: 300, height: 800 };
+  assert.deepEqual(clampPan({ x: 500, y: 0 }, 2, viewport, page), { x: 100, y: 0 });
+  // At 1.2x it is 360 wide and still fits: nothing to pan sideways, while the
+  // height, which fills the window, can still be pulled.
+  assert.deepEqual(clampPan({ x: 50, y: 500 }, 1.2, viewport, page), { x: 0, y: 80 });
+});
+
+test("zooming keeps the point under the finger where it was", () => {
+  // Doubling about a point 100 right of centre: the page moves 100 left so
+  // that point stays put. About the centre itself, nothing moves.
+  assert.deepEqual(zoomAt({ x: 100, y: 0 }, 1, 2), { x: -100, y: 0 });
+  assert.deepEqual(zoomAt({ x: 0, y: 0 }, 1, 2), { x: 0, y: 0 });
+  // Zooming back out from a panned page about the same point returns it.
+  assert.deepEqual(zoomAt({ x: 100, y: 0 }, 2, 1, { x: -100, y: 0 }), { x: 0, y: 0 });
 });

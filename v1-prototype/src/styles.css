@@ -3353,11 +3353,17 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   grid-row: 1 / -1; grid-column: 1; width: 100%; position: relative; overflow: hidden;
   display: grid; place-items: center; touch-action: pan-y; cursor: pointer;
 }
+/* Zoomed, the surface is a thing you drag: the browser must not claim a
+   vertical drag as a scroll and cancel the pan half way. */
+.reader-surface.zoomed { touch-action: none; cursor: grab; }
+.reader-surface.zoomed:active { cursor: grabbing; }
 .reader-page {
   grid-area: 1 / 1; max-width: 100%; max-height: 100dvh; width: auto; height: auto;
   object-fit: contain; visibility: hidden; user-select: none;
   transition: scale var(--motion-duration-fast) var(--motion-ease-standard), translate var(--motion-duration-fast) var(--motion-ease-standard);
 }
+/* Not while it is being dragged: an animated translate trails the finger. */
+.reader-page.panning { transition: none; }
 /* The page being read; the neighbours stay mounted so a turn is instant. */
 .reader-page.shown { visibility: visible; }
 /* A spread is read across the width rather than squeezed into the height. */

@@ -46,6 +46,19 @@ export function tapAction(x, width, direction) {
   return "chrome";
 }
 
+/**
+ * Which way a swipe turns.
+ *
+ * Dragging the page to the left is the same gesture as tapping the right
+ * edge: forward in a comic, back in manga. It was wired the other way round
+ * once -- a leftward swipe read as a tap on the *left* -- and turned every
+ * phone swipe backwards.
+ */
+export function swipeAction(dx, direction) {
+  if (!dx) return null;
+  return tapAction(dx < 0 ? 1 : 0, 1, direction);
+}
+
 /** The page an action lands on, never outside the comic. */
 export function pageForAction(index, count, action) {
   if (!count) return 0;
@@ -87,16 +100,33 @@ export const clampZoom = (scale) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number
 /**
  * Pan, bounded so a zoomed page cannot be pushed off the screen.
  *
- * At 1x there is nothing to pan: the offsets collapse to zero rather than
- * leaving the page sitting slightly off-centre after a pinch back out.
+ * The bound is the page's own size, not the window's: a portrait page in a
+ * landscape window is narrower than the surface it sits on, and bounding by
+ * the surface let it be dragged well into the black on either side. An axis
+ * on which the scaled page still fits cannot be panned at all, so the page
+ * stays centred on it. At 1x nothing can be panned: the offsets collapse to
+ * zero rather than leaving the page slightly off-centre after zooming out.
  */
-export function clampPan({ x = 0, y = 0 } = {}, scale, { width = 0, height = 0 } = {}) {
+export function clampPan({ x = 0, y = 0 } = {}, scale, viewport = { width: 0, height: 0 }, page = viewport) {
   const zoom = clampZoom(scale);
-  const limitX = Math.max(0, (width * zoom - width) / 2);
-  const limitY = Math.max(0, (height * zoom - height) / 2);
+  const limitX = Math.max(0, ((page.width || 0) * zoom - (viewport.width || 0)) / 2);
+  const limitY = Math.max(0, ((page.height || 0) * zoom - (viewport.height || 0)) / 2);
   return {
     x: Math.min(limitX, Math.max(-limitX, x)),
     y: Math.min(limitY, Math.max(-limitY, y)),
+  };
+}
+
+/**
+ * Where the page sits after zooming about a point, so that what was under
+ * the finger stays under it. `point` is measured from the viewport's centre,
+ * which is where the page's centre sits at pan zero. Clamp the answer.
+ */
+export function zoomAt(point, from, to, pan = { x: 0, y: 0 }) {
+  const ratio = clampZoom(to) / clampZoom(from);
+  return {
+    x: point.x - (point.x - pan.x) * ratio,
+    y: point.y - (point.y - pan.y) * ratio,
   };
 }
 

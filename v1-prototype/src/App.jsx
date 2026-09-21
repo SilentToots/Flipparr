@@ -51,10 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import {
-  readingDirection, actionForKey, tapAction, pageForAction, pageWindow,
-  isSpread, clampZoom, clampPan, pagesLeft, pageFilter,
-} from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -4835,6 +4832,15 @@ function ReaderView({
   const [chrome, setChrome] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [panning, setPanning] = useState(false);
+  // The current zoom and pan, readable from the natively bound wheel handler
+  // and a drag in progress without either re-binding on every change.
+  const zoomRef = useRef(1);
+  const panRef = useRef(pan);
+  zoomRef.current = zoom;
+  panRef.current = pan;
+  const pageRef = useRef(null);
+  const dragged = useRef(false);
   const [night, setNight] = useState({ dim: 1, warm: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scrub, setScrub] = useState(null);
@@ -5026,7 +5032,8 @@ function ReaderView({
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && Date.now() - start.at < 800) {
         // A swipe drags the page with it: left moves the page left, which is
         // forward in a comic and back in manga, the same rule as a tap.
-        go(tapAction(dx < 0 ? 0 : 1, 1, direction) === "next" ? "next" : "previous");
+        const action = swipeAction(dx, direction);
+        if (action) go(action);
       }
     }
     const onUp = (end) => finish(end);
@@ -5039,6 +5046,9 @@ function ReaderView({
   }
 
   function onSurfaceClick(event) {
+    // Releasing a drag fires a click; a page turn on letting go of a pan is
+    // not what a hand meant.
+    if (dragged.current) { dragged.current = false; return; }
     const box = surfaceRef.current?.getBoundingClientRect();
     if (!box) return;
     const action = tapAction(event.clientX - box.left, box.width, direction);
@@ -5049,35 +5059,84 @@ function ReaderView({
     go(action);
   }
 
+  // The surface and the page at 1x, for bounding a pan. The page's layout
+  // size is read rather than its rect, which the scale would have inflated.
+  const panBounds = useCallback(() => {
+    const viewport = surfaceRef.current?.getBoundingClientRect() || { width: 0, height: 0 };
+    const image = pageRef.current;
+    const page = image ? { width: image.offsetWidth, height: image.offsetHeight } : viewport;
+    return { viewport, page };
+  }, []);
+
+  // Zoom about a point on the surface, so what was under the pointer stays
+  // under it: double-tapping a panel lands on that panel, not on the middle
+  // of the page with the panel somewhere off to the side.
+  const zoomTo = useCallback((target, clientX, clientY) => {
+    const box = surfaceRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const point = { x: clientX - (box.left + box.width / 2), y: clientY - (box.top + box.height / 2) };
+    const { viewport, page } = panBounds();
+    const scale = clampZoom(target);
+    setPan(clampPan(zoomAt(point, zoomRef.current, scale, panRef.current), scale, viewport, page));
+    setZoom(scale);
+  }, [panBounds]);
+
   function onDoubleClick(event) {
     event.preventDefault();
-    setPan({ x: 0, y: 0 });
-    setZoom((current) => (current > 1 ? 1 : 2));
+    zoomTo(zoomRef.current > 1 ? 1 : 2, event.clientX, event.clientY);
   }
 
-  function onWheel(event) {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    setZoom((current) => clampZoom(current - event.deltaY / 400));
-  }
-
-  function onPagePointerDown(event) {
-    if (zoom <= 1) return;
-    event.preventDefault();
-    const start = { x: event.clientX, y: event.clientY, pan };
-    const box = surfaceRef.current?.getBoundingClientRect() || { width: 0, height: 0 };
-    function onMove(move) {
-      setPan(clampPan(
-        { x: start.pan.x + (move.clientX - start.x), y: start.pan.y + (move.clientY - start.y) },
-        zoom, box,
+  // Wheel is bound natively: React's is passive, and a pinch or a ctrl-wheel
+  // that is not prevented zooms the browser instead. With the page zoomed a
+  // plain wheel or two-finger scroll moves it, the way a scroll view would.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return undefined;
+    function onWheel(event) {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        zoomTo(zoomRef.current - event.deltaY / 400, event.clientX, event.clientY);
+        return;
+      }
+      if (zoomRef.current <= 1) return;
+      event.preventDefault();
+      const { viewport, page } = panBounds();
+      setPan((current) => clampPan(
+        { x: current.x - event.deltaX, y: current.y - event.deltaY }, zoomRef.current, viewport, page,
       ));
     }
-    function onUp() {
+    surface.addEventListener("wheel", onWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", onWheel);
+  }, [zoomTo, panBounds]);
+
+  // Dragging a zoomed page. The page's transition is off for the drag, or
+  // every frame would be animated and the page would trail the finger; the
+  // bound is the page's own edges; and only the pointer that started the
+  // drag moves it, so a second finger landing does not throw it.
+  function onPanStart(event) {
+    if (zoom <= 1 || event.button) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const start = { x: event.clientX, y: event.clientY, pan: panRef.current };
+    const { viewport, page } = panBounds();
+    setPanning(true);
+    function onMove(move) {
+      if (move.pointerId !== pointerId) return;
+      const dx = move.clientX - start.x;
+      const dy = move.clientY - start.y;
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) dragged.current = true;
+      setPan(clampPan({ x: start.pan.x + dx, y: start.pan.y + dy }, zoomRef.current, viewport, page));
+    }
+    function onUp(up) {
+      if (up.pointerId !== pointerId) return;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      setPanning(false);
     }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   function goToPage(target) {
@@ -5090,8 +5149,8 @@ function ReaderView({
 
   const filter = pageFilter(night);
   return <div className={`reader${chrome ? "" : " reader--reading"}${behind ? " reader--behind" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Reading ${title}`}>
-    <div className="reader-surface" ref={surfaceRef} onClick={onSurfaceClick} onDoubleClick={onDoubleClick}
-      onWheel={onWheel} onPointerDown={onSurfacePointerDown} onMouseMove={wakeArrows}>
+    <div className={`reader-surface${zoom > 1 ? " zoomed" : ""}`} ref={surfaceRef} onClick={onSurfaceClick} onDoubleClick={onDoubleClick}
+      onPointerDown={zoom > 1 ? onPanStart : onSurfacePointerDown} onMouseMove={wakeArrows}>
       {pages.state === "loading" ? <div className="reader-status" role="status"><LoadingSpinner size={22} /> Opening…</div> : null}
       {pages.error ? <div className="reader-status reader-status--error" role="alert">
         <WarningCircle size={22} /><span>{pages.error}</span>
@@ -5103,10 +5162,10 @@ function ReaderView({
         const item = pages.list[number];
         const shown = number === index;
         return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
-          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}`}
+          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}`}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
+          ref={shown ? pageRef : undefined}
           style={shown ? { filter, scale: String(zoom), translate: `${pan.x}px ${pan.y}px` } : undefined}
-          onPointerDown={shown ? onPagePointerDown : undefined}
           onLoad={(event) => {
             const { naturalWidth, naturalHeight } = event.target;
             // A spread is shown across the width instead of squeezed into the
