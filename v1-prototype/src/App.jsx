@@ -5092,6 +5092,18 @@ function ReaderView({
   useEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return undefined;
+    // A scroll is a drag in ticks, and gets the drag's treatment: written to
+    // the image a frame at a time, the transition off for as long as the
+    // ticks keep coming, and the state committed once they stop. A render per
+    // tick with the transition on was every tick animated against the next.
+    let frame = 0;
+    let settle = 0;
+    let latest = null;
+    function paint() {
+      frame = 0;
+      const image = pageRef.current;
+      if (image && latest) image.style.translate = `${latest.x}px ${latest.y}px`;
+    }
     function onWheel(event) {
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
@@ -5101,12 +5113,26 @@ function ReaderView({
       if (zoomRef.current <= 1) return;
       event.preventDefault();
       const { viewport, page } = panBounds();
-      setPan((current) => clampPan(
-        { x: current.x - event.deltaX, y: current.y - event.deltaY }, zoomRef.current, viewport, page,
-      ));
+      latest = clampPan(
+        { x: panRef.current.x - event.deltaX, y: panRef.current.y - event.deltaY },
+        zoomRef.current, viewport, page,
+      );
+      panRef.current = latest;
+      if (!settle) setPanning(true);
+      if (!frame) frame = requestAnimationFrame(paint);
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        settle = 0;
+        setPan(latest);
+        setPanning(false);
+      }, 150);
     }
     surface.addEventListener("wheel", onWheel, { passive: false });
-    return () => surface.removeEventListener("wheel", onWheel);
+    return () => {
+      surface.removeEventListener("wheel", onWheel);
+      cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
+    };
   }, [zoomTo, panBounds]);
 
   // Dragging a zoomed page. The drag is written straight to the image, one
