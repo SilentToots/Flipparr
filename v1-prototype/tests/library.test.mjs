@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SORT_OPTIONS, LIBRARY_DEFAULTS, recencyOf, sortLibrary, loadLibraryPrefs, saveLibraryPrefs,
+  SORT_OPTIONS, LIBRARY_DEFAULTS, recencyOf, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs,
 } from "../src/library.js";
 
 const runs = [
@@ -61,6 +61,13 @@ test("sorting never reorders the caller's array", () => {
   assert.deepEqual(titles(runs), before);
 });
 
+test("in progress is a run you are reading, whether mid-page or between issues", () => {
+  assert.equal(inProgress({ state: "continue" }), true);
+  assert.equal(inProgress({ state: "next" }), true, "finished #3 with #4 on the shelf is the middle of a run");
+  assert.equal(inProgress({ state: "finished" }), false, "read to the end, however recently");
+  assert.equal(inProgress(undefined), false, "never opened");
+});
+
 class FakeStorage {
   constructor(seed = {}) { this.map = new Map(Object.entries(seed)); }
   getItem(key) { return this.map.has(key) ? this.map.get(key) : null; }
@@ -69,8 +76,8 @@ class FakeStorage {
 
 test("what was chosen last time comes back", () => {
   const storage = new FakeStorage();
-  saveLibraryPrefs({ sort: "rated", view: "list", scope: "collections", followingOnly: true }, storage);
-  assert.deepEqual(loadLibraryPrefs(storage), { sort: "rated", view: "list", scope: "collections", followingOnly: true });
+  saveLibraryPrefs({ sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true }, storage);
+  assert.deepEqual(loadLibraryPrefs(storage), { sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true });
 });
 
 test("nothing remembered means the defaults", () => {
@@ -79,7 +86,7 @@ test("nothing remembered means the defaults", () => {
 });
 
 test("a stale or hand-edited key cannot wedge the grid", () => {
-  for (const raw of ["{not json", '"a string"', "null", JSON.stringify({ sort: "attention", view: "carousel", scope: "shelves", followingOnly: "yes" })]) {
+  for (const raw of ["{not json", '"a string"', "null", JSON.stringify({ sort: "attention", view: "carousel", scope: "shelves", followingOnly: "yes", inProgressOnly: 1 })]) {
     assert.deepEqual(loadLibraryPrefs(new FakeStorage({ "flipparr.library": raw })), { ...LIBRARY_DEFAULTS }, raw);
   }
 });

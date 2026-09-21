@@ -64,7 +64,7 @@ import {
   PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon,
 } from "./design-icons.jsx";
 import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
-import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
+import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel } from "./ratings.js";
 import {
@@ -1534,7 +1534,7 @@ const PULL_LIST_COPY = {
 // the screen: grid or list, the sort, the Following filter, and Runs or
 // Collections when collected editions are on. Changes apply as they are made;
 // Done, the backdrop and Escape all close it.
-function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowingOnly, editionsOn, scope, onScope, onClose }) {
+function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowingOnly, inProgressOnly, onInProgressOnly, editionsOn, scope, onScope, onClose }) {
   const dialogRef = useDialog(onClose);
   return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
     <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
@@ -1563,7 +1563,10 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
           </button>)}
         </div>
       </fieldset>
-      {scope === "runs" ? <FollowSwitch following={followingOnly} label="Following only" onChange={onFollowingOnly} /> : null}
+      {scope === "runs" ? <>
+        <FollowSwitch following={followingOnly} label="Following only" onChange={onFollowingOnly} />
+        <FollowSwitch following={inProgressOnly} label="In progress only" onChange={onInProgressOnly} />
+      </> : null}
       <button type="button" className="library-sheet-done" onClick={onClose}>Done</button>
     </section>
   </div>;
@@ -1719,7 +1722,10 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
   const [scope, setScope] = useState(prefs.scope);
   const [sort, setSort] = useState(prefs.sort);
   const [followingOnly, setFollowingOnly] = useState(prefs.followingOnly);
-  useEffect(() => { saveLibraryPrefs({ view, scope, sort, followingOnly }); }, [view, scope, sort, followingOnly]);
+  const [inProgressOnly, setInProgressOnly] = useState(prefs.inProgressOnly);
+  useEffect(() => {
+    saveLibraryPrefs({ view, scope, sort, followingOnly, inProgressOnly });
+  }, [view, scope, sort, followingOnly, inProgressOnly]);
   const fallbackSeries = backendStatus === "offline" ? DEMO_SERIES : [];
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
@@ -1730,14 +1736,15 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
   const editionsOn = Boolean(catalog?.collectedEditionsEnabled);
   const effectiveScope = editionsOn ? scope : "runs";
   const scopedSeries = useMemo(() => editionsOn ? series : series.filter((item) => !item.isCollectionSeries), [editionsOn, series]);
-  const followedSeries = useMemo(() => followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries, [followingOnly, scopedSeries]);
-  const filteredSeries = useMemo(() => searching ? followedSeries.filter((item) => libraryRunMatches(item, queryParts)) : followedSeries, [followedSeries, searching, queryParts]);
-  // Fetched before the sort needs it: Recent orders on when each run was last
-  // read, which is this map's to know.
+  // Fetched before the filters and the sort need it: In progress and Recent
+  // both read from where each run was left, which is this map's to know.
   const runReading = useRunReading(readingVersion);
+  const followedSeries = useMemo(() => followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries, [followingOnly, scopedSeries]);
+  const readingSeries = useMemo(() => inProgressOnly ? followedSeries.filter((item) => inProgress(runReading?.[String(item.id)])) : followedSeries, [inProgressOnly, followedSeries, runReading]);
+  const filteredSeries = useMemo(() => searching ? readingSeries.filter((item) => libraryRunMatches(item, queryParts)) : readingSeries, [readingSeries, searching, queryParts]);
   const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort, runReading), [filteredSeries, sort, runReading]);
   // The View & sort button marks when the library isn't showing its default.
-  const viewCustomized = view !== LIBRARY_DEFAULTS.view || sort !== LIBRARY_DEFAULTS.sort || followingOnly || effectiveScope !== "runs";
+  const viewCustomized = view !== LIBRARY_DEFAULTS.view || sort !== LIBRARY_DEFAULTS.sort || followingOnly || inProgressOnly || effectiveScope !== "runs";
   const sortedFamilies = useMemo(() => {
     const needle = queryParts.title.toLowerCase();
     const matching = searching ? families.filter((family) => String(family.name || "").toLowerCase().includes(needle)) : families;
@@ -1776,6 +1783,8 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
             {effectiveScope === "runs" ? <>
               <span className="glass-capsule-divider" aria-hidden="true" />
               <button type="button" className={`glass-capsule-segment filter-button${followingOnly ? " active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button>
+              <span className="glass-capsule-divider" aria-hidden="true" />
+              <button type="button" className={`glass-capsule-segment filter-button${inProgressOnly ? " active" : ""}`} aria-pressed={inProgressOnly} onClick={() => setInProgressOnly((value) => !value)}><BookOpen size={17} weight="fill" /> In progress</button>
             </> : null}
           </div>
         </div>}
@@ -1784,6 +1793,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
       {viewSheetOpen ? <LibraryViewSheet
         view={view} onView={setView} sort={sort} onSort={setSort}
         followingOnly={followingOnly} onFollowingOnly={setFollowingOnly}
+        inProgressOnly={inProgressOnly} onInProgressOnly={setInProgressOnly}
         editionsOn={editionsOn} scope={effectiveScope} onScope={setScope}
         onClose={() => setViewSheetOpen(false)}
       /> : null}
@@ -1795,7 +1805,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
       {/* Above the grid, and only while searching is not: a filtered library
           is a question about a title, not about where you left off. */}
       {!searching && backendStatus !== "offline" ? <ContinueReadingShelf version={readingVersion} onRead={onRead} /> : null}
-      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={runReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>The comic catalogs may have it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
+      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={runReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>The comic catalogs may have it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button></div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </div>
     </>
@@ -4109,16 +4119,20 @@ function SeriesEditPanel({
 function ReadRunOverlay({ run, reading, onRead }) {
   if (!onRead) return null;
   const place = reading?.[String(run.id)];
-  const started = place && !place.finished && place.pageCount;
-  // The verb the drawer's button would use, in one word: a card that says
-  // Read on a run you are halfway through would be telling you to start it.
-  const verb = started ? "Continue" : place?.finished ? "Restart" : "Read";
+  const started = place?.state === "continue" && place.pageCount;
+  // The drawer's verbs, in one word: Continue a comic mid-page, Begin the next
+  // one when you are between issues, Restart a run read to its end. A run
+  // never opened gets a plain Read and resolves when it is clicked.
+  const verb = started ? "Continue" : place?.state === "next" ? "Begin" : place?.state === "finished" ? "Restart" : "Read";
   const label = started
     ? `Continue ${issueLabel(place.issueNumber, run.medium)} of ${run.title}, page ${place.page + 1} of ${place.pageCount}`
     : `${verb} ${run.title}`;
+  // Only a comic mid-page is opened by file: between issues the latest file is
+  // the one just finished, and the reader would reopen it from page one. The
+  // run resolves to the next unread -- or, once every issue is read, to #1.
   return <>
     <button type="button" className="series-card-read" title={verb}
-      onClick={() => onRead(place ? { id: place.fileId } : { runId: run.id })} aria-label={label}>
+      onClick={() => onRead(started ? { id: place.fileId } : { runId: run.id })} aria-label={label}>
       <BookOpen size={16} weight="fill" />
       <b>{verb}</b>
     </button>

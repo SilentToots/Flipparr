@@ -17,7 +17,7 @@ export const SORT_OPTIONS = [
 ];
 
 export const LIBRARY_DEFAULTS = Object.freeze({
-  sort: "recent", view: "grid", scope: "runs", followingOnly: false,
+  sort: "recent", view: "grid", scope: "runs", followingOnly: false, inProgressOnly: false,
 });
 
 // Collections have a name where runs have a title; both fall back to the
@@ -56,6 +56,16 @@ export function sortLibrary(items, sort, reading = {}) {
   return sorted.sort(byTitle);
 }
 
+/**
+ * A run you are currently reading: started, with issues still unread.
+ *
+ * "next" counts -- finishing #3 with #4 on the shelf is being in the middle
+ * of a run -- and a run read to its end does not, however recently.
+ */
+export function inProgress(place) {
+  return place?.state === "continue" || place?.state === "next";
+}
+
 const PREFS_KEY = "flipparr.library";
 const SORT_IDS = new Set(SORT_OPTIONS.map((option) => option.value));
 
@@ -78,6 +88,7 @@ export function loadLibraryPrefs(storage = globalThis.localStorage) {
     view: saved.view === "list" ? "list" : LIBRARY_DEFAULTS.view,
     scope: saved.scope === "collections" ? "collections" : LIBRARY_DEFAULTS.scope,
     followingOnly: saved.followingOnly === true,
+    inProgressOnly: saved.inProgressOnly === true,
   };
 }
 
@@ -86,6 +97,7 @@ export function saveLibraryPrefs(prefs, storage = globalThis.localStorage) {
   try {
     storage?.setItem(PREFS_KEY, JSON.stringify({
       sort: prefs.sort, view: prefs.view, scope: prefs.scope, followingOnly: Boolean(prefs.followingOnly),
+      inProgressOnly: Boolean(prefs.inProgressOnly),
     }));
   } catch {
     // Nothing to do: the grid still works, it just forgets.
