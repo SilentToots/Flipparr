@@ -3349,9 +3349,14 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* A run's drawer opens over the comic, not instead of it: closing the drawer
    puts you back on the page you were reading. */
 .reader--behind { z-index: 60; }
+/* One grid area, exactly the surface: a zoomed page is laid out larger than
+   the surface, and an auto-sized area would grow to hold it and pin it to the
+   top. Fixed to 100% it stays centred and overflows both ways equally, which is
+   what the pan's limits assume. */
 .reader-surface {
   grid-row: 1 / -1; grid-column: 1; width: 100%; position: relative; overflow: hidden;
-  display: grid; place-items: center; touch-action: pan-y; cursor: pointer;
+  display: grid; grid-template-columns: 100%; grid-template-rows: 100%; place-items: center;
+  touch-action: pan-y; cursor: pointer;
 }
 /* Zoomed, the surface is a thing you drag: the browser must not claim a
    vertical drag as a scroll and cancel the pan half way. */
