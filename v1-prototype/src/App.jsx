@@ -4838,7 +4838,7 @@ function ReaderView({
   const zoomRef = useRef(1);
   const panRef = useRef(pan);
   zoomRef.current = zoom;
-  panRef.current = pan;
+  if (!panning) panRef.current = pan;
   const pageRef = useRef(null);
   const dragged = useRef(false);
   const [night, setNight] = useState({ dim: 1, warm: 0 });
@@ -5109,29 +5109,45 @@ function ReaderView({
     return () => surface.removeEventListener("wheel", onWheel);
   }, [zoomTo, panBounds]);
 
-  // Dragging a zoomed page. The page's transition is off for the drag, or
-  // every frame would be animated and the page would trail the finger; the
-  // bound is the page's own edges; and only the pointer that started the
-  // drag moves it, so a second finger landing does not throw it.
+  // Dragging a zoomed page. The drag is written straight to the image, one
+  // frame per pointer move, and committed to state when the finger lifts: a
+  // render per move was a repaint of a 2x bitmap per move, which is what
+  // jittered. The page's transition is off for the drag, or every frame
+  // would be animated and trail the finger; the bound is the page's own
+  // edges; and only the pointer that started the drag moves it, so a second
+  // finger landing does not throw it. `panRef` is kept current throughout, so
+  // any render that happens mid-drag writes the same translate, not a stale one.
   function onPanStart(event) {
     if (zoom <= 1 || event.button) return;
     event.preventDefault();
     const pointerId = event.pointerId;
+    const image = pageRef.current;
     const start = { x: event.clientX, y: event.clientY, pan: panRef.current };
     const { viewport, page } = panBounds();
+    let frame = 0;
+    let latest = start.pan;
     setPanning(true);
+    function paint() {
+      frame = 0;
+      if (image) image.style.translate = `${latest.x}px ${latest.y}px`;
+    }
     function onMove(move) {
       if (move.pointerId !== pointerId) return;
       const dx = move.clientX - start.x;
       const dy = move.clientY - start.y;
       if (Math.abs(dx) > 6 || Math.abs(dy) > 6) dragged.current = true;
-      setPan(clampPan({ x: start.pan.x + dx, y: start.pan.y + dy }, zoomRef.current, viewport, page));
+      latest = clampPan({ x: start.pan.x + dx, y: start.pan.y + dy }, zoomRef.current, viewport, page);
+      panRef.current = latest;
+      if (!frame) frame = requestAnimationFrame(paint);
     }
     function onUp(up) {
       if (up.pointerId !== pointerId) return;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      cancelAnimationFrame(frame);
+      paint();
+      setPan(latest);
       setPanning(false);
     }
     window.addEventListener("pointermove", onMove);
@@ -5150,7 +5166,7 @@ function ReaderView({
   const filter = pageFilter(night);
   return <div className={`reader${chrome ? "" : " reader--reading"}${behind ? " reader--behind" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Reading ${title}`}>
     <div className={`reader-surface${zoom > 1 ? " zoomed" : ""}`} ref={surfaceRef} onClick={onSurfaceClick} onDoubleClick={onDoubleClick}
-      onPointerDown={zoom > 1 ? onPanStart : onSurfacePointerDown} onMouseMove={wakeArrows}>
+      onPointerDown={zoom > 1 ? onPanStart : onSurfacePointerDown} onMouseMove={zoom > 1 ? undefined : wakeArrows}>
       {pages.state === "loading" ? <div className="reader-status" role="status"><LoadingSpinner size={22} /> Opening…</div> : null}
       {pages.error ? <div className="reader-status reader-status--error" role="alert">
         <WarningCircle size={22} /><span>{pages.error}</span>
@@ -5165,7 +5181,7 @@ function ReaderView({
           className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}`}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
           ref={shown ? pageRef : undefined}
-          style={shown ? { filter, scale: String(zoom), translate: `${pan.x}px ${pan.y}px` } : undefined}
+          style={shown ? { filter, scale: String(zoom), translate: `${(panning ? panRef.current : pan).x}px ${(panning ? panRef.current : pan).y}px` } : undefined}
           onLoad={(event) => {
             const { naturalWidth, naturalHeight } = event.target;
             // A spread is shown across the width instead of squeezed into the
