@@ -64,8 +64,9 @@ import {
   PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon,
 } from "./design-icons.jsx";
 import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
+import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
 import { READING_DIRECTIONS } from "./reader.js";
-import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel, byRating } from "./ratings.js";
+import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel } from "./ratings.js";
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
@@ -1498,23 +1499,6 @@ function catalogPending(catalog, backendStatus) {
   return !catalog && backendStatus !== "offline";
 }
 
-// One ordering for runs and for collections, so the control is never inert on
-// whichever of the two is on screen. A collection has no addedAt or status of
-// its own, so those keys fall back to the title rather than to an arbitrary
-// order that would look like a broken sort.
-function sortLibrary(items, sort) {
-  const byTitle = (a, b) => String(a.title ?? a.name ?? "").localeCompare(String(b.title ?? b.name ?? ""), undefined, { numeric: true, sensitivity: "base" });
-  const sorted = [...items];
-  if (sort === "added") {
-    return sorted.sort((a, b) => String(b.addedAt ?? "").localeCompare(String(a.addedAt ?? "")) || byTitle(a, b));
-  }
-  // Your rating first, an issue average standing in for a run you have not
-  // rated, and everything unrated below in title order rather than at random.
-  if (sort === "rated") {
-    return sorted.sort((a, b) => byRating(a, b) || byTitle(a, b));
-  }
-  return sorted.sort(byTitle);
-}
 
 // The four states a comic can be in on its way to the library, in the order
 // it moves through them. Following is not among them: monitoring is a property
@@ -1545,14 +1529,6 @@ const PULL_LIST_COPY = {
   },
 };
 
-// Sorting the whole library by "needs attention" was from when library health
-// lived on this page. It is triaged in Settings now, one problem at a time and
-// with the file in front of you, which is more than a reorder ever gave.
-const SORT_OPTIONS = [
-  { value: "title", label: "Title A–Z" },
-  { value: "added", label: "Recently added" },
-  { value: "rated", label: "Highest rated" },
-];
 
 // Everything the phone's toolbar used to hold, in one sheet from the bottom of
 // the screen: grid or list, the sort, the Following filter, and Runs or
@@ -1735,11 +1711,15 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
   const [query, setQuery] = useState("");
   const queryParts = useMemo(() => searchQueryParts(query), [query]);
   const searching = query.trim().length > 0;
-  // Covers are the point of a comic library, so the grid leads.
-  const [view, setView] = useState("grid");
-  const [scope, setScope] = useState("runs");
-  const [sort, setSort] = useState("title");
-  const [followingOnly, setFollowingOnly] = useState(false);
+  // How the grid was left last time, in this browser. Recent and covers by
+  // default: covers are the point of a comic library, and Recent is Kindle's
+  // answer to "where was I" -- one grid, with what you are reading on top.
+  const [prefs] = useState(loadLibraryPrefs);
+  const [view, setView] = useState(prefs.view);
+  const [scope, setScope] = useState(prefs.scope);
+  const [sort, setSort] = useState(prefs.sort);
+  const [followingOnly, setFollowingOnly] = useState(prefs.followingOnly);
+  useEffect(() => { saveLibraryPrefs({ view, scope, sort, followingOnly }); }, [view, scope, sort, followingOnly]);
   const fallbackSeries = backendStatus === "offline" ? DEMO_SERIES : [];
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
@@ -1752,10 +1732,12 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
   const scopedSeries = useMemo(() => editionsOn ? series : series.filter((item) => !item.isCollectionSeries), [editionsOn, series]);
   const followedSeries = useMemo(() => followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries, [followingOnly, scopedSeries]);
   const filteredSeries = useMemo(() => searching ? followedSeries.filter((item) => libraryRunMatches(item, queryParts)) : followedSeries, [followedSeries, searching, queryParts]);
-  const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort), [filteredSeries, sort]);
-  // The View & sort button marks when the library isn't showing its default.
-  const viewCustomized = view !== "grid" || sort !== "title" || followingOnly || effectiveScope !== "runs";
+  // Fetched before the sort needs it: Recent orders on when each run was last
+  // read, which is this map's to know.
   const runReading = useRunReading(readingVersion);
+  const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort, runReading), [filteredSeries, sort, runReading]);
+  // The View & sort button marks when the library isn't showing its default.
+  const viewCustomized = view !== LIBRARY_DEFAULTS.view || sort !== LIBRARY_DEFAULTS.sort || followingOnly || effectiveScope !== "runs";
   const sortedFamilies = useMemo(() => {
     const needle = queryParts.title.toLowerCase();
     const matching = searching ? families.filter((family) => String(family.name || "").toLowerCase().includes(needle)) : families;
