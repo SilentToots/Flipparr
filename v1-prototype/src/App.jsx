@@ -4840,6 +4840,13 @@ function ReaderView({
   zoomRef.current = zoom;
   if (!panning) panRef.current = pan;
   const pageRef = useRef(null);
+  // The page's size at 1x, taken the moment it is zoomed. A zoomed page is
+  // laid out at its real pixel size and only ever translated: scaling a
+  // bitmap with a transform had the compositor stretching a 1x raster while
+  // it moved and re-rasterising when it stopped, which read as a blur that
+  // came and went with the scroll.
+  const baseRef = useRef(null);
+  useEffect(() => { if (zoom === 1) baseRef.current = null; }, [zoom]);
   const dragged = useRef(false);
   const [night, setNight] = useState({ dim: 1, warm: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -5064,7 +5071,7 @@ function ReaderView({
   const panBounds = useCallback(() => {
     const viewport = surfaceRef.current?.getBoundingClientRect() || { width: 0, height: 0 };
     const image = pageRef.current;
-    const page = image ? { width: image.offsetWidth, height: image.offsetHeight } : viewport;
+    const page = baseRef.current || (image ? { width: image.offsetWidth, height: image.offsetHeight } : viewport);
     return { viewport, page };
   }, []);
 
@@ -5075,6 +5082,9 @@ function ReaderView({
     const box = surfaceRef.current?.getBoundingClientRect();
     if (!box) return;
     const point = { x: clientX - (box.left + box.width / 2), y: clientY - (box.top + box.height / 2) };
+    if (zoomRef.current === 1 && pageRef.current) {
+      baseRef.current = { width: pageRef.current.offsetWidth, height: pageRef.current.offsetHeight };
+    }
     const { viewport, page } = panBounds();
     const scale = clampZoom(target);
     setPan(clampPan(zoomAt(point, zoomRef.current, scale, panRef.current), scale, viewport, page));
@@ -5207,7 +5217,13 @@ function ReaderView({
           className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}`}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
           ref={shown ? pageRef : undefined}
-          style={shown ? { filter, scale: String(zoom), translate: `${(panning ? panRef.current : pan).x}px ${(panning ? panRef.current : pan).y}px` } : undefined}
+          style={shown ? {
+            filter, translate: `${(panning ? panRef.current : pan).x}px ${(panning ? panRef.current : pan).y}px`,
+            ...(zoom > 1 && baseRef.current ? {
+              width: `${Math.round(baseRef.current.width * zoom)}px`, height: `${Math.round(baseRef.current.height * zoom)}px`,
+              maxWidth: "none", maxHeight: "none",
+            } : {}),
+          } : undefined}
           onLoad={(event) => {
             const { naturalWidth, naturalHeight } = event.target;
             // A spread is shown across the width instead of squeezed into the
