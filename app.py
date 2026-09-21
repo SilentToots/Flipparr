@@ -656,7 +656,13 @@ def _provider_cache_file() -> Path:
 # Types the platform's table may not know. The slim Python image has no
 # /etc/mime.types, so the bundled Inter was served as octet-stream there while
 # a development machine labelled it correctly.
-WEB_ASSET_TYPES = {".woff2": "font/woff2", ".woff": "font/woff"}
+# Types the slim image's mimetypes table lacks. The manifest is what lets a
+# phone install the app to its home screen with the right icon and name, and
+# a browser ignores one served as octet-stream.
+WEB_ASSET_TYPES = {
+    ".woff2": "font/woff2", ".woff": "font/woff",
+    ".webmanifest": "application/manifest+json", ".ico": "image/x-icon",
+}
 
 
 def web_root() -> Path | None:

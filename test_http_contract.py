@@ -34,6 +34,8 @@ _ROOT = Path(_TEMP.name)
 (_ROOT / "web" / "index.html").write_text("<!doctype html><title>shell</title>")
 (_ROOT / "web" / "asset.js").write_text("console.log(1)")
 (_ROOT / "web" / "font.woff2").write_bytes(b"wOF2")
+(_ROOT / "web" / "manifest.webmanifest").write_text('{"name": "Flipparr"}')
+(_ROOT / "web" / "favicon.ico").write_bytes(b"\x00\x00\x01\x00")
 os.environ["COMICARR_DATABASE"] = str(_ROOT / "contract.db")
 os.environ["COMICARR_WEB_ROOT"] = str(_ROOT / "web")
 os.environ["COMICARR_PROVIDER_CONFIG"] = str(_ROOT / "providers.json")
@@ -219,6 +221,18 @@ class HttpContractTests(unittest.TestCase):
             response = self.get("/font.woff2")
         self.assertEqual(response.status, 200)
         self.assertEqual(response.headers["Content-Type"], "font/woff2")
+
+    def test_the_manifest_and_favicon_are_served_as_what_they_are(self):
+        """A phone installs the app from the manifest; served as octet-stream
+        it is ignored, and the home-screen icon is whatever the browser
+        guessed. The slim image's mimetypes table knows neither type."""
+        with patch.object(app.mimetypes, "guess_type", return_value=(None, None)):
+            manifest = self.get("/manifest.webmanifest")
+            icon = self.get("/favicon.ico")
+        self.assertEqual(manifest.status, 200)
+        self.assertEqual(manifest.headers["Content-Type"], "application/manifest+json")
+        self.assertEqual(icon.status, 200)
+        self.assertEqual(icon.headers["Content-Type"], "image/x-icon")
 
     def test_art_swatch_is_a_small_png_of_an_allowed_cover(self):
         from PIL import Image
