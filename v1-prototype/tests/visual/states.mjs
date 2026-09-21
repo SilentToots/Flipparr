@@ -58,6 +58,20 @@ export const states = [
     },
   },
   {
+    // The runs you are reading. Depends on the shared library having some --
+    // the same dependence library-following has on followed runs.
+    name: "library-in-progress",
+    phone: false,
+    path: "/library",
+    waitForCatalog: true,
+    require: [".filter-button", ".series-card"],
+    async setup(page) {
+      await page.waitForSelector(".filter-button", { timeout: 15000 });
+      await page.locator(".filter-button").nth(1).click();
+      await settle(page);
+    },
+  },
+  {
     // Requires the menu, not just the bar: a click that lands before the
     // bell has items photographs the closed state, and the run reads clean
     // having captured the same page as library-grid.

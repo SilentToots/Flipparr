@@ -176,6 +176,13 @@ for (const { suffix, width, height } of VIEWPORTS) {
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
   // Animations would make every screenshot differ from itself.
   await page.emulateMedia({ reducedMotion: "reduce" });
+  // One page serves every state, and the Comics grid remembers its view, sort
+  // and filters in localStorage -- so library-list would otherwise leave the
+  // list view behind for every state after it that waits for a card. Each
+  // state starts from the grid's defaults, before its own setup runs.
+  await page.addInitScript(() => {
+    try { localStorage.removeItem("flipparr.library"); } catch { /* private mode */ }
+  });
   const work = [
     ...states.map((s) => [s, APP]),
     ...backendStates.map((s) => [s, BACKEND]),
