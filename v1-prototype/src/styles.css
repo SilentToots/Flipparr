@@ -385,9 +385,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .page-header::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none;
   inset: 0 calc(var(--page-inset) * -1) calc(var(--space-24) * -1);
-  /* Solid to the header's own edge, so nothing ghosts behind the title or the
-     tools; the blur and the fade live in the 24px strip below it. */
-  background: linear-gradient(to bottom, var(--bg) calc(100% - var(--space-24)), transparent);
+  /* A frost to the header's own edge -- the page's black, not quite opaque,
+     over the blur, so what passes beneath the title and the tools shows
+     through softened -- then the 24px fade below it. */
+  background: linear-gradient(to bottom, var(--scroll-edge-bg) calc(100% - var(--space-24)), transparent);
   -webkit-backdrop-filter: blur(var(--scroll-edge-blur));
   backdrop-filter: blur(var(--scroll-edge-blur));
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);

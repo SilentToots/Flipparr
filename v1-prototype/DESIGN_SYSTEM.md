@@ -150,8 +150,13 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   sticky. Once the page moves it *condenses*: the title scales to 18px and,
   on a desktop, the header rises into its top padding.
   Its height never changes, so nothing under a scroll jumps. Content under it
-  meets a scroll edge: solid to the header's bottom, then a 24px blurred fade.
-  The header itself is never a glass panel.
+  meets a scroll edge (since 2026-09-22): the header's band is a frost -- the
+  page's black at 72% over an 18px blur (`--scroll-edge-bg`,
+  `--scroll-edge-blur`), so covers passing beneath the title and the tools
+  show through softened -- then a 24px fade below it. It is not the glass
+  material: no hairline, no rim of light, no shadow, and the glass controls
+  sitting on it are not glass on glass. Where transparency is reduced the
+  band is solid.
   - `search="phone"`: the page's own field on a phone only, on a row of its
     own. On Comics it filters your comics as you type, and a query with no
     match offers the catalogs; on Discover it searches your library and the
