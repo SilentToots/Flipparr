@@ -1018,15 +1018,17 @@ const LoadingSpinner = LoadingIndicator;
 // filters your comics, Discover searches the catalogs -- above 640px the
 // sidebar's Search does both); "none" leaves it out.
 function PageHeader({ title, leading, actions, primary, search = "none", field, tools, toolsClassName = "", narrow = false }) {
-  const sentinelRef = useRef(null);
   const headerRef = useRef(null);
   const [condensed, setCondensed] = useState(false);
+  // Condensed is simply "the window has moved", read from the window: a
+  // sentinel watched by an IntersectionObserver missed the move on an
+  // iPhone when a view change left the page scrolled, and the header sat
+  // transparent over the content with its band off.
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel || typeof IntersectionObserver === "undefined") return undefined;
-    const observer = new IntersectionObserver(([entry]) => setCondensed(!entry.isIntersecting));
-    observer.observe(sentinel);
-    return () => observer.disconnect();
+    const sync = () => setCondensed(window.scrollY > 0);
+    sync();
+    window.addEventListener("scroll", sync, { passive: true });
+    return () => window.removeEventListener("scroll", sync);
   }, []);
   // Sticky things further down the page sit under the header, not behind it.
   useEffect(() => {
@@ -1041,7 +1043,6 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
     };
   }, []);
   return <>
-    <span className="page-header-sentinel" ref={sentinelRef} aria-hidden="true" />
     <header ref={headerRef} className={`page-header page-header--search-${search}${narrow ? " page-header--narrow" : ""}${condensed ? " page-header--condensed" : ""}`}>
       <div className="page-header-heading">
         {leading}
@@ -7050,6 +7051,10 @@ export function App() {
     window.addEventListener("popstate", applyLocation);
     return () => window.removeEventListener("popstate", applyLocation);
   }, []);
+  // A settings section opens at its top, and the list is at its top on the
+  // way back: a long section left scrolled would otherwise hand its offset
+  // to the short list, which then sat under the header.
+  useEffect(() => { window.scrollTo(0, 0); }, [settingsSection]);
   // Resolve a ?series= link once the catalog is in. An id that no longer exists
   // simply clears, and the effect above then tidies it out of the URL.
   useEffect(() => {

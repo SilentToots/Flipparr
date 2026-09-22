@@ -78,7 +78,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 @keyframes sidebar-scan-turn { to { transform: rotate(360deg); } }
 .sidebar-session { display: grid; gap: var(--space-8); padding-top: var(--space-8); }
 
-.main-content { min-height: 100vh; margin-left: calc(var(--sidebar-inset) + var(--sidebar-width)); padding: 0 var(--page-inset) var(--space-32); }
+/* The viewport's height with the padding inside it: a page shorter than the
+   screen has nowhere to scroll, so no view can be left sitting on another's
+   offset with its content under the header. */
+.main-content { box-sizing: border-box; min-height: 100dvh; margin-left: calc(var(--sidebar-inset) + var(--sidebar-width)); padding: 0 var(--page-inset) var(--space-32); }
 .discovery-results { position: absolute; top: 51px; left: 0; width: min(690px, calc(100vw - 310px)); max-height: min(620px, calc(100vh - 105px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface); box-shadow: 0 22px 60px var(--shadow-strong); }
 .discovery-results > header { min-height: 59px; padding: var(--space-12) var(--space-14); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
 .discovery-results > header div, .discovery-copy { min-width: 0; display: grid; gap: var(--space-4); }
@@ -372,7 +375,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    scroll jumps. The content passing beneath dissolves into a blurred edge
    rather than meeting a panel: the header is never glass itself, so the glass
    controls on it are never glass on glass. */
-.page-header-sentinel { display: block; height: 1px; margin-bottom: -1px; }
 .page-header {
   position: sticky; top: 0; z-index: 30;
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
