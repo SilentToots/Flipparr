@@ -182,12 +182,13 @@
      soft ring breathing out from it. */
   --bell-unread-border: color-mix(in srgb, var(--violet-text) 55%, transparent);
   --bell-unread-pulse: color-mix(in srgb, var(--violet-text) 35%, transparent);
-  /* The page header's scroll edge: once the page has moved, the header's
-     band is a frost -- the page's black at under three quarters over a
-     blur, so covers passing beneath it show through softened -- and content
-     dissolves in a fade below it, the way iOS 26 treats its bars, instead of
-     a divider. Not the glass material: no hairline, no rim, no shadow. */
-  --scroll-edge-bg: color-mix(in srgb, var(--bg) 72%, transparent);
+  /* The page header's band: the sidebar's frost -- iOS grey 6 at under
+     three quarters over a blur -- on every page from the moment it opens,
+     so the header reads as a surface and what scrolls beneath it shows
+     through softened; content dissolves in a fade below it, the way iOS 26
+     treats its bars, instead of a divider. Not the glass material's
+     dressing: no hairline, no rim, no shadow. */
+  --scroll-edge-bg: var(--sidebar-glass-bg);
   --scroll-edge-blur: 18px;
   /* A band inside a drawer toned from its art: the art's colour, darker. */
   --art-band: rgb(0 0 0 / .24);
@@ -465,7 +466,7 @@
     --glass-bg-pressed: var(--color-ios-gray3);
     --glass-primary-bg: var(--violet);
     --glass-blur: none;
-    --scroll-edge-bg: var(--bg);
+    --scroll-edge-bg: var(--glass-solid);
     --scroll-edge-blur: 0px;
   }
 }
