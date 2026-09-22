@@ -150,18 +150,22 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   sticky. Once the page moves it *condenses*: the title scales to 18px and,
   on a desktop, the header rises into its top padding.
   Its height never changes, so nothing under a scroll jumps. Content under it
-  meets a scroll edge (since 2026-09-22): the header's band is a frost -- the
-  page's black at 72% over an 18px blur (`--scroll-edge-bg`,
-  `--scroll-edge-blur`), so covers passing beneath the title and the tools
-  show through softened -- then a 24px fade below it. It is not the glass
-  material: no hairline, no rim of light, no shadow, and the glass controls
-  sitting on it are not glass on glass. Where transparency is reduced the
-  band is solid. On a phone the condensed header carries the tint and blur
-  itself as well: iOS 26 Safari colours the status-bar zone by sampling the
-  sticky element at the top edge (its own background and backdrop blur, not
-  a pseudo-element's), so the frost continues up into that zone with no seam.
-  The tab bar's strip stops 4px short of the bottom edge for the same reason
-  in reverse: sampled there, its transparency became an opaque black bar.
+  meets a scroll edge (since 2026-09-22): the header's band is the
+  sidebar's frost -- grey 6 at 72% over a 12px blur (`--scroll-edge-bg`,
+  `--scroll-edge-blur`) -- so covers passing beneath the title and the tools
+  show through softened, then a 24px fade below it. It is not the glass
+  material's dressing: no hairline, no rim of light, no shadow, and the
+  glass controls sitting on it are not glass on glass. Where transparency is
+  reduced the band is solid. On a phone the header is fixed across the
+  screen's top (the page keeps `--page-header-height` clear below it) and,
+  condensed, carries the tint and blur itself while the band keeps only the
+  fade: a blur on a sticky element stops painting on iOS during a fast
+  scroll, and nested blurs render black. iOS 26 Safari also colours the
+  status-bar zone by sampling that element (its own background and blur,
+  not a pseudo-element's), so the frost continues up into the zone with no
+  seam. The tab bar's strip stops 4px short of the bottom edge for the same
+  reason in reverse: sampled there, its transparency became an opaque black
+  bar.
   - `search="phone"`: the page's own field on a phone only, on a row of its
     own. On Comics it filters your comics as you type, and a query with no
     match offers the catalogs; on Discover it searches your library and the

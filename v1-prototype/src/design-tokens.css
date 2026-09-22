@@ -183,12 +183,15 @@
   --bell-unread-border: color-mix(in srgb, var(--violet-text) 55%, transparent);
   --bell-unread-pulse: color-mix(in srgb, var(--violet-text) 35%, transparent);
   /* The page header's scroll edge: once the page has moved, the header's
-     band is a frost -- the page's black at under three quarters over a
-     blur, so covers passing beneath it show through softened -- and content
-     dissolves in a fade below it, the way iOS 26 treats its bars, instead of
-     a divider. Not the glass material: no hairline, no rim, no shadow. */
-  --scroll-edge-bg: color-mix(in srgb, var(--bg) 72%, transparent);
-  --scroll-edge-blur: 18px;
+     band is the sidebar's frost -- grey 6 at under three quarters over a
+     blur, so it reads as a surface and covers passing beneath it show
+     through softened; the page's own black at that share was all but
+     invisible over dark art -- and content dissolves in a fade below it,
+     the way iOS 26 treats its bars, instead of a divider. Not the glass
+     material's dressing: no hairline, no rim, no shadow. 12px of blur: 18
+     cost the tab bar's animation its smoothness on a phone. */
+  --scroll-edge-bg: var(--sidebar-glass-bg);
+  --scroll-edge-blur: 12px;
   /* A band inside a drawer toned from its art: the art's colour, darker. */
   --art-band: rgb(0 0 0 / .24);
   /* The Following band under a toned drawer's tabs: well darker than the tabs'

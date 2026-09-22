@@ -500,15 +500,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      that carries them is continued up into that zone, and the frost runs
      from the status bar down without a seam. The band still bleeds to the
      screen's sides and fades below. */
-  /* And only the header blurs: a backdrop blur nested inside another --
-     the band's inside the header's -- and a transform on a blurred sticky
-     element are both ways iOS renders the layer black after a frame. So on
-     a phone the header runs to the screen's sides itself, the band keeps
-     the 24px fade below it with no filter of its own, and the condensed
-     header does not translate. */
-  .page-header { margin-inline: calc(var(--page-inset) * -1); padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
+  /* And the header is fixed, not sticky, and the only thing that blurs: a
+     backdrop blur on a sticky element stops painting on iOS during a fast
+     scroll (the tab bar, fixed, never does), one nested inside another --
+     the band's inside the header's -- and a transform on a blurred element
+     both render the layer black after a frame. So on a phone the header is
+     fixed across the screen's top, the page keeps its height clear below
+     (measured, --page-header-height), the band keeps the 24px fade below it
+     with no filter of its own, and the condensed header does not translate. */
+  .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
+  .page-view { padding-top: calc(var(--page-header-height, 0px) + var(--space-8)); }
   .page-header::before { inset: 0 0 calc(var(--space-24) * -1); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); -webkit-backdrop-filter: blur(var(--scroll-edge-blur)); backdrop-filter: blur(var(--scroll-edge-blur)); }
+  .page-header--narrow { max-width: none; }
   .page-header--narrow::before { right: 0; }
 }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: var(--weight-bold); margin-bottom: var(--space-10); }
