@@ -286,3 +286,25 @@ export function saveReaderPrefs(prefs, storage = globalThis.localStorage) {
     // The reader still works; it just forgets.
   }
 }
+
+// A touch that begins this close to the screen's side is the phone's own
+// gesture as much as a tap: iOS takes a drift from the left edge as Back.
+export const EDGE_GESTURE_PX = 28;
+// How long after the system cancels an edge touch its Back still counts as
+// that touch: the pop lands when the finger lifts, a moment later.
+export const EDGE_GESTURE_GRACE_MS = 1500;
+
+/** Whether a touch started where the phone's edge gesture begins. */
+export function isEdgeTouch(x, width) {
+  return x <= EDGE_GESTURE_PX || x >= width - EDGE_GESTURE_PX;
+}
+
+/**
+ * Whether a history pop that would close the reader is the phone's edge
+ * gesture stealing a tap -- an edge touch the system cancelled a moment
+ * ago -- rather than someone leaving. The left tap zone is where the
+ * previous panel lives, and a tap there that drifts is Back to iOS.
+ */
+export function isStolenBack(edgeCancelledAt, now) {
+  return edgeCancelledAt > 0 && now - edgeCancelledAt < EDGE_GESTURE_GRACE_MS;
+}

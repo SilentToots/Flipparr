@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -6981,20 +6981,52 @@ export function App() {
   // shared link lands where the user actually was. Held back while a ?series=
   // link is still waiting on the catalog, or this would strip the parameter
   // before it could be resolved.
+  const locationRef = useRef(window.location.pathname + window.location.search);
   useEffect(() => {
     if (pendingSeriesId) return;
     const target = locationForState({
       active, settingsSection, searchQuery: viewQuery, seriesId: selectedSeries?.id, readFileId,
     });
+    locationRef.current = target;
     if (target !== window.location.pathname + window.location.search) {
       window.history.pushState(null, "", target);
     }
   }, [active, settingsSection, viewQuery, selectedSeries?.id, readFileId, pendingSeriesId]);
   // Back and forward move between views, and close the drawer when the entry
   // being returned to did not have it open.
+  //
+  // Except when Back was not meant: on a phone the reader's "previous" tap
+  // zone runs to the screen's left edge, and iOS takes a tap there that
+  // drifts as its own Back gesture -- the touch is cancelled, the entry
+  // popped, and the reader gone mid-issue. An edge touch the system
+  // cancelled a moment before the pop is that gesture; the reader keeps its
+  // entry and stays. The close button, Esc, a pull down and a Back with no
+  // edge touch behind it still close it.
+  const edgeTouch = useRef({ startedAt: 0, cancelledAt: 0 });
+  useEffect(() => {
+    function onPointerDown(event) {
+      if (event.pointerType === "mouse") return;
+      edgeTouch.current.startedAt = isEdgeTouch(event.clientX, window.innerWidth) ? Date.now() : 0;
+    }
+    function onPointerCancel() {
+      if (edgeTouch.current.startedAt) edgeTouch.current.cancelledAt = Date.now();
+    }
+    window.addEventListener("pointerdown", onPointerDown, { passive: true, capture: true });
+    window.addEventListener("pointercancel", onPointerCancel, { passive: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+      window.removeEventListener("pointercancel", onPointerCancel, { capture: true });
+    };
+  }, []);
   useEffect(() => {
     function applyLocation() {
       const next = stateFromLocation(window.location.pathname, window.location.search);
+      const reading = new URLSearchParams(locationRef.current.split("?")[1] || "").get("read");
+      if (reading && !next.readFileId && isStolenBack(edgeTouch.current.cancelledAt, Date.now())) {
+        edgeTouch.current.cancelledAt = 0;
+        window.history.pushState(null, "", locationRef.current);
+        return;
+      }
       setActive(next.active);
       setSettingsSection(next.settingsSection);
       setSearchQuery(next.searchQuery);

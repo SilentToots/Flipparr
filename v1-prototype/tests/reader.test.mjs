@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -242,4 +242,13 @@ test("a flick is read while the finger is still moving, and only quickly", () =>
   assert.equal(isFlick(60, 10, FLICK_WINDOW_MS), false, "past the window it is a look around");
   assert.equal(isFlick(30, 0, 50), false, "not far enough yet");
   assert.equal(isFlick(40, 35, 50), false, "as much down as across");
+});
+
+test("a Back that follows a cancelled edge touch is the phone's gesture, not the reader's", () => {
+  assert.equal(isEdgeTouch(12, 390), true);
+  assert.equal(isEdgeTouch(380, 390), true, "either side: the right edge is Forward");
+  assert.equal(isEdgeTouch(120, 390), false);
+  assert.equal(isStolenBack(1000, 1400), true);
+  assert.equal(isStolenBack(1000, 1000 + EDGE_GESTURE_GRACE_MS), false, "a moment, not a minute");
+  assert.equal(isStolenBack(0, 1400), false, "no edge touch behind it: someone left");
 });
