@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, quadrantPanels, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, quadrantPanels, panelMask, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -200,10 +200,30 @@ test("quadrants read the way the run does", () => {
 test("the reader remembers panel view, and forgets safely", () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
-  assert.deepEqual(loadReaderPrefs(storage), { panelMode: false });
+  assert.deepEqual(loadReaderPrefs(storage), { panelMode: false, panelScrim: true });
   saveReaderPrefs({ panelMode: true }, storage);
-  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true });
-  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }), { panelMode: false });
-  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }), { panelMode: false });
-  assert.deepEqual(loadReaderPrefs(undefined), { panelMode: false });
+  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true, panelScrim: true });
+  saveReaderPrefs({ panelMode: true, panelScrim: false }, storage);
+  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true, panelScrim: false });
+  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }), { panelMode: false, panelScrim: true });
+  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }), { panelMode: false, panelScrim: true });
+  assert.deepEqual(loadReaderPrefs(undefined), { panelMode: false, panelScrim: true });
+});
+
+test("the scrim's window sits on the panel, in the percentages a mask position takes", () => {
+  // A panel a quarter of the way in and a quarter wide: the window is the
+  // panel plus the pad each side, placed where CSS lands it -- position p%
+  // puts the window's left edge at p% of the room left over.
+  const hole = panelMask({ x: 0.25, y: 0.5, w: 0.25, h: 0.25 }, 0.01);
+  assert.deepEqual([hole.w, hole.h].map((v) => Math.round(v)), [27, 27]);
+  const left = (hole.x / 100) * (100 - hole.w);
+  assert.ok(Math.abs(left - 24) < 0.01, `window starts at ${left}%`);
+  const top = (hole.y / 100) * (100 - hole.h);
+  assert.ok(Math.abs(top - 49) < 0.01);
+  // Against the page's edge the pad is clipped, not pushed inside.
+  const edge = panelMask({ x: 0, y: 0, w: 0.5, h: 0.5 }, 0.01);
+  assert.deepEqual([edge.x, edge.y], [0, 0]);
+  assert.ok(Math.abs(edge.w - 51) < 0.01);
+  // A panel the width of the page has nowhere to go.
+  assert.deepEqual(panelMask({ x: 0, y: 0.2, w: 1, h: 0.3 }, 0).x, 0);
 });

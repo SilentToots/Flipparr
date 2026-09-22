@@ -3382,6 +3382,19 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    (App.jsx, the FLIP after a step); a transition on top of it would move the
    page twice. */
 .reader-page.panel-view { transition: none; }
+/* The page dims everywhere but the panel being read, as Kindle's Panel View
+   does: a mask with the panel's window at full strength over a layer at less
+   than half. It rides on the image itself, so the flight between panels, a
+   drag and the night filter all carry it without a second element to keep in
+   step. The window is placed in the percentages CSS measures against the
+   room left over; reader.js (`panelMask`) does that sum. */
+.reader-page.panel-view.scrim {
+  -webkit-mask-image: linear-gradient(#000, #000), linear-gradient(color-mix(in srgb, #000 42%, transparent), color-mix(in srgb, #000 42%, transparent));
+  mask-image: linear-gradient(#000, #000), linear-gradient(color-mix(in srgb, #000 42%, transparent), color-mix(in srgb, #000 42%, transparent));
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-size: var(--hole-w) var(--hole-h), 100% 100%; mask-size: var(--hole-w) var(--hole-h), 100% 100%;
+  -webkit-mask-position: var(--hole-x) var(--hole-y), 0 0; mask-position: var(--hole-x) var(--hole-y), 0 0;
+}
 .reader-settings .follow-switch { width: 100%; }
 .reader-surface.zoomed .reader-page.shown { will-change: translate; }
 /* The page being read; the neighbours stay mounted so a turn is instant. */

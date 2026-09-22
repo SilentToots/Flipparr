@@ -229,6 +229,23 @@ export function quadrantPanels(direction) {
   ];
 }
 
+/**
+ * Where the page's mask leaves the panel at full strength while the rest
+ * dims (styles.css `.reader-page.scrim`). The window is the panel with a
+ * little room around it, so a border is never shaved. Sizes are percentages
+ * of the page; the position is the percentage CSS wants, which it measures
+ * against the room left over rather than the page -- a window as wide as the
+ * page has nowhere to go.
+ */
+export function panelMask(rect, pad = PANEL_MARGIN / 4) {
+  const x0 = Math.max(0, rect.x - pad);
+  const y0 = Math.max(0, rect.y - pad);
+  const w = Math.min(1, rect.x + rect.w + pad) - x0;
+  const h = Math.min(1, rect.y + rect.h + pad) - y0;
+  const at = (offset, size) => (size >= 1 ? 0 : (offset / (1 - size)) * 100);
+  return { w: w * 100, h: h * 100, x: at(x0, w), y: at(y0, h) };
+}
+
 const READER_PREFS_KEY = "flipparr.reader";
 
 /** How the reader was left in this browser; guarded like the library's memory. */
@@ -238,12 +255,12 @@ export function loadReaderPrefs(storage = globalThis.localStorage) {
   let saved = {};
   try { saved = raw ? JSON.parse(raw) : {}; } catch { saved = {}; }
   if (!saved || typeof saved !== "object") saved = {};
-  return { panelMode: saved.panelMode === true };
+  return { panelMode: saved.panelMode === true, panelScrim: saved.panelScrim !== false };
 }
 
 export function saveReaderPrefs(prefs, storage = globalThis.localStorage) {
   try {
-    storage?.setItem(READER_PREFS_KEY, JSON.stringify({ panelMode: Boolean(prefs.panelMode) }));
+    storage?.setItem(READER_PREFS_KEY, JSON.stringify({ panelMode: Boolean(prefs.panelMode), panelScrim: prefs.panelScrim !== false }));
   } catch {
     // The reader still works; it just forgets.
   }

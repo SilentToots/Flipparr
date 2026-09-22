@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -3477,7 +3477,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         </> : null}
         {current === "reader" ? <>
           <SettingsCard title="Panel view">
-            <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice is remembered on this device. Flipparr finds the panels itself on the pages it can read.</p>
+            <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice is remembered on this device. The rest of the page dims around the panel being read, which the same settings can turn off. Flipparr finds the panels itself on the pages it can read.</p>
           </SettingsCard>
           {/* Claude and ChatGPT are filed here, not under Metadata sources:
               they contribute nothing to what a comic is, only to how a hard
@@ -4868,7 +4868,9 @@ function ReaderView({
   // window, which panel is in view, and whether the page is being shown whole
   // for a moment (a double-tap). The mode itself is kept in this browser.
   const [panelMode, setPanelMode] = useState(() => loadReaderPrefs().panelMode);
-  useEffect(() => { saveReaderPrefs({ panelMode }); }, [panelMode]);
+  // Whether the rest of the page dims around the panel being read.
+  const [panelScrim, setPanelScrim] = useState(() => loadReaderPrefs().panelScrim);
+  useEffect(() => { saveReaderPrefs({ panelMode, panelScrim }); }, [panelMode, panelScrim]);
   const [panel, setPanel] = useState(0);
   const [panels, setPanels] = useState({});
   const [overview, setOverview] = useState(false);
@@ -5409,12 +5411,17 @@ function ReaderView({
       {window_.map((number) => {
         const item = pages.list[number];
         const shown = number === index;
+        // The page dims around the panel in view; the whole page, asked for
+        // with a double-tap, is shown undimmed.
+        const scrim = shown && panelMode && panelScrim && !overview;
+        const hole = scrim ? panelMask(pagePanels(number)[Math.min(panel, pagePanels(number).length - 1)]) : null;
         return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
-          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}`}
+          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}`}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
           ref={shown ? pageRef : undefined}
           style={shown ? {
             filter, translate: `${(panning ? panRef.current : pan).x}px ${(panning ? panRef.current : pan).y}px`,
+            ...(hole ? { "--hole-w": `${hole.w}%`, "--hole-h": `${hole.h}%`, "--hole-x": `${hole.x}%`, "--hole-y": `${hole.y}%` } : {}),
             ...(zoom > 1 && baseRef.current ? {
               width: `${Math.round(baseRef.current.width * zoom)}px`, height: `${Math.round(baseRef.current.height * zoom)}px`,
               maxWidth: "none", maxHeight: "none",
@@ -5502,6 +5509,7 @@ function ReaderView({
           onChange={(event) => setNight((current) => ({ ...current, warm: Number(event.target.value) }))} />
       </label>
       <FollowSwitch following={panelMode} label="Panel view" onChange={() => togglePanelMode()} />
+      {panelMode ? <FollowSwitch following={panelScrim} label="Dim around the panel" onChange={() => setPanelScrim((value) => !value)} /> : null}
       <p className="reader-settings-note">{panelMode
         ? "One panel at a time. Double-tap for the whole page; P turns it off."
         : direction === "rtl" ? "Reading right to left." : "Reading left to right."}</p>
