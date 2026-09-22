@@ -152,3 +152,88 @@ export function pageFilter({ dim = 1, warm = 0 } = {}) {
   if (warmth > 0) parts.push(`sepia(${(warmth * 0.55).toFixed(2)})`);
   return parts.length ? parts.join(" ") : "none";
 }
+
+// ---- Panel view -------------------------------------------------------------
+//
+// Reading a page one panel at a time, the way Kindle's Panel View and
+// Comixology's Guided View do. The server says where the panels are, in
+// reading order; these decide where the page has to sit to show one, and
+// where the next one is. A page the server could not read gets four
+// quadrants, Kindle's own fallback, so there is never a dead page.
+
+/** The margin left around a panel, so its border is not the screen's edge. */
+export const PANEL_MARGIN = 0.04;
+
+/**
+ * Where the page sits to show one panel: the zoom that fits it with a margin,
+ * and the pan that centres it. `rect` is normalised, `page` the page's 1x
+ * layout size, `viewport` the surface. A panel wider than the fitted page
+ * simply reads at 1x -- the clamp never zooms out past the whole page.
+ */
+export function panelFocus(rect, viewport, page) {
+  const width = Math.max(1, rect.w * page.width);
+  const height = Math.max(1, rect.h * page.height);
+  const room = 1 - 2 * PANEL_MARGIN;
+  const zoom = clampZoom(Math.min((viewport.width * room) / width, (viewport.height * room) / height));
+  // The page is centred at pan zero, so a panel right of the page's centre
+  // needs the page moved left by that much, scaled.
+  const centreX = (rect.x + rect.w / 2 - 0.5) * page.width * zoom;
+  const centreY = (rect.y + rect.h / 2 - 0.5) * page.height * zoom;
+  const pan = clampPan({ x: -centreX, y: -centreY }, zoom, viewport, page);
+  // `-0` is a value Object.is tells apart; a pan of nothing is 0.
+  return { zoom, pan: { x: pan.x || 0, y: pan.y || 0 } };
+}
+
+/**
+ * The next place in panel view, or null past either end of the comic.
+ *
+ * `counts` is how many panels each page has. Stepping off the last panel of
+ * a page lands on the first of the next; stepping back off the first lands
+ * on the last of the previous. Null past the end is what lets the finish
+ * drawer fire exactly as it does when paging.
+ */
+export function panelStep(place, action, counts) {
+  const pages = counts.length;
+  const last = (page) => Math.max(0, (counts[page] ?? 1) - 1);
+  const { page, panel } = place;
+  if (action === "next") {
+    if (panel < last(page)) return { page, panel: panel + 1 };
+    return page + 1 < pages ? { page: page + 1, panel: 0 } : null;
+  }
+  if (action === "previous") {
+    if (panel > 0) return { page, panel: panel - 1 };
+    return page > 0 ? { page: page - 1, panel: last(page - 1) } : null;
+  }
+  if (action === "first") return { page: 0, panel: 0 };
+  if (action === "last") return { page: pages - 1, panel: last(pages - 1) };
+  return place;
+}
+
+/** Kindle's Virtual Panels: the page in four, in reading order. */
+export function quadrantPanels(direction) {
+  const [first, second] = direction === READING_DIRECTIONS.rtl ? [0.5, 0] : [0, 0.5];
+  return [
+    { x: first, y: 0, w: 0.5, h: 0.5 }, { x: second, y: 0, w: 0.5, h: 0.5 },
+    { x: first, y: 0.5, w: 0.5, h: 0.5 }, { x: second, y: 0.5, w: 0.5, h: 0.5 },
+  ];
+}
+
+const READER_PREFS_KEY = "flipparr.reader";
+
+/** How the reader was left in this browser; guarded like the library's memory. */
+export function loadReaderPrefs(storage = globalThis.localStorage) {
+  let raw = null;
+  try { raw = storage?.getItem(READER_PREFS_KEY) ?? null; } catch { raw = null; }
+  let saved = {};
+  try { saved = raw ? JSON.parse(raw) : {}; } catch { saved = {}; }
+  if (!saved || typeof saved !== "object") saved = {};
+  return { panelMode: saved.panelMode === true };
+}
+
+export function saveReaderPrefs(prefs, storage = globalThis.localStorage) {
+  try {
+    storage?.setItem(READER_PREFS_KEY, JSON.stringify({ panelMode: Boolean(prefs.panelMode) }));
+  } catch {
+    // The reader still works; it just forgets.
+  }
+}

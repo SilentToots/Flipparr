@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -4848,6 +4848,26 @@ function ReaderView({
   const baseRef = useRef(null);
   useEffect(() => { if (zoom === 1) baseRef.current = null; }, [zoom]);
   const dragged = useRef(false);
+  // Panel view: one panel at a time. The server's reading of each page in the
+  // window, which panel is in view, and whether the page is being shown whole
+  // for a moment (a double-tap). The mode itself is kept in this browser.
+  const [panelMode, setPanelMode] = useState(() => loadReaderPrefs().panelMode);
+  useEffect(() => { saveReaderPrefs({ panelMode }); }, [panelMode]);
+  const [panel, setPanel] = useState(0);
+  const [panels, setPanels] = useState({});
+  const [overview, setOverview] = useState(false);
+  const [stepping, setStepping] = useState(false);
+  const panelModeRef = useRef(panelMode);
+  const overviewRef = useRef(overview);
+  const panelRef = useRef(panel);
+  const panelsRef = useRef(panels);
+  const fileIdRef = useRef(fileId);
+  panelModeRef.current = panelMode;
+  overviewRef.current = overview;
+  panelRef.current = panel;
+  panelsRef.current = panels;
+  fileIdRef.current = fileId;
+  const asking = useRef(new Set());
   const [night, setNight] = useState({ dim: 1, warm: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scrub, setScrub] = useState(null);
@@ -4867,6 +4887,20 @@ function ReaderView({
   const at = useRef(0);
   at.current = index;
   const direction = readingDirection(medium, directionOverride);
+  // What a page's panels are for stepping: the server's, or four quadrants
+  // while its answer is on its way or when it had none -- so there is never
+  // a page that cannot be stepped through.
+  const pagePanels = useCallback((number) => {
+    const entry = panelsRef.current[number];
+    return entry?.segmented && entry.panels.length ? entry.panels : quadrantPanels(direction);
+  }, [direction]);
+  const togglePanelMode = useCallback(() => {
+    setPanelMode((value) => !value);
+    setOverview(false);
+    setPanel(0);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
   const count = pages.list.length;
   const spread = Boolean(spreads[index]);
 
@@ -4906,6 +4940,51 @@ function ReaderView({
       .catch((error) => { if (live) setPages({ state: "done", list: [], error: error.message }); });
     return () => { live = false; };
   }, [fileId, startPage]);
+
+  // A new comic is a new set of pages to read.
+  useEffect(() => {
+    setPanels({});
+    asking.current.clear();
+    setPanel(0);
+    setOverview(false);
+  }, [fileId]);
+
+  // The server is asked about the pages in the window, once each, only while
+  // panel view is on. A page is read the first time anyone asks and kept, so
+  // this is a comic being segmented as it is read, never a library sweep.
+  useEffect(() => {
+    if (!panelMode || pages.state !== "done" || !count) return;
+    const asked = fileId;
+    for (const number of pageWindow(index, count)) {
+      if (panels[number] || asking.current.has(number)) continue;
+      asking.current.add(number);
+      apiRequest(`/api/v1/files/${asked}/pages/${number}/panels`)
+        .then((data) => { if (fileIdRef.current === asked) setPanels((current) => ({ ...current, [number]: data })); })
+        .catch(() => { if (fileIdRef.current === asked) setPanels((current) => ({ ...current, [number]: { segmented: false, panels: [] } })); });
+    }
+  }, [panelMode, pages.state, count, index, fileId, panels]);
+
+  // Where the page sits for the panel in view: once the shown image has
+  // loaded (`spreads` records that) and again for every step. The page's 1x
+  // layout size comes from its natural size fitted to the surface, so this
+  // does not depend on what zoom the page happens to be at.
+  useEffect(() => {
+    if (!panelMode || overview || pages.state !== "done" || spreads[index] === undefined) return undefined;
+    const image = pageRef.current;
+    const surface = surfaceRef.current;
+    if (!image || !surface || !image.naturalWidth) return undefined;
+    const viewport = surface.getBoundingClientRect();
+    const fit = Math.min(1, viewport.width / image.naturalWidth, viewport.height / image.naturalHeight);
+    const base = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
+    baseRef.current = base;
+    const rects = pagePanels(index);
+    const focus = panelFocus(rects[Math.min(panel, rects.length - 1)], viewport, base);
+    setStepping(true);
+    setZoom(focus.zoom);
+    setPan(focus.pan);
+    const timer = window.setTimeout(() => setStepping(false), 260);
+    return () => window.clearTimeout(timer);
+  }, [panelMode, overview, pages.state, spreads, index, panel, panels, pagePanels]);
 
   // The place is kept as you read: a moment after a page settles, so paging
   // quickly through a recap is one write rather than twenty, and again on the
@@ -4993,6 +5072,17 @@ function ReaderView({
   // coming back on every page turn is the comic being covered up by the thing
   // you turned the page to read.
   const go = useCallback((action) => {
+    // In panel view a turn is a step: the next panel, or the next page's
+    // first. Stepping past the end is finishing, exactly as paging past it is.
+    if (panelModeRef.current && !overviewRef.current && count) {
+      const counts = Array.from({ length: count }, (_, number) => pagePanels(number).length);
+      const next = panelStep({ page: at.current, panel: panelRef.current }, action, counts);
+      if (next === null) { if (action === "next") onFinish?.(); return; }
+      if (next.page !== at.current) setIndex(next.page);
+      setPanel(next.panel);
+      wakeArrows();
+      return;
+    }
     // Paging on from the last page is how a reader says they have finished,
     // and the only moment worth asking what they thought of it.
     if (action === "next" && count && at.current >= count - 1) { onFinish?.(); return; }
@@ -5002,7 +5092,7 @@ function ReaderView({
       return next;
     });
     wakeArrows();
-  }, [count, wakeArrows, onFinish]);
+  }, [count, wakeArrows, onFinish, pagePanels]);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -5012,6 +5102,7 @@ function ReaderView({
       // page the comic underneath -- so Left-then-dismiss landed you a page
       // short of where you had been.
       if (!isTopDialog(dialogRef.current)) return;
+      if (event.key === "p" || event.key === "P") { event.preventDefault(); togglePanelMode(); return; }
       const action = actionForKey(event.key, direction);
       if (!action) return;
       event.preventDefault();
@@ -5019,7 +5110,7 @@ function ReaderView({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [direction, go]);
+  }, [direction, go, togglePanelMode]);
 
   // Two ahead and one behind stay mounted, so a page turn is instant and a
   // page back is too. The window is small on purpose: every page is a request
@@ -5093,6 +5184,15 @@ function ReaderView({
 
   function onDoubleClick(event) {
     event.preventDefault();
+    // In panel view a double-tap shows the whole page, and again returns to
+    // the panel you were on.
+    if (panelMode) {
+      if (overview) { setOverview(false); return; }
+      setOverview(true);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
     zoomTo(zoomRef.current > 1 ? 1 : 2, event.clientX, event.clientY);
   }
 
@@ -5214,7 +5314,7 @@ function ReaderView({
         const item = pages.list[number];
         const shown = number === index;
         return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
-          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}`}
+          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && stepping && !panning ? " stepping" : ""}`}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
           ref={shown ? pageRef : undefined}
           style={shown ? {
@@ -5305,11 +5405,16 @@ function ReaderView({
         <input type="range" min="0" max="1" step="0.1" value={night.warm}
           onChange={(event) => setNight((current) => ({ ...current, warm: Number(event.target.value) }))} />
       </label>
-      <p className="reader-settings-note">{direction === "rtl" ? "Reading right to left." : "Reading left to right."}</p>
+      <FollowSwitch following={panelMode} label="Panel view" onChange={() => togglePanelMode()} />
+      <p className="reader-settings-note">{panelMode
+        ? "One panel at a time. Double-tap for the whole page; P turns it off."
+        : direction === "rtl" ? "Reading right to left." : "Reading left to right."}</p>
     </div> : null}
 
     <footer className="reader-bar reader-bar--bottom" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
-      <span className="reader-count">{count ? `${index + 1} of ${count}` : "—"}{spread ? " · spread" : ""}</span>
+      <span className="reader-count">{count
+        ? (panelMode && !overview ? `Panel ${panel + 1} of ${pagePanels(index).length} · ${index + 1} of ${count}` : `${index + 1} of ${count}`)
+        : "—"}{spread ? " · spread" : ""}</span>
       {count ? <div className="reader-scrubber">
         {/* The page under the thumb, before letting go: skimming back for the
             page a recap refers to should not cost your place. */}

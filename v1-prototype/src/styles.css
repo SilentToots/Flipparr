@@ -3376,7 +3376,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* Not while it is being dragged: an animated translate trails the finger. And
    a zoomed page moves on its own layer, so a drag is a composite rather than
    a repaint of a 2x bitmap on every frame. */
+/* A step between panels is a short flight, size and place together. */
+.reader-page.stepping { transition: width var(--motion-duration-standard) var(--motion-ease-standard), height var(--motion-duration-standard) var(--motion-ease-standard), translate var(--motion-duration-standard) var(--motion-ease-standard); }
 .reader-page.panning { transition: none; }
+.reader-settings .follow-switch { width: 100%; }
 .reader-surface.zoomed .reader-page.shown { will-change: translate; }
 /* The page being read; the neighbours stay mounted so a turn is instant. */
 .reader-page.shown { visibility: visible; }

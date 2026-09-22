@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
+  panelFocus, panelStep, quadrantPanels, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -132,4 +133,56 @@ test("zooming keeps the point under the finger where it was", () => {
   assert.deepEqual(zoomAt({ x: 0, y: 0 }, 1, 2), { x: 0, y: 0 });
   // Zooming back out from a panned page about the same point returns it.
   assert.deepEqual(zoomAt({ x: 100, y: 0 }, 2, 1, { x: -100, y: 0 }), { x: 0, y: 0 });
+});
+
+test("a panel is shown zoomed to fit with a margin, centred", () => {
+  // A 400x800 page in a 400x800 viewport; the top-left quarter fills half of
+  // each side, so it fits at 1.84x (2x less the margin). Centring it wants the
+  // page moved right and down by a quarter of its scaled size, 184 and 368,
+  // but the page's own edge stops it first: at 1.84x it overhangs the
+  // viewport by 168 and 336 a side, and that is as far as it goes.
+  const viewport = { width: 400, height: 800 };
+  const page = { width: 400, height: 800 };
+  const focus = panelFocus({ x: 0, y: 0, w: 0.5, h: 0.5 }, viewport, page);
+  assert.ok(Math.abs(focus.zoom - 1.84) < 1e-9, String(focus.zoom));
+  assert.ok(Math.abs(focus.pan.x - 168) < 1e-9 && Math.abs(focus.pan.y - 336) < 1e-9, JSON.stringify(focus.pan));
+});
+
+test("a panel wider than the fitted page reads at 1x, never zoomed out", () => {
+  const focus = panelFocus({ x: 0, y: 0, w: 1, h: 0.2 }, { width: 400, height: 800 }, { width: 400, height: 800 });
+  assert.equal(focus.zoom, 1);
+  assert.deepEqual(focus.pan, { x: 0, y: 0 }, "nothing to pan at 1x");
+});
+
+test("stepping walks the panels, then the pages, and stops at the ends", () => {
+  const counts = [2, 3, 1];
+  assert.deepEqual(panelStep({ page: 0, panel: 0 }, "next", counts), { page: 0, panel: 1 });
+  assert.deepEqual(panelStep({ page: 0, panel: 1 }, "next", counts), { page: 1, panel: 0 }, "off the last panel onto the next page");
+  assert.deepEqual(panelStep({ page: 1, panel: 0 }, "previous", counts), { page: 0, panel: 1 }, "back onto the previous page's last");
+  assert.equal(panelStep({ page: 2, panel: 0 }, "next", counts), null, "past the end, so the finish drawer can fire");
+  assert.equal(panelStep({ page: 0, panel: 0 }, "previous", counts), null);
+  assert.deepEqual(panelStep({ page: 1, panel: 2 }, "first", counts), { page: 0, panel: 0 });
+  assert.deepEqual(panelStep({ page: 0, panel: 0 }, "last", counts), { page: 2, panel: 0 });
+  assert.deepEqual(panelStep({ page: 1, panel: 1 }, "chrome", counts), { page: 1, panel: 1 }, "not a step");
+});
+
+test("a page with no answer yet counts as one panel", () => {
+  assert.deepEqual(panelStep({ page: 0, panel: 0 }, "next", [undefined, 2]), { page: 1, panel: 0 });
+});
+
+test("quadrants read the way the run does", () => {
+  const centres = (rects) => rects.map((r) => [r.x + r.w / 2, r.y + r.h / 2]);
+  assert.deepEqual(centres(quadrantPanels("ltr")), [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]);
+  assert.deepEqual(centres(quadrantPanels("rtl")), [[0.75, 0.25], [0.25, 0.25], [0.75, 0.75], [0.25, 0.75]]);
+});
+
+test("the reader remembers panel view, and forgets safely", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  assert.deepEqual(loadReaderPrefs(storage), { panelMode: false });
+  saveReaderPrefs({ panelMode: true }, storage);
+  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true });
+  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }), { panelMode: false });
+  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }), { panelMode: false });
+  assert.deepEqual(loadReaderPrefs(undefined), { panelMode: false });
 });
