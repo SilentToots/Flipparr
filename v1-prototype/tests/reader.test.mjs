@@ -137,21 +137,42 @@ test("zooming keeps the point under the finger where it was", () => {
 
 test("a panel is shown zoomed to fit with a margin, centred", () => {
   // A 400x800 page in a 400x800 viewport; the top-left quarter fills half of
-  // each side, so it fits at 1.84x (2x less the margin). Centring it wants the
-  // page moved right and down by a quarter of its scaled size, 184 and 368,
-  // but the page's own edge stops it first: at 1.84x it overhangs the
-  // viewport by 168 and 336 a side, and that is as far as it goes.
+  // each side, so it fits at 1.84x (2x less the margin), and centring it
+  // moves the page right and down by a quarter of its scaled size -- past the
+  // page's own edge, which panel view allows: the panel is centred and the
+  // page's edge shows black beside it.
   const viewport = { width: 400, height: 800 };
   const page = { width: 400, height: 800 };
   const focus = panelFocus({ x: 0, y: 0, w: 0.5, h: 0.5 }, viewport, page);
   assert.ok(Math.abs(focus.zoom - 1.84) < 1e-9, String(focus.zoom));
-  assert.ok(Math.abs(focus.pan.x - 168) < 1e-9 && Math.abs(focus.pan.y - 336) < 1e-9, JSON.stringify(focus.pan));
+  assert.ok(Math.abs(focus.pan.x - 184) < 1e-9 && Math.abs(focus.pan.y - 368) < 1e-9, JSON.stringify(focus.pan));
 });
 
-test("a panel wider than the fitted page reads at 1x, never zoomed out", () => {
+test("a panel wider than the fitted page reads at 1x, never zoomed out, and is still centred", () => {
   const focus = panelFocus({ x: 0, y: 0, w: 1, h: 0.2 }, { width: 400, height: 800 }, { width: 400, height: 800 });
   assert.equal(focus.zoom, 1);
-  assert.deepEqual(focus.pan, { x: 0, y: 0 }, "nothing to pan at 1x");
+  // The strip across the top of the page is brought to the middle of the
+  // screen: the page moves down by 320, and the screen above it is black.
+  assert.deepEqual(focus.pan, { x: 0, y: 320 });
+});
+
+test("a low panel on a phone is centred, not left low on the screen", () => {
+  // A 2:3 page on a 375x812 phone fits by width: 375x562 at 1x. Its bottom
+  // strip, full width, zooms to ~1.06 and would sit at the bottom of a page
+  // that ends 125px above the screen's bottom edge; instead it is centred.
+  const viewport = { width: 375, height: 812 };
+  const page = { width: 375, height: 562 };
+  const focus = panelFocus({ x: 0.03, y: 0.75, w: 0.94, h: 0.22 }, viewport, page);
+  const centreY = (0.75 + 0.11 - 0.5) * 562 * focus.zoom;
+  assert.ok(Math.abs(focus.pan.y + centreY) < 1e-9, "the panel's centre lands on the viewport's centre");
+});
+
+test("the loose bound stops half a page off screen, the tight one at its edge", () => {
+  const viewport = { width: 400, height: 800 };
+  const page = { width: 400, height: 600 };
+  assert.deepEqual(clampPan({ x: 0, y: 900 }, 1, viewport, page), { x: 0, y: 0 }, "tight: a page that fits cannot move");
+  assert.deepEqual(clampPan({ x: 0, y: 900 }, 1, viewport, page, true), { x: 0, y: 400 }, "loose: as far as half the screen");
+  assert.deepEqual(clampPan({ x: 0, y: 900 }, 2, viewport, page, true), { x: 0, y: 600 }, "loose at 2x: half the scaled page");
 });
 
 test("stepping walks the panels, then the pages, and stops at the ends", () => {

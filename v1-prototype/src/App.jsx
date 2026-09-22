@@ -4856,7 +4856,8 @@ function ReaderView({
   const [panel, setPanel] = useState(0);
   const [panels, setPanels] = useState({});
   const [overview, setOverview] = useState(false);
-  const [stepping, setStepping] = useState(false);
+  // The framing a step is flying from, for the flight after the render.
+  const flightRef = useRef(null);
   const panelModeRef = useRef(panelMode);
   const overviewRef = useRef(overview);
   const panelRef = useRef(panel);
@@ -4964,27 +4965,55 @@ function ReaderView({
     }
   }, [panelMode, pages.state, count, index, fileId, panels]);
 
-  // Where the page sits for the panel in view: once the shown image has
-  // loaded (`spreads` records that) and again for every step. The page's 1x
-  // layout size comes from its natural size fitted to the surface, so this
-  // does not depend on what zoom the page happens to be at.
-  useEffect(() => {
-    if (!panelMode || overview || pages.state !== "done" || spreads[index] === undefined) return undefined;
+  // The framing for one panel of one page, from the shown image's natural
+  // size fitted to the surface -- its 1x layout size, whatever zoom it is at.
+  // Null until an image is on screen to measure.
+  const focusFor = useCallback((number, position) => {
     const image = pageRef.current;
     const surface = surfaceRef.current;
-    if (!image || !surface || !image.naturalWidth) return undefined;
+    if (!image || !surface || !image.naturalWidth) return null;
     const viewport = surface.getBoundingClientRect();
     const fit = Math.min(1, viewport.width / image.naturalWidth, viewport.height / image.naturalHeight);
     const base = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
     baseRef.current = base;
-    const rects = pagePanels(index);
-    const focus = panelFocus(rects[Math.min(panel, rects.length - 1)], viewport, base);
-    setStepping(true);
+    const rects = pagePanels(number);
+    return panelFocus(rects[Math.min(position, rects.length - 1)], viewport, base);
+  }, [pagePanels]);
+
+  // Where the page sits for the panel in view: once the shown image has
+  // loaded (`spreads` records that) and again for every step.
+  useEffect(() => {
+    if (!panelMode || overview || pages.state !== "done" || spreads[index] === undefined) return;
+    const focus = focusFor(index, panel);
+    if (!focus) return;
+    flightRef.current = { zoom: zoomRef.current, pan: panRef.current };
     setZoom(focus.zoom);
     setPan(focus.pan);
-    const timer = window.setTimeout(() => setStepping(false), 260);
-    return () => window.clearTimeout(timer);
-  }, [panelMode, overview, pages.state, spreads, index, panel, panels, pagePanels]);
+  }, [panelMode, overview, pages.state, spreads, index, panel, panels, focusFor]);
+
+  // The flight between framings, after the new one has been laid out: the
+  // image is snapped to its new size and place, then a transform carries it
+  // from where the old framing was to rest. Animating the layout itself was a
+  // reflow of a 2x bitmap every frame, which a phone could not keep smooth,
+  // and a page arriving at the old framing then jumping to its own read as
+  // the reader losing its place. A transform is composited; the page is
+  // crisp again the moment it lands.
+  useLayoutEffect(() => {
+    const from = flightRef.current;
+    if (!from) return;
+    flightRef.current = null;
+    const image = pageRef.current;
+    if (!image || !panelModeRef.current || typeof image.animate !== "function") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const dx = from.pan.x - pan.x;
+    const dy = from.pan.y - pan.y;
+    const ratio = from.zoom / zoom;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(ratio - 1) < 0.01) return;
+    image.animate(
+      [{ transform: `translate(${dx}px, ${dy}px) scale(${ratio})` }, { transform: "none" }],
+      { duration: 280, easing: "cubic-bezier(.32, .72, 0, 1)" },
+    );
+  }, [zoom, pan]);
 
   // The place is kept as you read: a moment after a page settles, so paging
   // quickly through a recap is one write rather than twenty, and again on the
@@ -5078,7 +5107,18 @@ function ReaderView({
       const counts = Array.from({ length: count }, (_, number) => pagePanels(number).length);
       const next = panelStep({ page: at.current, panel: panelRef.current }, action, counts);
       if (next === null) { if (action === "next") onFinish?.(); return; }
-      if (next.page !== at.current) setIndex(next.page);
+      if (next.page !== at.current) {
+        // The next page is framed for its panel before it is shown, from this
+        // page's size -- pages of a comic match -- so it arrives in place
+        // rather than at the old framing and then jumping.
+        const focus = focusFor(next.page, next.panel);
+        if (focus) {
+          flightRef.current = { zoom: zoomRef.current, pan: panRef.current };
+          setZoom(focus.zoom);
+          setPan(focus.pan);
+        }
+        setIndex(next.page);
+      }
       setPanel(next.panel);
       wakeArrows();
       return;
@@ -5092,7 +5132,7 @@ function ReaderView({
       return next;
     });
     wakeArrows();
-  }, [count, wakeArrows, onFinish, pagePanels]);
+  }, [count, wakeArrows, onFinish, pagePanels, focusFor]);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -5225,7 +5265,7 @@ function ReaderView({
       const { viewport, page } = panBounds();
       latest = clampPan(
         { x: panRef.current.x - event.deltaX, y: panRef.current.y - event.deltaY },
-        zoomRef.current, viewport, page,
+        zoomRef.current, viewport, page, panelModeRef.current,
       );
       panRef.current = latest;
       if (!settle) setPanning(true);
@@ -5254,7 +5294,9 @@ function ReaderView({
   // finger landing does not throw it. `panRef` is kept current throughout, so
   // any render that happens mid-drag writes the same translate, not a stale one.
   function onPanStart(event) {
-    if (zoom <= 1 || event.button) return;
+    // In panel view the page overflows the screen at any zoom, so a drag is
+    // always a pan; otherwise a drag on the whole page is the swipe path's.
+    if ((zoom <= 1 && !panelModeRef.current) || event.button) return;
     event.preventDefault();
     const pointerId = event.pointerId;
     const image = pageRef.current;
@@ -5272,7 +5314,7 @@ function ReaderView({
       const dx = move.clientX - start.x;
       const dy = move.clientY - start.y;
       if (Math.abs(dx) > 6 || Math.abs(dy) > 6) dragged.current = true;
-      latest = clampPan({ x: start.pan.x + dx, y: start.pan.y + dy }, zoomRef.current, viewport, page);
+      latest = clampPan({ x: start.pan.x + dx, y: start.pan.y + dy }, zoomRef.current, viewport, page, panelModeRef.current);
       panRef.current = latest;
       if (!frame) frame = requestAnimationFrame(paint);
     }
@@ -5301,8 +5343,8 @@ function ReaderView({
 
   const filter = pageFilter(night);
   return <div className={`reader${chrome ? "" : " reader--reading"}${behind ? " reader--behind" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Reading ${title}`}>
-    <div className={`reader-surface${zoom > 1 ? " zoomed" : ""}`} ref={surfaceRef} onClick={onSurfaceClick} onDoubleClick={onDoubleClick}
-      onPointerDown={zoom > 1 ? onPanStart : onSurfacePointerDown} onMouseMove={zoom > 1 ? undefined : wakeArrows}>
+    <div className={`reader-surface${zoom > 1 || panelMode ? " zoomed" : ""}`} ref={surfaceRef} onClick={onSurfaceClick} onDoubleClick={onDoubleClick}
+      onPointerDown={zoom > 1 || panelMode ? onPanStart : onSurfacePointerDown} onMouseMove={zoom > 1 || panelMode ? undefined : wakeArrows}>
       {pages.state === "loading" ? <div className="reader-status" role="status"><LoadingSpinner size={22} /> Opening…</div> : null}
       {pages.error ? <div className="reader-status reader-status--error" role="alert">
         <WarningCircle size={22} /><span>{pages.error}</span>
@@ -5314,7 +5356,7 @@ function ReaderView({
         const item = pages.list[number];
         const shown = number === index;
         return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
-          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && stepping && !panning ? " stepping" : ""}`}
+          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}`}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
           ref={shown ? pageRef : undefined}
           style={shown ? {

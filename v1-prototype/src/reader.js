@@ -107,10 +107,18 @@ export const clampZoom = (scale) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number
  * stays centred on it. At 1x nothing can be panned: the offsets collapse to
  * zero rather than leaving the page slightly off-centre after zooming out.
  */
-export function clampPan({ x = 0, y = 0 } = {}, scale, viewport = { width: 0, height: 0 }, page = viewport) {
+export function clampPan({ x = 0, y = 0 } = {}, scale, viewport = { width: 0, height: 0 }, page = viewport, loose = false) {
   const zoom = clampZoom(scale);
-  const limitX = Math.max(0, ((page.width || 0) * zoom - (viewport.width || 0)) / 2);
-  const limitY = Math.max(0, ((page.height || 0) * zoom - (viewport.height || 0)) / 2);
+  const scaled = { width: (page.width || 0) * zoom, height: (page.height || 0) * zoom };
+  // Loose is panel view's bound: a panel is centred wherever it sits on the
+  // page, with black around the page's edge if that is what centring takes
+  // -- Kindle's framing. The page can go no further than half off screen.
+  const limitX = loose
+    ? Math.max(scaled.width, viewport.width || 0) / 2
+    : Math.max(0, (scaled.width - (viewport.width || 0)) / 2);
+  const limitY = loose
+    ? Math.max(scaled.height, viewport.height || 0) / 2
+    : Math.max(0, (scaled.height - (viewport.height || 0)) / 2);
   return {
     x: Math.min(limitX, Math.max(-limitX, x)),
     y: Math.min(limitY, Math.max(-limitY, y)),
@@ -168,7 +176,10 @@ export const PANEL_MARGIN = 0.04;
  * Where the page sits to show one panel: the zoom that fits it with a margin,
  * and the pan that centres it. `rect` is normalised, `page` the page's 1x
  * layout size, `viewport` the surface. A panel wider than the fitted page
- * simply reads at 1x -- the clamp never zooms out past the whole page.
+ * simply reads at 1x -- the clamp never zooms out past the whole page -- and
+ * the panel is centred regardless of where it sits on the page, with black
+ * past the page's edge if need be: on a phone the page fits by width, and a
+ * bound at the page's edge left a low panel sitting low on the screen.
  */
 export function panelFocus(rect, viewport, page) {
   const width = Math.max(1, rect.w * page.width);
@@ -179,7 +190,7 @@ export function panelFocus(rect, viewport, page) {
   // needs the page moved left by that much, scaled.
   const centreX = (rect.x + rect.w / 2 - 0.5) * page.width * zoom;
   const centreY = (rect.y + rect.h / 2 - 0.5) * page.height * zoom;
-  const pan = clampPan({ x: -centreX, y: -centreY }, zoom, viewport, page);
+  const pan = clampPan({ x: -centreX, y: -centreY }, zoom, viewport, page, true);
   // `-0` is a value Object.is tells apart; a pan of nothing is 0.
   return { zoom, pan: { x: pan.x || 0, y: pan.y || 0 } };
 }
