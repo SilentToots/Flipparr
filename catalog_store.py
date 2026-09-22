@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 44
+SCHEMA_VERSION = 45
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1540,12 +1540,16 @@ class CatalogStore:
                 self._forget_misread_scene_releases(connection)
             if stored_version is not None and stored_version < 35:
                 self._forget_vague_refusals(connection)
-            if stored_version is not None and stored_version < 44:
+            if stored_version is not None and stored_version < 45:
                 # Before 44 a vision model's "no panels" was thrown away with
                 # a failed call, and the page quartered. Now it is one panel
                 # shown whole -- but the rows cannot say which they were, so
                 # the pages the model was asked about and left unsegmented
                 # are asked once more. A handful per library, on demand.
+                #
+                # 45 repeats it: the 44 build still counted a connector that
+                # did not answer as one that had, and stamped the same rows
+                # again while the account behind it was out of credit.
                 connection.execute("DELETE FROM page_panels WHERE source='vlm' AND segmented=0")
 
     @staticmethod

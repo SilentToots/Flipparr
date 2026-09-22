@@ -4161,7 +4161,7 @@ class PagePanelTests(LibraryFixture):
             store.set_page_panels(file_id, "p2.jpg", "sig", "vlm", [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}], True)
             store.set_page_panels(file_id, "p3.jpg", "sig", "model", [], False)
             with sqlite3.connect(root / "catalog.db") as raw:
-                raw.execute("UPDATE schema_info SET version=43")
+                raw.execute("UPDATE schema_info SET version=44")
             reopened = CatalogStore(root / "catalog.db")
             self.assertIsNone(reopened.page_panels(file_id, "p1.jpg"), "asked once more, under the new meaning")
             self.assertEqual(reopened.page_panels(file_id, "p2.jpg")["source"], "vlm")

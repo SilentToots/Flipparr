@@ -9455,9 +9455,38 @@ def vision_provider() -> str | None:
     return min(ready, key=lambda provider: (int((config.get(provider) or {}).get("priority") or 99), VISION_PROVIDERS.index(provider)))
 
 
+class VisionUnavailable(RuntimeError):
+    """The connector did not answer: a failed call, a refusal by the service, a cool-down.
+
+    Not the same as an answer nobody could use. A page this was raised for
+    has not been looked at, and is asked again once the connector is back.
+    """
+
+
+# How long a connector is left alone after it says the account is out of
+# credit. A rate limit passes in seconds; an empty balance does not, and a
+# page turn should not cost a doomed request each time.
+VISION_QUOTA_COOLDOWN_SECONDS = 15 * 60
+_VISION_QUOTA_CODES = {"insufficient_quota", "credit_balance_exhausted", "billing_error", "billing_not_active"}
+
+
+def _provider_cooling_down(provider_id: str) -> bool:
+    """Whether the provider is held off for longer than its ordinary pacing."""
+    with _PROVIDER_REQUEST_LOCK:
+        held = _PROVIDER_NEXT_REQUEST_AT.get(provider_id, 0.0) - time.monotonic()
+    return held > _PROVIDER_MIN_INTERVAL_SECONDS.get(provider_id, 1.0)
+
+
 def vision_model_ready() -> bool:
-    """Whether any vision connector is on and has a key. Never raises."""
-    return vision_provider() is not None
+    """Whether a vision connector is on, has a key, and is not cooling down. Never raises.
+
+    A connector that has just been refused -- a rate limit, an account out of
+    credit -- is not ready: the reader would otherwise wait out the cool-down
+    on a page turn. The page is read by the lower tiers and asked once the
+    connector is back.
+    """
+    provider = vision_provider()
+    return provider is not None and not _provider_cooling_down(provider)
 
 
 def _vision_request(provider: str, credential: str, image: bytes, prompt: str) -> tuple[str, bytes]:
@@ -9505,22 +9534,53 @@ def ask_vision_model(image: bytes, prompt: str) -> str:
     """
     provider = vision_provider()
     if provider is None:
-        raise ValueError("No vision model is configured")
+        raise VisionUnavailable("No vision model is configured")
     credential = _provider_credential(provider)
     url, body = _vision_request(provider, credential, image, prompt)
     headers = {**_provider_headers(provider, credential), "Content-Type": "application/json"}
     _wait_for_provider_slot(provider)
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    # Opened directly rather than through _safe_urlopen: the URL carries no
+    # credential (the key is a header), and the error body is what says why
+    # the service refused -- a rate limit and an account out of credit are
+    # both a 429, and only one of them passes in a minute.
     try:
-        with _safe_urlopen(request, timeout=VISION_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=VISION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            _cool_down_provider_requests(provider, _provider_retry_after(exc.headers) or 30)
-        raise
+        code = _vision_error_code(exc)
+        if exc.code == 429 or code in _VISION_QUOTA_CODES:
+            headers_seen = dict(exc.headers.items()) if exc.headers else {}
+            retry_after = _provider_retry_after(provider, headers_seen) or 30
+            if code in _VISION_QUOTA_CODES:
+                retry_after = max(retry_after, VISION_QUOTA_COOLDOWN_SECONDS)
+            _cool_down_provider_requests(provider, retry_after)
+        log_event("vision_request_failed", "warning", provider=provider, status=exc.code, code=code)
+        raise VisionUnavailable(f"{provider} answered {exc.code}" + (f" ({code})" if code else "")) from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        log_event("vision_request_failed", "warning", provider=provider, error=type(exc).__name__)
+        raise VisionUnavailable(f"{provider} could not be reached") from None
+    except ValueError as exc:
+        log_event("vision_request_failed", "warning", provider=provider, error="unreadable response")
+        raise VisionUnavailable(f"{provider} answered with something other than JSON") from exc
     if credential in json.dumps(payload, ensure_ascii=False):
-        raise ValueError("Provider returned unsafe credential-bearing data")
+        raise VisionUnavailable("Provider returned unsafe credential-bearing data")
     return _vision_answer(provider, payload)
+
+
+def _vision_error_code(exc: urllib.error.HTTPError) -> str:
+    """The service's own name for a refusal, from the error body, or empty."""
+    try:
+        raw = exc.read(4096)
+    except Exception:  # noqa: BLE001 -- a body that cannot be read is no code
+        return ""
+    try:
+        error = json.loads(raw.decode("utf-8", "replace")).get("error") or {}
+    except (ValueError, AttributeError):
+        return ""
+    if not isinstance(error, dict):
+        return ""
+    return str(error.get("code") or error.get("type") or "")
 
 
 def vision_panels(image: bytes, width: int, height: int, direction: str) -> list[dict[str, Any]] | None:
@@ -9528,13 +9588,11 @@ def vision_panels(image: bytes, width: int, height: int, direction: str) -> list
 
     "No panels" is an answer: a splash, a cover, a pin-up is one panel the
     size of the page, and the reader shows it whole rather than in quarters.
-    None is the model not answering -- a failed call, a reply with no list in
-    it -- and then the quadrants stand.
+    None is an answer with no list in it, and then the quadrants stand. A
+    connector that did not answer at all raises VisionUnavailable, and the
+    page is not counted as asked.
     """
-    try:
-        text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction))
-    except Exception:  # noqa: BLE001 -- the lower tiers' answer stands
-        return None
+    text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction))
     boxes = panel_finder.parse_vision_boxes(text, width, height)
     if boxes is None:
         return None
@@ -9544,11 +9602,11 @@ def vision_panels(image: bytes, width: int, height: int, direction: str) -> list
 
 
 def vision_order(image: bytes, panels: list[dict[str, Any]], direction: str) -> list[int] | None:
-    """The reading order a vision model gives a layout row-major cannot settle, or None."""
-    try:
-        text = ask_vision_model(image, panel_finder.vision_order_prompt(panels, direction))
-    except Exception:  # noqa: BLE001
-        return None
+    """The reading order a vision model gives a layout row-major cannot settle, or None.
+
+    Raises VisionUnavailable when the connector did not answer.
+    """
+    text = ask_vision_model(image, panel_finder.vision_order_prompt(panels, direction))
     return panel_finder.parse_vision_order(text, len(panels))
 
 
@@ -9616,22 +9674,28 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
                     detail_size = detail.size
         # The vision model is asked last and least: about a page nothing
         # could read, or the order of a layout row-major cannot settle. Its
-        # "vlm" source is stamped whether or not it had an answer, so a page
-        # is sent once, not every time it is opened. A page it reads as one
-        # image is kept as one panel, and shown whole.
+        # "vlm" source is stamped whenever it answered, usable or not, so a
+        # page is sent once, not every time it is opened. A page it reads as
+        # one image is kept as one panel, and shown whole. A connector that
+        # did not answer -- down, refused, out of credit -- stamps nothing:
+        # the lower tiers' reading is kept under their own name, which is
+        # what gets a page asked again once the connector is back.
         if vision and detail_bytes is not None:
-            if not found["segmented"]:
-                boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction)
-                if boxes:
-                    found = {"segmented": True, "source": "vlm", "panels": boxes}
-                else:
-                    found = {**found, "source": "vlm"}
-            elif panel_finder.ambiguous_layout(found["panels"]):
-                ordered = vision_order(detail_bytes, found["panels"], direction)
-                panels = found["panels"]
-                if ordered:
-                    panels = [{**panel, "order": ordered.index(position + 1)} for position, panel in enumerate(panels)]
-                found = {**found, "source": "vlm", "panels": panels}
+            try:
+                if not found["segmented"]:
+                    boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction)
+                    if boxes:
+                        found = {"segmented": True, "source": "vlm", "panels": boxes}
+                    else:
+                        found = {**found, "source": "vlm"}
+                elif panel_finder.ambiguous_layout(found["panels"]):
+                    ordered = vision_order(detail_bytes, found["panels"], direction)
+                    panels = found["panels"]
+                    if ordered:
+                        panels = [{**panel, "order": ordered.index(position + 1)} for position, panel in enumerate(panels)]
+                    found = {**found, "source": "vlm", "panels": panels}
+            except VisionUnavailable:
+                pass
         store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"])
         record = {"source": found["source"], "segmented": found["segmented"], "panels": found["panels"]}
     ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []

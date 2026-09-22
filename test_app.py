@@ -6377,7 +6377,8 @@ class VisionConnectorTests(unittest.TestCase):
                 return io.BytesIO(json.dumps({"content": [{"type": "text", "text": "[1, 2]"}]}).encode())
             return io.BytesIO(json.dumps({"choices": [{"message": {"content": "[2, 1]"}}]}).encode())
         opened.calls = []
-        with patch("app._safe_urlopen", side_effect=opened), patch("app._wait_for_provider_slot"):
+        with patch("urllib.request.urlopen", side_effect=opened), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
             with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "a-key"}}):
                 self.assertEqual(app.ask_vision_model(b"jpeg", "order?"), "[1, 2]")
             with patch("app.load_provider_config", return_value={"openai": {"enabled": True, "apiKey": "o-key"}}):
@@ -6409,8 +6410,49 @@ class VisionConnectorTests(unittest.TestCase):
                              "no panels is an answer: the page is one panel, shown whole")
         with patch("app.ask_vision_model", return_value="I cannot make out this page."):
             self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"), "no list is no answer")
-        with patch("app.ask_vision_model", side_effect=RuntimeError("down")):
-            self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"), "a failure is no answer, not an error")
+        with patch("app.ask_vision_model", side_effect=app.VisionUnavailable("down")):
+            with self.assertRaises(app.VisionUnavailable):
+                app.vision_panels(b"jpeg", 780, 1200, "ltr")
+
+    def _refusal(self, status, body=b"", headers=None):
+        import io
+        from email.message import Message
+        message = Message()
+        for key, value in (headers or {}).items():
+            message[key] = value
+        return urllib.error.HTTPError("https://api.openai.com/v1/chat/completions", status, "no", message, io.BytesIO(body))
+
+    def test_a_refusal_is_no_answer_and_cools_the_connector_down(self):
+        # Absolute Flash #1, 2026-09-22: OpenAI answered 429 "credit balance
+        # exhausted" to every page, the 429 branch crashed on a missing
+        # argument, the crash was swallowed as "no answer", and three pages
+        # were stamped as looked at by a model that never saw them.
+        keyed = {"openai": {"enabled": True, "apiKey": "o-key"}}
+        quota = b'{"error": {"message": "You have no credits remaining.", "type": "insufficient_quota", "code": "credit_balance_exhausted"}}'
+        with patch("app.load_provider_config", return_value=keyed), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
+            with patch("urllib.request.urlopen", side_effect=self._refusal(429, quota)), patch("app.log_event") as log:
+                with self.assertRaises(app.VisionUnavailable) as raised:
+                    app.ask_vision_model(b"jpeg", "boxes?")
+            self.assertIn("credit_balance_exhausted", str(raised.exception))
+            self.assertEqual(log.call_args.kwargs.get("code"), "credit_balance_exhausted")
+            held = app._PROVIDER_NEXT_REQUEST_AT["openai"] - time.monotonic()
+            self.assertGreater(held, app.VISION_QUOTA_COOLDOWN_SECONDS - 5, "an empty balance is left alone for a while")
+            self.assertFalse(app.vision_model_ready(), "not ready while cooling down: the reader must not wait it out")
+            with patch("app.log_event"):
+                self.assertFalse(app.vision_model_ready())
+        with patch("app.load_provider_config", return_value=keyed), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
+            with patch("urllib.request.urlopen", side_effect=self._refusal(429, b"{}", {"Retry-After": "7"})), patch("app.log_event"):
+                with self.assertRaises(app.VisionUnavailable):
+                    app.ask_vision_model(b"jpeg", "boxes?")
+            held = app._PROVIDER_NEXT_REQUEST_AT["openai"] - time.monotonic()
+            self.assertTrue(6 < held <= 7, f"a rate limit is waited out as told: {held}")
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("dns")), patch("app.log_event"):
+                app._PROVIDER_NEXT_REQUEST_AT.clear()
+                with self.assertRaises(app.VisionUnavailable):
+                    app.ask_vision_model(b"jpeg", "boxes?")
+            self.assertTrue(app.vision_model_ready(), "an unreachable service is tried again next time")
 
 
 class VisionInPanelPipelineTests(PagePanelTests):
@@ -6447,6 +6489,31 @@ class VisionInPanelPipelineTests(PagePanelTests):
         kept = {"fileSignature": "sig", "source": "vlm", "segmented": False, "panels": []}
         _, _, ask_again = self._ask_with_vision(record=kept, png=self._page_png(gridded=False))
         ask_again.assert_not_called()
+
+    def test_a_connector_that_did_not_answer_stamps_nothing(self):
+        from pathlib import Path
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = None
+        store.file_reading_direction.return_value = "ltr"
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch("app._file_signature", return_value="sig"), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.panel_model_session", return_value=None), \
+             patch("app.vision_model_ready", return_value=True), \
+             patch("app.render_file_page", return_value=self._page_png(gridded=False)), \
+             patch("app.ask_vision_model", side_effect=app.VisionUnavailable("out of credit")) as ask:
+            result = app.file_page_panels(7, 1)
+        ask.assert_called_once()
+        self.assertEqual((result["source"], result["segmented"]), ("auto", False), "the lower tier's reading, under its own name")
+        self.assertEqual(store.set_page_panels.call_args[0][3], "auto")
+        # Kept as "auto" and unsegmented, the row is exactly what the pipeline
+        # sends once the connector is ready again.
+        kept = {"fileSignature": "sig", "source": "auto", "segmented": False, "panels": []}
+        _, _, ask_again = self._ask_with_vision(record=kept, png=self._page_png(gridded=False), answer="[]")
+        ask_again.assert_called_once()
 
     def test_a_page_the_model_reads_as_one_image_is_shown_whole(self):
         # Absolute Flash #1: ChatGPT rightly answered "no panels" for the
