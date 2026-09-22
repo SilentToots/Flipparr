@@ -6327,6 +6327,96 @@ class PagePanelTests(unittest.TestCase):
             self._ask(index=5)
 
 
+class VisionConnectorTests(unittest.TestCase):
+    """Claude as an optional provider: a key, a switch, and only the hard pages sent."""
+
+    def test_claude_is_a_provider_with_a_key_and_somewhere_to_get_one(self):
+        definition = app.PROVIDER_DEFINITIONS["anthropic"]
+        self.assertEqual(definition["credentialField"], "apiKey")
+        self.assertTrue(definition["credentialUrl"].startswith("https://"))
+        self.assertFalse(definition["defaultEnabled"], "off until a person turns it on")
+        headers = app._provider_headers("anthropic", "k")
+        self.assertEqual(headers["x-api-key"], "k")
+        self.assertIn("anthropic-version", headers)
+
+    def test_the_connection_test_lists_models_with_the_key(self):
+        with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "k"}}), \
+             patch("app.fetch_provider_json", return_value={"data": [{"id": "claude"}]}) as fetch:
+            result = app.test_provider_connection("anthropic", {})
+        self.assertEqual(result["status"], "connected")
+        self.assertIn("/models", fetch.call_args[0][1])
+
+    def test_ready_means_on_and_keyed_and_never_raises(self):
+        with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "k"}}):
+            self.assertTrue(app.vision_model_ready())
+        with patch("app.load_provider_config", return_value={"anthropic": {"enabled": False, "apiKey": "k"}}):
+            self.assertFalse(app.vision_model_ready())
+        with patch("app.load_provider_config", return_value={}):
+            self.assertFalse(app.vision_model_ready())
+
+    def test_boxes_are_accepted_only_as_a_layout(self):
+        answer = '[{"x1": 0, "y1": 0, "x2": 780, "y2": 600}, {"x1": 0, "y1": 600, "x2": 780, "y2": 1200}]'
+        with patch("app.ask_vision_model", return_value=answer):
+            boxes = app.vision_panels(b"jpeg", 780, 1200, "ltr")
+        self.assertEqual(len(boxes), 2)
+        with patch("app.ask_vision_model", return_value="[]"):
+            self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"))
+        with patch("app.ask_vision_model", side_effect=RuntimeError("down")):
+            self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"), "a failure is no answer, not an error")
+
+
+class VisionInPanelPipelineTests(PagePanelTests):
+    """Where the vision model sits in the pipeline: last, and only for the hard pages."""
+
+    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True):
+        from pathlib import Path
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = record
+        store.file_reading_direction.return_value = "ltr"
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch("app._file_signature", return_value="sig"), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.panel_model_session", return_value=None), \
+             patch("app.vision_model_ready", return_value=ready), \
+             patch("app.render_file_page", return_value=png or self._page_png()), \
+             patch("app.ask_vision_model", return_value=answer) as ask:
+            return app.file_page_panels(7, 1), store, ask
+
+    def test_a_page_nothing_could_read_is_sent_and_its_boxes_kept(self):
+        answer = '[{"x1": 0, "y1": 0, "x2": 300, "y2": 225}, {"x1": 0, "y1": 225, "x2": 300, "y2": 450}]'
+        result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer=answer)
+        ask.assert_called_once()
+        self.assertEqual((result["source"], result["segmented"], len(result["panels"])), ("vlm", True, 2))
+        self.assertEqual(store.set_page_panels.call_args[0][3], "vlm")
+
+    def test_a_page_the_model_could_not_read_either_is_not_sent_again(self):
+        result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer="[]")
+        ask.assert_called_once()
+        self.assertEqual((result["source"], result["segmented"]), ("vlm", False), "stamped as looked at, so it is asked once")
+        kept = {"fileSignature": "sig", "source": "vlm", "segmented": False, "panels": []}
+        _, _, ask_again = self._ask_with_vision(record=kept, png=self._page_png(gridded=False))
+        ask_again.assert_not_called()
+
+    def test_a_readable_page_with_clean_rows_is_not_sent(self):
+        result, _, ask = self._ask_with_vision()
+        ask.assert_not_called()
+        self.assertEqual(result["source"], "auto")
+
+    def test_the_connector_off_means_nothing_is_sent(self):
+        _, _, ask = self._ask_with_vision(png=self._page_png(gridded=False), ready=False)
+        ask.assert_not_called()
+
+    def test_an_unreadable_page_kept_before_the_connector_is_sent_once_it_is_on(self):
+        earlier = {"fileSignature": "sig", "source": "model", "segmented": False, "panels": []}
+        answer = '[{"x1": 0, "y1": 0, "x2": 300, "y2": 225}, {"x1": 0, "y1": 225, "x2": 300, "y2": 450}]'
+        result, _, ask = self._ask_with_vision(record=earlier, png=self._page_png(gridded=False), answer=answer)
+        ask.assert_called_once()
+        self.assertEqual(result["source"], "vlm")
+
+
 class ASearchCannotStallThePassTests(unittest.TestCase):
     """Ultimate Spider-Man, 134 issues: the automatic pass asked Prowlarr for
     #050, Prowlarr logged the request, and the answer never came. The pass sat

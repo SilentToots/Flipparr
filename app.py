@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import html
 import http.cookies
+import base64
 import io
 import ipaddress
 import json
@@ -237,6 +238,12 @@ _PROXY_HEADER_WARNED = False
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
 GCD_API_BASE = "https://www.comics.org/api"
 METRON_API_BASE = "https://metron.cloud/api"
+ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
+ANTHROPIC_API_VERSION = "2023-06-01"
+# The vision model panel view asks, when the Claude connector is on. Haiku:
+# a page is a few thousand tokens, and this is a question about boxes.
+VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-haiku-4-5-20251001"
+VISION_TIMEOUT_SECONDS = 60.0
 COMIC_VINE_API_BASE = "https://comicvine.gamespot.com/api"
 _PROVIDER_CONFIG_LOCK = threading.Lock()
 _ACQUISITION_CONFIG_LOCK = threading.Lock()
@@ -792,6 +799,18 @@ PROVIDER_DEFINITIONS = {
         "credentialHelp": "Sign in and the API page shows your key. Comic Vine restricts API access to personal, non-commercial use.",
         "defaultEnabled": False, "defaultPriority": 30,
     },
+    "anthropic": {
+        "name": "Claude", "credentialField": "apiKey",
+        "capabilities": ["Panel view: pages the finder cannot read", "Reading order"],
+        "description": "Optional. With an Anthropic API key, the reader's panel view asks Claude about the pages "
+                       "its own detector could not read and the layouts it cannot order. Each such page is sent "
+                       "to Anthropic once, as an image, and the answer is kept.",
+        "setupSummary": "Optional. Sends hard pages to Anthropic, once each, when you turn it on.",
+        "credentialUrl": "https://console.anthropic.com/",
+        "credentialHelp": "Create an API key in the Anthropic Console. Usage is billed by Anthropic; a page is a "
+                          "few thousand tokens, and only the pages nothing else could read are sent.",
+        "defaultEnabled": False, "defaultPriority": 50,
+    },
     "open_library": {
         "name": "Open Library", "credentialField": None,
         "capabilities": ["ISBN editions", "Volumes", "Book covers"],
@@ -947,6 +966,9 @@ def _provider_headers(provider_id: str, credential: str) -> dict[str, str]:
     headers = {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION} (local metadata client)"}
     if provider_id == "metron":
         headers["Authorization"] = f"Bearer {credential}"
+    elif provider_id == "anthropic":
+        headers["x-api-key"] = credential
+        headers["anthropic-version"] = ANTHROPIC_API_VERSION
     return headers
 
 
@@ -1402,7 +1424,7 @@ def post_multipart_file_json(
 
 def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
-    if provider_id not in {"metron", "comic_vine"}:
+    if provider_id not in {"metron", "comic_vine", "anthropic"}:
         raise ValueError("This provider does not require a connection test")
     config = load_provider_config()[provider_id]
     credential_field = str(PROVIDER_DEFINITIONS[provider_id]["credentialField"])
@@ -1413,6 +1435,11 @@ def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = 
         url = f"{METRON_API_BASE}/series/?page=1"
         data = fetch_provider_json(provider_id, url, credential, force=True)
         detail = f"Authenticated successfully; {int(data.get('count') or 0):,} series are available."
+    elif provider_id == "anthropic":
+        data = fetch_provider_json(provider_id, f"{ANTHROPIC_API_BASE}/models?limit=1", credential, force=True)
+        if not isinstance(data.get("data"), list):
+            raise ValueError("Anthropic did not recognise the API key")
+        detail = "API key verified successfully."
     else:
         url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({
             "api_key": credential, "format": "json", "limit": 1, "field_list": "id",
@@ -9387,6 +9414,65 @@ def file_pages(file_id: int) -> dict[str, Any]:
     }
 
 
+def vision_model_ready() -> bool:
+    """Whether the Claude connector is on and has a key. Never raises."""
+    config = load_provider_config().get("anthropic") or {}
+    return bool(config.get("enabled") and str(config.get("apiKey") or "").strip())
+
+
+def ask_vision_model(image: bytes, prompt: str) -> str:
+    """One question about one page image, answered as text.
+
+    A POST to the Messages API with the page as a base64 JPEG. Paced with the
+    provider's slot like every other upstream call, and a 429 cools the
+    provider down; the caller decides what a failure means, which for panel
+    view is always "keep what the lower tiers found".
+    """
+    credential = _provider_credential("anthropic")
+    body = json.dumps({
+        "model": VISION_MODEL, "max_tokens": 1024,
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                         "data": base64.b64encode(image).decode("ascii")}},
+            {"type": "text", "text": prompt},
+        ]}],
+    }).encode()
+    headers = {**_provider_headers("anthropic", credential), "Content-Type": "application/json"}
+    _wait_for_provider_slot("anthropic")
+    request = urllib.request.Request(f"{ANTHROPIC_API_BASE}/messages", data=body, headers=headers, method="POST")
+    try:
+        with _safe_urlopen(request, timeout=VISION_TIMEOUT_SECONDS) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _cool_down_provider_requests("anthropic", _provider_retry_after(exc.headers) or 30)
+        raise
+    if credential in json.dumps(payload, ensure_ascii=False):
+        raise ValueError("Provider returned unsafe credential-bearing data")
+    return "".join(
+        str(block.get("text") or "") for block in (payload.get("content") or []) if isinstance(block, dict)
+    )
+
+
+def vision_panels(image: bytes, width: int, height: int, direction: str) -> list[dict[str, Any]] | None:
+    """The boxes a vision model sees on a page nothing else could read, or None."""
+    try:
+        text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction))
+    except Exception:  # noqa: BLE001 -- the lower tiers' answer stands
+        return None
+    boxes = panel_finder.parse_vision_boxes(text, width, height)
+    return boxes if panel_finder.accept_vision_boxes(boxes) else None
+
+
+def vision_order(image: bytes, panels: list[dict[str, Any]], direction: str) -> list[int] | None:
+    """The reading order a vision model gives a layout row-major cannot settle, or None."""
+    try:
+        text = ask_vision_model(image, panel_finder.vision_order_prompt(panels, direction))
+    except Exception:  # noqa: BLE001
+        return None
+    return panel_finder.parse_vision_order(text, len(panels))
+
+
 _PANEL_MODEL: dict[str, Any] = {}
 
 
@@ -9394,6 +9480,10 @@ def panel_model_session() -> Any:
     """The optional panel detector, probed once. None is the ordinary case."""
     if "session" not in _PANEL_MODEL:
         _PANEL_MODEL["session"] = panel_finder.load_model_session(os.environ.get("FLIPPARR_PANEL_MODEL"))
+        # ONNX Runtime aborts the interpreter if a session is still alive
+        # when the modules are torn down (a recursive_mutex failure, seen on
+        # macOS). Let it go while the interpreter is still whole.
+        atexit.register(_PANEL_MODEL.clear)
     return _PANEL_MODEL["session"]
 
 
@@ -9419,24 +9509,51 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     signature = _file_signature(path)
     record = store.page_panels(file_id, member)
     session = panel_model_session()
-    # A reading is redone when the file changed underneath it, and a reading
-    # made without the detector is redone once the detector is there; a
-    # person's stands regardless.
-    stale = record is not None and record["source"] in ("auto", "model") and record["fileSignature"] != signature
-    upgrade = record is not None and record["source"] == "auto" and session is not None
+    vision = vision_model_ready()
+    direction = store.file_reading_direction(file_id)
+    # A reading is redone when the file changed underneath it; a reading made
+    # without a tier is redone once that tier is there -- the detector for an
+    # "auto" row, the vision connector for a row it could still help; a
+    # person's stands regardless. Every automatic source counts as a machine's.
+    machine = record is not None and record["source"] in ("auto", "model", "vlm")
+    stale = machine and record["fileSignature"] != signature
+    upgrade = record is not None and (
+        (record["source"] == "auto" and session is not None)
+        or (record["source"] in ("auto", "model") and vision
+            and (not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
+    )
     if record is None or stale or upgrade:
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
-            if session is None:
+            if session is None and not vision:
                 found = panel_finder.detect_panels(image)
+                detail_bytes = None
             else:
                 # The detector reads the 1200px render: it was exported at
                 # 1024px so thin panels survive, and the cut's 600px would
                 # throw that away. Rendered once and cached like any page.
-                with Image.open(io.BytesIO(render_file_page(file_id, index, "backdrop"))) as detail:
+                detail_bytes = render_file_page(file_id, index, "backdrop")
+                with Image.open(io.BytesIO(detail_bytes)) as detail:
                     found = panel_finder.detect_panels(image, session, detail)
+                    detail_size = detail.size
+        # The vision model is asked last and least: about a page nothing
+        # could read, or the order of a layout row-major cannot settle. Its
+        # "vlm" source is stamped whether or not it had an answer, so a page
+        # is sent once, not every time it is opened.
+        if vision and detail_bytes is not None:
+            if not found["segmented"]:
+                boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction)
+                if boxes:
+                    found = {"segmented": True, "source": "vlm", "panels": boxes}
+                else:
+                    found = {**found, "source": "vlm"}
+            elif panel_finder.ambiguous_layout(found["panels"]):
+                ordered = vision_order(detail_bytes, found["panels"], direction)
+                panels = found["panels"]
+                if ordered:
+                    panels = [{**panel, "order": ordered.index(position + 1)} for position, panel in enumerate(panels)]
+                found = {**found, "source": "vlm", "panels": panels}
         store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"])
         record = {"source": found["source"], "segmented": found["segmented"], "panels": found["panels"]}
-    direction = store.file_reading_direction(file_id)
     ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []
     return {
         "fileId": str(file_id), "page": index, "source": record["source"],

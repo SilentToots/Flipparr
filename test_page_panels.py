@@ -5,8 +5,9 @@ import unittest
 from PIL import Image, ImageDraw
 
 from page_panels import (
-    READING_LTR, READING_RTL, detect_panels, ink_mask, load_model_session, order_panels,
-    quadrant_panels, refine, suppress,
+    READING_LTR, READING_RTL, accept_vision_boxes, ambiguous_layout, detect_panels, ink_mask,
+    load_model_session, order_panels, parse_vision_boxes, parse_vision_order, quadrant_panels,
+    refine, suppress, vision_boxes_prompt, vision_order_prompt,
 )
 
 try:
@@ -203,6 +204,53 @@ class ModelTierTests(unittest.TestCase):
         self.assertEqual((result["segmented"], result["source"], len(result["panels"])), (True, "model", 2))
         tops = sorted(round(panel["y"], 2) for panel in result["panels"])
         self.assertEqual(tops, [0.05, 0.5])
+
+
+class VisionTierTests(unittest.TestCase):
+    """What is asked of a vision model, and what of its answer is believed."""
+
+    def test_the_page_is_described_in_its_own_pixels_and_direction(self):
+        prompt = vision_boxes_prompt(780, 1200, READING_RTL)
+        self.assertIn("780 pixels wide and 1200 pixels tall", prompt)
+        self.assertIn("right to left", prompt)
+        self.assertIn("x1", prompt, "absolute pixel corners, which is what the model localises best in")
+
+    def test_boxes_come_back_normalised_and_clipped_whatever_form_they_took(self):
+        text = 'Here you go: [{"x1": 10, "y1": 20, "x2": 400, "y2": 620}, {"x": 400, "y": 620, "w": 380, "h": 900}, {"x1": "no"}, 7]'
+        boxes = parse_vision_boxes(text, 780, 1200)
+        self.assertEqual(len(boxes), 2)
+        self.assertEqual({round(v, 3) for v in (boxes[0]["x"], boxes[0]["y"])}, {round(10 / 780, 3), round(20 / 1200, 3)})
+        self.assertLessEqual(boxes[1]["y"] + boxes[1]["h"], 1.0, "a box past the page's edge is clipped to it")
+        self.assertEqual(parse_vision_boxes("I cannot see any panels.", 780, 1200), [])
+
+    def test_an_answer_is_believed_only_if_it_reads_as_a_layout(self):
+        two = [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertTrue(accept_vision_boxes(two))
+        self.assertFalse(accept_vision_boxes(two[:1]), "one box is a page, not a layout")
+        self.assertFalse(accept_vision_boxes([{"x": 0, "y": 0, "w": 0.3, "h": 0.3}, {"x": 0.5, "y": 0.5, "w": 0.3, "h": 0.3}]),
+                         "two small boxes leave most of the page unread")
+        self.assertFalse(accept_vision_boxes([{"x": 0, "y": 0, "w": 1, "h": 0.6}, {"x": 0, "y": 0.3, "w": 1, "h": 0.7}]),
+                         "boxes on top of each other are one panel seen twice")
+
+    def test_a_layout_is_ambiguous_when_panels_half_share_a_row(self):
+        grid = [{"x": 0, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0.5, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertFalse(ambiguous_layout(grid), "clean rows are not a question")
+        stagger = [{"x": 0, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0.5, "y": 0.25, "w": 0.5, "h": 0.5}]
+        self.assertTrue(ambiguous_layout(stagger), "half a row's overlap is what row-major gets wrong")
+
+    def test_an_order_is_believed_only_as_a_permutation(self):
+        self.assertEqual(parse_vision_order("Reading order: [3, 1, 2]", 3), [3, 1, 2])
+        self.assertIsNone(parse_vision_order("[1, 1, 2]", 3), "a panel read twice")
+        self.assertIsNone(parse_vision_order("[1, 2]", 3), "a panel left out")
+        self.assertIsNone(parse_vision_order("no idea", 3))
+        self.assertIn("panel 2:", vision_order_prompt([{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]))
+
+    def test_an_order_that_was_given_stands_over_the_row_rule(self):
+        panels = [
+            {"x": 0, "y": 0, "w": 0.5, "h": 0.5, "order": 1},
+            {"x": 0.5, "y": 0, "w": 0.5, "h": 0.5, "order": 0},
+        ]
+        self.assertEqual([p["x"] for p in order_panels(panels, READING_LTR)], [0.5, 0], "as ordered, not left to right")
 
 
 if __name__ == "__main__":

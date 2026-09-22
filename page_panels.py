@@ -144,6 +144,10 @@ def order_panels(panels: list[dict[str, Any]], direction: str = READING_LTR) -> 
     reads most pages right; the insets and diagonals it gets wrong are what a
     manual pass is for.
     """
+    # An order a vision model (or a person) gave stands; the row rule is for
+    # panels nobody has ordered.
+    if panels and all(isinstance(panel.get("order"), int) for panel in panels):
+        return sorted(panels, key=lambda panel: panel["order"])
     remaining = sorted(panels, key=lambda panel: (panel["y"], panel["x"]))
     rows: list[list[dict[str, Any]]] = []
     for panel in remaining:
@@ -433,3 +437,138 @@ def _plausible(mask: Image.Image, boxes: list[tuple[int, int, int, int]]) -> boo
     page_area = (page[2] - page[0]) * (page[3] - page[1])
     covered = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in boxes)
     return page_area > 0 and covered / page_area >= COVERAGE_MIN
+
+
+# ---- A vision model, as an optional connector ---------------------------------
+#
+# Claude (and, behind the same seam, any vision model) is consulted only where
+# the tiers below gave up or cannot know: the boxes on a page nothing could
+# read, and the reading order of a layout row-major cannot settle. Anthropic's
+# own guidance is that localisation is approximate and best asked for in
+# absolute pixels of the sent image, so that is how it is asked; the answer
+# is normalised here and accepted only if it looks like a layout.
+
+VISION_COVERAGE_MIN = 0.6
+VISION_OVERLAP_MAX = 0.2
+# A pair of panels whose vertical spans overlap by this much of the shorter
+# one -- neither clearly one row nor clearly two -- is what row-major gets
+# wrong: an inset, a diagonal, a stagger.
+AMBIGUOUS_OVERLAP = (0.2, 0.8)
+
+
+def vision_boxes_prompt(width: int, height: int, direction: str = READING_LTR) -> str:
+    reads = "right to left, like manga" if direction == READING_RTL else "left to right"
+    return (
+        f"This is one page of a comic, {width} pixels wide and {height} pixels tall, read {reads}. "
+        "List every story panel on it, in reading order, as a JSON array and nothing else. "
+        "Each item is an object with integer pixel coordinates in this image: "
+        '{"x1": left, "y1": top, "x2": right, "y2": bottom}. '
+        "Only the drawn panels: not speech balloons, captions, page numbers or the page border. "
+        "If the page is a single image with no panels, answer []."
+    )
+
+
+def parse_vision_boxes(text: str, width: int, height: int) -> list[dict[str, Any]]:
+    """The model's boxes as normalised rectangles; anything unusable is dropped."""
+    items = _first_json_array(text)
+    boxes: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            if all(key in item for key in ("x1", "y1", "x2", "y2")):
+                x0, y0, x1, y1 = (float(item["x1"]), float(item["y1"]), float(item["x2"]), float(item["y2"]))
+            elif all(key in item for key in ("x", "y", "w", "h")):
+                x0, y0 = float(item["x"]), float(item["y"])
+                x1, y1 = x0 + float(item["w"]), y0 + float(item["h"])
+            else:
+                continue
+        except (TypeError, ValueError):
+            continue
+        x0, x1 = sorted((min(max(x0, 0.0), width), min(max(x1, 0.0), width)))
+        y0, y1 = sorted((min(max(y0, 0.0), height), min(max(y1, 0.0), height)))
+        if x1 - x0 < 1 or y1 - y0 < 1 or not width or not height:
+            continue
+        boxes.append({"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height})
+    return boxes
+
+
+def accept_vision_boxes(boxes: list[dict[str, Any]]) -> bool:
+    """Whether the model's boxes read as a layout: enough of the page, and not on top of each other."""
+    if len(boxes) < 2:
+        return False
+    if sum(box["w"] * box["h"] for box in boxes) < VISION_COVERAGE_MIN:
+        return False
+    for index, a in enumerate(boxes):
+        for b in boxes[index + 1:]:
+            if _norm_overlap(a, b) > VISION_OVERLAP_MAX:
+                return False
+    return True
+
+
+def ambiguous_layout(panels: list[dict[str, Any]]) -> bool:
+    """Whether row-major ordering is a guess on this page."""
+    low, high = AMBIGUOUS_OVERLAP
+    for index, a in enumerate(panels):
+        for b in panels[index + 1:]:
+            shorter = min(a["h"], b["h"])
+            if not shorter:
+                continue
+            overlap = (min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])) / shorter
+            if low < overlap < high:
+                return True
+    return False
+
+
+def vision_order_prompt(panels: list[dict[str, Any]], direction: str = READING_LTR) -> str:
+    reads = "right to left, like manga" if direction == READING_RTL else "left to right"
+    listed = "; ".join(
+        f"panel {index + 1}: left {panel['x']:.2f}, top {panel['y']:.2f}, width {panel['w']:.2f}, height {panel['h']:.2f}"
+        for index, panel in enumerate(panels)
+    )
+    return (
+        f"This is one page of a comic, read {reads}. Its panels have been found and numbered; "
+        f"positions are fractions of the page's width and height: {listed}. "
+        "In what order should they be read? Answer with a JSON array of the panel numbers "
+        "in reading order and nothing else."
+    )
+
+
+def parse_vision_order(text: str, count: int) -> list[int] | None:
+    """A permutation of 1..count from the model's answer, or None."""
+    items = _first_json_array(text)
+    try:
+        order = [int(item) for item in items]
+    except (TypeError, ValueError):
+        return None
+    return order if sorted(order) == list(range(1, count + 1)) else None
+
+
+def _first_json_array(text: str) -> list[Any]:
+    import json  # noqa: PLC0415
+
+    start = text.find("[")
+    if start == -1:
+        return []
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "[":
+            depth += 1
+        elif text[index] == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(text[start:index + 1])
+                except ValueError:
+                    return []
+                return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _norm_overlap(a: dict[str, Any], b: dict[str, Any]) -> float:
+    """Intersection over union of two normalised rectangles."""
+    x0, y0 = max(a["x"], b["x"]), max(a["y"], b["y"])
+    x1, y1 = min(a["x"] + a["w"], b["x"] + b["w"]), min(a["y"] + a["h"], b["y"] + b["h"])
+    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
+    return inter / union if union else 0.0
