@@ -19,7 +19,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 42
+SCHEMA_VERSION = 43
+# Who found a page's panels: the gutter finder, a local model, a vision model
+# over the wire, a person, or a file that carried them.
+PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -1127,6 +1130,21 @@ class CatalogStore:
                     source TEXT NOT NULL,
                     file_signature TEXT,
                     updated_at TEXT NOT NULL
+                );
+                -- Where the panels are on a page (schema 43). Keyed by the
+                -- archive member like a backdrop, and stamped with the file's
+                -- signature so a re-scanned file is read again. Rectangles are
+                -- normalised and unordered: the order depends on how the run
+                -- reads, and is worked out when they are asked for.
+                CREATE TABLE IF NOT EXISTS page_panels (
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    page_member TEXT NOT NULL,
+                    file_signature TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    panels_json TEXT NOT NULL,
+                    segmented INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (file_id, page_member)
                 );
                 -- Where you are in a comic (schema 40). Keyed by file, because
                 -- a file is the thing you read; an issue may have several. The
@@ -3349,6 +3367,66 @@ class CatalogStore:
                 "stale": row["file_signature"] != row["scanned_signature"],
             }
         return by_run
+
+    def page_panels(self, file_id: int, member: str) -> dict[str, Any] | None:
+        """What was read off one page, or None when nobody has looked yet."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM page_panels WHERE file_id=? AND page_member=?", (int(file_id), member),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fileSignature": row["file_signature"], "source": row["source"],
+            "segmented": bool(row["segmented"]), "panels": _load_json(row["panels_json"], []),
+        }
+
+    def set_page_panels(
+        self, file_id: int, member: str, file_signature: str, source: str,
+        panels: list[dict[str, Any]], segmented: bool,
+    ) -> None:
+        """Keep one page's panels. `source` says who found them, so an automatic
+        reading can be redone when the file changes and a person's is left alone."""
+        if source not in PANEL_SOURCES:
+            raise ValueError("Unsupported panel source")
+        if not member:
+            raise ValueError("Choose a page")
+        with self._write_lock, self._connect() as connection:
+            if not connection.execute("SELECT 1 FROM files WHERE id=?", (int(file_id),)).fetchone():
+                raise LookupError("Library file was not found")
+            connection.execute(
+                """INSERT INTO page_panels(
+                       file_id, page_member, file_signature, source, panels_json, segmented, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(file_id, page_member) DO UPDATE SET
+                       file_signature=excluded.file_signature, source=excluded.source,
+                       panels_json=excluded.panels_json, segmented=excluded.segmented,
+                       updated_at=excluded.updated_at""",
+                (int(file_id), member, file_signature, source, json.dumps(list(panels)),
+                 1 if segmented else 0, _utc_now()),
+            )
+
+    def file_reading_direction(self, file_id: int) -> str:
+        """Which way a comic reads: its run's override, else right to left for manga.
+
+        The same rule as `readingDirection` in the reader's reader.js, so a
+        page's panels are ordered the way its pages are turned. A file with
+        no run reads as a comic.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT series_runs.format, series_runs.reading_direction
+                   FROM files
+                   JOIN file_identities ON file_identities.file_id=files.id
+                   JOIN series_runs ON series_runs.id=file_identities.series_run_id
+                   WHERE files.id=?""",
+                (int(file_id),),
+            ).fetchone()
+        if row is None:
+            return "ltr"
+        if row["reading_direction"] in ("ltr", "rtl"):
+            return row["reading_direction"]
+        return "rtl" if row["format"] == "manga" else "ltr"
 
     def issue_file_counts_by_run(self) -> dict[str, int]:
         """How many single-issue comics each run owns, for the Comics grid.

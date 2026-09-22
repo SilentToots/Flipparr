@@ -6252,6 +6252,81 @@ class IssueDetailTests(unittest.TestCase):
         self.assertEqual(result["status"], "unavailable")
 
 
+class PagePanelTests(unittest.TestCase):
+    """Where a page's panels are: read once from the render, kept, ordered the way the run reads."""
+
+    def _page_png(self, gridded=True):
+        import io
+        from PIL import Image, ImageDraw
+        image = Image.new("RGB", (300, 450), "white")
+        draw = ImageDraw.Draw(image)
+        if gridded:
+            for box in ((20, 20, 140, 210), (160, 20, 280, 210), (20, 240, 280, 430)):
+                draw.rectangle(box, fill="#444444", outline="black", width=3)
+        else:
+            draw.rectangle((0, 0, 299, 449), fill="#444444")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def _ask(self, record=None, direction="ltr", png=None, index=1):
+        from pathlib import Path
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = record
+        store.file_reading_direction.return_value = direction
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch("app._file_signature", return_value="sig"), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.render_file_page", return_value=png or self._page_png()) as render:
+            return app.file_page_panels(7, index), store, render
+
+    def test_the_first_look_reads_the_render_and_keeps_what_it_found(self):
+        result, store, render = self._ask()
+        render.assert_called_once_with(7, 1)
+        (file_id, member, signature, source, panels, segmented), _ = store.set_page_panels.call_args
+        self.assertEqual((file_id, member, signature, source, segmented, len(panels)), (7, "b.jpg", "sig", "auto", True, 3))
+        self.assertEqual([panel["id"] for panel in result["panels"]], ["1-0", "1-1", "1-2"])
+        self.assertLess(result["panels"][0]["x"], result["panels"][1]["x"], "left before right")
+        self.assertEqual((result["page"], result["source"], result["readingDirection"]), (1, "auto", "ltr"))
+
+    def test_a_kept_reading_is_not_read_again(self):
+        kept = {"fileSignature": "sig", "source": "auto", "segmented": True,
+                "panels": [{"x": 0.5, "y": 0.0, "w": 0.5, "h": 1.0}, {"x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0}]}
+        result, store, render = self._ask(record=kept)
+        render.assert_not_called()
+        store.set_page_panels.assert_not_called()
+        self.assertEqual([panel["x"] for panel in result["panels"]], [0.0, 0.5], "ordered on the way out")
+
+    def test_an_automatic_reading_is_redone_when_the_file_changed(self):
+        stale = {"fileSignature": "old", "source": "auto", "segmented": False, "panels": []}
+        _, _, render = self._ask(record=stale)
+        render.assert_called_once()
+
+    def test_a_persons_reading_stands_whatever_happened_to_the_file(self):
+        corrected = {"fileSignature": "old", "source": "manual", "segmented": True,
+                     "panels": [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}]}
+        result, _, render = self._ask(record=corrected)
+        render.assert_not_called()
+        self.assertEqual(result["source"], "manual")
+
+    def test_a_page_that_could_not_be_read_says_so(self):
+        result, store, _ = self._ask(png=self._page_png(gridded=False))
+        self.assertEqual((result["segmented"], result["panels"]), (False, []))
+        self.assertFalse(store.set_page_panels.call_args[0][5], "and that is what is kept")
+
+    def test_a_manga_page_orders_its_panels_right_to_left(self):
+        result, _, _ = self._ask(direction="rtl")
+        self.assertGreater(result["panels"][0]["x"], result["panels"][1]["x"])
+        self.assertEqual(result["readingDirection"], "rtl")
+
+    def test_a_page_the_comic_does_not_have_is_not_found(self):
+        with self.assertRaises(LookupError):
+            self._ask(index=5)
+
+
 class ASearchCannotStallThePassTests(unittest.TestCase):
     """Ultimate Spider-Man, 134 issues: the automatic pass asked Prowlarr for
     #050, Prowlarr logged the request, and the answer never came. The pass sat

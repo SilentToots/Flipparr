@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from catalog_store import CatalogStore, _issue_release_state, normalized_person
+import page_panels as panel_finder
 from catalog_core_v2.language import (
     LANGUAGE_NAMES,
     detect_language as detect_release_language,
@@ -9386,6 +9387,41 @@ def file_pages(file_id: int) -> dict[str, Any]:
     }
 
 
+def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
+    """Where the panels are on one page, in the order its run reads.
+
+    Read from the 600px render the first time a page is asked about and kept,
+    so a comic is segmented once, as it is read -- on demand, never as a
+    library sweep. An automatic reading is redone when the file changes
+    underneath it; a person's, like a chosen backdrop, stands. An unsegmented
+    page answers with no panels, and the reader draws its four quadrants.
+    """
+    from PIL import Image
+
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    if not 0 <= index < len(pages):
+        raise LookupError("That page is not in this comic")
+    member = pages[index]
+    signature = _file_signature(path)
+    record = store.page_panels(file_id, member)
+    if record is None or (record["source"] == "auto" and record["fileSignature"] != signature):
+        with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
+            found = panel_finder.detect_panels(image)
+        store.set_page_panels(file_id, member, signature, "auto", found["panels"], found["segmented"])
+        record = {"source": "auto", "segmented": found["segmented"], "panels": found["panels"]}
+    direction = store.file_reading_direction(file_id)
+    ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []
+    return {
+        "fileId": str(file_id), "page": index, "source": record["source"],
+        "segmented": bool(record["segmented"]), "readingDirection": direction,
+        "panels": [{"id": f"{index}-{position}", **panel} for position, panel in enumerate(ordered)],
+    }
+
+
 def file_reading_progress(file_id: int) -> dict[str, Any]:
     """Where a comic was left, and whether that place still exists.
 
@@ -11472,6 +11508,20 @@ class Handler(BaseHTTPRequestHandler):
                 payload = series_removal_preview(int(series_removal.group(1)))
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
+        file_page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
+        if file_page_panels_match:
+            try:
+                payload = file_page_panels(
+                    int(file_page_panels_match.group(1)), int(file_page_panels_match.group(2)),
+                )
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
+                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
                 return
             self.send_json(payload)
             return

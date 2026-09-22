@@ -4133,6 +4133,46 @@ class IssueFileCountTests(LibraryFixture):
             self.assertEqual(store.issue_file_counts_by_run(), {})
 
 
+class PagePanelTests(LibraryFixture):
+    """Where a page's panels are, kept by the page's member name like a backdrop."""
+
+    def test_a_pages_panels_round_trip(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            file_id = self._file_id(store, "Example 001.cbz")
+            self.assertIsNone(store.page_panels(file_id, "p1.jpg"), "nobody has looked yet")
+            panels = [{"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.3}]
+            store.set_page_panels(file_id, "p1.jpg", "sig-1", "auto", panels, True)
+            self.assertEqual(store.page_panels(file_id, "p1.jpg"), {
+                "fileSignature": "sig-1", "source": "auto", "segmented": True, "panels": panels,
+            })
+            store.set_page_panels(file_id, "p1.jpg", "sig-2", "manual", [], False)
+            self.assertEqual(store.page_panels(file_id, "p1.jpg")["source"], "manual", "the same page, corrected")
+
+    def test_only_a_known_source_for_a_known_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            file_id = self._file_id(store, "Example 001.cbz")
+            with self.assertRaises(ValueError):
+                store.set_page_panels(file_id, "p1.jpg", "s", "guess", [], False)
+            with self.assertRaises(ValueError):
+                store.set_page_panels(file_id, "", "s", "auto", [], False)
+            with self.assertRaises(LookupError):
+                store.set_page_panels(9999, "p1.jpg", "s", "auto", [], False)
+
+    def test_a_comic_reads_left_to_right_and_a_manga_the_other_way_unless_told(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run_id = self._run_id(store)
+            file_id = self._file_id(store, "Example 002.cbz")
+            self.assertEqual(store.file_reading_direction(file_id), "ltr")
+            store.set_series_format(run_id, "manga")
+            self.assertEqual(store.file_reading_direction(file_id), "rtl")
+            store.set_series_format(run_id, "manga", reading_direction="ltr")
+            self.assertEqual(store.file_reading_direction(file_id), "ltr", "a run may say otherwise")
+            self.assertEqual(store.file_reading_direction(9999), "ltr", "a file with no run reads as a comic")
+
+
 class ReplacementStaysItsOwnRequestTests(unittest.TestCase):
     """Replacing one comic must not enrol the run it belongs to.
 

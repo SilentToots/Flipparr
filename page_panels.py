@@ -200,8 +200,11 @@ def _ink_profiles(mask: Image.Image) -> tuple[list[int], list[int]]:
     a real gutter needs.
     """
     width, height = mask.size
-    columns = list(mask.resize((width, 1), Image.Resampling.BOX).getdata()) if width and height else []
-    rows = list(mask.resize((1, height), Image.Resampling.BOX).getdata()) if width and height else []
+    if not width or not height:
+        return [], []
+    # A one-line "L" image's bytes are its values, in order.
+    columns = list(mask.resize((width, 1), Image.Resampling.BOX).tobytes())
+    rows = list(mask.resize((1, height), Image.Resampling.BOX).tobytes())
     return columns, rows
 
 

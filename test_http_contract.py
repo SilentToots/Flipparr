@@ -1005,6 +1005,39 @@ class HttpContractTests(unittest.TestCase):
         self.assertRegex(entry["lastReadAt"], r"^\d{4}-\d{2}-\d{2}T", "Recent sorts on it as a string")
         self.assertEqual(set(entry), {"state", "fileId", "issueNumber", "page", "pageCount", "lastReadAt"})
 
+    def test_a_page_answers_where_its_panels_are(self):
+        """Read once from the render and kept, so the second ask is the first answer."""
+        from PIL import Image, ImageDraw
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "panels.cbz"
+            image = Image.new("RGB", (300, 450), "white")
+            draw = ImageDraw.Draw(image)
+            for box in ((20, 20, 140, 210), (160, 20, 280, 210), (20, 240, 280, 430)):
+                draw.rectangle(box, fill="#444444", outline="black", width=3)
+            page = io.BytesIO()
+            image.save(page, format="JPEG")
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("0.jpg", page.getvalue())
+            import app as app_module
+            run = self._series_run(app_module.catalog_store(), "Panel Contract")
+            file_id = self._library_file(comic, run=run, issue="1")
+            response = self.get(f"/api/v1/files/{file_id}/pages/0/panels")
+            again = self.get(f"/api/v1/files/{file_id}/pages/0/panels")
+            missing_page = self.get(f"/api/v1/files/{file_id}/pages/9/panels")
+        self.assertEqual(response.status, 200)
+        payload = response.json()
+        self.assertEqual(set(payload), {"fileId", "page", "source", "segmented", "readingDirection", "panels"})
+        self.assertTrue(payload["segmented"])
+        self.assertEqual(len(payload["panels"]), 3)
+        for panel in payload["panels"]:
+            for key in ("x", "y", "w", "h"):
+                self.assertGreaterEqual(panel[key], 0.0)
+                self.assertLessEqual(panel[key], 1.0)
+        self.assertEqual(payload["panels"][0]["id"], "0-0")
+        self.assertEqual(again.json(), payload)
+        self.assertEqual(missing_page.status, 404)
+        self.assertEqual(self.get("/api/v1/files/999999/pages/0/panels").status, 404)
+
     def test_progress_can_only_be_kept_for_comics_the_library_holds(self):
         self.assertEqual(self.get("/api/v1/files/999999/progress").status, 404)
         self.assertEqual(self.post("/api/v1/files/999999/progress", {"page": 1}).status, 404)
