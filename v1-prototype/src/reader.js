@@ -308,3 +308,8 @@ export function isEdgeTouch(x, width) {
 export function isStolenBack(edgeCancelledAt, now) {
   return edgeCancelledAt > 0 && now - edgeCancelledAt < EDGE_GESTURE_GRACE_MS;
 }
+
+// How far the page has to be pulled past its top, on a Home Screen app, for
+// letting go to reload it: the phone's rubber band reports the stretch as a
+// negative scroll while the finger is down.
+export const PULL_REFRESH_PX = 80;

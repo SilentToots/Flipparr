@@ -249,6 +249,12 @@ Motion tokens:
 - **The toast** is a glass capsule centred at the foot of the page (over the
   content area above 640px, above the tab bar on a phone). It springs up,
   sinks away after about three seconds, and a new one replaces it.
+- **The pull-to-refresh pill** (`.pull-refresh`, since 2026-09-22) is the
+  same capsule at the top of the page, under the phone's safe area, and only
+  in the installed app: a Home Screen web app has no browser chrome and so
+  none of Safari's reload, so a pull past 80px of the phone's own rubber
+  band shows "Release to refresh", and letting go there reloads. A Safari
+  tab keeps Safari's.
 - **Sheets on a phone.** A dialog is a sheet from the bottom, 8px in from
   the screen's edges with 24px corners, over the tab bar, with a grabber
   (`SheetGrabber`): the sheet follows a finger on it, and leaves past a
