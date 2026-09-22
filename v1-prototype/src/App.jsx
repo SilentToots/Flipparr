@@ -4991,6 +4991,44 @@ function ReaderView({
     setPan(focus.pan);
   }, [panelMode, overview, pages.state, spreads, index, panel, panels, focusFor]);
 
+  // Turning the phone changes the surface, and with it the page's 1x size:
+  // fitted by width one way, by height the other. Whatever framing was in
+  // force was worked out for the old surface. In panel view the panel is
+  // framed again for the new one; a zoomed page keeps its zoom, has its 1x
+  // size re-derived, and its pan brought back within the new bounds. A snap,
+  // not a flight: the flight's geometry belongs to the surface that is gone.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface || typeof ResizeObserver === "undefined") return undefined;
+    let last = null;
+    const observer = new ResizeObserver(() => {
+      const box = surface.getBoundingClientRect();
+      const size = `${Math.round(box.width)}x${Math.round(box.height)}`;
+      if (size === last) return;
+      const first = last === null;
+      last = size;
+      if (first) return;
+      const image = pageRef.current;
+      if (!image?.naturalWidth) return;
+      if (panelModeRef.current && !overviewRef.current) {
+        const focus = focusFor(at.current, panelRef.current);
+        if (focus) { setZoom(focus.zoom); setPan(focus.pan); }
+        return;
+      }
+      if (zoomRef.current > 1) {
+        const fit = Math.min(1, box.width / image.naturalWidth, box.height / image.naturalHeight);
+        baseRef.current = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
+        setPan((current) => clampPan(current, zoomRef.current, box, baseRef.current));
+        // The size is inline from `baseRef`, which is not state; a render is
+        // owed so the page takes its new 1x size.
+        setZoom((current) => current);
+        setPan((current) => ({ ...current }));
+      }
+    });
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [focusFor]);
+
   // The flight between framings, after the new one has been laid out: the
   // image is snapped to its new size and place, then a transform carries it
   // from where the old framing was to rest. Animating the layout itself was a
