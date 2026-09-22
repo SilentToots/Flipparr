@@ -1023,12 +1023,29 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
   // Condensed is simply "the window has moved", read from the window: a
   // sentinel watched by an IntersectionObserver missed the move on an
   // iPhone when a view change left the page scrolled, and the header sat
-  // transparent over the content with its band off.
+  // transparent over the content with its band off. Not the rubber band,
+  // though: pushed past its end a page bounces, scrollY reads past the
+  // range for a moment, and the bounce's return does not always send a last
+  // scroll event -- so a page with no range to scroll never condenses, and
+  // the finger lifting checks again once the bounce has settled. A long
+  // page bounced at its bottom stays condensed, as it should.
   useEffect(() => {
-    const sync = () => setCondensed(window.scrollY > 0);
+    const sync = () => {
+      const range = document.documentElement.scrollHeight - window.innerHeight;
+      setCondensed(range > 0 && window.scrollY > 0);
+    };
+    let settle = 0;
+    const later = () => { window.clearTimeout(settle); settle = window.setTimeout(sync, 400); };
     sync();
     window.addEventListener("scroll", sync, { passive: true });
-    return () => window.removeEventListener("scroll", sync);
+    window.addEventListener("scrollend", sync, { passive: true });
+    window.addEventListener("touchend", later, { passive: true });
+    return () => {
+      window.clearTimeout(settle);
+      window.removeEventListener("scroll", sync);
+      window.removeEventListener("scrollend", sync);
+      window.removeEventListener("touchend", later);
+    };
   }, []);
   // Sticky things further down the page sit under the header, not behind it.
   useEffect(() => {
