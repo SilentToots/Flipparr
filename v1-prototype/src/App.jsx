@@ -7082,37 +7082,6 @@ export function App() {
   // way back: a long section left scrolled would otherwise hand its offset
   // to the short list, which then sat under the header.
   useEffect(() => { window.scrollTo(0, 0); }, [settingsSection]);
-  // No rubber band past a page's *end* on a phone: iOS drags the whole
-  // document with the bounce, sticky header included, and a header with a
-  // backdrop blur was left hidden once it settled. The pull from the top
-  // stays, since that is how the installed app refreshes -- CSS cannot tell
-  // the two ends apart, so the touch is read here: a finger moving up with
-  // nowhere left to scroll is refused. A touch inside something with its own
-  // scrolling, or with a dialog holding the page, is not the page's.
-  useEffect(() => {
-    if (!window.matchMedia?.("(max-width: 640px)").matches) return undefined;
-    let lastY = 0;
-    const onStart = (event) => { lastY = event.touches[0]?.clientY ?? 0; };
-    const onMove = (event) => {
-      const y = event.touches[0]?.clientY ?? lastY;
-      const up = y < lastY;
-      lastY = y;
-      if (!up || !event.cancelable || document.documentElement.classList.contains("page-scroll-locked")) return;
-      const range = document.documentElement.scrollHeight - window.innerHeight;
-      if (window.scrollY < range) return;
-      for (let node = event.target; node && node !== document.body; node = node.parentElement) {
-        const overflow = getComputedStyle(node).overflowY;
-        if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return;
-      }
-      event.preventDefault();
-    };
-    window.addEventListener("touchstart", onStart, { passive: true });
-    window.addEventListener("touchmove", onMove, { passive: false });
-    return () => {
-      window.removeEventListener("touchstart", onStart);
-      window.removeEventListener("touchmove", onMove);
-    };
-  }, []);
   // Resolve a ?series= link once the catalog is in. An id that no longer exists
   // simply clears, and the effect above then tidies it out of the URL.
   useEffect(() => {
