@@ -656,7 +656,7 @@ function CountUp({ value }) {
   return <>{useCountUp(value).toLocaleString()}</>;
 }
 
-function useGlassIndicator(selector, deps) {
+function useGlassIndicator(selector, deps, quietRef = null) {
   const containerRef = useRef(null);
   const [style, setStyle] = useState(null);
   // Where the pill was last placed, so a move knows where it is coming from.
@@ -670,6 +670,14 @@ function useGlassIndicator(selector, deps) {
       // position away, so a tab strip that unmounted and came back -- the run
       // drawer's, while Edit is open -- returned with no tab marked at all.
       if (!container.isConnected) return;
+      // Told to keep quiet -- the container is mid-animation -- the pill is
+      // hidden and forgets where it was, so when it is placed again it
+      // appears there rather than travelling from where the animation began.
+      if (quietRef?.current) {
+        setStyle(null);
+        placedRef.current = null;
+        return;
+      }
       const active = container.querySelector(selector);
       if (!active || !active.offsetWidth) {
         setStyle(null);
@@ -750,7 +758,22 @@ const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAli
 
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
   const [collapsed, setCollapsed] = useCollapsingTabBar(active);
-  const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active, collapsed]);
+  // While the bar folds or opens, the glass pill sits out: its blur was
+  // being re-placed and re-animated on every frame of the width animation,
+  // and a phone could not keep that smooth. It pops in, in place, once the
+  // bar has finished moving -- the owner's suggestion.
+  const [morphing, setMorphing] = useState(false);
+  const morphingRef = useRef(false);
+  const firstMorph = useRef(true);
+  useEffect(() => {
+    if (firstMorph.current) { firstMorph.current = false; return undefined; }
+    morphingRef.current = true;
+    setMorphing(true);
+    const wait = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--motion-duration-morph")) || 440;
+    const timer = window.setTimeout(() => { morphingRef.current = false; setMorphing(false); }, wait + 30);
+    return () => window.clearTimeout(timer);
+  }, [collapsed]);
+  const [navRef, navGlass] = useGlassIndicator(".nav-item.active", [active, collapsed, morphing], morphingRef);
   // A tap on the tucked bar opens it rather than going anywhere, so the
   // reader can see the other tabs before choosing one.
   function expandInsteadOfNavigating(event) {
@@ -768,7 +791,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
       <nav aria-label="Primary navigation" ref={navRef} onClickCapture={expandInsteadOfNavigating}
         onFocusCapture={(event) => { if (event.target.matches?.(":focus-visible")) setCollapsed(false); }}>
         {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}
-        <span className="nav-glass glass-indicator" aria-hidden="true" style={navGlass || { opacity: 0 }} />
+        <span className={`nav-glass glass-indicator${morphing ? " nav-glass--waiting" : ""}`} aria-hidden="true" style={navGlass || { opacity: 0 }} />
         {NAV_ITEMS.map(({ id, label, icon: Icon, count, desktopOnly }) => (
           <button className={`nav-item ${active === id ? "active" : ""}${desktopOnly ? " nav-item--desktop" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
             <Icon size={null} /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
@@ -3122,7 +3145,20 @@ function SettingsCard({ title, action, className = "", children }) {
 // an icon and a name, each opening its section as a page. A count rides
 // beside the name rather than in a column of its own, which would set every
 // row's columns differently and stagger the chevrons.
+// Which build the app is: the server's, from /healthz, so a phone that has
+// held on to an old page can be told apart from a bug in the new one.
+function useBuild() {
+  const [build, setBuild] = useState(() => lastAnswer("/healthz")?.build || "");
+  useEffect(() => {
+    let live = true;
+    apiRequest("/healthz").then((data) => { if (live && data?.build) setBuild(data.build); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return build;
+}
+
 function SettingsIndex({ counts = {}, onOpen }) {
+  const build = useBuild();
   const groups = [...new Set(SETTINGS_SECTIONS.map((item) => item.group))];
   return <nav className="settings-index" aria-label="Settings sections">
     {groups.map((group) => <ul key={group}>
@@ -3138,6 +3174,7 @@ function SettingsIndex({ counts = {}, onOpen }) {
         </button>
       </li>)}
     </ul>)}
+    {build ? <p className="settings-build">Flipparr build {build}</p> : null}
   </nav>;
 }
 

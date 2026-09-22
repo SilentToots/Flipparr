@@ -508,13 +508,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      fixed across the screen's top, the page keeps its height clear below
      (measured, --page-header-height), the band keeps the 24px fade below it
      with no filter of its own, and the condensed header does not translate. */
-  .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease;
-    /* On its own layer from the start: a fixed element iOS has not
-       promoted stops painting during a fast scroll until the scroll ends. */
-    transform: translate3d(0, 0, 0); }
+  /* Built the way the tab bar is, which has never blanked or stuttered: the
+     tint on the fixed element (which is what Safari samples for the status
+     bar zone), the blur on a child of it, and no transform on either. */
+  .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
   .page-view { padding-top: calc(var(--page-header-height, 0px) + var(--space-8)); }
-  .page-header::before { inset: 0 0 calc(var(--space-24) * -1); -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); -webkit-backdrop-filter: blur(var(--scroll-edge-blur)); backdrop-filter: blur(var(--scroll-edge-blur)); }
+  .page-header::before { inset: 0 0 calc(var(--space-24) * -1); }
+  .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); }
   .page-header--narrow { max-width: none; }
   .page-header--narrow::before { right: 0; }
 }
@@ -1111,6 +1111,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* A row is its icon, its name and the chevron -- nothing else, so every row
    reads the same and the chevrons line up down the page. */
 .settings-index { display: grid; gap: var(--space-24); }
+.settings-build { margin: 0; color: var(--muted); font-size: var(--text-xs); text-align: center; }
 .settings-index ul { margin: 0; padding: 0; overflow: hidden; list-style: none; border-radius: var(--radius-12); background: var(--surface); }
 .settings-index button {
   --settings-row-rule: calc(var(--space-16) + 30px + var(--space-12));
@@ -2168,6 +2169,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .sidebar.tab-bar-collapsed .nav-item.active { max-width: 64px; min-width: 0; gap: 0; padding: var(--space-20); }
   .sidebar.tab-bar-collapsed .nav-item > :is(span, b) { max-height: 0; opacity: 0; }
   .sidebar.tab-bar-collapsed .nav-glass { opacity: 0; }
+  /* Not painted at all while the bar is moving; it comes in, in place, once
+     the bar has stopped (Nav, `morphing`). */
+  .nav-glass--waiting { visibility: hidden; }
   /* Centred, the circle drifts into the middle of the page as it shrinks and
      lands over whatever is being read. It goes to the 12px gutter the cards
      and headers keep instead. Translating there, rather than dropping the auto

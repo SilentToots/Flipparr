@@ -227,7 +227,6 @@ const GLASS = new Map([
   [".glass-indicator", "the sliding thumb in the tab bar, segmented tabs and drawer tabs"],
   [".sidebar nav", "the phone's floating tab bar"],
   [".page-header::before", "the header's scroll edge, which blurs content passing under it"],
-  [".page-header--condensed", "the header itself on a phone once the page has moved, so Safari continues the frost into the status-bar zone it samples from the top edge"],
   [".comic-drawer-bar::before", "a drawer's pinned top bar, frosted once the title scrolls under it"],
 ]);
 
