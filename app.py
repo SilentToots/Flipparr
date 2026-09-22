@@ -9524,12 +9524,22 @@ def ask_vision_model(image: bytes, prompt: str) -> str:
 
 
 def vision_panels(image: bytes, width: int, height: int, direction: str) -> list[dict[str, Any]] | None:
-    """The boxes a vision model sees on a page nothing else could read, or None."""
+    """The panels a vision model sees on a page nothing else could read, or None.
+
+    "No panels" is an answer: a splash, a cover, a pin-up is one panel the
+    size of the page, and the reader shows it whole rather than in quarters.
+    None is the model not answering -- a failed call, a reply with no list in
+    it -- and then the quadrants stand.
+    """
     try:
         text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction))
     except Exception:  # noqa: BLE001 -- the lower tiers' answer stands
         return None
     boxes = panel_finder.parse_vision_boxes(text, width, height)
+    if boxes is None:
+        return None
+    if len(boxes) <= 1:
+        return [dict(panel_finder.WHOLE_PAGE)]
     return boxes if panel_finder.accept_vision_boxes(boxes) else None
 
 
@@ -9607,7 +9617,8 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
         # The vision model is asked last and least: about a page nothing
         # could read, or the order of a layout row-major cannot settle. Its
         # "vlm" source is stamped whether or not it had an answer, so a page
-        # is sent once, not every time it is opened.
+        # is sent once, not every time it is opened. A page it reads as one
+        # image is kept as one panel, and shown whole.
         if vision and detail_bytes is not None:
             if not found["segmented"]:
                 boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction)

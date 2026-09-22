@@ -6405,7 +6405,10 @@ class VisionConnectorTests(unittest.TestCase):
             boxes = app.vision_panels(b"jpeg", 780, 1200, "ltr")
         self.assertEqual(len(boxes), 2)
         with patch("app.ask_vision_model", return_value="[]"):
-            self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"))
+            self.assertEqual(app.vision_panels(b"jpeg", 780, 1200, "ltr"), [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}],
+                             "no panels is an answer: the page is one panel, shown whole")
+        with patch("app.ask_vision_model", return_value="I cannot make out this page."):
+            self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"), "no list is no answer")
         with patch("app.ask_vision_model", side_effect=RuntimeError("down")):
             self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"), "a failure is no answer, not an error")
 
@@ -6438,12 +6441,23 @@ class VisionInPanelPipelineTests(PagePanelTests):
         self.assertEqual(store.set_page_panels.call_args[0][3], "vlm")
 
     def test_a_page_the_model_could_not_read_either_is_not_sent_again(self):
-        result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer="[]")
+        result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer="I cannot make out this page.")
         ask.assert_called_once()
         self.assertEqual((result["source"], result["segmented"]), ("vlm", False), "stamped as looked at, so it is asked once")
         kept = {"fileSignature": "sig", "source": "vlm", "segmented": False, "panels": []}
         _, _, ask_again = self._ask_with_vision(record=kept, png=self._page_png(gridded=False))
         ask_again.assert_not_called()
+
+    def test_a_page_the_model_reads_as_one_image_is_shown_whole(self):
+        # Absolute Flash #1: ChatGPT rightly answered "no panels" for the
+        # house ad and two splashes, and the reader quartered them anyway.
+        whole = {"id": "1-0", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+        for answer in ("[]", '[{"x1": 10, "y1": 10, "x2": 290, "y2": 440}]'):
+            with self.subTest(answer=answer):
+                result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer=answer)
+                ask.assert_called_once()
+                self.assertEqual((result["source"], result["segmented"], result["panels"]), ("vlm", True, [whole]))
+                self.assertEqual(store.set_page_panels.call_args[0][3:], ("vlm", [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}], True))
 
     def test_a_readable_page_with_clean_rows_is_not_sent(self):
         result, _, ask = self._ask_with_vision()

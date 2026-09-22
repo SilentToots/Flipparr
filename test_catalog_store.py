@@ -4149,6 +4149,24 @@ class PagePanelTests(LibraryFixture):
             store.set_page_panels(file_id, "p1.jpg", "sig-2", "manual", [], False)
             self.assertEqual(store.page_panels(file_id, "p1.jpg")["source"], "manual", "the same page, corrected")
 
+    def test_a_vision_models_no_panels_written_before_44_is_asked_again(self):
+        # Before 44 the model's "no panels" and a failed call were kept the
+        # same way, and the reader quartered both. The rows cannot say which
+        # they were, so the unsegmented ones go; a reading with panels stands.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            file_id = self._file_id(store, "Example 001.cbz")
+            store.set_page_panels(file_id, "p1.jpg", "sig", "vlm", [], False)
+            store.set_page_panels(file_id, "p2.jpg", "sig", "vlm", [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}], True)
+            store.set_page_panels(file_id, "p3.jpg", "sig", "model", [], False)
+            with sqlite3.connect(root / "catalog.db") as raw:
+                raw.execute("UPDATE schema_info SET version=43")
+            reopened = CatalogStore(root / "catalog.db")
+            self.assertIsNone(reopened.page_panels(file_id, "p1.jpg"), "asked once more, under the new meaning")
+            self.assertEqual(reopened.page_panels(file_id, "p2.jpg")["source"], "vlm")
+            self.assertEqual(reopened.page_panels(file_id, "p3.jpg")["source"], "model", "not the model's rows: those were never sent")
+
     def test_only_a_known_source_for_a_known_file(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

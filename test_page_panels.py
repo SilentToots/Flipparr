@@ -221,7 +221,8 @@ class VisionTierTests(unittest.TestCase):
         self.assertEqual(len(boxes), 2)
         self.assertEqual({round(v, 3) for v in (boxes[0]["x"], boxes[0]["y"])}, {round(10 / 780, 3), round(20 / 1200, 3)})
         self.assertLessEqual(boxes[1]["y"] + boxes[1]["h"], 1.0, "a box past the page's edge is clipped to it")
-        self.assertEqual(parse_vision_boxes("I cannot see any panels.", 780, 1200), [])
+        self.assertIsNone(parse_vision_boxes("I cannot see any panels.", 780, 1200), "no list is no answer")
+        self.assertEqual(parse_vision_boxes("[]", 780, 1200), [], "an empty list is the answer the prompt asks for")
 
     def test_an_answer_is_believed_only_if_it_reads_as_a_layout(self):
         two = [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]

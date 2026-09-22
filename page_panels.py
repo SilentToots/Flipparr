@@ -468,9 +468,22 @@ def vision_boxes_prompt(width: int, height: int, direction: str = READING_LTR) -
     )
 
 
-def parse_vision_boxes(text: str, width: int, height: int) -> list[dict[str, Any]]:
-    """The model's boxes as normalised rectangles; anything unusable is dropped."""
+# The page as one panel: what a splash, a cover or a pin-up is. A vision
+# model that answers "no panels" has read the page, and this is its reading.
+WHOLE_PAGE: dict[str, float] = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+
+
+def parse_vision_boxes(text: str, width: int, height: int) -> list[dict[str, Any]] | None:
+    """The model's boxes as normalised rectangles; anything unusable is dropped.
+
+    None when the answer holds no list at all -- a refusal, an apology, a
+    timeout's empty body -- which is not the same as the empty list the
+    prompt asks for on a page with no panels. One means the model did not
+    answer; the other is an answer.
+    """
     items = _first_json_array(text)
+    if items is None:
+        return None
     boxes: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -536,7 +549,7 @@ def vision_order_prompt(panels: list[dict[str, Any]], direction: str = READING_L
 
 def parse_vision_order(text: str, count: int) -> list[int] | None:
     """A permutation of 1..count from the model's answer, or None."""
-    items = _first_json_array(text)
+    items = _first_json_array(text) or []
     try:
         order = [int(item) for item in items]
     except (TypeError, ValueError):
@@ -544,12 +557,13 @@ def parse_vision_order(text: str, count: int) -> list[int] | None:
     return order if sorted(order) == list(range(1, count + 1)) else None
 
 
-def _first_json_array(text: str) -> list[Any]:
+def _first_json_array(text: str) -> list[Any] | None:
+    """The first JSON array in the text, or None when there is not one."""
     import json  # noqa: PLC0415
 
     start = text.find("[")
     if start == -1:
-        return []
+        return None
     depth = 0
     for index in range(start, len(text)):
         if text[index] == "[":
@@ -560,9 +574,9 @@ def _first_json_array(text: str) -> list[Any]:
                 try:
                     parsed = json.loads(text[start:index + 1])
                 except ValueError:
-                    return []
-                return parsed if isinstance(parsed, list) else []
-    return []
+                    return None
+                return parsed if isinstance(parsed, list) else None
+    return None
 
 
 def _norm_overlap(a: dict[str, Any], b: dict[str, Any]) -> float:
