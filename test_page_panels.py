@@ -296,6 +296,17 @@ class VisionTierTests(unittest.TestCase):
             for a, b in zip(panel, want):
                 self.assertLessEqual(abs(a - b), 3, f"{got} should sit on the frames")
 
+    def test_an_answer_that_leaves_a_quarter_of_the_page_unread_is_refused(self):
+        # A spread, 2026-09-22: six panels exact to their frames and three
+        # missed, the central figure among them. Stepping past them is worse
+        # than the quadrants.
+        image, draw = _page()
+        cells = _grid(draw, 2, 3)
+        mask = page_mask(image)
+        four = [self._nudged(box, 0, 0) for box in cells[:4]]
+        self.assertIsNone(refine_vision_boxes(mask, four))
+        self.assertEqual(len(refine_vision_boxes(mask, four + [self._nudged(box, 0, 0) for box in cells[4:]])), 6)
+
     def test_a_grid_guessed_through_the_art_is_refused(self):
         # gpt-4o-mini on the eight-panel page: a uniform 2x3 grid whose lines
         # run through panels. Coverage and overlap passed it; the page does not.

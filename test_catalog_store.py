@@ -4167,6 +4167,22 @@ class PagePanelTests(LibraryFixture):
             self.assertIsNone(reopened.page_panels(file_id, "p2.jpg"), "a grid believed on coverage alone")
             self.assertEqual(reopened.page_panels(file_id, "p3.jpg")["source"], "model", "not the model's rows: those were never sent")
 
+    def test_a_vision_reading_short_of_three_quarters_from_before_47_is_asked_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            file_id = self._file_id(store, "Example 001.cbz")
+            whole = [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+            store.set_page_panels(file_id, "p1.jpg", "sig", "vlm", whole, True)
+            store.set_page_panels(file_id, "p2.jpg", "sig", "vlm", [{"x": 0, "y": 0, "w": 1, "h": 0.66}], True)
+            store.set_page_panels(file_id, "p3.jpg", "sig", "vlm", [], False)
+            with sqlite3.connect(root / "catalog.db") as raw:
+                raw.execute("UPDATE schema_info SET version=46")
+            reopened = CatalogStore(root / "catalog.db")
+            self.assertEqual(reopened.page_panels(file_id, "p1.jpg")["panels"], whole, "a full reading stands")
+            self.assertIsNone(reopened.page_panels(file_id, "p2.jpg"), "two thirds of a page is not a reading")
+            self.assertEqual(reopened.page_panels(file_id, "p3.jpg")["source"], "vlm", "an answer with no panels is not a short one")
+
     def test_only_a_known_source_for_a_known_file(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

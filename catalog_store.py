@@ -19,10 +19,22 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
+
+
+def _panels_cover(panels_json: str) -> float:
+    """How much of a page its stored panels account for, from their normalised sizes."""
+    try:
+        panels = json.loads(panels_json or "[]")
+    except ValueError:
+        return 0.0
+    return sum(
+        float(panel.get("w") or 0) * float(panel.get("h") or 0)
+        for panel in panels if isinstance(panel, dict)
+    )
 # Refusals that prove nothing about the release -- a file this machine could
 # not read or identify, a download SABnzbd lost -- set it aside for a day
 # rather than barring it. See app.DownloadContentMismatch.
@@ -1557,6 +1569,18 @@ class CatalogStore:
                 # are corrected against the page's gutters now, and the few
                 # pages already asked about are asked under that rule.
                 connection.execute("DELETE FROM page_panels WHERE source='vlm'")
+            if stored_version is not None and stored_version < 47:
+                # 47: a corrected answer now has to account for three quarters
+                # of the page (page_panels.VISION_READ_MIN); a reading kept
+                # under the old floor that falls short is asked again. Only
+                # those -- a spread in one library -- not every reading.
+                short = [
+                    (row["file_id"], row["page_member"]) for row in connection.execute(
+                        "SELECT file_id, page_member, panels_json FROM page_panels WHERE source='vlm' AND segmented=1"
+                    ).fetchall()
+                    if _panels_cover(row["panels_json"]) < 0.75
+                ]
+                connection.executemany("DELETE FROM page_panels WHERE file_id=? AND page_member=?", short)
 
     @staticmethod
     def _forget_misread_scene_releases(connection: sqlite3.Connection) -> int:

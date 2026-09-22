@@ -480,6 +480,12 @@ def _plausible(mask: Image.Image, boxes: list[tuple[int, int, int, int]]) -> boo
 
 VISION_COVERAGE_MIN = 0.6
 VISION_OVERLAP_MAX = 0.2
+# What a corrected answer must account for of the page's ink, or it is not a
+# reading. Sonnet 5 on a spread: six panels exact to their frames, and three
+# missed -- the central figure among them -- at two thirds covered. A reader
+# stepping past a third of a page without knowing is worse off than with
+# the quadrants.
+VISION_READ_MIN = 0.75
 # How far a model's edge may sit from the gutter it meant, as a fraction of
 # the page's side. Measured 2026-09-22: Sonnet 5 within 2% on a clean page's
 # rows and 8.5% on its one thin column; gpt-5-mini 10-25% off on the same
@@ -620,7 +626,7 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
         return None
     page = mask.getbbox() or (0, 0, width, height)
     page_area = (page[2] - page[0]) * (page[3] - page[1])
-    if page_area <= 0 or sum(_area(panel) for panel in panels) / page_area < VISION_COVERAGE_MIN:
+    if page_area <= 0 or sum(_area(panel) for panel in panels) / page_area < VISION_READ_MIN:
         return None
     return [
         {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
