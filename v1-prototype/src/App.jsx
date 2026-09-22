@@ -198,6 +198,20 @@ const openDialogs = [];
 // Escape closes one layer at a time, and the reader's page turns must not
 // reach it while a drawer is open over it.
 const isTopDialog = (node) => Boolean(node) && openDialogs[openDialogs.length - 1] === node;
+// How to close each open dialog, for Back. A drawer or sheet has no history
+// entry of its own, so a phone's edge swipe -- Back -- used to leave the page
+// under it; it closes the dialog in front now, as it does in an iOS app.
+// The two that live in the address, the run drawer (?series=) and the reader
+// (?read=), say so with data-in-address and close by the address changing.
+const dialogClosers = new WeakMap();
+function closeTopDialog() {
+  const node = openDialogs[openDialogs.length - 1];
+  if (!node || node.hasAttribute("data-in-address")) return false;
+  const close = dialogClosers.get(node);
+  if (!close) return false;
+  close();
+  return true;
+}
 
 // While any dialog or drawer is open the page behind it does not scroll: only
 // the dialog does, and there is one scroll bar. The gutter stays reserved so
@@ -325,6 +339,7 @@ function useDialog(onClose) {
     if (initial === node && !node.hasAttribute("tabindex")) node.setAttribute("tabindex", "-1");
     initial.focus();
     openDialogs.push(node);
+    dialogClosers.set(node, () => closeRef.current?.());
     lockPageScroll();
     function handleKeyDown(event) {
       if (!isTopDialog(node)) return;
@@ -356,6 +371,7 @@ function useDialog(onClose) {
       document.removeEventListener("keydown", handleKeyDown, true);
       const index = openDialogs.indexOf(node);
       if (index !== -1) openDialogs.splice(index, 1);
+      dialogClosers.delete(node);
       unlockPageScroll();
       // Return focus to whatever opened the dialog, not the top of the page.
       if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
@@ -4501,7 +4517,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     tabMove.current = order.indexOf(tab) > order.indexOf(shownTab.current) ? "next" : "back";
     shownTab.current = tab;
   }
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} data-in-address="" role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
     <DrawerTopBar
       title={edit ? (EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title) : series.title}
       onClose={requestClose}
@@ -5552,7 +5568,7 @@ function ReaderView({
   }
 
   const filter = pageFilter(night);
-  return <div className={`reader${chrome ? "" : " reader--reading"}${behind ? " reader--behind" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Reading ${title}`}>
+  return <div className={`reader${chrome ? "" : " reader--reading"}${behind ? " reader--behind" : ""}`} ref={dialogRef} data-in-address="" role="dialog" aria-modal="true" aria-label={`Reading ${title}`}>
     <div className={`reader-surface${zoom > 1 || panelMode ? " zoomed" : ""}`} ref={surfaceRef} onClick={onSurfaceClick} onDoubleClick={onDoubleClick}
       onPointerDown={zoom > 1 || panelMode ? onPanStart : onSurfacePointerDown} onMouseMove={zoom > 1 || panelMode ? undefined : wakeArrows}>
       {pages.state === "loading" ? <div className="reader-status" role="status"><LoadingSpinner size={22} /> Opening…</div> : null}
@@ -7127,6 +7143,14 @@ export function App() {
       if (reading && !next.readFileId && isStolenBack(edgeTouch.current.cancelledAt, Date.now())) {
         edgeTouch.current.cancelledAt = 0;
         window.history.pushState(null, "", locationRef.current);
+        return;
+      }
+      // A drawer or sheet in front closes on Back, and the page stays: the
+      // entry the pop took is put back first, so the address still says
+      // where we are.
+      if (openDialogs.length && !openDialogs[openDialogs.length - 1].hasAttribute("data-in-address")) {
+        window.history.pushState(null, "", locationRef.current);
+        closeTopDialog();
         return;
       }
       setActive(next.active);
