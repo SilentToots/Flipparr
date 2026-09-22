@@ -817,28 +817,29 @@ PROVIDER_DEFINITIONS = {
     },
     "anthropic": {
         "name": "Claude", "credentialField": "apiKey",
-        "capabilities": ["Panel view: pages the finder cannot read", "Reading order"],
-        "description": "Optional. With an Anthropic API key, the reader's panel view asks Claude about the pages "
-                       "its own detector could not read and the layouts it cannot order. Each such page is sent "
-                       "to Anthropic once, as an image, and the answer is kept.",
-        "setupSummary": "Optional. Sends hard pages to Anthropic, once each, when you turn it on.",
+        "capabilities": ["Panel view: where the panels are", "Reading order"],
+        "description": "Optional. With an Anthropic API key, the reader's panel view asks Claude where the panels "
+                       "are on the pages you read, and the order of a layout it cannot settle. Each page is sent "
+                       "to Anthropic once, as an image, and the page itself corrects the answer's edges before "
+                       "it is kept.",
+        "setupSummary": "Optional. Sends the pages you read in panel view to Anthropic, once each, when you turn it on.",
         "credentialUrl": "https://console.anthropic.com/",
         "credentialHelp": "Create an API key in the Anthropic Console. Usage is billed by Anthropic; a page is a "
-                          "few thousand tokens, and only the pages nothing else could read are sent.",
+                          "few thousand tokens, about half a cent, and each page you read is sent once.",
         "defaultEnabled": False, "defaultPriority": 50,
         "kind": "reading",
     },
     "openai": {
         "name": "ChatGPT", "credentialField": "apiKey",
-        "capabilities": ["Panel view: pages the finder cannot read", "Reading order"],
-        "description": "Optional. With an OpenAI API key, the reader's panel view asks ChatGPT about the pages "
-                       "its own detector could not read and the layouts it cannot order. Each such page is sent "
-                       "to OpenAI once, as an image, and the answer is kept. If Claude is on as well, the one with "
-                       "the lower priority number is asked.",
-        "setupSummary": "Optional. Sends hard pages to OpenAI, once each, when you turn it on.",
+        "capabilities": ["Panel view: where the panels are", "Reading order"],
+        "description": "Optional. With an OpenAI API key, the reader's panel view asks ChatGPT where the panels "
+                       "are on the pages you read, and the order of a layout it cannot settle. Each page is sent "
+                       "to OpenAI once, as an image, and the page itself corrects the answer's edges before it "
+                       "is kept. If Claude is on as well, the one with the lower priority number is asked.",
+        "setupSummary": "Optional. Sends the pages you read in panel view to OpenAI, once each, when you turn it on.",
         "credentialUrl": "https://platform.openai.com/api-keys",
         "credentialHelp": "Create an API key on the OpenAI platform. Usage is billed by OpenAI; a page is a few "
-                          "thousand tokens, and only the pages nothing else could read are sent.",
+                          "thousand tokens, and each page you read is sent once.",
         "defaultEnabled": False, "defaultPriority": 60,
         "kind": "reading",
     },
@@ -9622,7 +9623,7 @@ def _vision_error_code(exc: urllib.error.HTTPError) -> str:
 
 
 def vision_panels(image: bytes, width: int, height: int, direction: str, mask: Any) -> list[dict[str, Any]] | None:
-    """The panels a vision model sees on a page nothing else could read, or None.
+    """The panels a vision model sees on a page, or None.
 
     "No panels" is an answer: a splash, a cover, a pin-up is one panel the
     size of the page, and the reader shows it whole rather than in quarters.
