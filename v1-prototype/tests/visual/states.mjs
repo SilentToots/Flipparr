@@ -178,6 +178,7 @@ export const states = [
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
+  { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },
   // The folders panel only renders once the catalog has loaded; the header
   // alone let a capture land on "0 Files" and a page 120px shorter.
   { name: "import", path: "/import", require: [".page-header", ".library-sources-panel"], phone: false },

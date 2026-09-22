@@ -814,6 +814,7 @@ PROVIDER_DEFINITIONS = {
         "credentialHelp": "Create an API key in the Anthropic Console. Usage is billed by Anthropic; a page is a "
                           "few thousand tokens, and only the pages nothing else could read are sent.",
         "defaultEnabled": False, "defaultPriority": 50,
+        "kind": "reading",
     },
     "openai": {
         "name": "ChatGPT", "credentialField": "apiKey",
@@ -827,6 +828,7 @@ PROVIDER_DEFINITIONS = {
         "credentialHelp": "Create an API key on the OpenAI platform. Usage is billed by OpenAI; a page is a few "
                           "thousand tokens, and only the pages nothing else could read are sent.",
         "defaultEnabled": False, "defaultPriority": 60,
+        "kind": "reading",
     },
     "open_library": {
         "name": "Open Library", "credentialField": None,
@@ -974,6 +976,9 @@ def public_provider_config() -> dict[str, Any]:
             "priority": int(values.get("priority") or definition["defaultPriority"]),
             "credentialField": credential_field,
             "credentialHint": "Saved locally" if configured and credential_field else None,
+            # What the provider is for -- a source of metadata, or help for the
+            # reader -- so Settings can file it on the right page.
+            "kind": definition.get("kind", "metadata"),
         })
     providers.sort(key=lambda item: item["priority"])
     return {"providers": providers, "credentialStorage": "local-file"}

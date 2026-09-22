@@ -3039,6 +3039,8 @@ const SETTINGS_SECTIONS = [
     detail: "Where releases are found and downloaded, and in which language." },
   { id: "metadata", label: "Metadata sources", icon: Database, group: "sources",
     detail: "Where issue titles, dates, covers and matches come from." },
+  { id: "reader", label: "Reader", icon: BookOpen, group: "reading",
+    detail: "Panel view, and the models that can help it with the pages it cannot read." },
   { id: "security", label: "Security", icon: LockSimple, group: "app",
     detail: "Who can reach this app, and how they sign in." },
 ];
@@ -3272,7 +3274,7 @@ function SetupView({ catalog, onFinish }) {
         {/* Sources you can act on come first. The built-in ones have no button
             and nothing to decide, so they are one informational line at the
             bottom rather than two cards competing with the real choices. */}
-        {providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+        {providers.filter((provider) => !provider.builtIn && provider.kind !== "reading").map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
         <BuiltInSources providers={providers} />
         <aside className="setup-aside">
           <ClockCounterClockwise size={18} weight="fill" />
@@ -3473,10 +3475,24 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
               options={languageOptions.map(([value, label]) => ({ value, label }))} /><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></div>
           </SettingsCard>
         </> : null}
+        {current === "reader" ? <>
+          <SettingsCard title="Panel view">
+            <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice is remembered on this device. Flipparr finds the panels itself on the pages it can read.</p>
+          </SettingsCard>
+          {/* Claude and ChatGPT are filed here, not under Metadata sources:
+              they contribute nothing to what a comic is, only to how a hard
+              page is read. */}
+          <SettingsCard title="Help with hard pages" className="metadata-source-settings">
+            <p className="settings-card-lead">Optional. With an API key, one of these is asked about a page Flipparr could not read, or the reading order of a layout it cannot settle &mdash; each such page once, sent as an image. Nothing is sent while they are off.</p>
+            {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+            {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+          </SettingsCard>
+          <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>
+        </> : null}
         {current === "metadata" ? <>
           <SettingsCard title="Sources with an account" className="metadata-source-settings">
             <p className="settings-card-lead">Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p>
-            {providers.filter((provider) => !provider.builtIn).map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+            {providers.filter((provider) => !provider.builtIn && provider.kind !== "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             <BuiltInSources providers={providers} />
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
           </SettingsCard>

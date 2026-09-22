@@ -1097,6 +1097,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .settings-index-icon--library { background: var(--amber); }
 .settings-index-icon--acquisition { background: var(--green); }
 .settings-index-icon--metadata { background: var(--violet); }
+.settings-index-icon--reader { background: var(--violet); }
 .settings-index-label { min-width: 0; display: flex; align-items: center; gap: var(--space-8); }
 .settings-index-label > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-index-badge { flex: none; min-width: 20px; padding: var(--space-2) var(--space-6); border-radius: var(--radius-pill); background: var(--red); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-bold); text-align: center; }

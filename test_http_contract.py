@@ -511,6 +511,9 @@ class HttpContractTests(unittest.TestCase):
         """An account is the one prerequisite the setup screen cannot satisfy,
         so the provider that needs it carries the link."""
         providers = {p["id"]: p for p in self.get("/api/v1/providers").json()["providers"]}
+        self.assertEqual({providers["anthropic"]["kind"], providers["openai"]["kind"]}, {"reading"},
+                         "help for the reader, not a source of metadata")
+        self.assertEqual(providers["metron"]["kind"], "metadata")
         for provider_id in ("metron", "comic_vine", "anthropic", "openai"):
             with self.subTest(provider=provider_id):
                 self.assertTrue(providers[provider_id]["credentialUrl"].startswith("https://"))
