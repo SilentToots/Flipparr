@@ -68,6 +68,18 @@ export function isSwipe(dx, dy, elapsed) {
   return Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && elapsed < 800;
 }
 
+/** How long a touch in panel view stays undecided between a flick and a look around. */
+export const FLICK_WINDOW_MS = 250;
+
+/**
+ * Whether a finger still moving reads as a flick: enough sideways travel,
+ * quickly, before it could be a drag. Decided mid-gesture, so the step
+ * fires under the finger rather than after it lifts.
+ */
+export function isFlick(dx, dy, elapsed) {
+  return elapsed < FLICK_WINDOW_MS && Math.abs(dx) > 36 && Math.abs(dx) > 1.5 * Math.abs(dy);
+}
+
 /** The page an action lands on, never outside the comic. */
 export function pageForAction(index, count, action) {
   if (!count) return 0;

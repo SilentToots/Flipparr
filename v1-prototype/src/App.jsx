@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -5088,7 +5088,8 @@ function ReaderView({
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(ratio - 1) < 0.01) return;
     image.animate(
       [{ transform: `translate(${dx}px, ${dy}px) scale(${ratio})` }, { transform: "none" }],
-      { duration: 280, easing: "cubic-bezier(.32, .72, 0, 1)" },
+      // Short and decisive: a step should feel like a snap, not a glide.
+      { duration: 180, easing: "cubic-bezier(.2, .8, .2, 1)" },
     );
   }, [zoom, pan]);
 
@@ -5373,9 +5374,12 @@ function ReaderView({
   function onPanStart(event) {
     // In panel view the page overflows the screen at any zoom, so a drag is
     // always a pan; otherwise a drag on the whole page is the swipe path's.
-    // A flick in panel view is still a step, though: on a phone the finger
-    // was moving the page around and never turning it, and a panel view
-    // you cannot swipe through is not one.
+    // On a phone in panel view a finger's first moment is ambiguous: a
+    // flick or the start of a look around. The page holds still until it
+    // is one or the other -- a flick steps the moment it reads as one,
+    // without waiting for the finger to lift, and the page never trails it;
+    // a slower touch becomes a pan from where the finger is then. A mouse
+    // drag is a pan from the start, as before.
     if ((zoom <= 1 && !panelModeRef.current) || event.button) return;
     event.preventDefault();
     const pointerId = event.pointerId;
@@ -5384,39 +5388,50 @@ function ReaderView({
     const { viewport, page } = panBounds();
     let frame = 0;
     let latest = start.pan;
-    setPanning(true);
+    let mode = panelModeRef.current && event.pointerType !== "mouse" ? "pending" : "pan";
+    if (mode === "pan") setPanning(true);
     function paint() {
       frame = 0;
       if (image) image.style.translate = `${latest.x}px ${latest.y}px`;
+    }
+    function letGo() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     }
     function onMove(move) {
       if (move.pointerId !== pointerId) return;
       const dx = move.clientX - start.x;
       const dy = move.clientY - start.y;
+      if (mode === "pending") {
+        const elapsed = Date.now() - start.at;
+        if (isFlick(dx, dy, elapsed)) {
+          mode = "stepped";
+          dragged.current = true;
+          letGo();
+          const action = swipeAction(dx, direction);
+          if (action) go(action);
+          return;
+        }
+        if (elapsed < FLICK_WINDOW_MS && Math.abs(dy) <= Math.abs(dx)) return;
+        // A look around, then: from here, not from the touch.
+        mode = "pan";
+        start.x = move.clientX;
+        start.y = move.clientY;
+        setPanning(true);
+        return;
+      }
+      if (mode !== "pan") return;
       if (Math.abs(dx) > 6 || Math.abs(dy) > 6) dragged.current = true;
-      latest = clampPan({ x: start.pan.x + dx, y: start.pan.y + dy }, zoomRef.current, viewport, page, panelModeRef.current);
+      latest = clampPan({ x: start.pan.x + (move.clientX - start.x), y: start.pan.y + (move.clientY - start.y) }, zoomRef.current, viewport, page, panelModeRef.current);
       panRef.current = latest;
       if (!frame) frame = requestAnimationFrame(paint);
     }
     function onUp(up) {
       if (up.pointerId !== pointerId) return;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
+      letGo();
       cancelAnimationFrame(frame);
-      if (panelModeRef.current && up.type === "pointerup" && up.pointerType !== "mouse"
-          && isSwipe(up.clientX - start.x, up.clientY - start.y, Date.now() - start.at)) {
-        // The page goes back to where the panel was framed, and the step
-        // flies from there; the little it moved under the finger was the
-        // swipe, not a place to leave it.
-        latest = start.pan;
-        paint();
-        setPan(start.pan);
-        setPanning(false);
-        const action = swipeAction(up.clientX - start.x, direction);
-        if (action) go(action);
-        return;
-      }
+      if (mode !== "pan") return;
       paint();
       setPan(latest);
       setPanning(false);

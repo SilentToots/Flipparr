@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -234,4 +234,12 @@ test("a swipe is a quick, mostly sideways flick, in page view and panel view ali
   assert.equal(isSwipe(40, 5, 200), false, "too short to mean it");
   assert.equal(isSwipe(80, 90, 200), false, "more down than across: a pull, not a swipe");
   assert.equal(isSwipe(200, 0, 1500), false, "slow: a drag to look around");
+});
+
+test("a flick is read while the finger is still moving, and only quickly", () => {
+  assert.equal(isFlick(-40, 4, 90), true);
+  assert.equal(isFlick(60, 10, FLICK_WINDOW_MS - 1), true);
+  assert.equal(isFlick(60, 10, FLICK_WINDOW_MS), false, "past the window it is a look around");
+  assert.equal(isFlick(30, 0, 50), false, "not far enough yet");
+  assert.equal(isFlick(40, 35, 50), false, "as much down as across");
 });
