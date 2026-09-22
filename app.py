@@ -243,7 +243,11 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 # The vision model panel view asks, when the Claude connector is on. Haiku:
 # a page is a few thousand tokens, and this is a question about boxes.
 VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-haiku-4-5-20251001"
+OPENAI_API_BASE = "https://api.openai.com/v1"
+VISION_MODEL_OPENAI = os.environ.get("FLIPPARR_VISION_MODEL_OPENAI") or "gpt-4o-mini"
 VISION_TIMEOUT_SECONDS = 60.0
+# The vision connectors, in the order a tie is broken.
+VISION_PROVIDERS = ("anthropic", "openai")
 COMIC_VINE_API_BASE = "https://comicvine.gamespot.com/api"
 _PROVIDER_CONFIG_LOCK = threading.Lock()
 _ACQUISITION_CONFIG_LOCK = threading.Lock()
@@ -811,6 +815,19 @@ PROVIDER_DEFINITIONS = {
                           "few thousand tokens, and only the pages nothing else could read are sent.",
         "defaultEnabled": False, "defaultPriority": 50,
     },
+    "openai": {
+        "name": "ChatGPT", "credentialField": "apiKey",
+        "capabilities": ["Panel view: pages the finder cannot read", "Reading order"],
+        "description": "Optional. With an OpenAI API key, the reader's panel view asks ChatGPT about the pages "
+                       "its own detector could not read and the layouts it cannot order. Each such page is sent "
+                       "to OpenAI once, as an image, and the answer is kept. If Claude is on as well, the one with "
+                       "the lower priority number is asked.",
+        "setupSummary": "Optional. Sends hard pages to OpenAI, once each, when you turn it on.",
+        "credentialUrl": "https://platform.openai.com/api-keys",
+        "credentialHelp": "Create an API key on the OpenAI platform. Usage is billed by OpenAI; a page is a few "
+                          "thousand tokens, and only the pages nothing else could read are sent.",
+        "defaultEnabled": False, "defaultPriority": 60,
+    },
     "open_library": {
         "name": "Open Library", "credentialField": None,
         "capabilities": ["ISBN editions", "Volumes", "Book covers"],
@@ -969,6 +986,8 @@ def _provider_headers(provider_id: str, credential: str) -> dict[str, str]:
     elif provider_id == "anthropic":
         headers["x-api-key"] = credential
         headers["anthropic-version"] = ANTHROPIC_API_VERSION
+    elif provider_id == "openai":
+        headers["Authorization"] = f"Bearer {credential}"
     return headers
 
 
@@ -1424,7 +1443,7 @@ def post_multipart_file_json(
 
 def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
-    if provider_id not in {"metron", "comic_vine", "anthropic"}:
+    if provider_id not in {"metron", "comic_vine", "anthropic", "openai"}:
         raise ValueError("This provider does not require a connection test")
     config = load_provider_config()[provider_id]
     credential_field = str(PROVIDER_DEFINITIONS[provider_id]["credentialField"])
@@ -1439,6 +1458,11 @@ def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = 
         data = fetch_provider_json(provider_id, f"{ANTHROPIC_API_BASE}/models?limit=1", credential, force=True)
         if not isinstance(data.get("data"), list):
             raise ValueError("Anthropic did not recognise the API key")
+        detail = "API key verified successfully."
+    elif provider_id == "openai":
+        data = fetch_provider_json(provider_id, f"{OPENAI_API_BASE}/models", credential, force=True)
+        if not isinstance(data.get("data"), list):
+            raise ValueError("OpenAI did not recognise the API key")
         detail = "API key verified successfully."
     else:
         url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({
@@ -9414,44 +9438,84 @@ def file_pages(file_id: int) -> dict[str, Any]:
     }
 
 
+def vision_provider() -> str | None:
+    """Which vision connector is on and keyed: the lowest priority number wins. Never raises."""
+    config = load_provider_config()
+    ready = [
+        provider for provider in VISION_PROVIDERS
+        if (config.get(provider) or {}).get("enabled") and str((config.get(provider) or {}).get("apiKey") or "").strip()
+    ]
+    if not ready:
+        return None
+    return min(ready, key=lambda provider: (int((config.get(provider) or {}).get("priority") or 99), VISION_PROVIDERS.index(provider)))
+
+
 def vision_model_ready() -> bool:
-    """Whether the Claude connector is on and has a key. Never raises."""
-    config = load_provider_config().get("anthropic") or {}
-    return bool(config.get("enabled") and str(config.get("apiKey") or "").strip())
+    """Whether any vision connector is on and has a key. Never raises."""
+    return vision_provider() is not None
+
+
+def _vision_request(provider: str, credential: str, image: bytes, prompt: str) -> tuple[str, bytes]:
+    """The endpoint and body for one page and one question, in the provider's own shape."""
+    encoded = base64.b64encode(image).decode("ascii")
+    if provider == "anthropic":
+        return f"{ANTHROPIC_API_BASE}/messages", json.dumps({
+            "model": VISION_MODEL, "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded}},
+                {"type": "text", "text": prompt},
+            ]}],
+        }).encode()
+    return f"{OPENAI_API_BASE}/chat/completions", json.dumps({
+        "model": VISION_MODEL_OPENAI, "max_tokens": 1024,
+        "messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
+            {"type": "text", "text": prompt},
+        ]}],
+    }).encode()
+
+
+def _vision_answer(provider: str, payload: dict[str, Any]) -> str:
+    """The text of the model's answer, in the provider's own shape."""
+    if provider == "anthropic":
+        return "".join(
+            str(block.get("text") or "") for block in (payload.get("content") or []) if isinstance(block, dict)
+        )
+    choices = payload.get("choices") or []
+    message = (choices[0].get("message") or {}) if choices and isinstance(choices[0], dict) else {}
+    content = message.get("content")
+    if isinstance(content, list):
+        return "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+    return str(content or "")
 
 
 def ask_vision_model(image: bytes, prompt: str) -> str:
-    """One question about one page image, answered as text.
+    """One question about one page image, answered as text, by whichever connector is on.
 
-    A POST to the Messages API with the page as a base64 JPEG. Paced with the
+    A POST with the page as a base64 JPEG -- Anthropic's Messages API or
+    OpenAI's Chat Completions, same question either way. Paced with the
     provider's slot like every other upstream call, and a 429 cools the
     provider down; the caller decides what a failure means, which for panel
     view is always "keep what the lower tiers found".
     """
-    credential = _provider_credential("anthropic")
-    body = json.dumps({
-        "model": VISION_MODEL, "max_tokens": 1024,
-        "messages": [{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-                                         "data": base64.b64encode(image).decode("ascii")}},
-            {"type": "text", "text": prompt},
-        ]}],
-    }).encode()
-    headers = {**_provider_headers("anthropic", credential), "Content-Type": "application/json"}
-    _wait_for_provider_slot("anthropic")
-    request = urllib.request.Request(f"{ANTHROPIC_API_BASE}/messages", data=body, headers=headers, method="POST")
+    provider = vision_provider()
+    if provider is None:
+        raise ValueError("No vision model is configured")
+    credential = _provider_credential(provider)
+    url, body = _vision_request(provider, credential, image, prompt)
+    headers = {**_provider_headers(provider, credential), "Content-Type": "application/json"}
+    _wait_for_provider_slot(provider)
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with _safe_urlopen(request, timeout=VISION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
-            _cool_down_provider_requests("anthropic", _provider_retry_after(exc.headers) or 30)
+            _cool_down_provider_requests(provider, _provider_retry_after(exc.headers) or 30)
         raise
     if credential in json.dumps(payload, ensure_ascii=False):
         raise ValueError("Provider returned unsafe credential-bearing data")
-    return "".join(
-        str(block.get("text") or "") for block in (payload.get("content") or []) if isinstance(block, dict)
-    )
+    return _vision_answer(provider, payload)
 
 
 def vision_panels(image: bytes, width: int, height: int, direction: str) -> list[dict[str, Any]] | None:

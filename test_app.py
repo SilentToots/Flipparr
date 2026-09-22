@@ -6346,6 +6346,51 @@ class VisionConnectorTests(unittest.TestCase):
         self.assertEqual(result["status"], "connected")
         self.assertIn("/models", fetch.call_args[0][1])
 
+    def test_chatgpt_is_the_second_connector_behind_the_same_seam(self):
+        definition = app.PROVIDER_DEFINITIONS["openai"]
+        self.assertEqual(definition["credentialField"], "apiKey")
+        self.assertFalse(definition["defaultEnabled"])
+        self.assertEqual(app._provider_headers("openai", "k")["Authorization"], "Bearer k")
+        with patch("app.load_provider_config", return_value={"openai": {"enabled": True, "apiKey": "k"}}), \
+             patch("app.fetch_provider_json", return_value={"data": [{"id": "gpt"}]}) as fetch:
+            self.assertEqual(app.test_provider_connection("openai", {})["status"], "connected")
+        self.assertIn("/models", fetch.call_args[0][1])
+
+    def test_the_lower_priority_number_is_asked_when_both_are_on(self):
+        both = {"anthropic": {"enabled": True, "apiKey": "a", "priority": 50},
+                "openai": {"enabled": True, "apiKey": "o", "priority": 20}}
+        with patch("app.load_provider_config", return_value=both):
+            self.assertEqual(app.vision_provider(), "openai")
+        both["anthropic"]["priority"] = 10
+        with patch("app.load_provider_config", return_value=both):
+            self.assertEqual(app.vision_provider(), "anthropic")
+        with patch("app.load_provider_config", return_value={"openai": {"enabled": True, "apiKey": "o"}}):
+            self.assertEqual(app.vision_provider(), "openai", "the only one on")
+
+    def test_each_connector_is_spoken_to_in_its_own_shape(self):
+        import io
+
+        def opened(request, *, timeout):
+            body = json.loads(request.data)
+            opened.calls.append((request.full_url, dict(request.header_items()), body))
+            if "anthropic" in request.full_url:
+                return io.BytesIO(json.dumps({"content": [{"type": "text", "text": "[1, 2]"}]}).encode())
+            return io.BytesIO(json.dumps({"choices": [{"message": {"content": "[2, 1]"}}]}).encode())
+        opened.calls = []
+        with patch("app._safe_urlopen", side_effect=opened), patch("app._wait_for_provider_slot"):
+            with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "a-key"}}):
+                self.assertEqual(app.ask_vision_model(b"jpeg", "order?"), "[1, 2]")
+            with patch("app.load_provider_config", return_value={"openai": {"enabled": True, "apiKey": "o-key"}}):
+                self.assertEqual(app.ask_vision_model(b"jpeg", "order?"), "[2, 1]")
+        (a_url, a_headers, a_body), (o_url, o_headers, o_body) = opened.calls
+        self.assertTrue(a_url.endswith("/messages"))
+        self.assertEqual(a_headers.get("X-api-key"), "a-key")
+        self.assertEqual(a_body["messages"][0]["content"][0]["source"]["media_type"], "image/jpeg")
+        self.assertTrue(o_url.endswith("/chat/completions"))
+        self.assertEqual(o_headers.get("Authorization"), "Bearer o-key")
+        self.assertTrue(o_body["messages"][0]["content"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertEqual(o_body["messages"][0]["content"][1]["text"], "order?")
+
     def test_ready_means_on_and_keyed_and_never_raises(self):
         with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "k"}}):
             self.assertTrue(app.vision_model_ready())
