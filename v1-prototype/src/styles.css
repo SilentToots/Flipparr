@@ -1731,6 +1731,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .sidebar-footer { display: none; }
 
   .main-content { margin-left: 0; padding: 0 var(--page-inset) calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom)); }
+  /* No rubber band on a phone: iOS drags the whole document with it, the
+     sticky header included, and a header with a backdrop blur was left
+     hidden or stuck once it settled. An installed app has nothing to pull
+     to refresh, so nothing is lost. */
+  html, body { overscroll-behavior-y: none; }
   .library-sources-panel > header { grid-template-columns: 1fr; }
   .library-scan-action { justify-items: start; }
   .library-source { grid-template-columns: auto minmax(0, 1fr); }

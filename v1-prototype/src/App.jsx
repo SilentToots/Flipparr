@@ -1035,7 +1035,17 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
       setCondensed(range > 0 && window.scrollY > 0);
     };
     let settle = 0;
-    const later = () => { window.clearTimeout(settle); settle = window.setTimeout(sync, 400); };
+    const settled = () => {
+      sync();
+      // A bounce that got through can leave a blurred sticky header's
+      // layer where the bounce took it; a nudge to its compositing puts it
+      // back where the layout says it is.
+      const header = headerRef.current;
+      if (!header) return;
+      header.style.willChange = "transform";
+      requestAnimationFrame(() => { header.style.willChange = ""; });
+    };
+    const later = () => { window.clearTimeout(settle); settle = window.setTimeout(settled, 400); };
     sync();
     window.addEventListener("scroll", sync, { passive: true });
     window.addEventListener("scrollend", sync, { passive: true });
