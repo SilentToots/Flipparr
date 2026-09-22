@@ -149,13 +149,12 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   Under them, an optional tools row (tabs, or view and sort). The header is
   sticky. Once the page moves it *condenses*: the title scales to 18px and,
   on a desktop, the header rises into its top padding.
-  Its height never changes, so nothing under a scroll jumps. The header's
-  band (since 2026-09-22) is the sidebar's frost -- iOS grey 6 at 72% over an
-  18px blur (`--scroll-edge-bg`, `--scroll-edge-blur`) -- on every page from
-  the moment it opens, short pages included, so the header reads as a surface
-  and covers passing beneath the title and the tools show through softened;
-  content meets a 24px fade below it. It is not the glass material's
-  dressing: no hairline, no rim of light, no shadow, and the glass controls
+  Its height never changes, so nothing under a scroll jumps. Content under it
+  meets a scroll edge (since 2026-09-22): the header's band is a frost -- the
+  page's black at 72% over an 18px blur (`--scroll-edge-bg`,
+  `--scroll-edge-blur`), so covers passing beneath the title and the tools
+  show through softened -- then a 24px fade below it. It is not the glass
+  material: no hairline, no rim of light, no shadow, and the glass controls
   sitting on it are not glass on glass. Where transparency is reduced the
   band is solid.
   - `search="phone"`: the page's own field on a phone only, on a row of its

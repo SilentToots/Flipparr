@@ -385,16 +385,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .page-header::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none;
   inset: 0 calc(var(--page-inset) * -1) calc(var(--space-24) * -1);
-  /* A frost to the header's own edge -- the sidebar's grey, not quite
-     opaque, over the blur, so the band reads as a surface from the start and
-     what passes beneath the title and the tools shows through softened --
-     then the 24px fade below it. */
+  /* A frost to the header's own edge -- the page's black, not quite opaque,
+     over the blur, so what passes beneath the title and the tools shows
+     through softened -- then the 24px fade below it. */
   background: linear-gradient(to bottom, var(--scroll-edge-bg) calc(100% - var(--space-24)), transparent);
   -webkit-backdrop-filter: blur(var(--scroll-edge-blur));
   backdrop-filter: blur(var(--scroll-edge-blur));
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
+  opacity: 0;
+  transition: opacity var(--motion-duration-standard) ease;
 }
+.page-header--condensed::before { opacity: 1; }
 /* A form page's header stops with its column; its scroll edge still runs to
    the window's edge (the main column clips the overflow). */
 .page-header--narrow { max-width: var(--page-narrow); }
