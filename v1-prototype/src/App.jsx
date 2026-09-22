@@ -1039,20 +1039,25 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
   // the finger lifting checks again once the bounce has settled. A long
   // page bounced at its bottom stays condensed, as it should.
   useEffect(() => {
+    // Once a frame, not once an event: scrollHeight is a forced layout, and
+    // read on every scroll event it stuttered the tab bar's own animation.
     const sync = () => {
-      const range = document.documentElement.scrollHeight - window.innerHeight;
-      setCondensed(range > 0 && window.scrollY > 0);
+      const y = window.scrollY;
+      setCondensed(y > 0 && document.documentElement.scrollHeight - window.innerHeight > 0);
     };
+    let frame = 0;
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; sync(); }); };
     let settle = 0;
     const later = () => { window.clearTimeout(settle); settle = window.setTimeout(sync, 400); };
     sync();
-    window.addEventListener("scroll", sync, { passive: true });
-    window.addEventListener("scrollend", sync, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scrollend", onScroll, { passive: true });
     window.addEventListener("touchend", later, { passive: true });
     return () => {
+      cancelAnimationFrame(frame);
       window.clearTimeout(settle);
-      window.removeEventListener("scroll", sync);
-      window.removeEventListener("scrollend", sync);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scrollend", onScroll);
       window.removeEventListener("touchend", later);
     };
   }, []);

@@ -500,8 +500,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      that carries them is continued up into that zone, and the frost runs
      from the status bar down without a seam. The band still bleeds to the
      screen's sides and fades below. */
-  .page-header { transition: translate var(--motion-duration-morph) var(--motion-ease-morph), background-color var(--motion-duration-standard) ease; }
-  .page-header--condensed { background-color: var(--scroll-edge-bg); -webkit-backdrop-filter: blur(var(--scroll-edge-blur)); backdrop-filter: blur(var(--scroll-edge-blur)); }
+  /* And only the header blurs: a backdrop blur nested inside another --
+     the band's inside the header's -- and a transform on a blurred sticky
+     element are both ways iOS renders the layer black after a frame. So on
+     a phone the header runs to the screen's sides itself, the band keeps
+     the 24px fade below it with no filter of its own, and the condensed
+     header does not translate. */
+  .page-header { margin-inline: calc(var(--page-inset) * -1); padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
+  .page-header::before { inset: 0 0 calc(var(--space-24) * -1); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); -webkit-backdrop-filter: blur(var(--scroll-edge-blur)); backdrop-filter: blur(var(--scroll-edge-blur)); }
+  .page-header--narrow::before { right: 0; }
 }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: var(--weight-bold); margin-bottom: var(--space-10); }
 /* The four-card stat strip was 98px of chrome to say two numbers. It says
