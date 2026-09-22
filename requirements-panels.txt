@@ -1,0 +1,3 @@
+# The optional panel detector for the reader's panel view (see page_panels.py).
+# Not installed by default: the image builds with PANEL_MODEL=1 to include it.
+onnxruntime>=1.20

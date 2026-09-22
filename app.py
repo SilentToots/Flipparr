@@ -9387,6 +9387,16 @@ def file_pages(file_id: int) -> dict[str, Any]:
     }
 
 
+_PANEL_MODEL: dict[str, Any] = {}
+
+
+def panel_model_session() -> Any:
+    """The optional panel detector, probed once. None is the ordinary case."""
+    if "session" not in _PANEL_MODEL:
+        _PANEL_MODEL["session"] = panel_finder.load_model_session(os.environ.get("FLIPPARR_PANEL_MODEL"))
+    return _PANEL_MODEL["session"]
+
+
 def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     """Where the panels are on one page, in the order its run reads.
 
@@ -9408,11 +9418,24 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     member = pages[index]
     signature = _file_signature(path)
     record = store.page_panels(file_id, member)
-    if record is None or (record["source"] == "auto" and record["fileSignature"] != signature):
+    session = panel_model_session()
+    # A reading is redone when the file changed underneath it, and a reading
+    # made without the detector is redone once the detector is there; a
+    # person's stands regardless.
+    stale = record is not None and record["source"] in ("auto", "model") and record["fileSignature"] != signature
+    upgrade = record is not None and record["source"] == "auto" and session is not None
+    if record is None or stale or upgrade:
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
-            found = panel_finder.detect_panels(image)
-        store.set_page_panels(file_id, member, signature, "auto", found["panels"], found["segmented"])
-        record = {"source": "auto", "segmented": found["segmented"], "panels": found["panels"]}
+            if session is None:
+                found = panel_finder.detect_panels(image)
+            else:
+                # The detector reads the 1200px render: it was exported at
+                # 1024px so thin panels survive, and the cut's 600px would
+                # throw that away. Rendered once and cached like any page.
+                with Image.open(io.BytesIO(render_file_page(file_id, index, "backdrop"))) as detail:
+                    found = panel_finder.detect_panels(image, session, detail)
+        store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"])
+        record = {"source": found["source"], "segmented": found["segmented"], "panels": found["panels"]}
     direction = store.file_reading_direction(file_id)
     ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []
     return {

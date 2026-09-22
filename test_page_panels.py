@@ -5,8 +5,15 @@ import unittest
 from PIL import Image, ImageDraw
 
 from page_panels import (
-    READING_LTR, READING_RTL, detect_panels, ink_mask, order_panels, quadrant_panels,
+    READING_LTR, READING_RTL, detect_panels, ink_mask, load_model_session, order_panels,
+    quadrant_panels, refine, suppress,
 )
+
+try:
+    import numpy  # noqa: F401
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 
 def _page(width=600, height=900, background="white"):
@@ -77,16 +84,16 @@ class DetectionTests(unittest.TestCase):
         """A painted page with no gutters: one blob of ink, which is not a layout."""
         image, draw = _page()
         draw.rectangle((0, 0, 599, 899), fill="#3a3a3a")
-        self.assertEqual(detect_panels(image), {"segmented": False, "panels": []})
+        self.assertEqual(detect_panels(image), {"segmented": False, "source": "auto", "panels": []})
 
     def test_a_spread_is_not_cut(self):
         image, draw = _page(width=1200, height=900)
         _grid(draw, 4, 3, width=1200)
-        self.assertEqual(detect_panels(image), {"segmented": False, "panels": []})
+        self.assertEqual(detect_panels(image), {"segmented": False, "source": "auto", "panels": []})
 
     def test_a_blank_page_has_nothing(self):
         image, _ = _page()
-        self.assertEqual(detect_panels(image), {"segmented": False, "panels": []})
+        self.assertEqual(detect_panels(image), {"segmented": False, "source": "auto", "panels": []})
 
     def test_ink_is_what_differs_from_the_background(self):
         image, draw = _page(background="black")
@@ -120,6 +127,82 @@ class OrderTests(unittest.TestCase):
     def test_quadrants_read_in_order(self):
         self.assertEqual(_centres(quadrant_panels(READING_LTR)), [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)])
         self.assertEqual(_centres(quadrant_panels(READING_RTL)), [(0.75, 0.25), (0.25, 0.25), (0.75, 0.75), (0.25, 0.75)])
+
+
+class ModelTierTests(unittest.TestCase):
+    """The detector refines the cut; it never replaces it."""
+
+    def test_no_model_is_the_ordinary_case(self):
+        self.assertIsNone(load_model_session(None))
+        self.assertIsNone(load_model_session("/nowhere/panels.onnx"))
+
+    def test_two_boxes_that_mostly_overlap_are_one_panel_seen_twice(self):
+        kept = suppress([(0.9, (0, 0, 100, 100)), (0.7, (5, 5, 100, 100)), (0.8, (200, 0, 300, 100))])
+        self.assertEqual(kept, [(0, 0, 100, 100), (200, 0, 300, 100)], "the surer of the pair, and the other panel")
+
+    def test_a_coarse_region_is_split_by_the_boxes_inside_it_and_keeps_what_they_miss(self):
+        # One region 300 wide by 300 tall with ink everywhere; the model saw
+        # two panels in its lower two thirds and nothing in the top third.
+        mask = Image.new("L", (300, 300), 255)
+        region = (0, 0, 300, 300)
+        boxes = [(0, 100, 300, 200), (0, 200, 300, 300)]
+        result = refine(mask, [region], boxes, min_area=300 * 300 * 0.04)
+        self.assertEqual(result[:2], [(0, 100, 300, 200), (0, 200, 300, 300)])
+        self.assertEqual(len(result), 3, "the two boxes, then the top third the model did not see")
+        top = result[2]
+        # The boxes are painted out with a margin, so the band above them
+        # ends a little short of the first box's edge.
+        self.assertEqual((top[0], top[1], top[2]), (0, 0, 300))
+        self.assertTrue(80 <= top[3] <= 100, str(top))
+
+    def test_a_region_with_one_box_or_none_is_left_as_the_cut_found_it(self):
+        mask = Image.new("L", (300, 300), 255)
+        self.assertEqual(refine(mask, [(0, 0, 300, 300)], [(0, 0, 300, 150)], 100), [(0, 0, 300, 300)])
+        self.assertEqual(refine(mask, [(0, 0, 300, 300)], [], 100), [(0, 0, 300, 300)])
+
+    def test_a_box_mostly_outside_a_region_is_not_one_of_its_panels(self):
+        mask = Image.new("L", (300, 300), 255)
+        regions = [(0, 0, 300, 150), (0, 150, 300, 300)]
+        # Two boxes in the lower region, one straddling the gutter: the upper
+        # region keeps its shape, the lower splits.
+        boxes = [(0, 160, 150, 300), (150, 160, 300, 300), (0, 100, 300, 200)]
+        result = refine(mask, regions, boxes, 100)
+        self.assertEqual(result[0], (0, 0, 300, 150))
+        self.assertIn((0, 160, 150, 300), result)
+        self.assertIn((150, 160, 300, 300), result)
+
+    @unittest.skipUnless(HAS_NUMPY, "the detector's runtime is an optional install")
+    def test_a_stubbed_detector_splits_what_the_gutters_merged(self):
+        import numpy
+
+        # A page whose two panels abut with no gutter: the cut sees one
+        # region. A detector that reports both, letterbox coordinates and all,
+        # turns it into two.
+        image, draw = _page(width=600, height=600)
+        draw.rectangle((30, 30, 570, 300), fill="#444444")
+        draw.rectangle((30, 300, 570, 570), fill="#666666")
+        self.assertFalse(detect_panels(image)["segmented"], "one block of ink is not a layout")
+        scale = 1024 / 600
+
+        class Session:
+            def get_inputs(self):
+                return [type("Input", (), {"name": "images"})()]
+
+            def run(self, _outputs, feeds):
+                self.shape = feeds["images"].shape
+                rows = numpy.zeros((1, 300, 6), dtype=numpy.float32)
+                rows[0, 0] = [30 * scale, 30 * scale, 570 * scale, 300 * scale, 0.9, 0]
+                rows[0, 1] = [30 * scale, 300 * scale, 570 * scale, 570 * scale, 0.8, 0]
+                rows[0, 2] = [100 * scale, 100 * scale, 200 * scale, 150 * scale, 0.95, 1]  # text, ignored
+                rows[0, 3] = [30 * scale, 30 * scale, 570 * scale, 300 * scale, 0.3, 0]      # too unsure
+                return [rows]
+
+        session = Session()
+        result = detect_panels(image, session)
+        self.assertEqual(session.shape, (1, 3, 1024, 1024))
+        self.assertEqual((result["segmented"], result["source"], len(result["panels"])), (True, "model", 2))
+        tops = sorted(round(panel["y"], 2) for panel in result["panels"])
+        self.assertEqual(tops, [0.05, 0.5])
 
 
 if __name__ == "__main__":
