@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, quadrantPanels, panelMask, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -226,4 +226,12 @@ test("the scrim's window sits on the panel, in the percentages a mask position t
   assert.ok(Math.abs(edge.w - 51) < 0.01);
   // A panel the width of the page has nowhere to go.
   assert.deepEqual(panelMask({ x: 0, y: 0.2, w: 1, h: 0.3 }, 0).x, 0);
+});
+
+test("a swipe is a quick, mostly sideways flick, in page view and panel view alike", () => {
+  assert.equal(isSwipe(-80, 10, 200), true);
+  assert.equal(isSwipe(80, -30, 700), true);
+  assert.equal(isSwipe(40, 5, 200), false, "too short to mean it");
+  assert.equal(isSwipe(80, 90, 200), false, "more down than across: a pull, not a swipe");
+  assert.equal(isSwipe(200, 0, 1500), false, "slow: a drag to look around");
 });

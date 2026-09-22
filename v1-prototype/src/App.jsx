@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -5244,7 +5244,7 @@ function ReaderView({
       const dx = end.clientX - start.x;
       const dy = end.clientY - start.y;
       if (Math.abs(dy) > 120 && Math.abs(dy) > Math.abs(dx)) { onClose(); return; }
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && Date.now() - start.at < 800) {
+      if (isSwipe(dx, dy, Date.now() - start.at)) {
         // A swipe drags the page with it: left moves the page left, which is
         // forward in a comic and back in manga, the same rule as a tap.
         const action = swipeAction(dx, direction);
@@ -5373,11 +5373,14 @@ function ReaderView({
   function onPanStart(event) {
     // In panel view the page overflows the screen at any zoom, so a drag is
     // always a pan; otherwise a drag on the whole page is the swipe path's.
+    // A flick in panel view is still a step, though: on a phone the finger
+    // was moving the page around and never turning it, and a panel view
+    // you cannot swipe through is not one.
     if ((zoom <= 1 && !panelModeRef.current) || event.button) return;
     event.preventDefault();
     const pointerId = event.pointerId;
     const image = pageRef.current;
-    const start = { x: event.clientX, y: event.clientY, pan: panRef.current };
+    const start = { x: event.clientX, y: event.clientY, at: Date.now(), pan: panRef.current };
     const { viewport, page } = panBounds();
     let frame = 0;
     let latest = start.pan;
@@ -5401,6 +5404,19 @@ function ReaderView({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       cancelAnimationFrame(frame);
+      if (panelModeRef.current && up.type === "pointerup" && up.pointerType !== "mouse"
+          && isSwipe(up.clientX - start.x, up.clientY - start.y, Date.now() - start.at)) {
+        // The page goes back to where the panel was framed, and the step
+        // flies from there; the little it moved under the finger was the
+        // swipe, not a place to leave it.
+        latest = start.pan;
+        paint();
+        setPan(start.pan);
+        setPanning(false);
+        const action = swipeAction(up.clientX - start.x, direction);
+        if (action) go(action);
+        return;
+      }
       paint();
       setPan(latest);
       setPanning(false);

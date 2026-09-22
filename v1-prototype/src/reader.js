@@ -59,6 +59,15 @@ export function swipeAction(dx, direction) {
   return tapAction(dx < 0 ? 1 : 0, 1, direction);
 }
 
+/**
+ * Whether a finger's travel was a swipe -- a quick, mostly sideways flick --
+ * rather than a drag to look around or a pull down to close. The one rule
+ * for page view and panel view, so a flick means the same thing in both.
+ */
+export function isSwipe(dx, dy, elapsed) {
+  return Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && elapsed < 800;
+}
+
 /** The page an action lands on, never outside the comic. */
 export function pageForAction(index, count, action) {
   if (!count) return 0;
