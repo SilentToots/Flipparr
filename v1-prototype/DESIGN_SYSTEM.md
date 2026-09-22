@@ -156,8 +156,12 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   show through softened -- then a 24px fade below it. It is not the glass
   material: no hairline, no rim of light, no shadow, and the glass controls
   sitting on it are not glass on glass. Where transparency is reduced the
-  band is solid, and so is it in a phone's browser tab, where the page stops
-  under a status bar Safari paints solid and a frost read as a seam.
+  band is solid. On a phone the condensed header carries the tint and blur
+  itself as well: iOS 26 Safari colours the status-bar zone by sampling the
+  sticky element at the top edge (its own background and backdrop blur, not
+  a pseudo-element's), so the frost continues up into that zone with no seam.
+  The tab bar's strip stops 4px short of the bottom edge for the same reason
+  in reverse: sampled there, its transparency became an opaque black bar.
   - `search="phone"`: the page's own field on a phone only, on a row of its
     own. On Comics it filters your comics as you type, and a query with no
     match offers the catalogs; on Discover it searches your library and the

@@ -493,6 +493,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .page-header .library-phone-view { display: inline-flex; }
   .page-header-actions { gap: var(--space-6); }
   .page-header-tools.library-tools-row { display: none; }
+  /* The frost on the header itself as well as on its band, once the page
+     has moved: iOS 26 Safari colours the status-bar zone above the page by
+     sampling the sticky element at the top edge, reading its background and
+     its backdrop blur -- the pseudo-element's do not count -- so a header
+     that carries them is continued up into that zone, and the frost runs
+     from the status bar down without a seam. The band still bleeds to the
+     screen's sides and fades below. */
+  .page-header { transition: translate var(--motion-duration-morph) var(--motion-ease-morph), background-color var(--motion-duration-standard) ease; }
+  .page-header--condensed { background-color: var(--scroll-edge-bg); -webkit-backdrop-filter: blur(var(--scroll-edge-blur)); backdrop-filter: blur(var(--scroll-edge-blur)); }
 }
 .eyebrow { display: block; color: var(--color-violet-400); text-transform: uppercase; letter-spacing: .12em; font-size: var(--text-sm); font-weight: var(--weight-bold); margin-bottom: var(--space-10); }
 /* The four-card stat strip was 98px of chrome to say two numbers. It says

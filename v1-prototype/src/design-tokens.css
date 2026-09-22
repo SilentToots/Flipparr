@@ -458,13 +458,6 @@
 
 /* Where transparency is unwanted or contrast is raised, glass is solid. The
    first query is Chromium's only; Safari has no equivalent yet. */
-/* In a phone's browser the page stops under the status bar, which Safari
-   paints solid: a translucent header just below it read as a black bar
-   above a grey one. Solid there; the installed app runs its header under
-   the status bar and keeps the frost, as does a desktop. */
-@media (max-width: 640px) and (display-mode: browser) {
-  :root { --scroll-edge-bg: var(--bg); }
-}
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   :root {
     --glass-bg: var(--glass-solid);
