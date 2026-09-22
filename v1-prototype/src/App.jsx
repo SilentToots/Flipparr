@@ -1658,13 +1658,17 @@ function SortMenu({ value, onChange }) {
 // library's matching runs as you type with Discover's Library Matches cards.
 // Search (Enter) looks through the comic catalogs on Discover, as the desktop
 // bar does.
+// Null until the first answer: the grid's Recent order needs it, and a grid
+// drawn before it came was drawn in added order and then re-sorted under
+// the eye, the comics read last jumping to the front. A refresh keeps the
+// last map until the next one lands, so nothing flickers.
 function useRunReading(version) {
-  const [runs, setRuns] = useState({});
+  const [runs, setRuns] = useState(null);
   useEffect(() => {
     let live = true;
     apiRequest("/api/v1/reading/runs")
       .then((data) => { if (live) setRuns(data.runs || {}); })
-      .catch(() => { if (live) setRuns({}); });
+      .catch(() => { if (live) setRuns((current) => current || {}); });
     return () => { live = false; };
   }, [version]);
   return runs;
@@ -1691,7 +1695,10 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
   const fallbackSeries = backendStatus === "offline" ? DEMO_SERIES : [];
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
-  const initialLoading = backendStatus === "loading" && !catalog;
+  const runReading = useRunReading(readingVersion);
+  // Nothing is drawn until what decides its order is in: the catalog, and
+  // for Recent and In progress the reading map as well.
+  const initialLoading = (backendStatus === "loading" && !catalog) || (runReading === null && (sort === "recent" || inProgressOnly));
   // The server has always reported this; nothing read it, so arriving during a
   // scan showed the "no comics yet" empty state on a library that was filling.
   const activeScan = catalog?.activeScan || null;
@@ -1700,7 +1707,6 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
   const scopedSeries = useMemo(() => editionsOn ? series : series.filter((item) => !item.isCollectionSeries), [editionsOn, series]);
   // Fetched before the filters and the sort need it: In progress and Recent
   // both read from where each run was left, which is this map's to know.
-  const runReading = useRunReading(readingVersion);
   const followedSeries = useMemo(() => followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries, [followingOnly, scopedSeries]);
   const readingSeries = useMemo(() => inProgressOnly ? followedSeries.filter((item) => inProgress(runReading?.[String(item.id)])) : followedSeries, [inProgressOnly, followedSeries, runReading]);
   const filteredSeries = useMemo(() => searching ? readingSeries.filter((item) => libraryRunMatches(item, queryParts)) : readingSeries, [readingSeries, searching, queryParts]);
