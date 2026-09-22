@@ -1079,9 +1079,17 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
     const header = headerRef.current;
     if (!header || typeof ResizeObserver === "undefined") return undefined;
     const root = document.documentElement;
-    const observer = new ResizeObserver(() => root.style.setProperty("--page-header-height", `${header.offsetHeight}px`));
+    // Written a frame later, not inside the observer's delivery: on a phone
+    // the page's own padding follows this height, so writing it in the pass
+    // resized the page mid-pass, which the observer warns about.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => root.style.setProperty("--page-header-height", `${header.offsetHeight}px`));
+    });
     observer.observe(header);
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
       root.style.removeProperty("--page-header-height");
     };
