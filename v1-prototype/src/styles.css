@@ -389,19 +389,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 }
 .page-header::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none;
-  inset: 0 calc(var(--page-inset) * -1) calc(var(--space-24) * -1);
-  /* A frost to the header's own edge -- the page's black, not quite opaque,
-     over the blur, so what passes beneath the title and the tools shows
-     through softened -- then the 24px fade below it. */
-  background: linear-gradient(to bottom, var(--scroll-edge-bg) calc(100% - var(--space-24)), transparent);
+  inset: 0 calc(var(--page-inset) * -1) 0;
+  /* The layer is there from the start, blur and all, with no tint: over the
+     page's own black it is invisible, and a short page never shows it. Once
+     the page has moved the tint comes up -- the sidebar's frost -- and the
+     band reaches 24px below the header, fading out through the mask. Only
+     a colour changes, so nothing is created or faded in under the eye: a
+     blur switched on as content arrived read as the band loading in. At
+     rest the band stops at the header's edge, so the blur never touches a
+     first row that is not passing under it. */
+  background-color: transparent;
   -webkit-backdrop-filter: blur(var(--scroll-edge-blur));
   backdrop-filter: blur(var(--scroll-edge-blur));
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
-  opacity: 0;
-  transition: opacity var(--motion-duration-standard) ease;
+  transition: background-color var(--motion-duration-standard) ease, bottom var(--motion-duration-standard) ease;
 }
-.page-header--condensed::before { opacity: 1; }
+.page-header--condensed::before { background-color: var(--scroll-edge-bg); bottom: calc(var(--space-24) * -1); }
 /* A form page's header stops with its column; its scroll edge still runs to
    the window's edge (the main column clips the overflow). */
 .page-header--narrow { max-width: var(--page-narrow); }
@@ -513,7 +517,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      bar zone), the blur on a child of it, and no transform on either. */
   .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
   .page-view { padding-top: calc(var(--page-header-height, 0px) + var(--space-8)); }
-  .page-header::before { inset: 0 0 calc(var(--space-24) * -1); }
+  .page-header::before { inset: 0 0 0; }
+  .page-header--condensed::before { bottom: calc(var(--space-24) * -1); }
   .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); }
   .page-header--narrow { max-width: none; }
   .page-header--narrow::before { right: 0; }

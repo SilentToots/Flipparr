@@ -153,7 +153,10 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   meets a scroll edge (since 2026-09-22): the header's band is the
   sidebar's frost -- grey 6 at 72% over a 12px blur (`--scroll-edge-bg`,
   `--scroll-edge-blur`) -- so covers passing beneath the title and the tools
-  show through softened, then a 24px fade below it. It is not the glass
+  show through softened, then a 24px fade below it. The blur layer exists
+  from the start with no tint and stops at the header's edge, so a page at
+  rest shows nothing; scrolling only changes its colour and reach, since a
+  blur switched on as content arrived read as the band loading in. It is not the glass
   material's dressing: no hairline, no rim of light, no shadow, and the
   glass controls sitting on it are not glass on glass. Where transparency is
   reduced the band is solid. On a phone the header is fixed across the
