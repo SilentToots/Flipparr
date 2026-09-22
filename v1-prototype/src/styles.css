@@ -2079,7 +2079,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   /* 69:792: the tab bar floats -- a clear strip holding a violet pill over a
      blur, solid where the browser cannot blur. Sign out is in Settings. The
      strip is 8px above and below the pill, not the file's 12px. */
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: auto; box-sizing: border-box; padding: var(--space-8) var(--page-inset) calc(var(--space-8) + env(safe-area-inset-bottom)); border: 0; background: transparent; overflow: visible; pointer-events: none; }
+  /* The strip stops 4px short of the screen's bottom edge, its padding 4px
+     shorter to match, so the pill sits where it did. iOS 26 Safari colours
+     its own bottom bar by sampling a fixed, full-width element that reaches
+     within 3px of that edge -- and this strip, transparent, gave it nothing
+     but the body's black to paint, opaquely, over the content Safari's bar
+     would otherwise show through. Out of reach, Safari falls back to its
+     own glass over the page. */
+  .sidebar { position: fixed; inset: auto 0 4px; z-index: 20; width: 100%; height: auto; box-sizing: border-box; padding: var(--space-8) var(--page-inset) calc(var(--space-4) + env(safe-area-inset-bottom)); border: 0; background: transparent; overflow: visible; pointer-events: none; }
   .sidebar-session { display: none; }
   .sidebar { border-radius: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; transition: none; }
   /* A pill on the page's own edges, so it lines up with the cards above it
