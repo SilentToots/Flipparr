@@ -279,8 +279,15 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # interval is one of AUTO_SCAN_INTERVALS, in minutes.
     "autoScanEnabled": True,
     "autoScanIntervalMinutes": 60,
+    # With a vision connector on, whether it reads every page opened in panel
+    # view, or only the pages the local finder could not read. The finder
+    # can be wrong while sure -- a patch of sky as a panel -- and nothing
+    # questions a reading that exists; a model does, and the page corrects
+    # its edges. Off, the model is a fallback only. Each page is still sent
+    # once.
+    "visionReadsEveryPage": True,
 }
-_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted", "autoScanEnabled"})
+_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage"})
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
 
@@ -9683,6 +9690,10 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     record = store.page_panels(file_id, member)
     session = panel_model_session()
     vision = vision_model_ready()
+    # Whether the connector reads every page, or only what the local tiers
+    # could not: a local reading can be wrong while sure, and only a model
+    # questions it.
+    every = vision and bool(load_app_settings().get("visionReadsEveryPage"))
     direction = store.file_reading_direction(file_id)
     # A reading is redone when the file changed underneath it; a reading made
     # without a tier is redone once that tier is there -- the detector for an
@@ -9693,7 +9704,7 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     upgrade = record is not None and (
         (record["source"] == "auto" and session is not None)
         or (record["source"] in ("auto", "model") and vision
-            and (not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
+            and (every or not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
     )
     if record is None or stale or upgrade:
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
@@ -9722,13 +9733,15 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
         # what gets a page asked again once the connector is back.
         if vision and detail_bytes is not None:
             try:
-                if not found["segmented"]:
+                if every or not found["segmented"]:
+                    # An answer the page could correct replaces the local
+                    # reading; a refused one leaves it standing, asked.
                     boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction, mask)
                     if boxes:
                         found = {"segmented": True, "source": "vlm", "panels": boxes}
                     else:
                         found = {**found, "source": "vlm"}
-                elif panel_finder.ambiguous_layout(found["panels"]):
+                if found["segmented"] and panel_finder.ambiguous_layout(found["panels"]):
                     ordered = vision_order(detail_bytes, found["panels"], direction)
                     panels = found["panels"]
                     if ordered:

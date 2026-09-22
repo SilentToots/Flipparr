@@ -579,21 +579,20 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
 
     A vision model reads a layout's structure well and its coordinates
     approximately (its makers say as much), and coverage and overlap alone
-    let a grid guessed over the art through. So the page corrects the model:
-    the cut reads a region a little larger than each box, and the panels it
-    finds there that the box covers are the answer -- exact to the ink,
-    whichever way the model's edges were off, and two panels a model drew as
-    one come apart. Where the cut found no gutter near an edge the model
-    drew, the page is read again along that edge for a thinner one. An edge
-    with nothing bare near it is either a boundary the art alone draws --
-    two panels abutting, a colour against a colour, which a model can see
-    and a mask cannot -- or an edge the model made up. One or two of them
-    in an answer are the first and stand where the model put them; an
+    let a grid guessed over the art through. So the page corrects the
+    model's edges and the model's structure stands: one box is one panel.
+    The page cannot tell a gutter from a band of cloud -- cutting inside a
+    box carved a patch of sky out of a painted page, the very page a model
+    is for -- so it never splits what the model drew as one. Each side of a
+    box is read for the barest line near where the model put it: a gutter,
+    thin or crossed by a caption, and the panel's ink then settles the edge
+    exactly. A side with nothing bare near it and ink going on past it is a
+    boundary the art alone draws, or an edge the model made up; one or two
+    in an answer are the first and stand where the model put them, an
     answer full of them is a grid guessed over the art, and is refused
     whole. Better the quadrants than a confident wrong grid.
     """
     width, height = mask.size
-    gutter = max(2, int(round(min(width, height) * GUTTER_MIN_FRACTION)))
     min_area = width * height * PANEL_MIN_AREA
     reach = (int(width * VISION_SNAP), int(height * VISION_SNAP))
     panels: list[tuple[int, int, int, int]] = []
@@ -609,20 +608,15 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
         )
         if region[2] - region[0] < 2 or region[3] - region[1] < 2:
             return None
-        for leaf in _cut(mask, region, gutter, min_area):
-            # A neighbour's sliver the wider region took in is not this
-            # box's; a panel the box mostly covers, or that holds most of
-            # the box, is.
-            shared = _area(_clip(leaf, drawn))
-            if shared < 0.5 * _area(leaf) and shared < 0.5 * _area(drawn):
-                continue
-            settled, doubted = _settle(mask, leaf, drawn, region, reach)
-            unverified += doubted
-            if _area(settled) < min_area:
-                continue
-            if all(_iou(settled, kept) < 0.5 for kept in panels):
-                panels.append(settled)
-    if not panels or unverified > VISION_UNVERIFIED_MAX * 4 * len(boxes):
+        settled, doubted = _settle(mask, drawn, region, reach)
+        unverified += doubted
+        if _area(settled) < min_area:
+            continue
+        if all(_iou(settled, kept) < 0.5 for kept in panels):
+            panels.append(settled)
+    # One doubt is always allowed: a two-box answer whose shared edge a
+    # caption runs across is not a guess.
+    if not panels or unverified > max(1, VISION_UNVERIFIED_MAX * 4 * len(boxes)):
         return None
     page = mask.getbbox() or (0, 0, width, height)
     page_area = (page[2] - page[0]) * (page[3] - page[1])
@@ -635,33 +629,26 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
 
 
 def _settle(
-    mask: Image.Image, leaf: tuple[int, int, int, int], drawn: tuple[int, int, int, int],
-    region: tuple[int, int, int, int], reach: tuple[int, int],
+    mask: Image.Image, drawn: tuple[int, int, int, int], region: tuple[int, int, int, int], reach: tuple[int, int],
 ) -> tuple[tuple[int, int, int, int], int]:
-    """The leaf with each side accounted for, and how many sides the page could not vouch for.
+    """One box's panel, each side accounted for, and how many sides the page could not vouch for.
 
-    A side the cut settled -- on a gutter inside the region, or where the
-    ink ends -- stands, wherever the model drew its edge: the cut parting a
-    box into two panels is the point. A side the leaf carries to the
-    region's edge is a side the cut could not settle, and the page is read
-    again along the model's edge for the barest line within reach: a gutter
-    too thin for the cut, or one a caption runs across. Found, the leaf is
-    trimmed there. Not found, the ink either ends at the region's edge --
-    the leaf is whole -- or goes on past it, and the side is the model's
-    word alone: it takes the model's edge and is counted. A leaf trimmed
-    away to nothing was not this box's panel, and comes back empty.
+    A side at the page's edge is the page's edge. Any other is read along
+    the model's edge for the barest line within reach and settles there --
+    then the ink inside settles it exactly. Nothing bare near it: if the ink
+    ends within reach anyway the panel simply ends there; if it goes on, the
+    side is the model's word alone, takes the model's edge, and is counted.
     """
     width, height = mask.size
-    edges = list(leaf)
+    edges = list(region)
     doubted = 0
     for side in range(4):
         vertical = side % 2 == 0
         low = side < 2
         limit = width if vertical else height
-        span = (edges[1], edges[3]) if vertical else (edges[0], edges[2])
-        at_boundary = edges[side] <= region[side] if low else edges[side] >= region[side]
-        if not at_boundary or region[side] == (0 if low else limit):
+        if region[side] == (0 if low else limit):
             continue
+        span = (drawn[1], drawn[3]) if vertical else (drawn[0], drawn[2])
         line = _bare_line_near(mask, side, drawn[side], span, reach[0] if vertical else reach[1])
         if line is not None:
             edges[side] = line

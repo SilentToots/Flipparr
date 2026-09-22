@@ -6490,7 +6490,7 @@ class VisionConnectorTests(unittest.TestCase):
 class VisionInPanelPipelineTests(PagePanelTests):
     """Where the vision model sits in the pipeline: last, and only for the hard pages."""
 
-    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True):
+    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True, every=False):
         from pathlib import Path
         store = Mock()
         store.library_file_path.return_value = Path("/library/x.cbz")
@@ -6503,9 +6503,46 @@ class VisionInPanelPipelineTests(PagePanelTests):
              patch.object(Path, "is_file", return_value=True), \
              patch("app.panel_model_session", return_value=None), \
              patch("app.vision_model_ready", return_value=ready), \
+             patch("app.load_app_settings", return_value={"visionReadsEveryPage": every}), \
              patch("app.render_file_page", return_value=png or self._page_png()), \
              patch("app.ask_vision_model", return_value=answer) as ask:
             return app.file_page_panels(7, 1), store, ask
+
+    def test_reading_every_page_is_the_default_with_a_connector_on(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
+        ):
+            self.assertIs(app.load_app_settings()["visionReadsEveryPage"], True)
+            self.assertIs(app.save_app_settings({"visionReadsEveryPage": False})["visionReadsEveryPage"], False)
+            with self.assertRaises(ValueError):
+                app.save_app_settings({"visionReadsEveryPage": "yes"})
+
+    def test_reading_every_page_questions_a_local_reading_and_the_page_corrects_the_answer(self):
+        # The cloud page: the local finder took a patch of sky between clouds
+        # for a panel and was sure. Asked anyway, the model's two rows stand,
+        # exact to the ink.
+        answer = '[{"x1": 14, "y1": 26, "x2": 288, "y2": 200}, {"x1": 26, "y1": 250, "x2": 270, "y2": 440}]'
+        kept = {"fileSignature": "sig", "source": "model", "segmented": True,
+                "panels": [{"x": 0.3, "y": 0.0, "w": 0.3, "h": 0.2}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]}
+        result, store, ask = self._ask_with_vision(record=kept, png=self._page_png(bridged=True), answer=answer, every=True)
+        ask.assert_called_once()
+        self.assertEqual((result["source"], result["segmented"], len(result["panels"])), ("vlm", True, 2))
+        self.assertEqual(round(result["panels"][0]["y"] * 450), 20)
+        # Asked, the page is not asked again, whatever the model said.
+        asked = {"fileSignature": "sig", "source": "vlm", "segmented": True, "panels": result["panels"]}
+        _, _, again = self._ask_with_vision(record=asked, png=self._page_png(bridged=True), answer=answer, every=True)
+        again.assert_not_called()
+        # And a refused answer leaves the local reading -- made afresh, not
+        # copied from the row -- standing, as asked.
+        result, _, _ = self._ask_with_vision(record=kept, answer="I cannot make out this page.", every=True)
+        self.assertEqual((result["source"], result["segmented"], len(result["panels"])), ("vlm", True, 3))
+
+    def test_the_fallback_policy_leaves_a_local_reading_alone(self):
+        kept = {"fileSignature": "sig", "source": "model", "segmented": True,
+                "panels": [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]}
+        result, _, ask = self._ask_with_vision(record=kept, every=False)
+        ask.assert_not_called()
+        self.assertEqual(result["source"], "model")
 
     def test_a_page_nothing_could_read_is_sent_and_its_boxes_kept(self):
         # Two panels with a caption across their gutter: the cut cannot read

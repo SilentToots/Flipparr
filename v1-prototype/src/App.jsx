@@ -3304,6 +3304,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   const [autoScan, setAutoScan] = useState(true);
   const [autoScanInterval, setAutoScanInterval] = useState(60);
   const [savingAutoScan, setSavingAutoScan] = useState(false);
+  const [everyPage, setEveryPage] = useState(true);
+  const [savingEveryPage, setSavingEveryPage] = useState(false);
   const [providers, setProviders] = useState([]);
   const [providerError, setProviderError] = useState("");
   const [editingProvider, setEditingProvider] = useState(null);
@@ -3335,8 +3337,25 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       setLanguage(result?.preferredLanguage ?? "en");
       setAutoScan(result?.autoScanEnabled ?? true);
       setAutoScanInterval(Number(result?.autoScanIntervalMinutes) || 60);
+      setEveryPage(result?.visionReadsEveryPage ?? true);
     } catch {
       /* settings fall back to defaults */
+    }
+  }
+  async function toggleEveryPage(next) {
+    setSavingEveryPage(true);
+    setEveryPage(next);
+    try {
+      const result = await apiRequest("/api/v1/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visionReadsEveryPage: next }),
+      });
+      setEveryPage(Boolean(result?.visionReadsEveryPage));
+    } catch {
+      setEveryPage(!next);
+    } finally {
+      setSavingEveryPage(false);
     }
   }
   async function toggleCollectedEditions(next) {
@@ -3483,9 +3502,10 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
               they contribute nothing to what a comic is, only to how a hard
               page is read. */}
           <SettingsCard title="Help with hard pages" className="metadata-source-settings">
-            <p className="settings-card-lead">Optional. With an API key, one of these is asked about a page Flipparr could not read, or the reading order of a layout it cannot settle &mdash; each such page once, sent as an image. Nothing is sent while they are off.</p>
+            <p className="settings-card-lead">Optional. With an API key, one of these is asked about the pages you read in panel view &mdash; each page once, sent as an image &mdash; and the page itself corrects the answer&rsquo;s edges. Nothing is sent while they are off.</p>
             {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+            <Toggle checked={everyPage} onChange={savingEveryPage ? () => {} : toggleEveryPage} title="Ask about every page" description="On, the model reads every page you open in panel view and its answer replaces what Flipparr found itself, which can be wrong while sure. Off, it is asked only about the pages Flipparr could not read. About half a cent a page with Sonnet." />
             <p className="settings-card-note">Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds itself and refuses boxes that cross the art.</p>
           </SettingsCard>
           <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>

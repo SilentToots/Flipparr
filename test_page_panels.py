@@ -22,11 +22,12 @@ def _page(width=600, height=900, background="white"):
     return image, ImageDraw.Draw(image)
 
 
-def _frame(draw, box, fill="white", outline="black", width=3):
+def _frame(draw, box, fill="#555555", outline="black", width=3):
+    # Art to the border, as on a printed page: a frame left white inside has
+    # bare lines that are not gutters, and no page reads that way.
     draw.rectangle(box, fill=fill, outline=outline, width=width)
-    # Some art inside, so a panel is not just its border.
     x0, y0, x1, y1 = box
-    draw.ellipse((x0 + 20, y0 + 20, x1 - 20, y1 - 20), fill="#555555")
+    draw.ellipse((x0 + 20, y0 + 20, x1 - 20, y1 - 20), fill="#333333")
 
 
 def _grid(draw, columns, rows, width=600, height=900, margin=30, gutter=20):
@@ -264,14 +265,21 @@ class VisionTierTests(unittest.TestCase):
             for got, want in zip(self._pixels(panel), cell):
                 self.assertLessEqual(abs(got - want), 2, f"{self._pixels(panel)} should sit on {cell}")
 
-    def test_two_panels_a_model_drew_as_one_come_apart(self):
+    def test_what_a_model_drew_as_one_panel_stays_one(self):
+        # The model's structure is the prior. Cutting inside its box let a
+        # band of cloud on a painted page pass for a gutter and carved a
+        # patch of sky out as a panel -- the local finder's own mistake,
+        # repeated on the answer that was meant to correct it.
         image, draw = _page()
         cells = _grid(draw, 2, 3)
         mask = page_mask(image)
         top_pair = (cells[0][0], cells[0][1], cells[1][2], cells[1][3])
         rough = [self._nudged(top_pair, 5, -6)] + [self._nudged(box, 0, 0) for box in cells[2:]]
         refined = refine_vision_boxes(mask, rough)
-        self.assertEqual(len(refined), 6, "the merged pair is cut again inside the box")
+        self.assertEqual(len(refined), 5)
+        pair = max(refined, key=lambda panel: panel["w"])
+        for got, want in zip(self._pixels(pair), top_pair):
+            self.assertLessEqual(abs(got - want), 2, "one panel, on the ink of both frames")
 
     def test_a_gutter_too_thin_for_the_cut_is_found_along_the_models_edge(self):
         # Absolute Batman #2, page 3: the top pair's gutter is two pixels at
