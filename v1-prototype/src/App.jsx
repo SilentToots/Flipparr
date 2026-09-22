@@ -497,9 +497,18 @@ function logicalCatalogSeries(catalog, fallback = []) {
   ].sort((a, b) => a.title.localeCompare(b.title));
 }
 
+// What each GET last answered, for a view coming back: a tab switch unmounts
+// the view it leaves, and a view mounting with nothing showed its skeleton
+// while it asked again for what it had a moment ago -- the Comics grid, the
+// release shelves, the settings toggles. Seeded from here, it draws at once
+// with the last answer and refreshes behind it.
+const LAST_ANSWERS = new Map();
+function lastAnswer(path) { return LAST_ANSWERS.get(path) ?? null; }
+
 async function apiRequest(path, options) {
   const response = await fetch(path, options);
   const payload = await response.json();
+  if (response.ok && (!options?.method || options.method === "GET")) LAST_ANSWERS.set(path, payload);
   if (!response.ok) {
     const error = new Error(payload.error || `Request failed (${response.status})`);
     // Carry the status alongside the message. Callers need to tell "you are
@@ -1663,7 +1672,7 @@ function SortMenu({ value, onChange }) {
 // the eye, the comics read last jumping to the front. A refresh keeps the
 // last map until the next one lands, so nothing flickers.
 function useRunReading(version) {
-  const [runs, setRuns] = useState(null);
+  const [runs, setRuns] = useState(() => lastAnswer("/api/v1/reading/runs")?.runs ?? null);
   useEffect(() => {
     let live = true;
     apiRequest("/api/v1/reading/runs")
@@ -1793,7 +1802,10 @@ function DiscoverView({
   onOpenSeries, onOpenCollection, onDiscoverRequest, onUnfollowRun, onPullIssue, onPullIssues,
 }) {
   const [draft, setDraft] = useState(query || "");
-  const [releases, setReleases] = useState({ state: "loading", data: null });
+  const [releases, setReleases] = useState(() => {
+    const last = lastAnswer("/api/v1/discover/releases");
+    return last ? { state: "done", data: last } : { state: "loading", data: null };
+  });
   const [discovery, setDiscovery] = useState(
     { state: "idle", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
   const [pulled, setPulled] = useState({});
@@ -1824,7 +1836,9 @@ function DiscoverView({
   }, [allSeries, query]);
 
   async function loadReleases() {
-    setReleases({ state: "loading", data: null });
+    // The skeleton only when there is nothing to show yet; a refresh of
+    // shelves already up lands behind them.
+    setReleases((current) => (current.data ? current : { state: "loading", data: null }));
     try {
       setReleases({ state: "done", data: await apiRequest("/api/v1/discover/releases") });
     } catch (error) {
@@ -3331,19 +3345,20 @@ function SetupView({ catalog, onFinish }) {
 }
 
 function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, onAuthChanged, onSignOut, section, onSectionChange, health, onScanLibrary, scanState, scanProgress }) {
-  const [collectedEditions, setCollectedEditions] = useState(false);
+  const settingsLast = lastAnswer("/api/v1/settings");
+  const [collectedEditions, setCollectedEditions] = useState(Boolean(settingsLast?.collectedEditionsEnabled));
   const [savingCollectedEditions, setSavingCollectedEditions] = useState(false);
-  const [language, setLanguage] = useState("en");
+  const [language, setLanguage] = useState(settingsLast?.preferredLanguage ?? "en");
   const [savingLanguage, setSavingLanguage] = useState(false);
-  const [autoScan, setAutoScan] = useState(true);
-  const [autoScanInterval, setAutoScanInterval] = useState(60);
+  const [autoScan, setAutoScan] = useState(settingsLast?.autoScanEnabled ?? true);
+  const [autoScanInterval, setAutoScanInterval] = useState(Number(settingsLast?.autoScanIntervalMinutes) || 60);
   const [savingAutoScan, setSavingAutoScan] = useState(false);
-  const [everyPage, setEveryPage] = useState(true);
+  const [everyPage, setEveryPage] = useState(settingsLast?.visionReadsEveryPage ?? true);
   const [savingEveryPage, setSavingEveryPage] = useState(false);
-  const [providers, setProviders] = useState([]);
+  const [providers, setProviders] = useState(() => lastAnswer("/api/v1/providers")?.providers ?? []);
   const [providerError, setProviderError] = useState("");
   const [editingProvider, setEditingProvider] = useState(null);
-  const [services, setServices] = useState([]);
+  const [services, setServices] = useState(() => lastAnswer("/api/v1/acquisition-services")?.services ?? []);
   const [serviceError, setServiceError] = useState("");
   const [editingService, setEditingService] = useState(null);
   async function loadProviders() {
