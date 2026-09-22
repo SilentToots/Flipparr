@@ -450,6 +450,11 @@
     --page-inset: 12px;
     --page-header-pad: 8px;
     --page-header-lift: 0px;
+    /* The tab bar's own blur, and for the same reason: WebKit cannot cache
+       a blur behind a fixed element and recomputes it every scroll frame,
+       and the bar's opening animation runs while scrolling. Cost scales
+       with the radius; 4px reads as frost and leaves the frames alone. */
+    --scroll-edge-blur: 4px;
   }
 }
 

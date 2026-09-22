@@ -1039,25 +1039,38 @@ function PageHeader({ title, leading, actions, primary, search = "none", field, 
   // the finger lifting checks again once the bounce has settled. A long
   // page bounced at its bottom stays condensed, as it should.
   useEffect(() => {
-    // Once a frame, not once an event: scrollHeight is a forced layout, and
-    // read on every scroll event it stuttered the tab bar's own animation.
-    const sync = () => {
-      const y = window.scrollY;
-      setCondensed(y > 0 && document.documentElement.scrollHeight - window.innerHeight > 0);
-    };
+    // Nothing a scroll frame has to lay out: whether the page has room to
+    // scroll only changes when its size does, so a ResizeObserver keeps it
+    // (they run after layout, for free), and a frame reads scrollY alone.
+    // Reading scrollHeight there was a forced layout under the tab bar's
+    // own animation, every frame, and the bar stuttered.
+    let range = document.documentElement.scrollHeight - window.innerHeight;
+    // Past the noise: during a phone's momentum scrollY wanders by fractions
+    // of a pixel, and Safari's collapsing toolbar sends scroll events of its
+    // own; 8px is a move, not a tremor.
+    const sync = () => setCondensed(window.scrollY > 8 && range > 0);
     let frame = 0;
     const onScroll = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; sync(); }); };
+    // Measured a frame after the size changes, not inside the observer's
+    // own delivery: the header's height is set from another observer in
+    // the same pass, and answering in the pass is a loop it warns about.
+    const measure = () => { range = document.documentElement.scrollHeight - window.innerHeight; onScroll(); };
+    const sized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    sized?.observe(document.body);
     let settle = 0;
     const later = () => { window.clearTimeout(settle); settle = window.setTimeout(sync, 400); };
     sync();
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("scrollend", onScroll, { passive: true });
+    window.addEventListener("resize", measure);
     window.addEventListener("touchend", later, { passive: true });
     return () => {
+      sized?.disconnect();
       cancelAnimationFrame(frame);
       window.clearTimeout(settle);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("scrollend", onScroll);
+      window.removeEventListener("resize", measure);
       window.removeEventListener("touchend", later);
     };
   }, []);

@@ -508,7 +508,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      fixed across the screen's top, the page keeps its height clear below
      (measured, --page-header-height), the band keeps the 24px fade below it
      with no filter of its own, and the condensed header does not translate. */
-  .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
+  .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease;
+    /* On its own layer from the start: a fixed element iOS has not
+       promoted stops painting during a fast scroll until the scroll ends. */
+    transform: translate3d(0, 0, 0); }
   .page-view { padding-top: calc(var(--page-header-height, 0px) + var(--space-8)); }
   .page-header::before { inset: 0 0 calc(var(--space-24) * -1); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); -webkit-backdrop-filter: blur(var(--scroll-edge-blur)); backdrop-filter: blur(var(--scroll-edge-blur)); }
