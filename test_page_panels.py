@@ -6,8 +6,8 @@ from PIL import Image, ImageDraw
 
 from page_panels import (
     READING_LTR, READING_RTL, accept_vision_boxes, ambiguous_layout, detect_panels, ink_mask,
-    load_model_session, order_panels, parse_vision_boxes, parse_vision_order, quadrant_panels,
-    refine, suppress, vision_boxes_prompt, vision_order_prompt,
+    load_model_session, order_panels, page_mask, parse_vision_boxes, parse_vision_order, quadrant_panels,
+    refine, refine_vision_boxes, suppress, vision_boxes_prompt, vision_order_prompt,
 )
 
 try:
@@ -86,6 +86,17 @@ class DetectionTests(unittest.TestCase):
         image, draw = _page()
         draw.rectangle((0, 0, 599, 899), fill="#3a3a3a")
         self.assertEqual(detect_panels(image), {"segmented": False, "source": "auto", "panels": []})
+
+    def test_a_page_bleeding_dark_to_its_edges_is_still_read_by_its_white_gutters(self):
+        # Absolute Batman #2, page 3: eight panels of dark red art running to
+        # the page's edges, clean white gutters between them. The border read
+        # as dark, the gutters counted as ink, and the page went to quadrants.
+        image, draw = _page()
+        for box in _grid(draw, 2, 3, margin=0, gutter=16):
+            draw.rectangle(box, fill="#3a0a0a")
+        result = detect_panels(image)
+        self.assertTrue(result["segmented"])
+        self.assertEqual(len(result["panels"]), 6)
 
     def test_a_spread_is_not_cut(self):
         image, draw = _page(width=1200, height=900)
@@ -232,6 +243,69 @@ class VisionTierTests(unittest.TestCase):
                          "two small boxes leave most of the page unread")
         self.assertFalse(accept_vision_boxes([{"x": 0, "y": 0, "w": 1, "h": 0.6}, {"x": 0, "y": 0.3, "w": 1, "h": 0.7}]),
                          "boxes on top of each other are one panel seen twice")
+
+    def _nudged(self, box, dx, dy, width=600, height=900):
+        x0, y0, x1, y1 = box
+        return {"x": (x0 + dx) / width, "y": (y0 + dy) / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
+
+    def _pixels(self, panel, width=600, height=900):
+        return (round(panel["x"] * width), round(panel["y"] * height),
+                round((panel["x"] + panel["w"]) * width), round((panel["y"] + panel["h"]) * height))
+
+    def test_a_models_rough_boxes_are_moved_onto_the_gutters(self):
+        image, draw = _page()
+        cells = _grid(draw, 2, 3)
+        mask = page_mask(image)
+        # Every edge a few percent off, the way a model draws them.
+        rough = [self._nudged(box, dx, dy) for box, (dx, dy) in zip(cells, [(-14, 9), (11, -12), (8, 8), (-9, -15), (13, 6), (-12, 12)])]
+        refined = refine_vision_boxes(mask, rough)
+        self.assertEqual(len(refined), 6)
+        for panel, cell in zip(sorted(refined, key=lambda p: (p["y"], p["x"])), cells):
+            for got, want in zip(self._pixels(panel), cell):
+                self.assertLessEqual(abs(got - want), 2, f"{self._pixels(panel)} should sit on {cell}")
+
+    def test_two_panels_a_model_drew_as_one_come_apart(self):
+        image, draw = _page()
+        cells = _grid(draw, 2, 3)
+        mask = page_mask(image)
+        top_pair = (cells[0][0], cells[0][1], cells[1][2], cells[1][3])
+        rough = [self._nudged(top_pair, 5, -6)] + [self._nudged(box, 0, 0) for box in cells[2:]]
+        refined = refine_vision_boxes(mask, rough)
+        self.assertEqual(len(refined), 6, "the merged pair is cut again inside the box")
+
+    def test_a_gutter_too_thin_for_the_cut_is_found_along_the_models_edge(self):
+        # Absolute Batman #2, page 3: the top pair's gutter is two pixels at
+        # 600px and the cut reads the row as one panel; Sonnet drew the pair
+        # as two, its split nine percent off. The page finds the thin gutter
+        # near the model's edge and parts them there.
+        image, draw = _page()
+        left, right, below = (30, 30, 288, 296), (290, 30, 570, 296), (30, 316, 570, 870)
+        for box in (left, right, below):
+            # Art to the border, as on a printed page: a page with white
+            # inside its frames has bare lines that are not gutters.
+            draw.rectangle(box, fill="#555555", outline="black", width=3)
+        mask = page_mask(image)
+        rough = [self._nudged(left, 0, 0), self._nudged(right, 0, 0), self._nudged(below, 4, -6)]
+        rough[0]["w"] = (288 - 30 + 40) / 600  # the model put the split 40px too far right
+        rough[1]["x"] = (291 + 40) / 600
+        rough[1]["w"] = (570 - 291 - 40) / 600
+        refined = refine_vision_boxes(mask, rough)
+        self.assertEqual(len(refined), 3)
+        got = sorted(self._pixels(panel) for panel in refined)
+        for panel, want in zip(got, sorted([left, right, below])):
+            for a, b in zip(panel, want):
+                self.assertLessEqual(abs(a - b), 3, f"{got} should sit on the frames")
+
+    def test_a_grid_guessed_through_the_art_is_refused(self):
+        # gpt-4o-mini on the eight-panel page: a uniform 2x3 grid whose lines
+        # run through panels. Coverage and overlap passed it; the page does not.
+        image, draw = _page()
+        _grid(draw, 2, 3)
+        mask = page_mask(image)
+        # A 3x2 guess over a 2x3 page: the column line at a third of the width
+        # crosses every panel in the left column.
+        guess = [{"x": c / 3, "y": r / 2, "w": 1 / 3, "h": 1 / 2} for r in range(2) for c in range(3)]
+        self.assertIsNone(refine_vision_boxes(mask, guess))
 
     def test_a_layout_is_ambiguous_when_panels_half_share_a_row(self):
         grid = [{"x": 0, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0.5, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]

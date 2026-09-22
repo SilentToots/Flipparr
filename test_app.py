@@ -6255,12 +6255,18 @@ class IssueDetailTests(unittest.TestCase):
 class PagePanelTests(unittest.TestCase):
     """Where a page's panels are: read once from the render, kept, ordered the way the run reads."""
 
-    def _page_png(self, gridded=True):
+    def _page_png(self, gridded=True, bridged=False):
+        """A readable page, a solid one, or -- `bridged` -- two panels whose
+        gutter a caption runs across, which the cut cannot read and a model can."""
         import io
         from PIL import Image, ImageDraw
         image = Image.new("RGB", (300, 450), "white")
         draw = ImageDraw.Draw(image)
-        if gridded:
+        if bridged:
+            for box in ((20, 20, 280, 210), (20, 240, 280, 430)):
+                draw.rectangle(box, fill="#444444", outline="black", width=3)
+            draw.rectangle((100, 190, 200, 260), fill="#444444")
+        elif gridded:
             for box in ((20, 20, 140, 210), (160, 20, 280, 210), (20, 240, 280, 430)):
                 draw.rectangle(box, fill="#444444", outline="black", width=3)
         else:
@@ -6400,19 +6406,45 @@ class VisionConnectorTests(unittest.TestCase):
         with patch("app.load_provider_config", return_value={}):
             self.assertFalse(app.vision_model_ready())
 
-    def test_boxes_are_accepted_only_as_a_layout(self):
-        answer = '[{"x1": 0, "y1": 0, "x2": 780, "y2": 600}, {"x1": 0, "y1": 600, "x2": 780, "y2": 1200}]'
+    def _mask(self, **kind):
+        import io
+        from PIL import Image
+        import page_panels
+        with Image.open(io.BytesIO(PagePanelTests._page_png(self, **kind))) as image:
+            return page_panels.page_mask(image)
+
+    def test_boxes_are_believed_once_the_page_has_corrected_them(self):
+        mask = self._mask(bridged=True)
+        # Roughly the two panels, drawn a little off; the page puts them right.
+        answer = '[{"x1": 14, "y1": 26, "x2": 288, "y2": 200}, {"x1": 26, "y1": 250, "x2": 270, "y2": 440}]'
         with patch("app.ask_vision_model", return_value=answer):
-            boxes = app.vision_panels(b"jpeg", 780, 1200, "ltr")
+            boxes = app.vision_panels(b"jpeg", 300, 450, "ltr", mask)
         self.assertEqual(len(boxes), 2)
+        top, bottom = sorted(boxes, key=lambda b: b["y"])
+        # The frame's ink runs 20..430 inclusive; a box's end is exclusive.
+        self.assertEqual((round(top["y"] * 450), round((bottom["y"] + bottom["h"]) * 450)), (20, 431), "on the ink, not where the model said")
+        self.assertTrue(200 <= round(bottom["y"] * 450) <= 260, "parted at the bridged gutter")
+        # A guess: a line through the middle of the top panel.
+        guess = '[{"x1": 20, "y1": 20, "x2": 280, "y2": 110}, {"x1": 20, "y1": 110, "x2": 280, "y2": 430}]'
+        with patch("app.ask_vision_model", return_value=guess):
+            self.assertIsNone(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), "an edge on ink is an edge the model made up")
         with patch("app.ask_vision_model", return_value="[]"):
-            self.assertEqual(app.vision_panels(b"jpeg", 780, 1200, "ltr"), [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}],
+            self.assertEqual(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}],
                              "no panels is an answer: the page is one panel, shown whole")
         with patch("app.ask_vision_model", return_value="I cannot make out this page."):
-            self.assertIsNone(app.vision_panels(b"jpeg", 780, 1200, "ltr"), "no list is no answer")
+            self.assertIsNone(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), "no list is no answer")
         with patch("app.ask_vision_model", side_effect=app.VisionUnavailable("down")):
             with self.assertRaises(app.VisionUnavailable):
-                app.vision_panels(b"jpeg", 780, 1200, "ltr")
+                app.vision_panels(b"jpeg", 300, 450, "ltr", mask)
+
+    def test_a_rate_limits_window_is_waited_out_as_a_whole(self):
+        self.assertEqual(app._duration_seconds("1m17.49s"), 77.49)
+        self.assertEqual(app._duration_seconds("876ms"), 0.876)
+        self.assertEqual(app._duration_seconds("3h47m45.167s"), 13665.167)
+        self.assertEqual(app._duration_seconds("soon"), 0)
+        self.assertEqual(app._window_reset_seconds({"x-ratelimit-remaining-tokens": "0", "x-ratelimit-reset-tokens": "51.833s"}), 52)
+        self.assertEqual(app._window_reset_seconds({"x-ratelimit-remaining-tokens": "8166", "x-ratelimit-reset-tokens": "51.833s"}), 0, "tokens left: no wait")
+        self.assertEqual(app._window_reset_seconds({}), 0)
 
     def _refusal(self, status, body=b"", headers=None):
         import io
@@ -6476,11 +6508,14 @@ class VisionInPanelPipelineTests(PagePanelTests):
             return app.file_page_panels(7, 1), store, ask
 
     def test_a_page_nothing_could_read_is_sent_and_its_boxes_kept(self):
-        answer = '[{"x1": 0, "y1": 0, "x2": 300, "y2": 225}, {"x1": 0, "y1": 225, "x2": 300, "y2": 450}]'
-        result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer=answer)
+        # Two panels with a caption across their gutter: the cut cannot read
+        # it, the model can, and the page puts the model's edges right.
+        answer = '[{"x1": 14, "y1": 26, "x2": 288, "y2": 200}, {"x1": 26, "y1": 250, "x2": 270, "y2": 440}]'
+        result, store, ask = self._ask_with_vision(png=self._page_png(bridged=True), answer=answer)
         ask.assert_called_once()
         self.assertEqual((result["source"], result["segmented"], len(result["panels"])), ("vlm", True, 2))
         self.assertEqual(store.set_page_panels.call_args[0][3], "vlm")
+        self.assertEqual(round(result["panels"][0]["y"] * 450), 20, "on the ink, not where the model said")
 
     def test_a_page_the_model_could_not_read_either_is_not_sent_again(self):
         result, store, ask = self._ask_with_vision(png=self._page_png(gridded=False), answer="I cannot make out this page.")

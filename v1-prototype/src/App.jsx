@@ -3486,6 +3486,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             <p className="settings-card-lead">Optional. With an API key, one of these is asked about a page Flipparr could not read, or the reading order of a layout it cannot settle &mdash; each such page once, sent as an image. Nothing is sent while they are off.</p>
             {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+            <p className="settings-card-note">Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds itself and refuses boxes that cross the art.</p>
           </SettingsCard>
           <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>
         </> : null}

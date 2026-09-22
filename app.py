@@ -242,9 +242,14 @@ ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
 ANTHROPIC_API_VERSION = "2023-06-01"
 # The vision model panel view asks, when the Claude connector is on. Haiku:
 # a page is a few thousand tokens, and this is a question about boxes.
-VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-haiku-4-5-20251001"
+# Measured 2026-09-22 on real pages (see the Reader settings): Sonnet 5 read
+# every layout tried; Haiku guesses a grid on hard ones.
+VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-sonnet-5"
 OPENAI_API_BASE = "https://api.openai.com/v1"
-VISION_MODEL_OPENAI = os.environ.get("FLIPPARR_VISION_MODEL_OPENAI") or "gpt-4o-mini"
+# gpt-4o-mini bills a page at ~37k tokens (images at 33x) and guessed a grid
+# through an eight-panel page; 4.1-mini is a tenth the tokens, says "no
+# panels" when unsure, and merges rather than invents.
+VISION_MODEL_OPENAI = os.environ.get("FLIPPARR_VISION_MODEL_OPENAI") or "gpt-4.1-mini"
 VISION_TIMEOUT_SECONDS = 60.0
 # The vision connectors, in the order a tie is broken.
 VISION_PROVIDERS = ("anthropic", "openai")
@@ -9551,7 +9556,9 @@ def ask_vision_model(image: bytes, prompt: str) -> str:
         code = _vision_error_code(exc)
         if exc.code == 429 or code in _VISION_QUOTA_CODES:
             headers_seen = dict(exc.headers.items()) if exc.headers else {}
-            retry_after = _provider_retry_after(provider, headers_seen) or 30
+            # OpenAI says "try again in 1s" while its token window has a
+            # minute to run; the window's own reset is the honest wait.
+            retry_after = max(_provider_retry_after(provider, headers_seen) or 30, _window_reset_seconds(headers_seen))
             if code in _VISION_QUOTA_CODES:
                 retry_after = max(retry_after, VISION_QUOTA_COOLDOWN_SECONDS)
             _cool_down_provider_requests(provider, retry_after)
@@ -9566,6 +9573,30 @@ def ask_vision_model(image: bytes, prompt: str) -> str:
     if credential in json.dumps(payload, ensure_ascii=False):
         raise VisionUnavailable("Provider returned unsafe credential-bearing data")
     return _vision_answer(provider, payload)
+
+
+def _window_reset_seconds(headers: dict[str, Any]) -> int:
+    """How long until an exhausted rate-limit window refills, from OpenAI's own headers, else 0.
+
+    `x-ratelimit-remaining-tokens: 0` beside `x-ratelimit-reset-tokens:
+    1m17.49s` (or `51.833s`, or `876ms`); the same pair for requests.
+    """
+    lowered = {str(key).casefold(): str(value) for key, value in (headers or {}).items()}
+    longest = 0
+    for kind in ("tokens", "requests"):
+        remaining = lowered.get(f"x-ratelimit-remaining-{kind}")
+        if remaining is None or remaining.strip() != "0":
+            continue
+        longest = max(longest, int(_duration_seconds(lowered.get(f"x-ratelimit-reset-{kind}", "")) + 0.999))
+    return longest
+
+
+def _duration_seconds(text: str) -> float:
+    """`1m17.49s`, `51.833s`, `876ms`, `3h47m45.167s` as seconds; unreadable is 0."""
+    total = 0.0
+    for amount, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", text or ""):
+        total += float(amount) * {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}[unit]
+    return total
 
 
 def _vision_error_code(exc: urllib.error.HTTPError) -> str:
@@ -9583,14 +9614,17 @@ def _vision_error_code(exc: urllib.error.HTTPError) -> str:
     return str(error.get("code") or error.get("type") or "")
 
 
-def vision_panels(image: bytes, width: int, height: int, direction: str) -> list[dict[str, Any]] | None:
+def vision_panels(image: bytes, width: int, height: int, direction: str, mask: Any) -> list[dict[str, Any]] | None:
     """The panels a vision model sees on a page nothing else could read, or None.
 
     "No panels" is an answer: a splash, a cover, a pin-up is one panel the
     size of the page, and the reader shows it whole rather than in quarters.
-    None is an answer with no list in it, and then the quadrants stand. A
-    connector that did not answer at all raises VisionUnavailable, and the
-    page is not counted as asked.
+    Boxes are believed only once the page has corrected them against its
+    own gutters (`refine_vision_boxes`, with the `mask` the cut read the
+    page with): a model gets the structure right and the edges roughly, and
+    a grid it guessed is refused. None is an answer nobody could use, and
+    then the quadrants stand. A connector that did not answer at all raises
+    VisionUnavailable, and the page is not counted as asked.
     """
     text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction))
     boxes = panel_finder.parse_vision_boxes(text, width, height)
@@ -9598,7 +9632,9 @@ def vision_panels(image: bytes, width: int, height: int, direction: str) -> list
         return None
     if len(boxes) <= 1:
         return [dict(panel_finder.WHOLE_PAGE)]
-    return boxes if panel_finder.accept_vision_boxes(boxes) else None
+    if not panel_finder.accept_vision_boxes(boxes):
+        return None
+    return panel_finder.refine_vision_boxes(mask, boxes)
 
 
 def vision_order(image: bytes, panels: list[dict[str, Any]], direction: str) -> list[int] | None:
@@ -9672,6 +9708,10 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
                 with Image.open(io.BytesIO(detail_bytes)) as detail:
                     found = panel_finder.detect_panels(image, session, detail)
                     detail_size = detail.size
+                    # The mask a vision model's boxes are corrected against:
+                    # the 1200px render, where a two-pixel gutter is still
+                    # bare rather than the grey the 600px one blends it to.
+                    mask = panel_finder.page_mask(detail) if vision else None
         # The vision model is asked last and least: about a page nothing
         # could read, or the order of a layout row-major cannot settle. Its
         # "vlm" source is stamped whenever it answered, usable or not, so a
@@ -9683,7 +9723,7 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
         if vision and detail_bytes is not None:
             try:
                 if not found["segmented"]:
-                    boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction)
+                    boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction, mask)
                     if boxes:
                         found = {"segmented": True, "source": "vlm", "panels": boxes}
                     else:

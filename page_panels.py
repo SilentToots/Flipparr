@@ -93,10 +93,7 @@ def detect_panels(image: Image.Image, session: Any = None, detail: Image.Image |
     width, height = image.size
     if not width or not height or width > height * SPREAD_RATIO:
         return {"segmented": False, "source": "auto", "panels": []}
-    mask = ink_mask(image)
-    gutter = max(2, int(round(min(width, height) * GUTTER_MIN_FRACTION)))
-    min_area = width * height * PANEL_MIN_AREA
-    boxes = _cut(mask, (0, 0, width, height), gutter, min_area)
+    mask, boxes, gutter, min_area = _read(image)
     source = "auto" if session is None else "model"
     if session is not None:
         looked_at = detail if detail is not None else image
@@ -119,20 +116,53 @@ def detect_panels(image: Image.Image, session: Any = None, detail: Image.Image |
     return {"segmented": plausible, "source": source, "panels": panels}
 
 
-def ink_mask(image: Image.Image) -> Image.Image:
+def ink_mask(image: Image.Image, background: int | None = None) -> Image.Image:
     """Ink as white on black: what is drawn, against whatever the page is printed on.
 
     The background is read off the page's own border rather than assumed
     white -- a manga scan can be off-white, an inverted page black -- and ink
     is anything far enough from it. No dilation: at 600px a printed border is
     already a solid line, and thickening the ink was closing the gutters,
-    which are only a few pixels wide at that size.
+    which are only a few pixels wide at that size. `background` names the
+    level outright when the caller has a better idea than the border.
     """
     grey = ImageOps.grayscale(image)
-    background = _border_level(grey)
+    if background is None:
+        background = _border_level(grey)
     if background > 127:
         return grey.point(lambda value: 255 if value < background - INK_DELTA else 0)
     return grey.point(lambda value: 255 if value > background + INK_DELTA else 0)
+
+
+def _read(image: Image.Image) -> tuple[Image.Image, list[tuple[int, int, int, int]], int, float]:
+    """The mask the page is best read with, and the cut it gives.
+
+    The border says what a page is printed on, and it is usually right. A
+    page whose art bleeds dark to every edge reads as printed on black, and
+    its white gutters then count as ink: the cut finds nothing, or dark bands
+    that are not gutters -- an eight-panel page with clean white gutters went
+    to the fallback that way. So a page not read as white is tried as white
+    too, and the reading that found a layout is kept; between two layouts,
+    the one with more panels. A truly dark page, an inverted scan, finds
+    nothing under white and keeps its own reading.
+    """
+    width, height = image.size
+    gutter = max(2, int(round(min(width, height) * GUTTER_MIN_FRACTION)))
+    min_area = width * height * PANEL_MIN_AREA
+    level = _border_level(ImageOps.grayscale(image))
+    readings = []
+    for background in ([level] if level == 255 else [level, 255]):
+        mask = ink_mask(image, background)
+        boxes = _cut(mask, (0, 0, width, height), gutter, min_area)
+        readings.append((mask, boxes))
+    # `max` keeps the first of equals: the border's own reading, on a tie.
+    mask, boxes = max(readings, key=lambda reading: (_plausible(*reading), len(reading[1])))
+    return mask, boxes, gutter, min_area
+
+
+def page_mask(image: Image.Image) -> Image.Image:
+    """The ink mask `detect_panels` read this page with."""
+    return _read(image)[0]
 
 
 def order_panels(panels: list[dict[str, Any]], direction: str = READING_LTR) -> list[dict[str, Any]]:
@@ -450,6 +480,25 @@ def _plausible(mask: Image.Image, boxes: list[tuple[int, int, int, int]]) -> boo
 
 VISION_COVERAGE_MIN = 0.6
 VISION_OVERLAP_MAX = 0.2
+# How far a model's edge may sit from the gutter it meant, as a fraction of
+# the page's side. Measured 2026-09-22: Sonnet 5 within 2% on a clean page's
+# rows and 8.5% on its one thin column; gpt-5-mini 10-25% off on the same
+# page -- the same structure, drawn in the wrong place. Past this the edge
+# is not near anything it could have meant.
+VISION_SNAP = 0.1
+# Ink past a region's edge, along a panel that ends there: more than this
+# and the panel goes on -- the model's edge ran through it. A balloon or a
+# caption crossing a real gutter is a short stretch of ink, not most of one.
+VISION_LINE_INK = 0.5
+# The share of an answer's edges (four to a box) the page may fail to vouch
+# for before the answer is a guess. Sonnet 5 on a real page: two of
+# thirty-two, both on one boundary drawn by colour alone. gpt-4o-mini's grid
+# through the same page: eight of twenty-four.
+VISION_UNVERIFIED_MAX = 0.1
+# How much ink a line may carry and still be the gutter a model's edge meant:
+# the same share as VISION_LINE_INK, so that every line is one or the other.
+# A caption across a gutter is a third of it; art is nearly all of a line.
+VISION_GUTTER_INK = VISION_LINE_INK
 # A pair of panels whose vertical spans overlap by this much of the shorter
 # one -- neither clearly one row nor clearly two -- is what row-major gets
 # wrong: an inset, a diagonal, a stagger.
@@ -517,6 +566,147 @@ def accept_vision_boxes(boxes: list[dict[str, Any]]) -> bool:
             if _norm_overlap(a, b) > VISION_OVERLAP_MAX:
                 return False
     return True
+
+
+def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """A model's boxes, made exact by the page itself -- or refused.
+
+    A vision model reads a layout's structure well and its coordinates
+    approximately (its makers say as much), and coverage and overlap alone
+    let a grid guessed over the art through. So the page corrects the model:
+    the cut reads a region a little larger than each box, and the panels it
+    finds there that the box covers are the answer -- exact to the ink,
+    whichever way the model's edges were off, and two panels a model drew as
+    one come apart. Where the cut found no gutter near an edge the model
+    drew, the page is read again along that edge for a thinner one. An edge
+    with nothing bare near it is either a boundary the art alone draws --
+    two panels abutting, a colour against a colour, which a model can see
+    and a mask cannot -- or an edge the model made up. One or two of them
+    in an answer are the first and stand where the model put them; an
+    answer full of them is a grid guessed over the art, and is refused
+    whole. Better the quadrants than a confident wrong grid.
+    """
+    width, height = mask.size
+    gutter = max(2, int(round(min(width, height) * GUTTER_MIN_FRACTION)))
+    min_area = width * height * PANEL_MIN_AREA
+    reach = (int(width * VISION_SNAP), int(height * VISION_SNAP))
+    panels: list[tuple[int, int, int, int]] = []
+    unverified = 0
+    for box in boxes:
+        drawn = (
+            int(round(box["x"] * width)), int(round(box["y"] * height)),
+            int(round((box["x"] + box["w"]) * width)), int(round((box["y"] + box["h"]) * height)),
+        )
+        region = (
+            max(0, drawn[0] - reach[0]), max(0, drawn[1] - reach[1]),
+            min(width, drawn[2] + reach[0]), min(height, drawn[3] + reach[1]),
+        )
+        if region[2] - region[0] < 2 or region[3] - region[1] < 2:
+            return None
+        for leaf in _cut(mask, region, gutter, min_area):
+            # A neighbour's sliver the wider region took in is not this
+            # box's; a panel the box mostly covers, or that holds most of
+            # the box, is.
+            shared = _area(_clip(leaf, drawn))
+            if shared < 0.5 * _area(leaf) and shared < 0.5 * _area(drawn):
+                continue
+            settled, doubted = _settle(mask, leaf, drawn, region, reach)
+            unverified += doubted
+            if _area(settled) < min_area:
+                continue
+            if all(_iou(settled, kept) < 0.5 for kept in panels):
+                panels.append(settled)
+    if not panels or unverified > VISION_UNVERIFIED_MAX * 4 * len(boxes):
+        return None
+    page = mask.getbbox() or (0, 0, width, height)
+    page_area = (page[2] - page[0]) * (page[3] - page[1])
+    if page_area <= 0 or sum(_area(panel) for panel in panels) / page_area < VISION_COVERAGE_MIN:
+        return None
+    return [
+        {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
+        for x0, y0, x1, y1 in panels
+    ]
+
+
+def _settle(
+    mask: Image.Image, leaf: tuple[int, int, int, int], drawn: tuple[int, int, int, int],
+    region: tuple[int, int, int, int], reach: tuple[int, int],
+) -> tuple[tuple[int, int, int, int], int]:
+    """The leaf with each side accounted for, and how many sides the page could not vouch for.
+
+    A side the cut settled -- on a gutter inside the region, or where the
+    ink ends -- stands, wherever the model drew its edge: the cut parting a
+    box into two panels is the point. A side the leaf carries to the
+    region's edge is a side the cut could not settle, and the page is read
+    again along the model's edge for the barest line within reach: a gutter
+    too thin for the cut, or one a caption runs across. Found, the leaf is
+    trimmed there. Not found, the ink either ends at the region's edge --
+    the leaf is whole -- or goes on past it, and the side is the model's
+    word alone: it takes the model's edge and is counted. A leaf trimmed
+    away to nothing was not this box's panel, and comes back empty.
+    """
+    width, height = mask.size
+    edges = list(leaf)
+    doubted = 0
+    for side in range(4):
+        vertical = side % 2 == 0
+        low = side < 2
+        limit = width if vertical else height
+        span = (edges[1], edges[3]) if vertical else (edges[0], edges[2])
+        at_boundary = edges[side] <= region[side] if low else edges[side] >= region[side]
+        if not at_boundary or region[side] == (0 if low else limit):
+            continue
+        line = _bare_line_near(mask, side, drawn[side], span, reach[0] if vertical else reach[1])
+        if line is not None:
+            edges[side] = line
+            continue
+        if _ink_along(mask, side, region[side] - (1 if low else 0), span) <= VISION_LINE_INK:
+            continue
+        edges[side] = max(0, min(limit, drawn[side]))
+        doubted += 1
+    x0, y0, x1, y1 = edges
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return (0, 0, 0, 0), doubted
+    bbox = mask.crop((x0, y0, x1, y1)).getbbox()
+    if bbox is None:
+        return (0, 0, 0, 0), doubted
+    return (x0 + bbox[0], y0 + bbox[1], x0 + bbox[2], y0 + bbox[3]), doubted
+
+
+def _ink_along(mask: Image.Image, side: int, line: int, span: tuple[int, int]) -> float:
+    """The share of one line, across a span, that is ink."""
+    width, height = mask.size
+    vertical = side % 2 == 0
+    if not (0 <= line < (width if vertical else height)) or span[1] - span[0] < 1:
+        return 0.0
+    strip = mask.crop((line, span[0], line + 1, span[1]) if vertical else (span[0], line, span[1], line + 1))
+    return strip.histogram()[255] / max(1, strip.size[0] * strip.size[1])
+
+
+def _bare_line_near(mask: Image.Image, side: int, edge: int, span: tuple[int, int], reach: int) -> int | None:
+    """The barest line within reach of the model's edge, across the middle of the span -- the thin gutter it meant."""
+    width, height = mask.size
+    vertical = side % 2 == 0
+    limit = width if vertical else height
+    inset = int((span[1] - span[0]) * 0.1)
+    lo, hi = span[0] + inset, span[1] - inset
+    if hi - lo < 1:
+        return None
+    strip = mask.crop((0, lo, width, hi) if vertical else (lo, 0, hi, height))
+    profile = _ink_profiles(strip)[0 if vertical else 1]
+    best: tuple[int, int, int] | None = None
+    for line in range(max(0, edge - reach), min(limit, edge + reach + 1)):
+        if profile[line] <= 255 * VISION_GUTTER_INK:
+            score = (profile[line], abs(line - edge), line)
+            if best is None or score < best:
+                best = score
+    return None if best is None else best[2]
+
+
+def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    inter = _area(_clip(a, b))
+    union = _area(a) + _area(b) - inter
+    return inter / union if union else 0.0
 
 
 def ambiguous_layout(panels: list[dict[str, Any]]) -> bool:
