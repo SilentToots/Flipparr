@@ -198,12 +198,21 @@ const openDialogs = [];
 // Escape closes one layer at a time, and the reader's page turns must not
 // reach it while a drawer is open over it.
 const isTopDialog = (node) => Boolean(node) && openDialogs[openDialogs.length - 1] === node;
-// How to close each open dialog, for Back. A drawer or sheet has no history
-// entry of its own, so a phone's edge swipe -- Back -- used to leave the page
-// under it; it closes the dialog in front now, as it does in an iOS app.
-// The two that live in the address, the run drawer (?series=) and the reader
-// (?read=), say so with data-in-address and close by the address changing.
+// A dialog and Back. On a phone the edge swipe is Back, and a drawer with no
+// history entry of its own left the page under it. Putting the entry back
+// from the popstate handler works under a Back button and not under the
+// swipe: Safari has committed to the previous page before the handler runs.
+// So a dialog pushes an entry of its own when it opens -- the same address,
+// marked with its id -- and Back pops that: the address never changes, and
+// the dialog closes because its mark is gone (App, applyLocation). Closed
+// any other way, it takes its entry with it, so no Back press is a dead one;
+// and a view change made while it was open writes over the entry instead of
+// stacking on it. The two dialogs that live in the address, the run drawer
+// (?series=) and the reader (?read=), say so with data-in-address and close
+// by the address changing.
 const dialogClosers = new WeakMap();
+const dialogMarks = new WeakMap();
+let dialogMarkCount = 0;
 function closeTopDialog() {
   const node = openDialogs[openDialogs.length - 1];
   if (!node || node.hasAttribute("data-in-address")) return false;
@@ -211,6 +220,12 @@ function closeTopDialog() {
   if (!close) return false;
   close();
   return true;
+}
+/** The dialog in front, when Back has just taken its entry: it should close. */
+function dialogLeftByBack() {
+  const node = openDialogs[openDialogs.length - 1];
+  if (!node || node.hasAttribute("data-in-address")) return false;
+  return window.history.state?.dialog !== dialogMarks.get(node);
 }
 
 // While any dialog or drawer is open the page behind it does not scroll: only
@@ -340,6 +355,12 @@ function useDialog(onClose) {
     initial.focus();
     openDialogs.push(node);
     dialogClosers.set(node, () => closeRef.current?.());
+    let mark = 0;
+    if (!node.hasAttribute("data-in-address")) {
+      mark = ++dialogMarkCount;
+      dialogMarks.set(node, mark);
+      window.history.pushState({ ...(window.history.state || {}), dialog: mark }, "", window.location.href);
+    }
     lockPageScroll();
     function handleKeyDown(event) {
       if (!isTopDialog(node)) return;
@@ -372,6 +393,11 @@ function useDialog(onClose) {
       const index = openDialogs.indexOf(node);
       if (index !== -1) openDialogs.splice(index, 1);
       dialogClosers.delete(node);
+      dialogMarks.delete(node);
+      // Its entry goes with it -- a moment later, so a view change made in
+      // the same breath (a drawer's "View pull list") has written its own
+      // address over the entry first, and there is nothing left to take.
+      if (mark) window.setTimeout(() => { if (window.history.state?.dialog === mark) window.history.back(); }, 0);
       unlockPageScroll();
       // Return focus to whatever opened the dialog, not the top of the page.
       if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
@@ -7107,7 +7133,10 @@ export function App() {
     });
     locationRef.current = target;
     if (target !== window.location.pathname + window.location.search) {
-      window.history.pushState(null, "", target);
+      // Over a dialog's own entry rather than on top of it: the dialog is
+      // going with the view, and its entry must not be left to a Back press.
+      if (window.history.state?.dialog) window.history.replaceState(null, "", target);
+      else window.history.pushState(null, "", target);
     }
   }, [active, settingsSection, viewQuery, selectedSeries?.id, readFileId, pendingSeriesId]);
   // Back and forward move between views, and close the drawer when the entry
@@ -7145,13 +7174,19 @@ export function App() {
         window.history.pushState(null, "", locationRef.current);
         return;
       }
-      // A drawer or sheet in front closes on Back, and the page stays: the
-      // entry the pop took is put back first, so the address still says
-      // where we are.
-      if (openDialogs.length && !openDialogs[openDialogs.length - 1].hasAttribute("data-in-address")) {
-        window.history.pushState(null, "", locationRef.current);
-        closeTopDialog();
+      // An entry marked for a dialog nobody has open -- development's double
+      // mount leaves one, a reload keeps one -- is not a place; Back goes on.
+      const mark = window.history.state?.dialog;
+      if (mark && !openDialogs.some((node) => dialogMarks.get(node) === mark)) {
+        window.history.back();
         return;
+      }
+      // Back took the dialog in front's own entry: the dialog closes and the
+      // page stays, its address untouched. Only if Back went further -- to
+      // another page -- does the location apply as well.
+      if (dialogLeftByBack()) {
+        closeTopDialog();
+        if (window.location.pathname + window.location.search === locationRef.current) return;
       }
       setActive(next.active);
       setSettingsSection(next.settingsSection);
