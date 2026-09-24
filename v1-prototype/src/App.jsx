@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, quadrantPanels, pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -5365,6 +5365,7 @@ function ReaderView({
   const baseRef = useRef(null);
   useEffect(() => { if (zoom === 1) baseRef.current = null; }, [zoom]);
   const dragged = useRef(false);
+  const pinching = useRef(false);
   // Panel view: one panel at a time. The server's reading of each page in the
   // window, which panel is in view, and whether the page is being shown whole
   // for a moment (a double-tap). The mode itself is kept in this browser.
@@ -5774,6 +5775,8 @@ function ReaderView({
     function finish(end) {
       surface.removeEventListener("pointerup", onUp);
       surface.removeEventListener("pointercancel", onCancel);
+      // A pinch's fingers lifting are not a swipe, whatever line they make.
+      if (pinching.current) return;
       const dx = end.clientX - start.x;
       const dy = end.clientY - start.y;
       if (Math.abs(dy) > 120 && Math.abs(dy) > Math.abs(dx)) { onClose(); return; }
@@ -5903,6 +5906,102 @@ function ReaderView({
   // edges; and only the pointer that started the drag moves it, so a second
   // finger landing does not throw it. `panRef` is kept current throughout, so
   // any render that happens mid-drag writes the same translate, not a stale one.
+  // Two fingers on the page: a pinch, bound natively on the surface so it
+  // sees every pointer, and written straight to the image a frame at a time
+  // like the drag, committed when a finger lifts. The drag and the swipe
+  // stand aside while it runs (`pinching`). In panel view a pinch in past
+  // the panel's framing shows the whole page, as a double-tap does.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return undefined;
+    const pointers = new Map();
+    let gesture = null;
+    const point = (event) => ({ x: event.clientX, y: event.clientY });
+    function paint() {
+      gesture.frame = 0;
+      const image = pageRef.current;
+      const base = baseRef.current;
+      if (!image || !base) return;
+      image.style.width = `${Math.round(base.width * gesture.zoom)}px`;
+      image.style.height = `${Math.round(base.height * gesture.zoom)}px`;
+      image.style.maxWidth = "none";
+      image.style.maxHeight = "none";
+      image.style.translate = `${gesture.pan.x}px ${gesture.pan.y}px`;
+    }
+    function begin() {
+      const [a, b] = [...pointers.values()];
+      const image = pageRef.current;
+      if (zoomRef.current === 1 && image) baseRef.current = { width: image.offsetWidth, height: image.offsetHeight };
+      gesture = { zoom0: zoomRef.current, dist0: pointerDistance(a, b), zoom: zoomRef.current, pan: panRef.current, frame: 0 };
+      pinching.current = true;
+      // The finger that lifts last fires a click; a page turn on letting go
+      // of a pinch is not what the hand meant.
+      dragged.current = true;
+      setPanning(true);
+    }
+    function end() {
+      cancelAnimationFrame(gesture.frame);
+      const { zoom: after, pan } = gesture;
+      gesture = null;
+      const image = pageRef.current;
+      const clear = () => {
+        if (!image) return;
+        for (const property of ["width", "height", "maxWidth", "maxHeight"]) image.style[property] = "";
+      };
+      const framing = panelModeRef.current && !overviewRef.current ? focusFor(at.current, panelRef.current)?.zoom || 0 : 0;
+      if (pinchLeavesPanel(after, framing, panelModeRef.current, overviewRef.current)) {
+        clear();
+        setOverview(true);
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      } else {
+        if (after <= 1) clear();
+        setZoom(after);
+        setPan(after <= 1 ? { x: 0, y: 0 } : pan);
+      }
+      setPanning(false);
+      // The remaining finger's lift, and the click it fires, are still the
+      // pinch's; only after them is a touch a touch again.
+      window.setTimeout(() => { pinching.current = false; dragged.current = false; }, 0);
+    }
+    function onDown(event) {
+      if (event.pointerType === "mouse") return;
+      pointers.set(event.pointerId, point(event));
+      if (pointers.size === 2 && !gesture) begin();
+    }
+    function onMove(event) {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, point(event));
+      if (!gesture || pointers.size < 2) return;
+      const [a, b] = [...pointers.values()];
+      const box = surface.getBoundingClientRect();
+      const mid = pointerMidpoint(a, b);
+      const about = { x: mid.x - (box.left + box.width / 2), y: mid.y - (box.top + box.height / 2) };
+      const next = pinchZoom(gesture.zoom0, gesture.dist0, pointerDistance(a, b));
+      const { viewport, page } = panBounds();
+      gesture.pan = clampPan(zoomAt(about, gesture.zoom, next, gesture.pan), next, viewport, page, panelModeRef.current);
+      gesture.zoom = next;
+      zoomRef.current = next;
+      panRef.current = gesture.pan;
+      if (!gesture.frame) gesture.frame = requestAnimationFrame(paint);
+    }
+    function onUp(event) {
+      pointers.delete(event.pointerId);
+      if (gesture && pointers.size < 2) end();
+    }
+    surface.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      surface.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (gesture) cancelAnimationFrame(gesture.frame);
+    };
+  }, [panBounds, focusFor]);
+
   function onPanStart(event) {
     // In panel view the page overflows the screen at any zoom, so a drag is
     // always a pan; otherwise a drag on the whole page is the swipe path's.
@@ -5933,6 +6032,8 @@ function ReaderView({
     }
     function onMove(move) {
       if (move.pointerId !== pointerId) return;
+      // A second finger has made this a pinch: the drag stands aside.
+      if (pinching.current) { letGo(); cancelAnimationFrame(frame); return; }
       const dx = move.clientX - start.x;
       const dy = move.clientY - start.y;
       if (mode === "pending") {

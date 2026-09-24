@@ -272,6 +272,34 @@ export function panelStep(place, action, counts) {
   return place;
 }
 
+/**
+ * A pinch. Two fingers on the page zoom it about their midpoint, in either
+ * mode, the way any picture zooms on a phone. In panel view a pinch in past
+ * the panel's own framing is the reader asking for the whole page -- what
+ * Guided View does -- and the page is shown whole; pinching out is simply
+ * looking closer, and the next step frames again.
+ */
+export const PINCH_OUT_OF_PANEL = 0.9;
+
+export function pointerDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+export function pointerMidpoint(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/** The zoom a pinch asks for: the zoom it began at, scaled by how far apart the fingers are now against then. */
+export function pinchZoom(startZoom, startDistance, distance) {
+  if (!startDistance) return clampZoom(startZoom);
+  return clampZoom(startZoom * (distance / startDistance));
+}
+
+/** Whether a pinch that ended at `zoomAfter` asked for the whole page: in panel view, on a panel, in past its framing. */
+export function pinchLeavesPanel(zoomAfter, panelZoom, panelMode, overview) {
+  return Boolean(panelMode) && !overview && panelZoom > 0 && zoomAfter < panelZoom * PINCH_OUT_OF_PANEL;
+}
+
 /** Kindle's Virtual Panels: the page in four, in reading order. */
 export function quadrantPanels(direction) {
   const [first, second] = direction === READING_DIRECTIONS.rtl ? [0.5, 0] : [0, 0.5];

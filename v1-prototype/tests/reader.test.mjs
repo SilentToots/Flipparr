@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, panelMask,
+  pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, PINCH_OUT_OF_PANEL, MIN_ZOOM, MAX_ZOOM, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -282,4 +283,25 @@ test("a Back that follows a cancelled edge touch is the phone's gesture, not the
   assert.equal(isStolenBack(1000, 1400), true);
   assert.equal(isStolenBack(1000, 1000 + EDGE_GESTURE_GRACE_MS), false, "a moment, not a minute");
   assert.equal(isStolenBack(0, 1400), false, "no edge touch behind it: someone left");
+});
+
+test("a pinch zooms about the fingers' midpoint, within the reader's limits", () => {
+  const a = { x: 100, y: 100 };
+  const b = { x: 160, y: 180 };
+  assert.equal(pointerDistance(a, b), 100);
+  assert.deepEqual(pointerMidpoint(a, b), { x: 130, y: 140 });
+  assert.equal(pinchZoom(1, 100, 200), 2, "fingers twice as far apart, twice the zoom");
+  assert.equal(pinchZoom(2, 100, 50), 1, "and halved, half");
+  assert.equal(pinchZoom(1, 100, 20), MIN_ZOOM, "never smaller than the page");
+  assert.equal(pinchZoom(3, 100, 400), MAX_ZOOM, "never past the reader's most");
+  assert.equal(pinchZoom(1.5, 0, 80), 1.5, "a pinch that began with the fingers together asks for nothing");
+});
+
+test("pinching in past a panel's framing asks for the whole page, and nothing else does", () => {
+  assert.equal(pinchLeavesPanel(1.2, 2, true, false), true);
+  assert.equal(pinchLeavesPanel(2 * PINCH_OUT_OF_PANEL, 2, true, false), false, "a hair short of the framing is a wobble");
+  assert.equal(pinchLeavesPanel(2.5, 2, true, false), false, "pinching out is looking closer");
+  assert.equal(pinchLeavesPanel(1, 2, true, true), false, "the whole page is already shown");
+  assert.equal(pinchLeavesPanel(1, 2, false, false), false, "page view has no panel to leave");
+  assert.equal(pinchLeavesPanel(1, 0, true, false), false, "no framing yet, nothing to leave");
 });
