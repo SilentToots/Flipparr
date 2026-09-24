@@ -5,7 +5,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 from page_panels import (
-    INK_UNCOVERED_MAX, add_leftover_panels, combine_halves, ink_outside,
+    INK_UNCOVERED_MAX, add_leftover_panels, combine_halves, ink_outside, merge_overlapping,
     READING_LTR, READING_RTL, accept_vision_boxes, ambiguous_layout, detect_panels, ink_mask,
     load_model_session, order_panels, page_mask, parse_vision_boxes, parse_vision_order, quadrant_panels,
     refine, refine_vision_boxes, suppress, vision_boxes_prompt, vision_order_prompt,
@@ -301,7 +301,40 @@ class VisionTierTests(unittest.TestCase):
         self.assertTrue(accept_vision_boxes(two))
         self.assertFalse(accept_vision_boxes(two[:1]), "one box is a page, not a layout")
         self.assertFalse(accept_vision_boxes([{"x": 0, "y": 0, "w": 1, "h": 0.6}, {"x": 0, "y": 0.3, "w": 1, "h": 0.7}]),
-                         "boxes on top of each other are one panel seen twice")
+                         "boxes on top of each other are one panel seen twice, and one is not a layout")
+
+    def test_boxes_that_lie_over_each_other_become_the_field_around_them(self):
+        # A diagonal pair: two panels split by a slanted gutter, whose
+        # rectangles overlap in the middle of the page. Read as one field.
+        diagonal = [{"x": 0.05, "y": 0.05, "w": 0.55, "h": 0.45}, {"x": 0.4, "y": 0.05, "w": 0.55, "h": 0.45},
+                    {"x": 0.05, "y": 0.55, "w": 0.9, "h": 0.4}]
+        merged = merge_overlapping(diagonal)
+        self.assertEqual(len(merged), 2)
+        field = min(merged, key=lambda box: box["y"])
+        self.assertEqual([round(field[key], 2) for key in ("x", "y", "w", "h")], [0.05, 0.05, 0.9, 0.45])
+        self.assertTrue(accept_vision_boxes(diagonal))
+        # Panels that merely touch, or overlap by a hair, stay themselves.
+        grid = [{"x": 0.05, "y": 0.05, "w": 0.4, "h": 0.4}, {"x": 0.45, "y": 0.05, "w": 0.45, "h": 0.4}]
+        self.assertEqual(merge_overlapping(grid), grid)
+        # Merging carries on: a chain of three overlapping boxes is one field.
+        chain = [{"x": 0.0, "y": 0.0, "w": 0.4, "h": 1.0}, {"x": 0.3, "y": 0.0, "w": 0.4, "h": 1.0}, {"x": 0.6, "y": 0.0, "w": 0.4, "h": 1.0}]
+        self.assertEqual(len(merge_overlapping(chain)), 1)
+
+    def test_a_sliver_of_leftover_ink_grows_the_panel_beside_it(self):
+        # A panel whose right side is a slant: the rectangle read for it stops
+        # where the slant starts, and the triangle beyond is left out. It is
+        # no panel of its own (a triangle is half its rectangle); the panel
+        # grows to hold it. A dense island beside it is a panel of its own.
+        image, draw = _page()
+        draw.rectangle((30, 30, 400, 420), fill="#444444")
+        draw.polygon([(400, 30), (560, 30), (400, 420)], fill="#444444")
+        _frame(draw, (30, 450, 570, 870))
+        mask = page_mask(image)
+        read = [{"x": 30 / 600, "y": 30 / 900, "w": 370 / 600, "h": 390 / 900}]
+        whole = add_leftover_panels(mask, read)
+        self.assertEqual(len(whole), 2, "the triangle grew the panel; the framed panel below is its own")
+        top = min(whole, key=lambda panel: panel["y"])
+        self.assertGreaterEqual(round((top["x"] + top["w"]) * 600), 555, "the panel now holds the slant")
 
     def _nudged(self, box, dx, dy, width=600, height=900):
         x0, y0, x1, y1 = box

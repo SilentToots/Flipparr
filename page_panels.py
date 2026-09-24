@@ -478,6 +478,8 @@ def _plausible(mask: Image.Image, boxes: list[tuple[int, int, int, int]]) -> boo
 # absolute pixels of the sent image, so that is how it is asked; the answer
 # is normalised here and accepted only if it looks like a layout.
 
+# Two boxes overlapping by more than this share of the smaller are one field
+# (merge_overlapping): a diagonal pair, or one panel seen twice.
 VISION_OVERLAP_MAX = 0.2
 # What an answer leaves out is not the end of it: the ink no box covers is
 # read as panels of its own (add_leftover_panels), and only what is still
@@ -561,19 +563,43 @@ def parse_vision_boxes(text: str, width: int, height: int) -> list[dict[str, Any
 
 
 def accept_vision_boxes(boxes: list[dict[str, Any]]) -> bool:
-    """Whether the model's boxes read as a layout: two or more, and not on top of each other.
+    """Whether the model's boxes read as a layout: two or more, once overlaps are merged.
 
     How much of the page they leave out is not judged here: what they leave
     is read from the ink afterwards (add_leftover_panels), and only what is
     still uncovered then counts (INK_UNCOVERED_MAX).
     """
-    if len(boxes) < 2:
-        return False
-    for index, a in enumerate(boxes):
-        for b in boxes[index + 1:]:
-            if _norm_overlap(a, b) > VISION_OVERLAP_MAX:
-                return False
-    return True
+    return len(merge_overlapping(boxes)) >= 2
+
+
+def merge_overlapping(boxes: list[dict[str, Any]], limit: float = VISION_OVERLAP_MAX) -> list[dict[str, Any]]:
+    """Boxes that overlap by more than `limit` of the smaller, made one: the field around them.
+
+    Panels are rectangles here, and a diagonal panel's rectangle lies over
+    its neighbours'. Refusing such an answer threw away every diagonal page;
+    a reader fixing one by hand expands to a field that holds the group and
+    reads it at once, and Kindle's Panel View does the same, so the answer is
+    read that way. Two boxes on top of each other -- one panel seen twice --
+    come out as one by the same rule. Merging goes on until nothing overlaps.
+    """
+    merged = [dict(box) for box in boxes]
+    changed = True
+    while changed:
+        changed = False
+        for index, a in enumerate(merged):
+            for other in range(index + 1, len(merged)):
+                b = merged[other]
+                if _norm_overlap(a, b) > limit:
+                    x0, y0 = min(a["x"], b["x"]), min(a["y"], b["y"])
+                    x1 = max(a["x"] + a["w"], b["x"] + b["w"])
+                    y1 = max(a["y"] + a["h"], b["y"] + b["h"])
+                    merged[index] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+                    del merged[other]
+                    changed = True
+                    break
+            if changed:
+                break
+    return merged
 
 
 def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
@@ -761,12 +787,17 @@ def _first_json_array(text: str) -> list[Any] | None:
 
 
 def _norm_overlap(a: dict[str, Any], b: dict[str, Any]) -> float:
-    """Intersection over union of two normalised rectangles."""
+    """How much of the smaller of two normalised rectangles lies inside the other.
+
+    Measured against the smaller, not the union: a small panel drawn a third
+    inside its big diagonal neighbour is a diagonal pair, whatever the big
+    one's size makes of the union.
+    """
     x0, y0 = max(a["x"], b["x"]), max(a["y"], b["y"])
     x1, y1 = min(a["x"] + a["w"], b["x"] + b["w"]), min(a["y"] + a["h"], b["y"] + b["h"])
     inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
-    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
-    return inter / union if union else 0.0
+    smaller = min(a["w"] * a["h"], b["w"] * b["h"])
+    return inter / smaller if smaller else 0.0
 
 
 # ---- Spreads: two pages, read as two -----------------------------------------
@@ -881,6 +912,12 @@ def combine_halves(readings: list[dict[str, Any]], direction: str = READING_LTR)
 LEFTOVER_PAD = 0.02
 # The share of a page's ink a reading may leave outside every panel.
 INK_UNCOVERED_MAX = 0.1
+# An island of leftover ink this dense in its own rectangle is a panel; one
+# sparser than that but at least this inked is a sliver -- the corner of a
+# diagonal panel the rectangle beside it could not hold -- and grows the
+# nearest panel into a field that holds it, the way a reader does by hand.
+LEFTOVER_PANEL_DENSITY = 0.6
+LEFTOVER_SLIVER_DENSITY = 0.3
 
 
 def _painted_out(mask: Image.Image, panels: list[dict[str, Any]], pad: int = 0) -> Image.Image:
@@ -925,14 +962,33 @@ def add_leftover_panels(mask: Image.Image, panels: list[dict[str, Any]]) -> list
     # of three across a page is 3% of it each), so the floor is a quarter of
     # a cut leaf's, as for the detector's boxes, and an island has to be
     # dense with ink to be one.
-    found = [
-        leaf for leaf in _cut(remainder, (0, 0, width, height), gutter, min_area / 4)
-        if remainder.crop(leaf).histogram()[255] >= REMAINDER_DENSITY * _area(leaf)
-    ]
-    return list(panels) + [
-        {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
-        for x0, y0, x1, y1 in found
-    ]
+    grown = [dict(panel) for panel in panels]
+    added: list[dict[str, Any]] = []
+    for leaf in _cut(remainder, (0, 0, width, height), gutter, min_area / 4):
+        density = remainder.crop(leaf).histogram()[255] / _area(leaf)
+        rect = {"x": leaf[0] / width, "y": leaf[1] / height, "w": (leaf[2] - leaf[0]) / width, "h": (leaf[3] - leaf[1]) / height}
+        if density >= LEFTOVER_PANEL_DENSITY:
+            added.append(rect)
+        elif density >= LEFTOVER_SLIVER_DENSITY:
+            # A sliver: the corner a diagonal left outside the rectangle
+            # beside it. That panel grows to hold it.
+            nearest = min(range(len(grown)), key=lambda at: _gap(grown[at], rect))
+            grown[nearest] = _union(grown[nearest], rect)
+    return grown + added
+
+
+def _gap(a: dict[str, Any], b: dict[str, Any]) -> float:
+    """How far apart two normalised boxes are; zero when they touch or overlap."""
+    dx = max(0.0, max(a["x"], b["x"]) - min(a["x"] + a["w"], b["x"] + b["w"]))
+    dy = max(0.0, max(a["y"], b["y"]) - min(a["y"] + a["h"], b["y"] + b["h"]))
+    return max(dx, dy)
+
+
+def _union(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    x0, y0 = min(a["x"], b["x"]), min(a["y"], b["y"])
+    x1 = max(a["x"] + a["w"], b["x"] + b["w"])
+    y1 = max(a["y"] + a["h"], b["y"] + b["h"])
+    return {**a, "x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
 
 
 def vision_examples_note(count: int) -> str:

@@ -9728,6 +9728,9 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     boxes = panel_finder.parse_vision_boxes(text, width, height)
     if boxes is None:
         return None
+    # Boxes that lie over each other -- a diagonal pair, a panel seen twice
+    # -- are one field, read at once.
+    boxes = panel_finder.merge_overlapping(boxes)
     if len(boxes) <= 1:
         return [dict(panel_finder.WHOLE_PAGE)]
     if not panel_finder.accept_vision_boxes(boxes):

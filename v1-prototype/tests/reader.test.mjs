@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, stepCount, REVEAL_MIN_PANELS, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -200,14 +200,26 @@ test("quadrants read the way the run does", () => {
 test("the reader remembers panel view, and forgets safely", () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
-  assert.deepEqual(loadReaderPrefs(storage), { panelMode: false, panelScrim: true });
+  const fresh = { panelMode: false, panelScrim: true, panelReveal: false };
+  assert.deepEqual(loadReaderPrefs(storage), fresh);
   saveReaderPrefs({ panelMode: true }, storage);
-  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true, panelScrim: true });
-  saveReaderPrefs({ panelMode: true, panelScrim: false }, storage);
-  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true, panelScrim: false });
-  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }), { panelMode: false, panelScrim: true });
-  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }), { panelMode: false, panelScrim: true });
-  assert.deepEqual(loadReaderPrefs(undefined), { panelMode: false, panelScrim: true });
+  assert.deepEqual(loadReaderPrefs(storage), { ...fresh, panelMode: true });
+  saveReaderPrefs({ panelMode: true, panelScrim: false, panelReveal: true }, storage);
+  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true, panelScrim: false, panelReveal: true });
+  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }), fresh);
+  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }), fresh);
+  assert.deepEqual(loadReaderPrefs(undefined), fresh);
+});
+
+test("a page ends on the whole page when asked, and only a page of three panels or more", () => {
+  assert.equal(stepCount(5, true), 6);
+  assert.equal(stepCount(5, false), 5);
+  assert.equal(stepCount(2, true), 2, "a two-panel page would only be seen twice");
+  assert.equal(stepCount(REVEAL_MIN_PANELS, true), REVEAL_MIN_PANELS + 1);
+  // Stepping runs through the extra step like any other, and off it onto the next page.
+  const counts = [stepCount(3, true), stepCount(1, true)];
+  assert.deepEqual(panelStep({ page: 0, panel: 2 }, "next", counts), { page: 0, panel: 3 }, "the whole page after the last panel");
+  assert.deepEqual(panelStep({ page: 0, panel: 3 }, "next", counts), { page: 1, panel: 0 });
 });
 
 test("the scrim's window sits on the panel, in the percentages a mask position takes", () => {

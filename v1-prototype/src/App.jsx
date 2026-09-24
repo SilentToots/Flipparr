@@ -51,7 +51,7 @@ import {
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -5313,7 +5313,10 @@ function ReaderView({
   const [panelMode, setPanelMode] = useState(() => loadReaderPrefs().panelMode);
   // Whether the rest of the page dims around the panel being read.
   const [panelScrim, setPanelScrim] = useState(() => loadReaderPrefs().panelScrim);
-  useEffect(() => { saveReaderPrefs({ panelMode, panelScrim }); }, [panelMode, panelScrim]);
+  const [panelReveal, setPanelReveal] = useState(() => loadReaderPrefs().panelReveal);
+  useEffect(() => { saveReaderPrefs({ panelMode, panelScrim, panelReveal }); }, [panelMode, panelScrim, panelReveal]);
+  const panelRevealRef = useRef(panelReveal);
+  panelRevealRef.current = panelReveal;
   const [panel, setPanel] = useState(0);
   const [panels, setPanels] = useState({});
   const [overview, setOverview] = useState(false);
@@ -5375,6 +5378,11 @@ function ReaderView({
     const entry = panelsRef.current[number];
     return entry?.segmented && entry.panels.length ? entry.panels : quadrantPanels(direction);
   }, [direction]);
+  // The steps a page takes: its panels, and -- when asked for -- the whole
+  // page after them, the way Guided View ends a page. A step past the
+  // panels is that whole-page step.
+  const pageSteps = useCallback((number) => stepCount(pagePanels(number).length, panelRevealRef.current), [pagePanels]);
+  const wholePageStep = panelMode && !overview && panel >= pagePanels(index).length;
   const togglePanelMode = useCallback(() => {
     setPanelMode((value) => !value);
     setOverview(false);
@@ -5457,6 +5465,7 @@ function ReaderView({
     const base = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
     baseRef.current = base;
     const rects = pagePanels(number);
+    if (position >= rects.length) return { zoom: 1, pan: { x: 0, y: 0 } };
     return panelFocus(rects[Math.min(position, rects.length - 1)], viewport, base);
   }, [pagePanels]);
 
@@ -5623,7 +5632,7 @@ function ReaderView({
     // In panel view a turn is a step: the next panel, or the next page's
     // first. Stepping past the end is finishing, exactly as paging past it is.
     if (panelModeRef.current && !overviewRef.current && count) {
-      const counts = Array.from({ length: count }, (_, number) => pagePanels(number).length);
+      const counts = Array.from({ length: count }, (_, number) => pageSteps(number));
       const next = panelStep({ page: at.current, panel: panelRef.current }, action, counts);
       if (next === null) { if (action === "next") onFinish?.(); return; }
       if (next.page !== at.current) {
@@ -5906,7 +5915,7 @@ function ReaderView({
         const shown = number === index;
         // The page dims around the panel in view; the whole page, asked for
         // with a double-tap, is shown undimmed.
-        const scrim = shown && panelMode && panelScrim && !overview;
+        const scrim = shown && panelMode && panelScrim && !overview && !wholePageStep;
         const hole = scrim ? panelMask(pagePanels(number)[Math.min(panel, pagePanels(number).length - 1)]) : null;
         return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
           className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}`}
@@ -6003,6 +6012,7 @@ function ReaderView({
       </label>
       <FollowSwitch following={panelMode} label="Panel view" onChange={() => togglePanelMode()} />
       {panelMode ? <FollowSwitch following={panelScrim} label="Dim around the panel" onChange={() => setPanelScrim((value) => !value)} /> : null}
+      {panelMode ? <FollowSwitch following={panelReveal} label="End each page on the whole page" onChange={() => setPanelReveal((value) => !value)} /> : null}
       {count ? <button type="button" className="ghost-button reader-settings-action" onClick={() => { setSettingsOpen(false); setFixingPanels(true); }}>
         <PencilSimple size={16} /> Fix panels on this page
       </button> : null}
@@ -6025,7 +6035,9 @@ function ReaderView({
       }} /> : null}
     <footer className="reader-bar reader-bar--bottom" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
       <span className="reader-count">{count
-        ? (panelMode && !overview ? `Panel ${panel + 1} of ${pagePanels(index).length} · ${index + 1} of ${count}` : `${index + 1} of ${count}`)
+        ? (panelMode && !overview
+          ? `${wholePageStep ? "Whole page" : `Panel ${panel + 1} of ${pagePanels(index).length}`} · ${index + 1} of ${count}`
+          : `${index + 1} of ${count}`)
         : "—"}{spread ? " · spread" : ""}</span>
       {count ? <div className="reader-scrubber">
         {/* The page under the thumb, before letting go: skimming back for the

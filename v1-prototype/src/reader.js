@@ -224,6 +224,19 @@ export function panelFocus(rect, viewport, page) {
  * on the last of the previous. Null past the end is what lets the finish
  * drawer fire exactly as it does when paging.
  */
+/**
+ * Comixology's Guided View ends a page on the whole page: the small panels
+ * first, then the page they make. Pages of this many panels or more get that
+ * last step when it is asked for; a page of one or two rarely needs the
+ * reveal, and would only be seen twice.
+ */
+export const REVEAL_MIN_PANELS = 3;
+
+/** How many steps a page of `panelCount` panels takes: its panels, and the whole page after them when asked. */
+export function stepCount(panelCount, reveal) {
+  return panelCount + (reveal && panelCount >= REVEAL_MIN_PANELS ? 1 : 0);
+}
+
 export function panelStep(place, action, counts) {
   const pages = counts.length;
   const last = (page) => Math.max(0, (counts[page] ?? 1) - 1);
@@ -276,12 +289,14 @@ export function loadReaderPrefs(storage = globalThis.localStorage) {
   let saved = {};
   try { saved = raw ? JSON.parse(raw) : {}; } catch { saved = {}; }
   if (!saved || typeof saved !== "object") saved = {};
-  return { panelMode: saved.panelMode === true, panelScrim: saved.panelScrim !== false };
+  return { panelMode: saved.panelMode === true, panelScrim: saved.panelScrim !== false, panelReveal: saved.panelReveal === true };
 }
 
 export function saveReaderPrefs(prefs, storage = globalThis.localStorage) {
   try {
-    storage?.setItem(READER_PREFS_KEY, JSON.stringify({ panelMode: Boolean(prefs.panelMode), panelScrim: prefs.panelScrim !== false }));
+    storage?.setItem(READER_PREFS_KEY, JSON.stringify({
+      panelMode: Boolean(prefs.panelMode), panelScrim: prefs.panelScrim !== false, panelReveal: Boolean(prefs.panelReveal),
+    }));
   } catch {
     // The reader still works; it just forgets.
   }
