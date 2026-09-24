@@ -3417,6 +3417,17 @@ class CatalogStore:
             )
             return cursor.rowcount > 0
 
+    def forget_automatic_page_panels(self, file_id: int) -> dict[str, int]:
+        """Forget every automatic reading of a file's pages, keeping a person's, so they are read again as reached."""
+        with self._write_lock, self._connect() as connection:
+            kept = connection.execute(
+                "SELECT COUNT(*) FROM page_panels WHERE file_id=? AND source='manual'", (int(file_id),),
+            ).fetchone()[0]
+            cursor = connection.execute(
+                "DELETE FROM page_panels WHERE file_id=? AND source<>'manual'", (int(file_id),),
+            )
+            return {"forgotten": cursor.rowcount, "kept": int(kept)}
+
     def page_panels(self, file_id: int, member: str) -> dict[str, Any] | None:
         """What was read off one page, or None when nobody has looked yet."""
         with self._connect() as connection:

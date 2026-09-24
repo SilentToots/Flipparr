@@ -9922,6 +9922,20 @@ def save_page_panels(file_id: int, index: int, payload: Any) -> dict[str, Any]:
     return file_page_panels(file_id, index)
 
 
+def forget_file_panels(file_id: int) -> dict[str, Any]:
+    """Drop every automatic reading of a comic's pages, so each is read again as it is reached.
+
+    For a comic read before a tier, a model or a way of reading was there --
+    spreads read whole, a page read without the connector. What a person
+    fixed by hand is kept; a page of theirs is let go one at a time.
+    """
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    return {"fileId": str(file_id), **store.forget_automatic_page_panels(file_id)}
+
+
 def forget_page_panels(file_id: int, index: int) -> dict[str, Any]:
     """Drop whatever is kept for one page, a person's reading included, and read it afresh."""
     store = catalog_store()
@@ -12936,6 +12950,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
                 self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                return
+            self.send_json(result)
+            return
+        file_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/panels", parsed_url.path)
+        if file_panels_match:
+            try:
+                result = forget_file_panels(int(file_panels_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (OSError, ValueError) as exc:
+                self.send_json({"error": str(exc) or "That comic could not be read"}, 422)
                 return
             self.send_json(result)
             return

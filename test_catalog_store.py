@@ -4192,6 +4192,21 @@ class PagePanelTests(LibraryFixture):
             self.assertIsNone(store.page_panels(file_id, "p1.jpg"), "read afresh next time")
             self.assertFalse(store.delete_page_panels(file_id, "p1.jpg"), "nothing left to forget")
 
+    def test_a_comics_automatic_readings_can_be_forgotten_together_keeping_a_persons(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            file_id = self._file_id(store, "Example 001.cbz")
+            other = self._file_id(store, "Example 002.cbz")
+            store.set_page_panels(file_id, "p1.jpg", "sig", "vlm", [], False)
+            store.set_page_panels(file_id, "p2.jpg", "sig", "auto", [{"x": 0, "y": 0, "w": 1, "h": 1}], True)
+            store.set_page_panels(file_id, "p3.jpg", "sig", "manual", [{"x": 0, "y": 0, "w": 1, "h": 1, "order": 0}], True)
+            store.set_page_panels(other, "p1.jpg", "sig", "auto", [], False)
+            self.assertEqual(store.forget_automatic_page_panels(file_id), {"forgotten": 2, "kept": 1})
+            self.assertIsNone(store.page_panels(file_id, "p1.jpg"))
+            self.assertEqual(store.page_panels(file_id, "p3.jpg")["source"], "manual", "a person's stands")
+            self.assertIsNotNone(store.page_panels(other, "p1.jpg"), "another comic's readings are its own")
+            self.assertEqual(store.forget_automatic_page_panels(file_id), {"forgotten": 0, "kept": 1})
+
     def test_only_a_known_source_for_a_known_file(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

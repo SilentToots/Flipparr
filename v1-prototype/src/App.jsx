@@ -5334,6 +5334,23 @@ function ReaderView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The page's panels, being corrected by hand over the page itself.
   const [fixingPanels, setFixingPanels] = useState(false);
+  // Reading an issue's panels again: the comic's automatic readings are
+  // forgotten on the server (a person's pages stay theirs) and the reader's
+  // own map emptied, so each page is read afresh as it is reached -- for a
+  // comic read before a connector or a way of reading was there.
+  const [rereading, setRereading] = useState("");
+  async function readPanelsAgain() {
+    if (rereading === "asking") return;
+    setRereading("asking");
+    try {
+      await apiRequest(`/api/v1/files/${fileId}/panels`, { method: "DELETE" });
+      asking.current.clear();
+      setPanels((current) => Object.fromEntries(Object.entries(current).filter(([, reading]) => reading?.source === "manual")));
+      setRereading("done");
+    } catch {
+      setRereading("failed");
+    }
+  }
   const [scrub, setScrub] = useState(null);
   const [contents, setContents] = useState(false);
   const [arrows, setArrows] = useState(false);
@@ -5988,6 +6005,9 @@ function ReaderView({
       {panelMode ? <FollowSwitch following={panelScrim} label="Dim around the panel" onChange={() => setPanelScrim((value) => !value)} /> : null}
       {count ? <button type="button" className="ghost-button reader-settings-action" onClick={() => { setSettingsOpen(false); setFixingPanels(true); }}>
         <PencilSimple size={16} /> Fix panels on this page
+      </button> : null}
+      {count ? <button type="button" className="ghost-button reader-settings-action" onClick={readPanelsAgain} disabled={rereading === "asking"} aria-busy={rereading === "asking"}>
+        {rereading === "asking" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />} {rereading === "done" ? "Pages will be read again as you reach them" : rereading === "failed" ? "The pages could not be forgotten" : "Read this issue's panels again"}
       </button> : null}
       <p className="reader-settings-note">{panelMode
         ? "One panel at a time. Double-tap for the whole page; P turns it off."
