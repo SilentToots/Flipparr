@@ -264,12 +264,13 @@ Motion tokens:
 - **The reader's settings** (`.reader-settings-drawer`, since 2026-09-24) open
   in the app's drawer, not a popover: a page pushed over the reader on a
   phone with the back arrow, a 420px side panel above it elsewhere, Back and
-  Escape closing it. Inside, Settings' own cards (`.settings-card`, raised,
-  no outline, 16px) for Screen, Panel view and This issue, holding Settings'
-  rows (`.toggle-row`, a line each, a title and an explanation; the two range
-  sliders in rows of the same shape) and, for the issue's tools, the run
-  drawer's Advanced rows (`.advanced-card`) stacked with the button under
-  its line, since the drawer is too narrow for two columns.
+  Escape closing it, titled "Reader settings". Inside, Settings' own cards
+  (`.settings-card`, raised, no outline, 16px): Screen, with the two sliders
+  in rows; and Read by panel, whose switch sits in the card's header
+  (`.toggle-row--header`, the pill alone) with everything it opens beneath
+  it only while on -- the three choices as bare rows (`.toggle-row` without
+  an explanation) and the two tools as the run drawer's Advanced rows
+  (`.advanced-card`), one sentence each, the button under its line.
 - **The panel editor** (`.panel-editor`, since 2026-09-24) is the reader's
   chrome over the page at fit size: a top bar with Done, the page number with
   its save status under it (Saving… / Saved / Unsaved changes) and a ‹ ›

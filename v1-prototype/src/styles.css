@@ -3576,7 +3576,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-settings-drawer .settings-card { padding: var(--space-20); background: var(--surface-raised); }
 .reader-settings-drawer .settings-card > header { margin-bottom: var(--space-4); }
 .reader-settings-drawer .settings-card > header h3 { margin: 0; font-size: var(--text-md); }
-.reader-settings-drawer .toggle-row { min-height: 60px; padding: var(--space-8) 0; }
+.reader-settings-drawer .toggle-row { min-height: 52px; padding: var(--space-4) 0; }
 .reader-settings-drawer .toggle-row small { max-width: none; }
 .reader-settings-drawer .toggle-row strong { font-size: var(--text-sm); }
 .reader-settings-range { display: grid; gap: var(--space-8); padding: var(--space-12) 0; border-top: 1px solid var(--line); color: var(--text); font-size: var(--text-sm); }
@@ -3589,7 +3589,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-settings-tools { margin-top: 0; }
 .reader-settings-tools .advanced-card { grid-template-columns: minmax(0, 1fr); gap: var(--space-12); border: 0; background: var(--surface); }
 .reader-settings-tools .advanced-card button { width: auto; justify-self: start; padding: 0 var(--space-16); }
-.reader-settings-tools .direction-toggle { justify-self: start; }
+.reader-settings-drawer .reader-settings-tools { margin-top: var(--space-16); }
+/* A card's own switch, in its header: the pill alone, the name being the card's. */
+.toggle-row--header { min-height: 0; padding: 0; border: 0; flex: none; }
+.reader-settings-drawer .settings-card > header + .toggle-row { border-top: 0; }
 @media (max-width: 640px) {
   .reader-settings-drawer .settings-card { padding: var(--space-16); background: var(--surface-raised); }
 }
