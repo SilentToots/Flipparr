@@ -7,6 +7,8 @@
 // rectangle to move it, a corner to resize both ways, a side to move that
 // edge; a numbered circle shows each panel's place in the reading order.
 
+import { READING_DIRECTIONS } from "./reader.js";
+
 /** A panel narrower or shorter than this cannot be read, and the server refuses it. */
 export const PANEL_MIN_SIDE = 0.02;
 /** The size a new panel starts at, as a share of the page's side. */
@@ -154,4 +156,23 @@ export function toPayload(panels) {
 export function fromReading(reading) {
   if (!reading?.segmented || !Array.isArray(reading.panels)) return [];
   return reading.panels.map(({ x, y, w, h }) => normalise({ x, y, w, h }));
+}
+
+/**
+ * What a key asks of the editor. With a panel selected the arrows nudge it
+ * (Shift resizes) and Delete removes it; with none selected the left and
+ * right arrows turn the page the way the run reads, so a whole issue can be
+ * corrected without leaving the editor. PageUp and PageDown always turn.
+ */
+export function editorKeyIntent(key, selected, direction) {
+  if (key === "Delete" || key === "Backspace") return selected >= 0 ? "remove" : null;
+  if (key === "PageDown") return "next";
+  if (key === "PageUp") return "previous";
+  if (!key.startsWith("Arrow")) return null;
+  if (selected >= 0) return "nudge";
+  const forward = direction === READING_DIRECTIONS.rtl ? "ArrowLeft" : "ArrowRight";
+  const back = direction === READING_DIRECTIONS.rtl ? "ArrowRight" : "ArrowLeft";
+  if (key === forward) return "next";
+  if (key === back) return "previous";
+  return null;
 }

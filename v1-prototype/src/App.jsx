@@ -64,7 +64,7 @@ import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./re
 import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import {
-  HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading,
+  HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
 } from "./panel-editor.js";
 import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel } from "./ratings.js";
 import {
@@ -5006,26 +5006,67 @@ function CoverWorkbench({ data, title, busy, error, onClose, onSelect, onUpload 
 // Correcting a page's panels by hand, over the page itself: the finder's
 // rectangles (or none, for a page it could not read), each numbered in reading
 // order; drag one to move it, its handles to resize, an empty stretch of page
-// to draw a new one; tap them in order to renumber them. Saved, the page is
-// the person's -- nothing automatic touches it again until they let it go.
-// The geometry is panel-editor.js; this is the pointer and the paint.
+// to draw a new one; tap them in order to renumber them. The editor pages
+// through the issue on its own -- the arrows in its bar, or the keyboard's
+// with no panel selected -- and saves a page as it is left, so a whole issue
+// is corrected in one sitting. What is saved is the person's: nothing
+// automatic touches it again until they let it go. The geometry is
+// panel-editor.js; this is the pointer, the paging and the paint.
 const EDITOR_HANDLE_PX = 22;
 const EDITOR_NUDGE = 0.005;
 
-function PanelEditor({ fileId, page, count, imageUrl, reading, onSaved, onClose }) {
-  const [panels, setPanels] = useState(() => fromReading(reading));
+function PanelEditor({ fileId, count, pages, startPage, readings, direction, onSaved, onClose }) {
+  const [page, setPage] = useState(startPage);
+  const [panels, setPanels] = useState([]);
+  const [reading, setReading] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(-1);
   const [draft, setDraft] = useState(null);
   const [ordering, setOrdering] = useState(null);
   const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState("");
+  const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [box, setBox] = useState(null);
   const stageRef = useRef(null);
   const imageRef = useRef(null);
   const drag = useRef(null);
   const manual = reading?.source === "manual";
-  const dialogRef = useDialog(() => (ordering ? setOrdering(null) : onClose()));
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  const panelsRef = useRef(panels);
+  panelsRef.current = panels;
+
+  // The page's reading: the reader's, when it has one, else asked for.
+  useEffect(() => {
+    let live = true;
+    const known = readings?.[page];
+    setSelected(-1);
+    setOrdering(null);
+    setDraft(null);
+    setDirty(false);
+    setError("");
+    if (known) {
+      setReading(known);
+      setPanels(fromReading(known));
+      setLoading(false);
+      return undefined;
+    }
+    setLoading(true);
+    apiRequest(`/api/v1/files/${fileId}/pages/${page}/panels`)
+      .then((data) => { if (live) { setReading(data); setPanels(fromReading(data)); setLoading(false); } })
+      .catch((problem) => { if (live) { setReading(null); setPanels([]); setLoading(false); setError(problem.message || "This page's panels could not be read"); } });
+    return () => { live = false; };
+  }, [fileId, page]); // the reader's map is read once per page, not re-applied over edits
+  // The next page's image is fetched ahead, so a turn does not wait on it.
+  useEffect(() => {
+    const next = pages[page + 1];
+    if (next?.readUrl) { const ahead = new Image(); ahead.src = next.readUrl; }
+  }, [pages, page]);
+
+  const finishRef = useRef(null);
+  const dialogRef = useDialog(() => (ordering ? setOrdering(null) : finishRef.current?.()));
 
   // Where the page sits on the stage: the layer of rectangles lies over it
   // exactly, and every pointer position is read against it.
@@ -5056,7 +5097,7 @@ function PanelEditor({ fileId, page, count, imageUrl, reading, onSaved, onClose 
   const reach = box ? { x: EDITOR_HANDLE_PX / box.width, y: EDITOR_HANDLE_PX / box.height } : { x: 0.03, y: 0.02 };
 
   function onPointerDown(event) {
-    if (event.button) return;
+    if (event.button || loading || saving) return;
     const point = pointAt(event);
     if (ordering) {
       const hit = hitTest(panels, point, { x: 0, y: 0 });
@@ -5098,18 +5139,56 @@ function PanelEditor({ fileId, page, count, imageUrl, reading, onSaved, onClose 
     }
     if (current.moved) setDirty(true);
   }
-  function onKeyDown(event) {
-    if (event.target.closest("button, input")) return;
-    if (selected < 0) return;
-    if (event.key === "Delete" || event.key === "Backspace") {
-      event.preventDefault();
-      remove();
-      return;
+
+  // A page is saved as it is left -- by a turn, or by closing -- and not
+  // left if it could not be. `saving` names what is under way, so the bar
+  // can say so and a second turn waits its turn.
+  async function flush() {
+    if (!dirtyRef.current) return true;
+    setSaving("save");
+    setError("");
+    try {
+      const data = await apiRequest(`/api/v1/files/${fileId}/pages/${pageRef.current}/panels`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ panels: toPayload(panelsRef.current) }),
+      });
+      onSaved(pageRef.current, data);
+      setReading(data);
+      setDirty(false);
+      return true;
+    } catch (problem) {
+      setError(problem.message || "The panels could not be saved");
+      return false;
+    } finally {
+      setSaving("");
     }
-    if (event.key.startsWith("Arrow")) {
-      event.preventDefault();
-      setPanels((list) => list.map((rect, at) => at === selected ? nudge(rect, event.key, EDITOR_NUDGE, event.shiftKey) : rect));
-      setDirty(true);
+  }
+  async function turn(delta) {
+    const target = Math.min(count - 1, Math.max(0, page + delta));
+    if (target === page || saving || loading) return;
+    if (!(await flush())) return;
+    setPage(target);
+  }
+  async function finish() {
+    if (saving) return;
+    if (!(await flush())) return;
+    onClose(pageRef.current);
+  }
+  finishRef.current = finish;
+  async function letGo() {
+    setSaving("reset");
+    setError("");
+    try {
+      const data = await apiRequest(`/api/v1/files/${fileId}/pages/${page}/panels`, { method: "DELETE" });
+      onSaved(page, data);
+      setReading(data);
+      setPanels(fromReading(data));
+      setSelected(-1);
+      setDirty(false);
+    } catch (problem) {
+      setError(problem.message || "The page could not be read again");
+    } finally {
+      setSaving("");
     }
   }
   function add() {
@@ -5124,48 +5203,52 @@ function PanelEditor({ fileId, page, count, imageUrl, reading, onSaved, onClose 
     setSelected(next.selected);
     setDirty(true);
   }
-  async function save() {
-    setBusy("save");
-    setError("");
-    try {
-      const data = await apiRequest(`/api/v1/files/${fileId}/pages/${page}/panels`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ panels: toPayload(panels) }),
-      });
-      onSaved(data);
-    } catch (problem) {
-      setError(problem.message || "The panels could not be saved");
-      setBusy("");
-    }
-  }
-  async function letGo() {
-    setBusy("reset");
-    setError("");
-    try {
-      const data = await apiRequest(`/api/v1/files/${fileId}/pages/${page}/panels`, { method: "DELETE" });
-      onSaved(data);
-    } catch (problem) {
-      setError(problem.message || "The page could not be read again");
-      setBusy("");
-    }
-  }
+  // The keyboard is heard from anywhere in the editor -- focus rests on a
+  // button, or nowhere after a tap on the page -- and only while the editor
+  // is the dialog in front, so the reader's own keys stay quiet beneath it.
+  const keyRef = useRef(null);
+  keyRef.current = (event) => {
+    if (event.target.closest("input, textarea, select") || ordering) return;
+    const intent = editorKeyIntent(event.key, selected, direction);
+    if (!intent) return;
+    event.preventDefault();
+    if (saving) return;
+    if (intent === "remove") remove();
+    else if (intent === "nudge") {
+      setPanels((list) => list.map((rect, at) => at === selected ? nudge(rect, event.key, EDITOR_NUDGE, event.shiftKey) : rect));
+      setDirty(true);
+    } else turn(intent === "next" ? 1 : -1);
+  };
+  useEffect(() => {
+    const onKey = (event) => { if (isTopDialog(dialogRef.current)) keyRef.current(event); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dialogRef]);
 
+  const status = saving === "save" ? "Saving…" : saving === "reset" ? "Reading the page again…" : error ? "" : dirty ? "Unsaved changes" : manual ? "Saved" : "";
+  // Nothing is edited while a save or a re-read is in flight: an answer
+  // landing over a change made meanwhile would lose one or the other.
+  const busy = loading || Boolean(saving);
   const hint = ordering
     ? `Tap the panels in reading order · ${ordering.length} of ${panels.length}`
-    : panels.length
-      ? "Drag a panel to move it, its corners to resize. Drag on the page to draw one."
-      : "Drag on the page to draw the first panel, or save with none for a single image.";
-  return <div className="panel-editor" ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Panels on page ${page + 1}`} onKeyDown={onKeyDown}>
+    : loading ? "Reading the page…"
+      : panels.length
+        ? "Drag a panel to move it, its corners to resize. Drag on the page to draw one. Arrows turn the page; pages save as you leave them."
+        : "Drag on the page to draw the first panel, or leave it with none for a single image.";
+  return <div className="panel-editor" ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Panels on page ${page + 1}`}>
     <header className="reader-bar reader-bar--top panel-editor-bar">
-      <button type="button" className="glass-button glass-button--icon" onClick={onClose} aria-label="Close without saving"><X size={20} /></button>
-      <span className="reader-title">Panels · page {page + 1} of {count}</span>
-      <button type="button" className="glass-button glass-button--primary" onClick={save} disabled={Boolean(busy) || (!dirty && manual)} aria-busy={busy === "save"}>
-        {busy === "save" ? <LoadingSpinner size={16} /> : <Check size={18} />} Save
-      </button>
+      <button type="button" className="glass-button glass-button--icon" onClick={finish} disabled={Boolean(saving)} aria-label="Done fixing panels"><X size={20} /></button>
+      <span className="reader-title">Panels · page {page + 1} of {count}{status ? <span className="panel-editor-status">{status}</span> : null}</span>
+      <span className="panel-editor-pager glass-capsule">
+        <button type="button" className="glass-button glass-button--icon" onClick={() => turn(direction === READING_DIRECTIONS.rtl ? 1 : -1)}
+          disabled={Boolean(saving) || (direction === READING_DIRECTIONS.rtl ? page >= count - 1 : page <= 0)} aria-label={direction === READING_DIRECTIONS.rtl ? "Next page" : "Previous page"}><ArrowLeft size={18} /></button>
+        <button type="button" className="glass-button glass-button--icon" onClick={() => turn(direction === READING_DIRECTIONS.rtl ? -1 : 1)}
+          disabled={Boolean(saving) || (direction === READING_DIRECTIONS.rtl ? page <= 0 : page >= count - 1)} aria-label={direction === READING_DIRECTIONS.rtl ? "Previous page" : "Next page"}><ArrowRight size={18} /></button>
+      </span>
     </header>
-    <div className="panel-editor-stage" ref={stageRef}>
-      <img ref={imageRef} src={imageUrl} alt="" draggable="false" />
-      {box ? <div className={`panel-editor-layer${ordering ? " ordering" : ""}`}
+    <div className="panel-editor-stage" ref={stageRef} onPointerDown={(event) => { if (event.target === event.currentTarget) setSelected(-1); }}>
+      <img ref={imageRef} src={pages[page]?.readUrl} alt="" draggable="false" />
+      {box && !loading ? <div className={`panel-editor-layer${ordering ? " ordering" : ""}`}
         style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
         {panels.map((rect, at) => {
@@ -5183,11 +5266,11 @@ function PanelEditor({ fileId, page, count, imageUrl, reading, onSaved, onClose 
       <p className={`panel-editor-hint${error ? " panel-editor-hint--error" : ""}`} role="status">{error || hint}</p>
       <div className="panel-editor-actions">
         {ordering ? <button type="button" className="glass-button" onClick={() => setOrdering(null)}>Cancel ordering</button> : <>
-          <button type="button" className="glass-button" onClick={add}><Plus size={16} /> Add panel</button>
-          <button type="button" className="glass-button" onClick={() => { setOrdering([]); setSelected(-1); }} disabled={panels.length < 2}><ListBullets size={16} /> Set order</button>
-          <button type="button" className="glass-button" onClick={remove} disabled={selected < 0}><Trash size={16} /> Delete</button>
-          {manual ? <button type="button" className="glass-button" onClick={letGo} disabled={Boolean(busy)} aria-busy={busy === "reset"}>
-            {busy === "reset" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />} Back to automatic
+          <button type="button" className="glass-button" onClick={add} disabled={busy}><Plus size={16} /> Add panel</button>
+          <button type="button" className="glass-button" onClick={() => { setOrdering([]); setSelected(-1); }} disabled={busy || panels.length < 2}><ListBullets size={16} /> Set order</button>
+          <button type="button" className="glass-button" onClick={remove} disabled={busy || selected < 0}><Trash size={16} /> Delete</button>
+          {manual ? <button type="button" className="glass-button" onClick={letGo} disabled={Boolean(saving)} aria-busy={saving === "reset"}>
+            {saving === "reset" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />} Back to automatic
           </button> : null}
         </>}
       </div>
@@ -5911,14 +5994,14 @@ function ReaderView({
         : direction === "rtl" ? "Reading right to left." : "Reading left to right."}</p>
     </div> : null}
 
-    {fixingPanels && pages.list[index] ? <PanelEditor fileId={fileId} page={index} count={count} imageUrl={pages.list[index].readUrl} reading={panels[index]}
-      onClose={() => setFixingPanels(false)}
-      onSaved={(data) => {
-        // The reader takes the person's reading at once and starts it from
-        // its first panel; the focus effect re-frames from the new map.
-        setPanels((current) => ({ ...current, [index]: data }));
-        setPanel(0);
+    {fixingPanels && pages.list[index] ? <PanelEditor fileId={fileId} count={count} pages={pages.list} startPage={index} readings={panels} direction={direction}
+      onSaved={(number, data) => setPanels((current) => ({ ...current, [number]: data }))}
+      onClose={(number) => {
+        // The reader picks up where the editor left off, from the first
+        // panel of that page; the focus effect re-frames from the new map.
         setFixingPanels(false);
+        if (number !== index) goToPage(number);
+        setPanel(0);
       }} /> : null}
     <footer className="reader-bar reader-bar--bottom" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
       <span className="reader-count">{count

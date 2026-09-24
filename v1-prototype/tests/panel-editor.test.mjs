@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   PANEL_MIN_SIDE, normalise, handlePoint, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge,
-  removeAt, tapOrder, applyOrder, toPayload, fromReading,
+  removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
 } from "../src/panel-editor.js";
 
 const grid = [
@@ -92,4 +92,16 @@ test("the reader's reading becomes the editor's rectangles, and the fallback sta
   assert.deepEqual(fromReading({ segmented: false, panels: [] }), []);
   assert.deepEqual(fromReading(undefined), []);
   assert.deepEqual(toPayload([{ x: 0.123456, y: 0, w: 0.5, h: 0.5 }]), [{ x: 0.1235, y: 0, w: 0.5, h: 0.5 }]);
+});
+
+test("the arrows nudge a selected panel and turn the page otherwise, the way the run reads", () => {
+  assert.equal(editorKeyIntent("ArrowRight", 0, "ltr"), "nudge");
+  assert.equal(editorKeyIntent("ArrowRight", -1, "ltr"), "next");
+  assert.equal(editorKeyIntent("ArrowLeft", -1, "ltr"), "previous");
+  assert.equal(editorKeyIntent("ArrowRight", -1, "rtl"), "previous", "manga turns the other way");
+  assert.equal(editorKeyIntent("ArrowUp", -1, "ltr"), null);
+  assert.equal(editorKeyIntent("PageDown", 2, "ltr"), "next", "PageDown always turns");
+  assert.equal(editorKeyIntent("Delete", 1, "ltr"), "remove");
+  assert.equal(editorKeyIntent("Delete", -1, "ltr"), null);
+  assert.equal(editorKeyIntent("Enter", -1, "ltr"), null);
 });
