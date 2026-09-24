@@ -3886,6 +3886,11 @@ class ReadingProgressTests(LibraryFixture):
             store.set_reading_progress(first, 5, 24, "sig-a")
             self.assertEqual(store.reading_progress(first)["page"], 5)
             self.assertEqual(len(store.recent_reading()), 1)
+            # The panel on the page rides along, and is the first unless said.
+            self.assertEqual(store.reading_progress(first)["panel"], 0)
+            self.assertEqual(store.set_reading_progress(first, 5, 24, "sig-a", panel=3)["panel"], 3)
+            with self.assertRaises(ValueError):
+                store.set_reading_progress(first, 5, 24, "sig-a", panel=-1)
 
             finished = store.set_reading_progress(first, 23, 24, "sig-a", finished=True)
             self.assertIsNotNone(finished["finishedAt"])

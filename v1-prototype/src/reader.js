@@ -225,16 +225,34 @@ export function panelFocus(rect, viewport, page) {
  * drawer fire exactly as it does when paging.
  */
 /**
- * Comixology's Guided View ends a page on the whole page: the small panels
- * first, then the page they make. Pages of this many panels or more get that
- * last step when it is asked for; a page of one or two rarely needs the
- * reveal, and would only be seen twice.
+ * Comixology's Guided View can show the whole page before its panels, after
+ * them, or both: the page first for the layout, the panels for the reading,
+ * the page again for what they make. Pages of this many panels or more get
+ * those steps when they are asked for; a page of one or two rarely needs
+ * them, and would only be seen twice.
  */
 export const REVEAL_MIN_PANELS = 3;
 
-/** How many steps a page of `panelCount` panels takes: its panels, and the whole page after them when asked. */
-export function stepCount(panelCount, reveal) {
-  return panelCount + (reveal && panelCount >= REVEAL_MIN_PANELS ? 1 : 0);
+const whole = (panelCount, on) => Boolean(on) && panelCount >= REVEAL_MIN_PANELS;
+
+/** How many steps a page of `panelCount` panels takes: its panels, plus the whole page before and after when asked. */
+export function stepCount(panelCount, steps = {}) {
+  return panelCount + (whole(panelCount, steps.start) ? 1 : 0) + (whole(panelCount, steps.end) ? 1 : 0);
+}
+
+/** What step `step` of a page shows: `{ whole: true }` or `{ whole: false, panel }`; `panel` is the nearest panel either way. */
+export function stepAt(step, panelCount, steps = {}) {
+  const lead = whole(panelCount, steps.start) ? 1 : 0;
+  if (step < lead) return { whole: true, panel: 0 };
+  const panel = step - lead;
+  if (panel >= panelCount) return { whole: true, panel: Math.max(0, panelCount - 1) };
+  return { whole: false, panel };
+}
+
+/** The step that shows panel `panel` itself, for resuming on it. */
+export function stepOf(panel, panelCount, steps = {}) {
+  const lead = whole(panelCount, steps.start) ? 1 : 0;
+  return Math.min(Math.max(0, panel), Math.max(0, panelCount - 1)) + lead;
 }
 
 export function panelStep(place, action, counts) {
@@ -282,20 +300,36 @@ export function panelMask(rect, pad = PANEL_MARGIN / 4) {
 
 const READER_PREFS_KEY = "flipparr.reader";
 
-/** How the reader was left in this browser; guarded like the library's memory. */
-export function loadReaderPrefs(storage = globalThis.localStorage) {
+/** A phone's screen, by the same width the stylesheet calls a phone. */
+export function phoneScreen() {
+  try { return globalThis.matchMedia?.("(max-width: 640px)")?.matches === true; } catch { return false; }
+}
+
+/**
+ * How the reader was left in this browser; guarded like the library's
+ * memory. Until panel view has been chosen either way it is on for a phone
+ * and off elsewhere -- Guided View's own default -- and the first save
+ * keeps whichever it was.
+ */
+export function loadReaderPrefs(storage = globalThis.localStorage, phone = phoneScreen()) {
   let raw = null;
   try { raw = storage?.getItem(READER_PREFS_KEY) ?? null; } catch { raw = null; }
   let saved = {};
   try { saved = raw ? JSON.parse(raw) : {}; } catch { saved = {}; }
   if (!saved || typeof saved !== "object") saved = {};
-  return { panelMode: saved.panelMode === true, panelScrim: saved.panelScrim !== false, panelReveal: saved.panelReveal === true };
+  return {
+    panelMode: typeof saved.panelMode === "boolean" ? saved.panelMode : Boolean(phone),
+    panelScrim: saved.panelScrim !== false,
+    panelStartWhole: saved.panelStartWhole === true,
+    panelReveal: saved.panelReveal === true,
+  };
 }
 
 export function saveReaderPrefs(prefs, storage = globalThis.localStorage) {
   try {
     storage?.setItem(READER_PREFS_KEY, JSON.stringify({
-      panelMode: Boolean(prefs.panelMode), panelScrim: prefs.panelScrim !== false, panelReveal: Boolean(prefs.panelReveal),
+      panelMode: Boolean(prefs.panelMode), panelScrim: prefs.panelScrim !== false,
+      panelStartWhole: Boolean(prefs.panelStartWhole), panelReveal: Boolean(prefs.panelReveal),
     }));
   } catch {
     // The reader still works; it just forgets.

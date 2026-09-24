@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 48
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1167,6 +1167,7 @@ class CatalogStore:
                 CREATE TABLE IF NOT EXISTS reading_progress (
                     file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
                     page INTEGER NOT NULL,
+                    panel INTEGER NOT NULL DEFAULT 0,
                     page_count INTEGER NOT NULL,
                     file_signature TEXT NOT NULL,
                     started_at TEXT NOT NULL,
@@ -1581,6 +1582,11 @@ class CatalogStore:
                     if _panels_cover(row["panels_json"]) < 0.75
                 ]
                 connection.executemany("DELETE FROM page_panels WHERE file_id=? AND page_member=?", short)
+            # 48: the place is kept to the panel as well as the page, so panel
+            # view resumes on the panel it was left on, as Guided View does.
+            progress_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reading_progress)")}
+            if "panel" not in progress_columns:
+                connection.execute("ALTER TABLE reading_progress ADD COLUMN panel INTEGER NOT NULL DEFAULT 0")
 
     @staticmethod
     def _forget_misread_scene_releases(connection: sqlite3.Connection) -> int:
@@ -3216,7 +3222,7 @@ class CatalogStore:
         if row is None:
             return None
         return {
-            "fileId": str(row["file_id"]), "page": int(row["page"]),
+            "fileId": str(row["file_id"]), "page": int(row["page"]), "panel": int(row["panel"] or 0),
             "pageCount": int(row["page_count"]), "fileSignature": row["file_signature"],
             "startedAt": row["started_at"], "finishedAt": row["finished_at"],
             "updatedAt": row["updated_at"],
@@ -3224,9 +3230,9 @@ class CatalogStore:
 
     def set_reading_progress(
         self, file_id: int, page: int, page_count: int, file_signature: str,
-        finished: bool = False,
+        finished: bool = False, panel: int = 0,
     ) -> dict[str, Any]:
-        """Remember the page, and when a comic was finished.
+        """Remember the page (and the panel on it), and when a comic was finished.
 
         Two things write this -- turning a page, and closing the reader -- and
         the last write wins. That is correct here: both carry the page the
@@ -3235,20 +3241,22 @@ class CatalogStore:
         """
         if page < 0 or page_count < 0 or page > max(0, page_count - 1):
             raise ValueError("That page is not in this comic")
+        if panel < 0:
+            raise ValueError("A panel is counted from the first")
         now = _utc_now()
         finished_at = now if finished else None
         with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO reading_progress(
-                       file_id, page, page_count, file_signature, started_at, finished_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                       file_id, page, panel, page_count, file_signature, started_at, finished_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(file_id) DO UPDATE SET
-                       page=excluded.page, page_count=excluded.page_count,
+                       page=excluded.page, panel=excluded.panel, page_count=excluded.page_count,
                        file_signature=excluded.file_signature,
                        -- Going back into a comic you finished makes it unfinished again.
                        finished_at=excluded.finished_at,
                        updated_at=excluded.updated_at""",
-                (int(file_id), int(page), int(page_count), file_signature, now, finished_at, now),
+                (int(file_id), int(page), int(panel), int(page_count), file_signature, now, finished_at, now),
             )
         return self.reading_progress(file_id)
 

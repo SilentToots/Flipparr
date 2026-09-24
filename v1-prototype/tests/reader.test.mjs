@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, stepCount, REVEAL_MIN_PANELS, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
+  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -200,24 +200,43 @@ test("quadrants read the way the run does", () => {
 test("the reader remembers panel view, and forgets safely", () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
-  const fresh = { panelMode: false, panelScrim: true, panelReveal: false };
-  assert.deepEqual(loadReaderPrefs(storage), fresh);
+  const fresh = { panelMode: false, panelScrim: true, panelStartWhole: false, panelReveal: false };
+  assert.deepEqual(loadReaderPrefs(storage, false), fresh);
   saveReaderPrefs({ panelMode: true }, storage);
-  assert.deepEqual(loadReaderPrefs(storage), { ...fresh, panelMode: true });
-  saveReaderPrefs({ panelMode: true, panelScrim: false, panelReveal: true }, storage);
-  assert.deepEqual(loadReaderPrefs(storage), { panelMode: true, panelScrim: false, panelReveal: true });
-  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }), fresh);
-  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }), fresh);
-  assert.deepEqual(loadReaderPrefs(undefined), fresh);
+  assert.deepEqual(loadReaderPrefs(storage, false), { ...fresh, panelMode: true });
+  saveReaderPrefs({ panelMode: true, panelScrim: false, panelStartWhole: true, panelReveal: true }, storage);
+  assert.deepEqual(loadReaderPrefs(storage, false), { panelMode: true, panelScrim: false, panelStartWhole: true, panelReveal: true });
+  assert.deepEqual(loadReaderPrefs({ getItem: () => "{nope" }, false), fresh);
+  assert.deepEqual(loadReaderPrefs({ getItem() { throw new Error("private"); } }, false), fresh);
+  assert.deepEqual(loadReaderPrefs(undefined, false), fresh);
 });
 
-test("a page ends on the whole page when asked, and only a page of three panels or more", () => {
-  assert.equal(stepCount(5, true), 6);
-  assert.equal(stepCount(5, false), 5);
-  assert.equal(stepCount(2, true), 2, "a two-panel page would only be seen twice");
-  assert.equal(stepCount(REVEAL_MIN_PANELS, true), REVEAL_MIN_PANELS + 1);
-  // Stepping runs through the extra step like any other, and off it onto the next page.
-  const counts = [stepCount(3, true), stepCount(1, true)];
+test("panel view is on for a phone until it has been chosen either way", () => {
+  const empty = { getItem: () => null };
+  assert.equal(loadReaderPrefs(empty, true).panelMode, true);
+  assert.equal(loadReaderPrefs(empty, false).panelMode, false);
+  const chosenOff = { getItem: () => JSON.stringify({ panelMode: false }) };
+  assert.equal(loadReaderPrefs(chosenOff, true).panelMode, false, "a choice made on the phone stands");
+});
+
+test("a page can begin and end on the whole page when asked, and only a page of three panels or more", () => {
+  assert.equal(stepCount(5, { end: true }), 6);
+  assert.equal(stepCount(5, { start: true, end: true }), 7);
+  assert.equal(stepCount(5), 5);
+  assert.equal(stepCount(2, { start: true, end: true }), 2, "a two-panel page would only be seen twice");
+  assert.equal(stepCount(REVEAL_MIN_PANELS, { end: true }), REVEAL_MIN_PANELS + 1);
+  // What each step shows, and the step a panel is shown at.
+  const both = { start: true, end: true };
+  assert.deepEqual(stepAt(0, 5, both), { whole: true, panel: 0 }, "the page first");
+  assert.deepEqual(stepAt(1, 5, both), { whole: false, panel: 0 });
+  assert.deepEqual(stepAt(5, 5, both), { whole: false, panel: 4 });
+  assert.deepEqual(stepAt(6, 5, both), { whole: true, panel: 4 }, "and the page again after the last");
+  assert.deepEqual(stepAt(2, 5), { whole: false, panel: 2 });
+  assert.equal(stepOf(3, 5, both), 4, "resuming on panel 4 skips the page-first step");
+  assert.equal(stepOf(3, 5), 3);
+  assert.equal(stepOf(9, 5), 4, "a panel the page no longer has is its last");
+  // Stepping runs through the extra steps like any other, and off them onto the next page.
+  const counts = [stepCount(3, { end: true }), stepCount(1, { end: true })];
   assert.deepEqual(panelStep({ page: 0, panel: 2 }, "next", counts), { page: 0, panel: 3 }, "the whole page after the last panel");
   assert.deepEqual(panelStep({ page: 0, panel: 3 }, "next", counts), { page: 1, panel: 0 });
 });

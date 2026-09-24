@@ -1034,6 +1034,13 @@ class HttpContractTests(unittest.TestCase):
             self.patch(f"/api/v1/files/{file_id}/pages/0/panels", {"panels": []})
             whole = self.delete(f"/api/v1/files/{file_id}/panels")
             nobody = self.delete("/api/v1/files/999999/panels")
+            # The place is kept to the panel: posted with the page, answered with it.
+            placed = self.post(f"/api/v1/files/{file_id}/progress", {"page": 0, "panel": 2})
+            place = self.get(f"/api/v1/files/{file_id}/progress")
+            odd = self.post(f"/api/v1/files/{file_id}/progress", {"page": 0, "panel": "two"})
+        self.assertEqual((placed.status, placed.json()["panel"]), (200, 2))
+        self.assertEqual(place.json()["panel"], 2)
+        self.assertEqual(odd.status, 400)
         self.assertEqual(whole.status, 200)
         self.assertEqual(whole.json(), {"fileId": str(file_id), "forgotten": 0, "kept": 1}, "the comic's automatic readings go; a person's page stays")
         self.assertIn(nobody.status, (404, 422))

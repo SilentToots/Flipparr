@@ -10041,8 +10041,8 @@ def file_reading_progress(file_id: int) -> dict[str, Any]:
     }
 
 
-def set_file_reading_progress(file_id: int, page: int) -> dict[str, Any]:
-    """Remember the page. The count and the signature are the server's to know."""
+def set_file_reading_progress(file_id: int, page: int, panel: int = 0) -> dict[str, Any]:
+    """Remember the page, and the panel on it. The count and the signature are the server's to know."""
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("Pages can only be read from comic archives")
@@ -10051,8 +10051,10 @@ def set_file_reading_progress(file_id: int, page: int) -> dict[str, Any]:
         raise ValueError("This comic has no pages")
     if not 0 <= page < len(pages):
         raise ValueError("That page is not in this comic")
+    if not 0 <= panel <= PANELS_MAX:
+        raise ValueError("That panel is not on the page")
     return catalog_store().set_reading_progress(
-        file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1,
+        file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1, panel=panel,
     )
 
 
@@ -12768,7 +12770,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     if not isinstance(page, int) or isinstance(page, bool):
                         raise ValueError("A page is a whole number")
-                    result = set_file_reading_progress(file_id, page)
+                    panel = payload.get("panel", 0)
+                    if not isinstance(panel, int) or isinstance(panel, bool):
+                        raise ValueError("A panel is a whole number")
+                    result = set_file_reading_progress(file_id, page, panel)
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
