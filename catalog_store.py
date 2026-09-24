@@ -3409,6 +3409,14 @@ class CatalogStore:
             }
         return by_run
 
+    def delete_page_panels(self, file_id: int, member: str) -> bool:
+        """Forget one page's panels, a person's included, so the automatic tiers read it again."""
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM page_panels WHERE file_id=? AND page_member=?", (int(file_id), member),
+            )
+            return cursor.rowcount > 0
+
     def page_panels(self, file_id: int, member: str) -> dict[str, Any] | None:
         """What was read off one page, or None when nobody has looked yet."""
         with self._connect() as connection:

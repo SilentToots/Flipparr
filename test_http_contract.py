@@ -1008,6 +1008,39 @@ class HttpContractTests(unittest.TestCase):
         self.assertRegex(entry["lastReadAt"], r"^\d{4}-\d{2}-\d{2}T", "Recent sorts on it as a string")
         self.assertEqual(set(entry), {"state", "fileId", "issueNumber", "page", "pageCount", "lastReadAt"})
 
+    def test_a_person_can_set_a_pages_panels_and_take_them_back(self):
+        """PATCH keeps rectangles as the person's, in their order; DELETE forgets them and the page is read afresh."""
+        from PIL import Image, ImageDraw
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "manual.cbz"
+            image = Image.new("RGB", (300, 450), "white")
+            draw = ImageDraw.Draw(image)
+            for box in ((20, 20, 140, 210), (160, 20, 280, 210), (20, 240, 280, 430)):
+                draw.rectangle(box, fill="#444444", outline="black", width=3)
+            page = io.BytesIO()
+            image.save(page, format="JPEG")
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("0.jpg", page.getvalue())
+            import app as app_module
+            run = self._series_run(app_module.catalog_store(), "Manual Panel Contract")
+            file_id = self._library_file(comic, run=run, issue="1")
+            saved = self.patch(f"/api/v1/files/{file_id}/pages/0/panels", {"panels": [
+                {"x": 0.5, "y": 0.0, "w": 0.5, "h": 0.5}, {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5},
+            ]})
+            kept = self.get(f"/api/v1/files/{file_id}/pages/0/panels")
+            refused = self.patch(f"/api/v1/files/{file_id}/pages/0/panels", {"panels": [{"x": 0.9, "y": 0, "w": 0.5, "h": 0.5}]})
+            missing = self.patch(f"/api/v1/files/{file_id}/pages/9/panels", {"panels": []})
+            forgotten = self.delete(f"/api/v1/files/{file_id}/pages/0/panels")
+        self.assertEqual(saved.status, 200)
+        self.assertEqual(saved.json()["source"], "manual")
+        self.assertEqual([panel["x"] for panel in saved.json()["panels"]], [0.5, 0.0], "the person's order, not left to right")
+        self.assertEqual(kept.json()["source"], "manual", "and it is what the reader gets back")
+        self.assertEqual(refused.status, 400)
+        self.assertEqual(missing.status, 404)
+        self.assertEqual(forgotten.status, 200)
+        self.assertEqual(forgotten.json()["source"], "auto", "read afresh by the automatic tiers")
+        self.assertEqual(len(forgotten.json()["panels"]), 3)
+
     def test_a_page_answers_where_its_panels_are(self):
         """Read once from the render and kept, so the second ask is the first answer."""
         from PIL import Image, ImageDraw

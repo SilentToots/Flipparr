@@ -9760,6 +9760,64 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     }
 
 
+PANEL_MIN_SIDE = 0.02
+PANELS_MAX = 64
+
+
+def save_page_panels(file_id: int, index: int, payload: Any) -> dict[str, Any]:
+    """Keep a person's panels for one page, in the order given, and answer as the reader asks.
+
+    Rectangles are normalised (0-1) and are checked to be on the page and no
+    thinner than a sliver; their order is the order sent, kept as `order` so
+    the row rule never rearranges what a person arranged. No rectangles is
+    the whole page as one panel -- a splash, said outright. A person's row
+    stands until they forget it (`forget_page_panels`), whatever the
+    automatic tiers would say.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("panels"), list):
+        raise ValueError("Send the page's panels as a list")
+    raw = payload["panels"]
+    if len(raw) > PANELS_MAX:
+        raise ValueError(f"A page has at most {PANELS_MAX} panels")
+    panels: list[dict[str, Any]] = []
+    for position, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError("Each panel is a rectangle")
+        try:
+            x, y, w, h = (float(item[key]) for key in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Each panel needs x, y, w and h between 0 and 1") from exc
+        if not all(0.0 <= value <= 1.0 for value in (x, y, w, h)) or x + w > 1.0001 or y + h > 1.0001:
+            raise ValueError("A panel has to sit on the page")
+        if w < PANEL_MIN_SIDE or h < PANEL_MIN_SIDE:
+            raise ValueError("A panel that thin cannot be read")
+        panels.append({"x": round(x, 4), "y": round(y, 4), "w": round(min(w, 1.0 - x), 4), "h": round(min(h, 1.0 - y), 4), "order": position})
+    if not panels:
+        panels = [{**panel_finder.WHOLE_PAGE, "order": 0}]
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    if not 0 <= index < len(pages):
+        raise LookupError("That page is not in this comic")
+    store.set_page_panels(file_id, pages[index], _file_signature(path), "manual", panels, True)
+    return file_page_panels(file_id, index)
+
+
+def forget_page_panels(file_id: int, index: int) -> dict[str, Any]:
+    """Drop whatever is kept for one page, a person's reading included, and read it afresh."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    if not 0 <= index < len(pages):
+        raise LookupError("That page is not in this comic")
+    store.delete_page_panels(file_id, pages[index])
+    return file_page_panels(file_id, index)
+
+
 def file_reading_progress(file_id: int) -> dict[str, Any]:
     """Where a comic was left, and whether that place still exists.
 
@@ -12710,6 +12768,18 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
             return
+        page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
+        if page_panels_match:
+            try:
+                result = save_page_panels(int(page_panels_match.group(1)), int(page_panels_match.group(2)), payload)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
+                self.send_json({"error": str(exc) or "That page could not be read"}, 400)
+                return
+            self.send_json(result)
+            return
         if parsed_url.path == "/api/v1/settings":
             try:
                 updated = save_app_settings(payload if isinstance(payload, dict) else {})
@@ -12740,6 +12810,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
+        if page_panels_match:
+            try:
+                result = forget_page_panels(int(page_panels_match.group(1)), int(page_panels_match.group(2)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
+                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                return
+            self.send_json(result)
+            return
         root_match = re.fullmatch(r"/api/v1/library-roots/(\d+)", parsed_url.path)
         if root_match:
             try:

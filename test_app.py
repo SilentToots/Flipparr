@@ -6333,6 +6333,84 @@ class PagePanelTests(unittest.TestCase):
             self._ask(index=5)
 
 
+class ManualPanelTests(unittest.TestCase):
+    """A person's panels for a page: kept in their order, standing until forgotten."""
+
+    def _saving(self, payload, index=1, record=None):
+        from pathlib import Path
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = record
+        store.file_reading_direction.return_value = "ltr"
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch("app._file_signature", return_value="sig"), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.file_page_panels", return_value={"ok": True}) as answer:
+            result = app.save_page_panels(7, index, payload)
+        return result, store, answer
+
+    def test_rectangles_are_kept_as_manual_in_the_order_sent(self):
+        result, store, answer = self._saving({"panels": [
+            {"x": 0.5, "y": 0.0, "w": 0.5, "h": 0.5}, {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5},
+        ]})
+        self.assertEqual(result, {"ok": True})
+        answer.assert_called_once_with(7, 1)
+        args = store.set_page_panels.call_args[0]
+        self.assertEqual(args[:4], (7, "b.jpg", "sig", "manual"))
+        self.assertEqual([panel["order"] for panel in args[4]], [0, 1], "the order sent, not the row rule's")
+        self.assertEqual(args[4][0]["x"], 0.5)
+        self.assertIs(args[5], True)
+
+    def test_no_rectangles_is_the_whole_page(self):
+        _, store, _ = self._saving({"panels": []})
+        self.assertEqual(store.set_page_panels.call_args[0][4], [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "order": 0}])
+
+    def test_a_rectangle_off_the_page_or_too_thin_is_refused(self):
+        for bad in ([{"x": 0.8, "y": 0, "w": 0.5, "h": 0.5}], [{"x": 0, "y": 0, "w": 0.01, "h": 0.5}], [{"x": "a", "y": 0, "w": 1, "h": 1}], "nope", {"panels": 3}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    self._saving(bad if isinstance(bad, (str, dict)) else {"panels": bad})
+        with self.assertRaises(LookupError):
+            self._saving({"panels": []}, index=9)
+
+    def test_a_persons_reading_stands_when_the_file_changes_and_whatever_the_tiers_say(self):
+        from pathlib import Path
+        kept = {"fileSignature": "old", "source": "manual", "segmented": True,
+                "panels": [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 1}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 0}]}
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = kept
+        store.file_reading_direction.return_value = "ltr"
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch("app._file_signature", return_value="new"), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.panel_model_session", return_value=object()), \
+             patch("app.vision_model_ready", return_value=True), \
+             patch("app.load_app_settings", return_value={"visionReadsEveryPage": True}), \
+             patch("app.render_file_page") as render:
+            result = app.file_page_panels(7, 1)
+        render.assert_not_called()
+        self.assertEqual(result["source"], "manual")
+        self.assertEqual([panel["y"] for panel in result["panels"]], [0.5, 0], "in the person's order")
+
+    def test_forgetting_drops_the_row_and_reads_afresh(self):
+        from pathlib import Path
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.file_page_panels", return_value={"fresh": True}) as answer:
+            self.assertEqual(app.forget_page_panels(7, 0), {"fresh": True})
+        store.delete_page_panels.assert_called_once_with(7, "a.jpg")
+        answer.assert_called_once_with(7, 0)
+
+
 class VisionConnectorTests(unittest.TestCase):
     """Claude as an optional provider: a key, a switch, and only the hard pages sent."""
 

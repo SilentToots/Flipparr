@@ -3484,6 +3484,8 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader--reading .reader-bar { opacity: 0; pointer-events: none; }
 .reader--reading .reader-bar--top { translate: 0 -100%; }
 .reader--reading .reader-bar--bottom { translate: 0 100%; }
+/* The panel editor's bars are its own, whatever the reader beneath is doing. */
+.reader--reading .panel-editor .reader-bar { opacity: 1; pointer-events: auto; translate: none; }
 /* "esc" beside the close button: a key drawn as a key, in the app's own type. */
 .reader-esc-hint { flex: none; margin-left: calc(var(--space-8) * -1); padding: var(--space-2) var(--space-6); border: 1px solid var(--line-strong); border-radius: var(--radius-4); color: var(--muted); font: inherit; font-size: var(--text-xs); font-weight: var(--weight-semibold); line-height: var(--leading-tight); text-transform: lowercase; }
 @media (max-width: 640px) { .reader-esc-hint { display: none; } }
@@ -3571,6 +3573,48 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-settings label { display: grid; gap: var(--space-6); color: var(--text); font-size: var(--text-sm); }
 .reader-settings input[type="range"] { width: 100%; accent-color: var(--violet); }
 .reader-settings-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.reader-settings-action { justify-content: flex-start; width: 100%; }
+
+/* The panel editor: the page at fit size with the panels drawn over it, in
+   the reader's own chrome. The layer of rectangles lies exactly over the
+   image; each box is a percentage of it, so the same numbers the server
+   keeps place them, at any size. Handles are 22px targets drawn 12px. */
+.panel-editor {
+  position: fixed; z-index: 95; inset: 0; background: var(--color-black);
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.panel-editor-bar .glass-button--primary { margin-left: auto; }
+/* Flex, not grid: a grid item's percentage height resolves against an auto
+   row and the page grew past the stage; a flex item's resolves against the
+   stage itself, whose height the editor's own rows fix. */
+.panel-editor-stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: var(--space-8); box-sizing: border-box; min-height: 0; }
+.panel-editor-stage img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; pointer-events: none; }
+.panel-editor-layer { position: absolute; touch-action: none; cursor: crosshair; }
+.panel-editor-layer.ordering { cursor: pointer; }
+.panel-editor-box {
+  position: absolute; box-sizing: border-box; border: 2px solid var(--violet-text);
+  background: color-mix(in srgb, var(--violet) 18%, transparent); cursor: move;
+}
+.panel-editor-box.selected { border-color: var(--color-neutral-0); box-shadow: 0 0 0 1px var(--violet); background: color-mix(in srgb, var(--violet) 28%, transparent); }
+.panel-editor-box.drawing { border-style: dashed; pointer-events: none; }
+.panel-editor-layer.ordering .panel-editor-box { opacity: .55; }
+.panel-editor-layer.ordering .panel-editor-box.numbered { opacity: 1; border-color: var(--color-neutral-0); }
+.panel-editor-number {
+  position: absolute; top: var(--space-4); right: var(--space-4); min-width: 22px; height: 22px; padding: 0 var(--space-6);
+  border-radius: var(--radius-pill); background: var(--violet); color: var(--color-neutral-0);
+  display: grid; place-items: center; font-size: var(--text-xs); font-weight: var(--weight-bold); pointer-events: none;
+}
+.panel-editor-handle {
+  position: absolute; width: 22px; height: 22px; translate: -50% -50%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, var(--color-neutral-0) 5px, transparent 6px);
+}
+.panel-editor-handle--nw { left: 0; top: 0; } .panel-editor-handle--n { left: 50%; top: 0; } .panel-editor-handle--ne { left: 100%; top: 0; }
+.panel-editor-handle--e { left: 100%; top: 50%; } .panel-editor-handle--se { left: 100%; top: 100%; } .panel-editor-handle--s { left: 50%; top: 100%; }
+.panel-editor-handle--sw { left: 0; top: 100%; } .panel-editor-handle--w { left: 0; top: 50%; }
+.panel-editor-tools { flex-wrap: wrap; justify-content: space-between; }
+.panel-editor-hint { flex: 1 1 260px; margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.panel-editor-hint--error { color: var(--red-text); }
+.panel-editor-actions { display: flex; flex-wrap: wrap; gap: var(--space-8); }
 /* A measured aside at the foot of a settings card. */
 .settings-card-note { margin: var(--space-12) 0 0; color: var(--muted); font-size: var(--text-sm); }
 @media (prefers-reduced-motion: reduce) {

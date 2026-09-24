@@ -4183,6 +4183,15 @@ class PagePanelTests(LibraryFixture):
             self.assertIsNone(reopened.page_panels(file_id, "p2.jpg"), "two thirds of a page is not a reading")
             self.assertEqual(reopened.page_panels(file_id, "p3.jpg")["source"], "vlm", "an answer with no panels is not a short one")
 
+    def test_a_pages_panels_can_be_forgotten(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            file_id = self._file_id(store, "Example 001.cbz")
+            store.set_page_panels(file_id, "p1.jpg", "sig", "manual", [{"x": 0, "y": 0, "w": 1, "h": 1, "order": 0}], True)
+            self.assertTrue(store.delete_page_panels(file_id, "p1.jpg"))
+            self.assertIsNone(store.page_panels(file_id, "p1.jpg"), "read afresh next time")
+            self.assertFalse(store.delete_page_panels(file_id, "p1.jpg"), "nothing left to forget")
+
     def test_only_a_known_source_for_a_known_file(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

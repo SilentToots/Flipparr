@@ -261,6 +261,16 @@ Motion tokens:
 - **The toast** is a glass capsule centred at the foot of the page (over the
   content area above 640px, above the tab bar on a phone). It springs up,
   sinks away after about three seconds, and a new one replaces it.
+- **The panel editor** (`.panel-editor`, since 2026-09-24) is the reader's
+  chrome over the page at fit size: a top bar with Close and Save, the page
+  with each panel drawn as a violet box numbered at its top-right in reading
+  order (the selected one white-edged with eight 22px handles), and a bottom
+  bar with the hint and the actions -- Add panel, Set order, Delete, and
+  Back to automatic on a page a person has corrected. Drag a box to move it,
+  a handle to resize, an empty stretch of page to draw one; Set order numbers
+  the boxes in the order they are tapped. Opened from the reader's settings
+  ("Fix panels on this page"); what is saved is the person's until they let
+  it go, and the automatic tiers never touch it.
 - **The pull-to-refresh pill** (`.pull-refresh`, since 2026-09-22) is the
   same capsule at the top of the page, under the phone's safe area, and only
   in the installed app: a Home Screen web app has no browser chrome and so
