@@ -6320,6 +6320,29 @@ class PagePanelTests(unittest.TestCase):
         image.save(buffer, format="PNG")
         return buffer.getvalue()
 
+    def _spread_png(self):
+        """Two readable pages side by side: a spread, as the renders give it."""
+        import io
+        from PIL import Image
+        with Image.open(io.BytesIO(self._page_png())) as page:
+            spread = Image.new("RGB", (page.width * 2, page.height), "white")
+            spread.paste(page, (0, 0))
+            spread.paste(page, (page.width, 0))
+        buffer = io.BytesIO()
+        spread.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_a_spread_is_read_as_its_two_pages_in_order(self):
+        result, store, render = self._ask(png=self._spread_png())
+        self.assertEqual([call.args for call in render.call_args_list], [(7, 1), (7, 1, "backdrop")])
+        self.assertTrue(result["segmented"])
+        self.assertEqual(len(result["panels"]), 6)
+        self.assertTrue(all(panel["x"] + panel["w"] <= 0.5 for panel in result["panels"][:3]), "the left page first")
+        self.assertTrue(all(panel["x"] >= 0.5 for panel in result["panels"][3:]), "then the right")
+        self.assertTrue(store.set_page_panels.call_args[0][5])
+        manga, _, _ = self._ask(png=self._spread_png(), direction="rtl")
+        self.assertTrue(all(panel["x"] >= 0.5 for panel in manga["panels"][:3]), "a manga spread starts on the right page")
+
     def _ask(self, record=None, direction="ltr", png=None, index=1):
         from pathlib import Path
         store = Mock()
@@ -6630,6 +6653,18 @@ class VisionInPanelPipelineTests(PagePanelTests):
              patch("app.render_file_page", return_value=png or self._page_png()), \
              patch("app.ask_vision_model", return_value=answer) as ask:
             return app.file_page_panels(7, 1), store, ask
+
+    def test_a_spread_is_asked_about_a_half_at_a_time(self):
+        # Asked about the whole, a model loses a third of a spread's panels;
+        # asked about each page it reads as well as on any page. Here it sees
+        # no panels on either half: the two halves meet at the fold with the
+        # same top and bottom, and are one image across the spread, shown whole.
+        result, _, ask = self._ask_with_vision(png=self._spread_png(), every=True)
+        self.assertEqual(ask.call_count, 2)
+        for call in ask.call_args_list:
+            self.assertIn("300 pixels wide and 450 pixels tall", call.args[1], "each half at its own size")
+        self.assertEqual((result["source"], result["segmented"], len(result["panels"])), ("vlm", True, 1))
+        self.assertEqual((result["panels"][0]["x"], result["panels"][0]["w"]), (0.0, 1.0))
 
     def test_reading_every_page_is_the_default_with_a_connector_on(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(

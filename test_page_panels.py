@@ -5,6 +5,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 from page_panels import (
+    combine_halves,
     READING_LTR, READING_RTL, accept_vision_boxes, ambiguous_layout, detect_panels, ink_mask,
     load_model_session, order_panels, page_mask, parse_vision_boxes, parse_vision_order, quadrant_panels,
     refine, refine_vision_boxes, suppress, vision_boxes_prompt, vision_order_prompt,
@@ -103,6 +104,42 @@ class DetectionTests(unittest.TestCase):
         image, draw = _page(width=1200, height=900)
         _grid(draw, 4, 3, width=1200)
         self.assertEqual(detect_panels(image), {"segmented": False, "source": "auto", "panels": []})
+
+    def test_a_spread_is_read_as_two_pages_and_put_back_together(self):
+        left = {"segmented": True, "source": "auto", "panels": [
+            {"x": 0.05, "y": 0.05, "w": 0.4, "h": 0.4}, {"x": 0.55, "y": 0.05, "w": 0.4, "h": 0.4},
+            {"x": 0.05, "y": 0.55, "w": 0.9, "h": 0.4}]}
+        right = {"segmented": True, "source": "model", "panels": [
+            {"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.4}, {"x": 0.05, "y": 0.55, "w": 0.9, "h": 0.4}]}
+        spread = combine_halves([left, right], "ltr")
+        self.assertEqual((spread["segmented"], spread["source"], len(spread["panels"])), (True, "model", 5))
+        ordered = order_panels(spread["panels"], "ltr")
+        self.assertEqual([round(panel["x"], 3) for panel in ordered], [0.025, 0.275, 0.025, 0.525, 0.525], "the left page whole, then the right")
+        self.assertEqual([round(panel["w"], 3) for panel in ordered][:2], [0.2, 0.2], "placed at half width")
+        manga = order_panels(combine_halves([left, right], "rtl")["panels"], "rtl")
+        self.assertEqual([round(panel["x"], 3) for panel in manga][:2], [0.525, 0.525], "a manga spread starts on the right page")
+        # A half nothing could read stands as its own quadrants beside the other.
+        one_sided = combine_halves([left, {"segmented": False, "source": "auto", "panels": []}], "ltr")
+        self.assertEqual(len(one_sided["panels"]), 7)
+        self.assertEqual(combine_halves([{"segmented": False, "source": "vlm", "panels": []}] * 2, "ltr"),
+                         {"segmented": False, "source": "vlm", "panels": []})
+
+    def test_a_panel_across_the_fold_is_one_panel_read_first(self):
+        # A wide panel across the top of both pages, and a panel under it on each.
+        left = {"segmented": True, "source": "auto", "panels": [
+            {"x": 0.05, "y": 0.05, "w": 0.95, "h": 0.4}, {"x": 0.05, "y": 0.55, "w": 0.9, "h": 0.4}]}
+        right = {"segmented": True, "source": "auto", "panels": [
+            {"x": 0.0, "y": 0.05, "w": 0.95, "h": 0.4}, {"x": 0.05, "y": 0.55, "w": 0.9, "h": 0.4}]}
+        ordered = order_panels(combine_halves([left, right], "ltr")["panels"], "ltr")
+        self.assertEqual(len(ordered), 3)
+        self.assertEqual((round(ordered[0]["x"], 3), round(ordered[0]["w"], 3)), (0.025, 0.95), "one panel, fold to fold")
+        self.assertLess(ordered[1]["x"], 0.5)
+        self.assertGreater(ordered[2]["x"], 0.5)
+        # Two facing panels each inside their page's margin are not joined.
+        apart = combine_halves([
+            {"segmented": True, "source": "auto", "panels": [{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.9}]},
+            {"segmented": True, "source": "auto", "panels": [{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.9}]}], "ltr")
+        self.assertEqual(len(apart["panels"]), 2)
 
     def test_a_blank_page_has_nothing(self):
         image, _ = _page()

@@ -9791,47 +9791,34 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     )
     if record is None or stale or upgrade:
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
-            if session is None and not vision:
+            spread = panel_finder.is_spread(*image.size)
+            if spread:
+                found = None
+            elif session is None and not vision:
                 found = panel_finder.detect_panels(image)
-                detail_bytes = None
             else:
                 # The detector reads the 1200px render: it was exported at
                 # 1024px so thin panels survive, and the cut's 600px would
                 # throw that away. Rendered once and cached like any page.
                 detail_bytes = render_file_page(file_id, index, "backdrop")
                 with Image.open(io.BytesIO(detail_bytes)) as detail:
-                    found = panel_finder.detect_panels(image, session, detail)
-                    detail_size = detail.size
-                    # The mask a vision model's boxes are corrected against:
-                    # the 1200px render, where a two-pixel gutter is still
-                    # bare rather than the grey the 600px one blends it to.
-                    mask = panel_finder.page_mask(detail) if vision else None
-        # The vision model is asked last and least: about a page nothing
-        # could read, or the order of a layout row-major cannot settle. Its
-        # "vlm" source is stamped whenever it answered, usable or not, so a
-        # page is sent once, not every time it is opened. A page it reads as
-        # one image is kept as one panel, and shown whole. A connector that
-        # did not answer -- down, refused, out of credit -- stamps nothing:
-        # the lower tiers' reading is kept under their own name, which is
-        # what gets a page asked again once the connector is back.
-        if vision and detail_bytes is not None:
-            try:
-                if every or not found["segmented"]:
-                    # An answer the page could correct replaces the local
-                    # reading; a refused one leaves it standing, asked.
-                    boxes = vision_panels(detail_bytes, detail_size[0], detail_size[1], direction, mask)
-                    if boxes:
-                        found = {"segmented": True, "source": "vlm", "panels": boxes}
-                    else:
-                        found = {**found, "source": "vlm"}
-                if found["segmented"] and panel_finder.ambiguous_layout(found["panels"]):
-                    ordered = vision_order(detail_bytes, found["panels"], direction)
-                    panels = found["panels"]
-                    if ordered:
-                        panels = [{**panel, "order": ordered.index(position + 1)} for position, panel in enumerate(panels)]
-                    found = {**found, "source": "vlm", "panels": panels}
-            except VisionUnavailable:
-                pass
+                    found = _read_page_panels(image, session, vision, every, direction, detail, detail_bytes)
+        if spread:
+            # A spread is two pages, and is read as two: each half through
+            # the same tiers, from the renders a size up so that a half is
+            # a page's size, then joined across the fold and ordered a
+            # page at a time.
+            with Image.open(io.BytesIO(render_file_page(file_id, index, "backdrop"))) as cut_image:
+                halves = panel_finder.spread_halves(cut_image)
+            details: list[Any] = [None, None]
+            if session is not None or vision:
+                with Image.open(io.BytesIO(render_file_page(file_id, index, "read"))) as read_image:
+                    details = panel_finder.spread_halves(read_image)
+            readings = [
+                _read_page_panels(half, session, vision, every, direction, detail)
+                for half, detail in zip(halves, details)
+            ]
+            found = panel_finder.combine_halves(readings, direction)
         store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"])
         record = {"source": found["source"], "segmented": found["segmented"], "panels": found["panels"]}
     ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []
@@ -9840,6 +9827,54 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
         "segmented": bool(record["segmented"]), "readingDirection": direction,
         "panels": [{"id": f"{index}-{position}", **panel} for position, panel in enumerate(ordered)],
     }
+
+
+def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direction: str,
+                      detail: Any = None, detail_bytes: bytes | None = None) -> dict[str, Any]:
+    """One page (or one half of a spread) through every tier there is.
+
+    `image` is what the cut reads; `detail` the same page a size up, for the
+    detector and the vision model, with its bytes when already encoded. The
+    vision model is asked last and least: about a page nothing could read,
+    or every page when so set, or the order of a layout row-major cannot
+    settle. Its "vlm" source is stamped whenever it answered, usable or not,
+    so a page is sent once, not every time it is opened. A page it reads as
+    one image is kept as one panel, and shown whole. A connector that did
+    not answer -- down, refused, out of credit -- stamps nothing: the lower
+    tiers' reading is kept under their own name, which is what gets a page
+    asked again once the connector is back.
+    """
+    if detail is None:
+        return panel_finder.detect_panels(image)
+    found = panel_finder.detect_panels(image, session, detail)
+    if not vision:
+        return found
+    if detail_bytes is None:
+        buffer = io.BytesIO()
+        detail.convert("RGB").save(buffer, format="JPEG", quality=88)
+        detail_bytes = buffer.getvalue()
+    # The mask a vision model's boxes are corrected against: the larger
+    # render, where a two-pixel gutter is still bare rather than the grey
+    # the smaller one blends it to.
+    mask = panel_finder.page_mask(detail)
+    try:
+        if every or not found["segmented"]:
+            # An answer the page could correct replaces the local reading;
+            # a refused one leaves it standing, asked.
+            boxes = vision_panels(detail_bytes, detail.size[0], detail.size[1], direction, mask)
+            if boxes:
+                found = {"segmented": True, "source": "vlm", "panels": boxes}
+            else:
+                found = {**found, "source": "vlm"}
+        if found["segmented"] and panel_finder.ambiguous_layout(found["panels"]):
+            ordered = vision_order(detail_bytes, found["panels"], direction)
+            panels = found["panels"]
+            if ordered:
+                panels = [{**panel, "order": ordered.index(position + 1)} for position, panel in enumerate(panels)]
+            found = {**found, "source": "vlm", "panels": panels}
+    except VisionUnavailable:
+        pass
+    return found
 
 
 PANEL_MIN_SIDE = 0.02

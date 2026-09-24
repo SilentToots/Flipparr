@@ -769,3 +769,100 @@ def _norm_overlap(a: dict[str, Any], b: dict[str, Any]) -> float:
     inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
     union = a["w"] * a["h"] + b["w"] * b["h"] - inter
     return inter / union if union else 0.0
+
+
+# ---- Spreads: two pages, read as two -----------------------------------------
+#
+# A double-page spread is two pages side by side, and every tier reads it
+# badly as one: the cut refuses it outright, a detector trained on pages
+# halves its resolution, and a vision model asked about the whole gets the
+# structure and loses a third of the panels (Sonnet 5, 2026-09-22: six exact,
+# three missed). So a spread is read as its two halves, each through the
+# same tiers as a page, and the halves put back together: a panel that
+# meets the fold from both sides with the same top and bottom is one panel
+# across it, and the order is the first-read page whole, then the other.
+
+# How far from the fold a panel's edge may sit and still meet it, as a
+# share of the spread's width: a page's inner margin is wider than this,
+# so two facing panels each inside their own margin are not joined.
+FOLD_REACH = 0.015
+# How much of the taller of two panels meeting at the fold the shorter one
+# has to span for them to be one panel: the same top and bottom, near enough.
+FOLD_MATCH = 0.9
+
+
+def is_spread(width: int, height: int) -> bool:
+    return width > height * SPREAD_RATIO
+
+
+def spread_halves(image: Image.Image) -> list[Image.Image]:
+    """The left and right pages of a spread, as two images."""
+    width, height = image.size
+    middle = width // 2
+    return [image.crop((0, 0, middle, height)), image.crop((middle, 0, width, height))]
+
+
+def place_half(panels: list[dict[str, Any]], side: int) -> list[dict[str, Any]]:
+    """Panels read in one half's own space, placed on the spread (side 0 left, 1 right)."""
+    return [
+        {**panel, "x": panel["x"] * 0.5 + side * 0.5, "w": panel["w"] * 0.5}
+        for panel in panels
+    ]
+
+
+def join_across_fold(panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Two panels that meet at the fold with the same top and bottom, made one."""
+    joined: list[dict[str, Any]] = []
+    used: set[int] = set()
+    for index, left in enumerate(panels):
+        if abs(left["x"] + left["w"] - 0.5) > FOLD_REACH:
+            continue
+        for other, right in enumerate(panels):
+            if other in used or other == index or abs(right["x"] - 0.5) > FOLD_REACH:
+                continue
+            overlap = min(left["y"] + left["h"], right["y"] + right["h"]) - max(left["y"], right["y"])
+            if overlap >= FOLD_MATCH * max(left["h"], right["h"]):
+                top = min(left["y"], right["y"])
+                bottom = max(left["y"] + left["h"], right["y"] + right["h"])
+                joined.append({"x": left["x"], "y": top, "w": right["x"] + right["w"] - left["x"], "h": bottom - top})
+                used.update((index, other))
+                break
+    return [panel for index, panel in enumerate(panels) if index not in used] + joined
+
+
+def order_spread(panels: list[dict[str, Any]], direction: str = READING_LTR) -> list[dict[str, Any]]:
+    """Reading order across a spread, stamped as `order`.
+
+    The page read first is read whole, then the other -- row-major across
+    the whole spread would weave the two pages' rows together. A panel
+    across the fold belongs to the page read first, at its row there.
+    """
+    first = 1 if direction == READING_RTL else 0
+    groups: dict[int, list[dict[str, Any]]] = {0: [], 1: []}
+    for panel in panels:
+        crosses = panel["x"] < 0.5 - FOLD_REACH and panel["x"] + panel["w"] > 0.5 + FOLD_REACH
+        side = first if crosses else (0 if panel["x"] + panel["w"] / 2 < 0.5 else 1)
+        groups[side].append({key: value for key, value in panel.items() if key != "order"})
+    ordered: list[dict[str, Any]] = []
+    for side in ((1, 0) if first else (0, 1)):
+        ordered.extend(order_panels(groups[side], direction))
+    return [{**panel, "order": position} for position, panel in enumerate(ordered)]
+
+
+def combine_halves(readings: list[dict[str, Any]], direction: str = READING_LTR) -> dict[str, Any]:
+    """The two halves' readings as one spread's.
+
+    A half nothing could read stands as its own quadrants beside a half that
+    was read; two unread halves are an unread spread, and the reader shows
+    its quadrants. The source is the highest tier that answered on either
+    half, so the spread is redone on the same terms as a page.
+    """
+    tiers = ("auto", "model", "vlm")
+    source = max((reading["source"] for reading in readings), key=tiers.index)
+    if not any(reading["segmented"] for reading in readings):
+        return {"segmented": False, "source": source, "panels": []}
+    panels: list[dict[str, Any]] = []
+    for side, reading in enumerate(readings):
+        half = reading["panels"] if reading["segmented"] else quadrant_panels(direction)
+        panels.extend(place_half(half, side))
+    return {"segmented": True, "source": source, "panels": order_spread(join_across_fold(panels), direction)}
