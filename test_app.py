@@ -6355,6 +6355,7 @@ class PagePanelTests(unittest.TestCase):
              patch("app._file_signature", return_value="sig"), \
              patch.object(Path, "is_file", return_value=True), \
              patch("app.render_file_page", return_value=png or self._page_png()) as render:
+            store.manual_page_panels_near.return_value = []
             return app.file_page_panels(7, index), store, render
 
     def test_the_first_look_reads_the_render_and_keeps_what_it_found(self):
@@ -6577,6 +6578,14 @@ class VisionConnectorTests(unittest.TestCase):
         with patch("app.ask_vision_model", return_value="[]"):
             self.assertEqual(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}],
                              "no panels is an answer: the page is one panel, shown whole")
+        # The gridded page: two panels above one wide. The model lists the two
+        # and forgets the wide one; the ink it left gives the panel back.
+        grid = self._mask()
+        short = '[{"x1": 22, "y1": 22, "x2": 138, "y2": 208}, {"x1": 162, "y1": 22, "x2": 278, "y2": 208}]'
+        with patch("app.ask_vision_model", return_value=short):
+            boxes = app.vision_panels(b"jpeg", 300, 450, "ltr", grid)
+        self.assertEqual(len(boxes), 3, "the panel the model left out is read from the ink it left")
+        self.assertGreater(boxes[2]["y"], 0.5)
         with patch("app.ask_vision_model", return_value="I cannot make out this page."):
             self.assertIsNone(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), "no list is no answer")
         with patch("app.ask_vision_model", side_effect=app.VisionUnavailable("down")):
@@ -6636,12 +6645,13 @@ class VisionConnectorTests(unittest.TestCase):
 class VisionInPanelPipelineTests(PagePanelTests):
     """Where the vision model sits in the pipeline: last, and only for the hard pages."""
 
-    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True, every=False):
+    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True, every=False, fixed=()):
         from pathlib import Path
         store = Mock()
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
         store.file_reading_direction.return_value = "ltr"
+        store.manual_page_panels_near.return_value = list(fixed)
         with patch("app.catalog_store", return_value=store), \
              patch("app.archive_kind", return_value="zip"), \
              patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
@@ -6665,6 +6675,36 @@ class VisionInPanelPipelineTests(PagePanelTests):
             self.assertIn("300 pixels wide and 450 pixels tall", call.args[1], "each half at its own size")
         self.assertEqual((result["source"], result["segmented"], len(result["panels"])), ("vlm", True, 1))
         self.assertEqual((result["panels"][0]["x"], result["panels"][0]["w"]), (0.0, 1.0))
+
+    def test_a_readers_own_fixes_go_with_the_question(self):
+        # A page of this comic a reader fixed by hand: it goes first, drawn
+        # and described, and the question says to cut the page its way.
+        fixed = [{"fileId": 7, "member": "a.jpg", "panels": [
+            {"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5, "order": 1}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5, "order": 0}]}]
+        _, _, ask = self._ask_with_vision(every=True, fixed=fixed)
+        ask.assert_called_once()
+        image, prompt, examples = ask.call_args.args
+        self.assertIn("1 example page from the same comic", prompt)
+        self.assertEqual(len(examples), 1)
+        picture, text = examples[0]
+        self.assertEqual(picture[:2], b"\xff\xd8", "a JPEG of the page")
+        self.assertIn("Example 1", text)
+        self.assertIn('[{"x1": 0, "y1": 225, "x2": 300, "y2": 450}, {"x1": 0, "y1": 0, "x2": 300, "y2": 225}]', text,
+                      "the person's order, in the answer's own form")
+        # Without any, the question stands alone, as before.
+        _, _, alone = self._ask_with_vision(every=True)
+        self.assertEqual(alone.call_args.args[2], [])
+        self.assertNotIn("example", alone.call_args.args[1])
+
+    def test_examples_come_first_in_either_providers_request(self):
+        examples = [(b"\xff\xd8one", "Example 1")]
+        _, a_body = app._vision_request("anthropic", "k", b"\xff\xd8page", "read it", examples)
+        _, o_body = app._vision_request("openai", "k", b"\xff\xd8page", "read it", examples)
+        a_content = json.loads(a_body)["messages"][0]["content"]
+        o_content = json.loads(o_body)["messages"][0]["content"]
+        self.assertEqual([block["type"] for block in a_content], ["image", "text", "image", "text"])
+        self.assertEqual([block.get("text") for block in a_content if block["type"] == "text"], ["Example 1", "read it"])
+        self.assertEqual([block["type"] for block in o_content], ["image_url", "text", "image_url", "text"])
 
     def test_reading_every_page_is_the_default_with_a_connector_on(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
@@ -6726,6 +6766,7 @@ class VisionInPanelPipelineTests(PagePanelTests):
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
         store.file_reading_direction.return_value = "ltr"
+        store.manual_page_panels_near.return_value = []
         with patch("app.catalog_store", return_value=store), \
              patch("app.archive_kind", return_value="zip"), \
              patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \

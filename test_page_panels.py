@@ -5,7 +5,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 from page_panels import (
-    combine_halves,
+    INK_UNCOVERED_MAX, add_leftover_panels, combine_halves, ink_outside,
     READING_LTR, READING_RTL, accept_vision_boxes, ambiguous_layout, detect_panels, ink_mask,
     load_model_session, order_panels, page_mask, parse_vision_boxes, parse_vision_order, quadrant_panels,
     refine, refine_vision_boxes, suppress, vision_boxes_prompt, vision_order_prompt,
@@ -140,6 +140,29 @@ class DetectionTests(unittest.TestCase):
             {"segmented": True, "source": "auto", "panels": [{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.9}]},
             {"segmented": True, "source": "auto", "panels": [{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.9}]}], "ltr")
         self.assertEqual(len(apart["panels"]), 2)
+
+    def test_what_no_panel_covers_comes_back_as_panels(self):
+        # A page of two rows: one wide panel above a row of three. A reading
+        # that has only the top panel gets the row back, cut into its three.
+        image, draw = _page()
+        _frame(draw, (30, 30, 570, 420))
+        for box in _grid(draw, 3, 1, height=900, margin=30, gutter=20):
+            _frame(draw, (box[0], 450, box[2], 870))
+        mask = page_mask(image)
+        top_only = [{"x": 0.05, "y": 30 / 900, "w": 0.9, "h": 390 / 900}]
+        self.assertGreater(ink_outside(mask, top_only), 0.4)
+        whole = add_leftover_panels(mask, top_only)
+        self.assertEqual(len(whole), 4)
+        self.assertEqual([round(panel["x"], 2) for panel in whole[1:]], [0.05, 0.36, 0.67])
+        self.assertLess(ink_outside(mask, whole), 0.02)
+        self.assertEqual(add_leftover_panels(mask, whole), whole, "nothing left, nothing added")
+        # A caption's worth of ink outside the panels is not a panel.
+        image, draw = _page()
+        _frame(draw, (30, 30, 570, 420))
+        _frame(draw, (30, 450, 570, 840))
+        draw.rectangle((200, 860, 400, 880), fill="black")
+        both = [{"x": 0.05, "y": 30 / 900, "w": 0.9, "h": 390 / 900}, {"x": 0.05, "y": 0.5, "w": 0.9, "h": 390 / 900}]
+        self.assertEqual(len(add_leftover_panels(page_mask(image), both)), 2)
 
     def test_a_blank_page_has_nothing(self):
         image, _ = _page()
@@ -277,8 +300,6 @@ class VisionTierTests(unittest.TestCase):
         two = [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
         self.assertTrue(accept_vision_boxes(two))
         self.assertFalse(accept_vision_boxes(two[:1]), "one box is a page, not a layout")
-        self.assertFalse(accept_vision_boxes([{"x": 0, "y": 0, "w": 0.3, "h": 0.3}, {"x": 0.5, "y": 0.5, "w": 0.3, "h": 0.3}]),
-                         "two small boxes leave most of the page unread")
         self.assertFalse(accept_vision_boxes([{"x": 0, "y": 0, "w": 1, "h": 0.6}, {"x": 0, "y": 0.3, "w": 1, "h": 0.7}]),
                          "boxes on top of each other are one panel seen twice")
 
@@ -341,16 +362,23 @@ class VisionTierTests(unittest.TestCase):
             for a, b in zip(panel, want):
                 self.assertLessEqual(abs(a - b), 3, f"{got} should sit on the frames")
 
-    def test_an_answer_that_leaves_a_quarter_of_the_page_unread_is_refused(self):
+    def test_the_panels_an_answer_left_out_are_read_from_the_ink_it_left(self):
         # A spread, 2026-09-22: six panels exact to their frames and three
-        # missed, the central figure among them. Stepping past them is worse
-        # than the quadrants.
+        # missed, the central figure among them. Refusing the answer whole
+        # threw the six away; the page gives the missing row back instead,
+        # and only what is still uncovered after that counts against it.
         image, draw = _page()
         cells = _grid(draw, 2, 3)
         mask = page_mask(image)
-        four = [self._nudged(box, 0, 0) for box in cells[:4]]
-        self.assertIsNone(refine_vision_boxes(mask, four))
-        self.assertEqual(len(refine_vision_boxes(mask, four + [self._nudged(box, 0, 0) for box in cells[4:]])), 6)
+        four = refine_vision_boxes(mask, [self._nudged(box, 0, 0) for box in cells[:4]])
+        self.assertEqual(len(four), 4)
+        self.assertGreater(ink_outside(mask, four), INK_UNCOVERED_MAX)
+        whole = add_leftover_panels(mask, four)
+        self.assertEqual(len(whole), 6)
+        self.assertLess(ink_outside(mask, whole), INK_UNCOVERED_MAX)
+        for panel, cell in zip(sorted(whole[4:], key=lambda p: p["x"]), cells[4:]):
+            for got, want in zip(self._pixels(panel), cell):
+                self.assertLessEqual(abs(got - want), 3, f"{self._pixels(panel)} should sit on {cell}")
 
     def test_a_grid_guessed_through_the_art_is_refused(self):
         # gpt-4o-mini on the eight-panel page: a uniform 2x3 grid whose lines

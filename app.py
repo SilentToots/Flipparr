@@ -9584,23 +9584,29 @@ def vision_model_ready() -> bool:
     return provider is not None and not _provider_cooling_down(provider)
 
 
-def _vision_request(provider: str, credential: str, image: bytes, prompt: str) -> tuple[str, bytes]:
-    """The endpoint and body for one page and one question, in the provider's own shape."""
-    encoded = base64.b64encode(image).decode("ascii")
+def _vision_request(provider: str, credential: str, image: bytes, prompt: str,
+                    examples: list[tuple[bytes, str]] | None = None) -> tuple[str, bytes]:
+    """The endpoint and body for one page and one question, in the provider's own shape.
+
+    Examples, when there are any, come first: each an image and the text
+    that describes it, then the page and the question.
+    """
+    pairs = [*(examples or []), (image, prompt)]
     if provider == "anthropic":
+        content: list[dict[str, Any]] = []
+        for picture, text in pairs:
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                         "data": base64.b64encode(picture).decode("ascii")}})
+            content.append({"type": "text", "text": text})
         return f"{ANTHROPIC_API_BASE}/messages", json.dumps({
-            "model": VISION_MODEL, "max_tokens": 1024,
-            "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded}},
-                {"type": "text", "text": prompt},
-            ]}],
+            "model": VISION_MODEL, "max_tokens": 1024, "messages": [{"role": "user", "content": content}],
         }).encode()
+    content = []
+    for picture, text in pairs:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(picture).decode('ascii')}"}})
+        content.append({"type": "text", "text": text})
     return f"{OPENAI_API_BASE}/chat/completions", json.dumps({
-        "model": VISION_MODEL_OPENAI, "max_tokens": 1024,
-        "messages": [{"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
-            {"type": "text", "text": prompt},
-        ]}],
+        "model": VISION_MODEL_OPENAI, "max_tokens": 1024, "messages": [{"role": "user", "content": content}],
     }).encode()
 
 
@@ -9618,7 +9624,7 @@ def _vision_answer(provider: str, payload: dict[str, Any]) -> str:
     return str(content or "")
 
 
-def ask_vision_model(image: bytes, prompt: str) -> str:
+def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]] | None = None) -> str:
     """One question about one page image, answered as text, by whichever connector is on.
 
     A POST with the page as a base64 JPEG -- Anthropic's Messages API or
@@ -9631,7 +9637,7 @@ def ask_vision_model(image: bytes, prompt: str) -> str:
     if provider is None:
         raise VisionUnavailable("No vision model is configured")
     credential = _provider_credential(provider)
-    url, body = _vision_request(provider, credential, image, prompt)
+    url, body = _vision_request(provider, credential, image, prompt, examples)
     headers = {**_provider_headers(provider, credential), "Content-Type": "application/json"}
     _wait_for_provider_slot(provider)
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -9704,7 +9710,8 @@ def _vision_error_code(exc: urllib.error.HTTPError) -> str:
     return str(error.get("code") or error.get("type") or "")
 
 
-def vision_panels(image: bytes, width: int, height: int, direction: str, mask: Any) -> list[dict[str, Any]] | None:
+def vision_panels(image: bytes, width: int, height: int, direction: str, mask: Any,
+                  examples: list[tuple[bytes, str]] | None = None) -> list[dict[str, Any]] | None:
     """The panels a vision model sees on a page, or None.
 
     "No panels" is an answer: a splash, a cover, a pin-up is one panel the
@@ -9716,7 +9723,8 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     then the quadrants stand. A connector that did not answer at all raises
     VisionUnavailable, and the page is not counted as asked.
     """
-    text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction))
+    examples = list(examples or [])
+    text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction, len(examples)), examples)
     boxes = panel_finder.parse_vision_boxes(text, width, height)
     if boxes is None:
         return None
@@ -9724,7 +9732,62 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
         return [dict(panel_finder.WHOLE_PAGE)]
     if not panel_finder.accept_vision_boxes(boxes):
         return None
-    return panel_finder.refine_vision_boxes(mask, boxes)
+    refined = panel_finder.refine_vision_boxes(mask, boxes)
+    if refined is None:
+        return None
+    # A panel the model left out comes back from the ink no box covers; a
+    # reading that still leaves a tenth of the ink uncovered is a guess.
+    refined = panel_finder.add_leftover_panels(mask, refined)
+    if panel_finder.ink_outside(mask, refined) > panel_finder.INK_UNCOVERED_MAX:
+        return None
+    return refined
+
+
+VISION_EXAMPLES_MAX = 2
+
+
+def vision_examples(file_id: int, store: Any) -> list[tuple[bytes, str]]:
+    """A reader's own hand-fixed pages from the same comic, as examples for the model.
+
+    The one thing the model can learn from a person's fixes without being
+    trained: how this artist cuts a page. Each example is the page with its
+    panels outlined and numbered in reading order, with the answer in the
+    form the model is asked for. Two at most, the nearest first; a spread
+    is not an example of a page. Anything that cannot be rendered is left
+    out rather than failing the page being read.
+    """
+    from PIL import Image, ImageDraw
+
+    examples: list[tuple[bytes, str]] = []
+    for row in store.manual_page_panels_near(file_id, VISION_EXAMPLES_MAX):
+        try:
+            path = store.library_file_path(row["fileId"])
+            members = cached_page_members(path)
+            index = members.index(row["member"])
+            with Image.open(io.BytesIO(render_file_page(int(row["fileId"]), index, "backdrop"))) as image:
+                if panel_finder.is_spread(*image.size):
+                    continue
+                page = image.convert("RGB")
+        except (ValueError, LookupError, OSError, KeyError, zipfile.BadZipFile):
+            continue
+        width, height = page.size
+        draw = ImageDraw.Draw(page)
+        stroke = max(3, width // 200)
+        answer = []
+        for number, panel in enumerate(panel_finder.order_panels(row["panels"]), start=1):
+            box = (int(panel["x"] * width), int(panel["y"] * height),
+                   int(round((panel["x"] + panel["w"]) * width)), int(round((panel["y"] + panel["h"]) * height)))
+            draw.rectangle(box, outline=(0, 220, 0), width=stroke)
+            draw.rectangle((box[0], box[1], box[0] + 12 * stroke, box[1] + 8 * stroke), fill=(0, 220, 0))
+            draw.text((box[0] + 2 * stroke, box[1] + stroke), str(number), fill="black")
+            answer.append({"x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3]})
+        buffer = io.BytesIO()
+        page.save(buffer, format="JPEG", quality=85)
+        examples.append((buffer.getvalue(), (
+            f"Example {len(examples) + 1}: a page from the same comic, {width} pixels wide and {height} pixels tall, "
+            f"its panels marked by a reader. Its answer is {json.dumps(answer)}"
+        )))
+    return examples
 
 
 def vision_order(image: bytes, panels: list[dict[str, Any]], direction: str) -> list[int] | None:
@@ -9790,6 +9853,9 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
             and (every or not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
     )
     if record is None or stale or upgrade:
+        # A reader's own fixes to this comic go with the question, when a
+        # model is asked: the way this artist cuts a page, shown not told.
+        examples = vision_examples(file_id, store) if vision else []
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
             spread = panel_finder.is_spread(*image.size)
             if spread:
@@ -9802,7 +9868,7 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
                 # throw that away. Rendered once and cached like any page.
                 detail_bytes = render_file_page(file_id, index, "backdrop")
                 with Image.open(io.BytesIO(detail_bytes)) as detail:
-                    found = _read_page_panels(image, session, vision, every, direction, detail, detail_bytes)
+                    found = _read_page_panels(image, session, vision, every, direction, detail, detail_bytes, examples)
         if spread:
             # A spread is two pages, and is read as two: each half through
             # the same tiers, from the renders a size up so that a half is
@@ -9815,7 +9881,7 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
                 with Image.open(io.BytesIO(render_file_page(file_id, index, "read"))) as read_image:
                     details = panel_finder.spread_halves(read_image)
             readings = [
-                _read_page_panels(half, session, vision, every, direction, detail)
+                _read_page_panels(half, session, vision, every, direction, detail, None, examples)
                 for half, detail in zip(halves, details)
             ]
             found = panel_finder.combine_halves(readings, direction)
@@ -9830,7 +9896,8 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
 
 
 def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direction: str,
-                      detail: Any = None, detail_bytes: bytes | None = None) -> dict[str, Any]:
+                      detail: Any = None, detail_bytes: bytes | None = None,
+                      examples: list[tuple[bytes, str]] | None = None) -> dict[str, Any]:
     """One page (or one half of a spread) through every tier there is.
 
     `image` is what the cut reads; `detail` the same page a size up, for the
@@ -9844,10 +9911,11 @@ def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direc
     tiers' reading is kept under their own name, which is what gets a page
     asked again once the connector is back.
     """
-    if detail is None:
-        return panel_finder.detect_panels(image)
-    found = panel_finder.detect_panels(image, session, detail)
-    if not vision:
+    found = panel_finder.detect_panels(image) if detail is None else panel_finder.detect_panels(image, session, detail)
+    if found["segmented"]:
+        # Whatever the local tiers left out, read from the ink they left.
+        found = {**found, "panels": panel_finder.add_leftover_panels(panel_finder.page_mask(image), found["panels"])}
+    if detail is None or not vision:
         return found
     if detail_bytes is None:
         buffer = io.BytesIO()
@@ -9861,7 +9929,7 @@ def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direc
         if every or not found["segmented"]:
             # An answer the page could correct replaces the local reading;
             # a refused one leaves it standing, asked.
-            boxes = vision_panels(detail_bytes, detail.size[0], detail.size[1], direction, mask)
+            boxes = vision_panels(detail_bytes, detail.size[0], detail.size[1], direction, mask, examples)
             if boxes:
                 found = {"segmented": True, "source": "vlm", "panels": boxes}
             else:

@@ -4207,6 +4207,23 @@ class PagePanelTests(LibraryFixture):
             self.assertIsNotNone(store.page_panels(other, "p1.jpg"), "another comic's readings are its own")
             self.assertEqual(store.forget_automatic_page_panels(file_id), {"forgotten": 0, "kept": 1})
 
+    def test_a_persons_fixes_nearest_a_comic_are_its_own_then_its_runs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            one = self._file_id(store, "Example 001.cbz")
+            two = self._file_id(store, "Example 002.cbz")
+            panel = [{"x": 0, "y": 0, "w": 1, "h": 1, "order": 0}]
+            store.set_page_panels(two, "p1.jpg", "sig", "manual", panel, True)
+            store.set_page_panels(one, "p1.jpg", "sig", "auto", panel, True)
+            store.set_page_panels(one, "p2.jpg", "sig", "manual", panel, True)
+            store.set_page_panels(one, "p3.jpg", "sig", "manual", panel, True)
+            near = store.manual_page_panels_near(one, 2)
+            self.assertEqual([(row["fileId"], row["member"]) for row in near], [(one, "p3.jpg"), (one, "p2.jpg")],
+                             "its own pages first, newest first, and only a person's")
+            self.assertEqual([row["fileId"] for row in store.manual_page_panels_near(one, 5)], [one, one, two],
+                             "then the run's other issues")
+            self.assertEqual(near[0]["panels"], panel)
+
     def test_only_a_known_source_for_a_known_file(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

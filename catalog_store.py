@@ -3428,6 +3428,25 @@ class CatalogStore:
             )
             return {"forgotten": cursor.rowcount, "kept": int(kept)}
 
+    def manual_page_panels_near(self, file_id: int, limit: int = 2) -> list[dict[str, Any]]:
+        """A person's hand-fixed pages nearest this comic: its own first, then its run's, newest first."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.file_id, p.page_member, p.panels_json
+                   FROM page_panels p
+                   LEFT JOIN file_identities own ON own.file_id=?
+                   LEFT JOIN file_identities theirs ON theirs.file_id=p.file_id
+                   WHERE p.source='manual' AND p.segmented=1
+                     AND (p.file_id=? OR (own.series_run_id IS NOT NULL AND theirs.series_run_id=own.series_run_id))
+                   ORDER BY (p.file_id=?) DESC, p.updated_at DESC
+                   LIMIT ?""",
+                (int(file_id), int(file_id), int(file_id), int(limit)),
+            ).fetchall()
+        return [
+            {"fileId": int(row["file_id"]), "member": row["page_member"], "panels": _load_json(row["panels_json"], [])}
+            for row in rows
+        ]
+
     def page_panels(self, file_id: int, member: str) -> dict[str, Any] | None:
         """What was read off one page, or None when nobody has looked yet."""
         with self._connect() as connection:

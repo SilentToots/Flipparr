@@ -478,14 +478,12 @@ def _plausible(mask: Image.Image, boxes: list[tuple[int, int, int, int]]) -> boo
 # absolute pixels of the sent image, so that is how it is asked; the answer
 # is normalised here and accepted only if it looks like a layout.
 
-VISION_COVERAGE_MIN = 0.6
 VISION_OVERLAP_MAX = 0.2
-# What a corrected answer must account for of the page's ink, or it is not a
-# reading. Sonnet 5 on a spread: six panels exact to their frames, and three
-# missed -- the central figure among them -- at two thirds covered. A reader
-# stepping past a third of a page without knowing is worse off than with
-# the quadrants.
-VISION_READ_MIN = 0.75
+# What an answer leaves out is not the end of it: the ink no box covers is
+# read as panels of its own (add_leftover_panels), and only what is still
+# uncovered after that counts against the answer (INK_UNCOVERED_MAX). Sonnet
+# 5 on a spread once left three of nine panels out, the central figure among
+# them; refusing the whole answer for it threw away six exact panels.
 # How far a model's edge may sit from the gutter it meant, as a fraction of
 # the page's side. Measured 2026-09-22: Sonnet 5 within 2% on a clean page's
 # rows and 8.5% on its one thin column; gpt-5-mini 10-25% off on the same
@@ -511,10 +509,11 @@ VISION_GUTTER_INK = VISION_LINE_INK
 AMBIGUOUS_OVERLAP = (0.2, 0.8)
 
 
-def vision_boxes_prompt(width: int, height: int, direction: str = READING_LTR) -> str:
+def vision_boxes_prompt(width: int, height: int, direction: str = READING_LTR, examples: int = 0) -> str:
     reads = "right to left, like manga" if direction == READING_RTL else "left to right"
     return (
-        f"This is one page of a comic, {width} pixels wide and {height} pixels tall, read {reads}. "
+        f"{'The last image' if examples else 'This'} is one page of a comic, {width} pixels wide and {height} pixels tall, read {reads}. "
+        + vision_examples_note(examples) +
         "List every story panel on it, in reading order, as a JSON array and nothing else. "
         "Each item is an object with integer pixel coordinates in this image: "
         '{"x1": left, "y1": top, "x2": right, "y2": bottom}. '
@@ -562,10 +561,13 @@ def parse_vision_boxes(text: str, width: int, height: int) -> list[dict[str, Any
 
 
 def accept_vision_boxes(boxes: list[dict[str, Any]]) -> bool:
-    """Whether the model's boxes read as a layout: enough of the page, and not on top of each other."""
+    """Whether the model's boxes read as a layout: two or more, and not on top of each other.
+
+    How much of the page they leave out is not judged here: what they leave
+    is read from the ink afterwards (add_leftover_panels), and only what is
+    still uncovered then counts (INK_UNCOVERED_MAX).
+    """
     if len(boxes) < 2:
-        return False
-    if sum(box["w"] * box["h"] for box in boxes) < VISION_COVERAGE_MIN:
         return False
     for index, a in enumerate(boxes):
         for b in boxes[index + 1:]:
@@ -617,10 +619,6 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
     # One doubt is always allowed: a two-box answer whose shared edge a
     # caption runs across is not a guess.
     if not panels or unverified > max(1, VISION_UNVERIFIED_MAX * 4 * len(boxes)):
-        return None
-    page = mask.getbbox() or (0, 0, width, height)
-    page_area = (page[2] - page[0]) * (page[3] - page[1])
-    if page_area <= 0 or sum(_area(panel) for panel in panels) / page_area < VISION_READ_MIN:
         return None
     return [
         {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
@@ -866,3 +864,84 @@ def combine_halves(readings: list[dict[str, Any]], direction: str = READING_LTR)
         half = reading["panels"] if reading["segmented"] else quadrant_panels(direction)
         panels.extend(place_half(half, side))
     return {"segmented": True, "source": source, "panels": order_spread(join_across_fold(panels), direction)}
+
+
+# ---- What no panel covers ----------------------------------------------------
+#
+# Every tier can leave a panel out: the cut discards a row whose gutters the
+# art bleeds into, a detector skips one, a vision model lists five of six
+# (measured against a reader's hand fixes, 2026-09-24: seven of twenty-two
+# pages had 4-17% of their ink outside every panel, one a whole row of three).
+# So the last thing done to any reading is to ask what ink no panel covers,
+# and to read that as panels of its own -- and a reading that still leaves a
+# tenth of the page's ink uncovered is not a reading.
+
+# How far around a panel its slivers reach -- a border it was drawn inside
+# of, the wedge by a slanted gutter -- as a share of the page's shorter side.
+LEFTOVER_PAD = 0.02
+# The share of a page's ink a reading may leave outside every panel.
+INK_UNCOVERED_MAX = 0.1
+
+
+def _painted_out(mask: Image.Image, panels: list[dict[str, Any]], pad: int = 0) -> Image.Image:
+    """The mask with every panel (and a margin around it) blacked out."""
+    width, height = mask.size
+    remainder = mask.copy()
+    for panel in panels:
+        remainder.paste(0, (
+            int(panel["x"] * width) - pad, int(panel["y"] * height) - pad,
+            int(round((panel["x"] + panel["w"]) * width)) + pad, int(round((panel["y"] + panel["h"]) * height)) + pad,
+        ))
+    return remainder
+
+
+def ink_outside(mask: Image.Image, panels: list[dict[str, Any]]) -> float:
+    """The share of the page's ink that lies outside every panel."""
+    total = mask.histogram()[255]
+    if not total:
+        return 0.0
+    return _painted_out(mask, panels).histogram()[255] / total
+
+
+def add_leftover_panels(mask: Image.Image, panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The reading with the panels it left out, read from the ink no panel covers.
+
+    What is left once the panels are painted out is cut the way a page is,
+    the painted-out panels serving as its gutters -- a dropped row of three
+    comes back as three, a lone panel beside a column as one. Each has to
+    hold a panel's worth of ink, dense with it, so a caption, a page number
+    or a strip of bleed is not made a panel of.
+    """
+    if not panels:
+        return panels
+    width, height = mask.size
+    pad = max(2, int(min(width, height) * LEFTOVER_PAD))
+    remainder = _painted_out(mask, panels, pad)
+    min_area = width * height * PANEL_MIN_AREA
+    gutter = max(2, int(round(min(width, height) * GUTTER_MIN_FRACTION)))
+    # The painted-out panels are the gutters of what is left, so the cut
+    # finds each island of ink on its own -- a lone panel in a column as
+    # well as a dropped row. The panels left out are the small ones (a row
+    # of three across a page is 3% of it each), so the floor is a quarter of
+    # a cut leaf's, as for the detector's boxes, and an island has to be
+    # dense with ink to be one.
+    found = [
+        leaf for leaf in _cut(remainder, (0, 0, width, height), gutter, min_area / 4)
+        if remainder.crop(leaf).histogram()[255] >= REMAINDER_DENSITY * _area(leaf)
+    ]
+    return list(panels) + [
+        {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
+        for x0, y0, x1, y1 in found
+    ]
+
+
+def vision_examples_note(count: int) -> str:
+    """What the prompt says when a reader's own pages come first as examples."""
+    if count <= 0:
+        return ""
+    pages = "page" if count == 1 else "pages"
+    return (
+        f"Before it, {count} example {pages} from the same comic, whose panels a reader marked by hand: "
+        "each is outlined in green and numbered in reading order, with the answer that describes it. "
+        "Cut the page the way those are cut, in that artist's manner. "
+    )
