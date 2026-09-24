@@ -2183,6 +2183,40 @@ class FilenameParserTests(unittest.TestCase):
             7, "fulfilled", "Imported and verified as Saga (2012) #001 - Chapter One.cbz"
         )
 
+    def test_a_download_sabnzbd_paused_as_encrypted_is_refused_and_the_next_release_tried(self):
+        # In the queue, not the history, paused with a label: not "downloading".
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "paused-queue-id",
+            "release_title": "Absolute Batman 024 (2025) (digital-mobile)", "release_key": "junk-key",
+            "created_at": "2026-09-23T04:09:26+00:00",
+        }
+        store = Mock()
+        store.record_acquisition_release_failure.return_value = {"failureCount": 1}
+        fallback = {"id": "fallback-candidate", "title": "Absolute Batman 024 (2025) (Digital)"}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._sab_history_slot", return_value=None), \
+             patch("app._sab_queue_slot", return_value={"nzo_id": "paused-queue-id", "status": "Paused", "labels": ["ENCRYPTED"], "percentage": "39"}), \
+             patch("app._sab_forget_queued") as forget, \
+             patch("app.search_prowlarr_releases", return_value={"candidateCount": 1, "candidates": [fallback], "job": {}}), \
+             patch("app.send_release_to_sabnzbd", return_value={"status": "grabbed"}) as send:
+            result = reconcile_acquisition_download(download)
+        forget.assert_called_once_with(download)
+        store.update_acquisition_download.assert_any_call(31, "failed", error="SABnzbd paused it: the archive is password-protected", failure_stage="download")
+        self.assertEqual(store.record_acquisition_release_failure.call_args.args[:3], (7, "junk-key", "Absolute Batman 024 (2025) (digital-mobile)"))
+        send.assert_called_once_with(7, "fallback-candidate")
+        self.assertNotEqual(result.get("status"), "downloading")
+
+    def test_a_download_a_person_paused_is_still_downloading(self):
+        download = {"id": 31, "job_id": 7, "sab_nzo_id": "queue-id", "release_title": "x", "release_key": "k",
+                    "created_at": "2026-09-23T04:09:26+00:00"}
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._sab_history_slot", return_value=None), \
+             patch("app._sab_queue_slot", return_value={"nzo_id": "queue-id", "status": "Paused", "labels": []}):
+            result = reconcile_acquisition_download(download)
+        self.assertEqual(result["status"], "downloading")
+        store.record_acquisition_release_failure.assert_not_called()
+
     def test_failed_sab_download_automatically_uses_the_next_strong_release(self):
         download = {
             "id": 31, "job_id": 7, "sab_nzo_id": "failed-queue-id",
@@ -3352,6 +3386,17 @@ class PackEligibilityTests(unittest.TestCase):
     def order(self, candidates, *wanted):
         with patch("app.catalog_store", return_value=self._store(*wanted)):
             return app._automatic_grab_order(self.CONTEXT, candidates)
+
+    def test_a_single_release_too_large_for_one_issue_is_held_back(self):
+        # 5.2 GB for a digital issue: password-protected junk, as it turned out.
+        junk = {**self.single("Absolute Batman 024 (2025) (digital-mobile)"), "id": "junk", "sizeBytes": 5_200_000_000}
+        grabbable, note = self.order([junk, self.single()], 4)
+        self.assertEqual([item["id"] for item in grabbable], ["single-1"], "the plausible one is taken")
+        self.assertEqual(note, "")
+        grabbable, note = self.order([junk], 4)
+        self.assertEqual(grabbable, [])
+        self.assertIn("5.2 GB is too large for one issue", note)
+        self.assertIn("Find release lists it", note)
 
     def test_a_pack_is_taken_when_a_run_is_mostly_missing(self):
         grabbable, note = self.order([self.pack()], *range(1, 41))

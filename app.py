@@ -2023,6 +2023,12 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
 # risk of forty gigabytes for a single issue.
 PACK_MINIMUM_WANTED = 5
 PACK_BYTES_PER_COVERED_ISSUE = 1_500_000_000
+# A single issue has the same ceiling. The largest file in a 1,569-file library
+# is 239 MB (a manga volume; p99 213 MB), so a release six times that is not
+# an issue: the 5.2 GB "Absolute Batman 024 (digital-mobile)" SABnzbd paused
+# as password-protected was grabbed without a second thought and sat a day
+# at 39%. Held back rather than barred: a person may still choose it.
+SINGLE_RELEASE_MAX_BYTES = PACK_BYTES_PER_COVERED_ISSUE
 
 
 def _issue_number(value: Any) -> int | None:
@@ -4480,6 +4486,15 @@ def _automatic_grab_order(
     """
     singles = [item for item in candidates if not item.get("pack")]
     packs = [item for item in candidates if item.get("pack")]
+    oversized = [item for item in singles if int(item.get("sizeBytes") or 0) > SINGLE_RELEASE_MAX_BYTES]
+    singles = [item for item in singles if item not in oversized]
+    if oversized and not singles and not packs:
+        biggest = oversized[0]
+        return [], (
+            f"Found {biggest.get('title') or 'a release'} but did not take it automatically: "
+            f"{int(biggest.get('sizeBytes') or 0) / 1_000_000_000:.1f} GB is too large for one issue. "
+            "Find release lists it if you want it."
+        )
     if not packs:
         return singles, ""
     try:
@@ -4762,6 +4777,72 @@ def _sab_queue_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
+# What SABnzbd pauses a download for, by the label it puts on the slot, and
+# what that is in plain words. Each is proof the release is wrong, not the
+# connection: a password-protected archive, a duplicate, a job past the size
+# limit, a file type it refuses. A slot paused with no label is a person's
+# pause, and stands.
+SAB_REFUSAL_LABELS = {
+    "ENCRYPTED": "SABnzbd paused it: the archive is password-protected",
+    "TOO LARGE": "SABnzbd paused it as larger than its size limit",
+    "DUPLICATE": "SABnzbd paused it as a duplicate of a download it already has",
+    "UNWANTED_EXTENSION": "SABnzbd paused it as holding a file type it refuses",
+}
+
+
+def _sab_just_sent(download: dict[str, Any]) -> bool:
+    """Whether a download was sent so recently that SABnzbd's queue should be left alone."""
+    try:
+        sent = dt.datetime.fromisoformat(str(download.get("created_at") or ""))
+    except ValueError:
+        return True
+    if sent.tzinfo is None:
+        sent = sent.replace(tzinfo=dt.timezone.utc)
+    return (dt.datetime.now(dt.timezone.utc) - sent).total_seconds() < SAB_MISSING_GRACE_SECONDS
+
+
+def _sab_queue_refusal(download: dict[str, Any]) -> str | None:
+    """Why SABnzbd has paused a queued download, when the reason condemns the release.
+
+    A download in the queue and not in the history read as "downloading"
+    however long it sat there: Absolute Batman #24 sat a day at 39%,
+    paused with the label ENCRYPTED, and the Pull List said Downloading.
+    Asked after the same grace as a lost download: SABnzbd finds an
+    encrypted archive minutes in, and a just-sent job is left to settle.
+    """
+    if _sab_just_sent(download):
+        return None
+    try:
+        slot = _sab_queue_slot(download)
+    except Exception:  # noqa: BLE001 -- unreachable is not a refusal
+        return None
+    if not slot or str(slot.get("status") or "").casefold() != "paused":
+        return None
+    labels = {str(label).strip().upper() for label in (slot.get("labels") or []) if label}
+    for label, reason in SAB_REFUSAL_LABELS.items():
+        if label in labels:
+            return reason
+    return None
+
+
+def _sab_forget_queued(download: dict[str, Any]) -> None:
+    """Take a refused download out of SABnzbd's queue, files and all. A failure costs disk, not the outcome."""
+    nzo_id = str((download or {}).get("sab_nzo_id") or "").strip()
+    if not nzo_id:
+        return
+    try:
+        sab = _enabled_acquisition_service("sabnzbd")
+        endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
+            "mode": "queue", "name": "delete", "value": nzo_id, "del_files": 1,
+            "output": "json", "apikey": sab["apiKey"],
+        })
+        fetch_json_with_headers(
+            endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log_exception("sab_queue_delete_failed", exc, level="warning")
+
+
 def _sab_lost_download(download: dict[str, Any]) -> bool:
     """Whether SABnzbd has forgotten a download: in neither its queue nor its history.
 
@@ -4769,13 +4850,7 @@ def _sab_lost_download(download: dict[str, Any]) -> bool:
     its files were deleted as the wrong comic, "Retry import" put it back to
     waiting on SABnzbd, and the Pull List said Downloading from then on.
     """
-    try:
-        sent = dt.datetime.fromisoformat(str(download.get("created_at") or ""))
-    except ValueError:
-        return False
-    if sent.tzinfo is None:
-        sent = sent.replace(tzinfo=dt.timezone.utc)
-    if (dt.datetime.now(dt.timezone.utc) - sent).total_seconds() < SAB_MISSING_GRACE_SECONDS:
+    if _sab_just_sent(download):
         return False
     return _sab_queue_slot(download) is None
 
@@ -4808,6 +4883,13 @@ def _sab_download_storage(store: Any, download: dict[str, Any]) -> str | dict[st
     """
     slot = _sab_history_slot(download)
     if not slot:
+        refusal = _sab_queue_refusal(download)
+        if refusal:
+            _sab_forget_queued(download)
+            store.update_acquisition_download(
+                int(download["id"]), "failed", error=refusal, failure_stage="download",
+            )
+            return _fallback_after_sab_failure(store, download, refusal)
         if _sab_lost_download(download):
             message = "SABnzbd no longer has this download"
             store.update_acquisition_download(
