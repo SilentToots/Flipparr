@@ -5003,6 +5003,61 @@ function CoverWorkbench({ data, title, busy, error, onClose, onSelect, onUpload 
 // page you are dragging over so skimming back does not lose your place, a way
 // to type a page number, and a night setting that dims and warms the page
 // rather than sending you to Control Centre.
+// The reader's settings as a drawer, the same panel every other detail in
+// the app opens in: a page pushed over the reader on a phone, a side panel
+// above it elsewhere, Back and Escape closing it. It grew past a popover
+// once panel view had its own choices; grouped rows with a line each, as
+// Settings has them, carry the explanations a menu had no room for.
+function ReaderSettingsDrawer({
+  night, onNight, panelMode, onTogglePanelMode, panelScrim, onPanelScrim, panelStartWhole, onPanelStartWhole,
+  panelReveal, onPanelReveal, direction, count, rereading, onFixPanels, onReadAgain, onClose,
+}) {
+  const { closing, requestClose } = useDrawerExit(onClose);
+  const dialogRef = useDialog(requestClose);
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
+    <aside className={`series-drawer reader-settings-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true"
+      aria-labelledby="reader-settings-title" onMouseDown={(event) => event.stopPropagation()}>
+      <DialogCloseButton onClose={requestClose} label="Close reading settings" drawer />
+      <h2 id="reader-settings-title">Reading</h2>
+      <section className="reader-settings-group">
+        <h3>Screen</h3>
+        <label className="reader-settings-range"><span>Brightness</span>
+          <input type="range" min="0.35" max="1" step="0.05" value={night.dim}
+            onChange={(event) => onNight({ ...night, dim: Number(event.target.value) })} />
+        </label>
+        <label className="reader-settings-range"><span>Warmth</span>
+          <input type="range" min="0" max="1" step="0.1" value={night.warm}
+            onChange={(event) => onNight({ ...night, warm: Number(event.target.value) })} />
+        </label>
+      </section>
+      <section className="reader-settings-group">
+        <h3>Panel view</h3>
+        <Toggle checked={panelMode} onChange={() => onTogglePanelMode()} title="Panel view"
+          description="One panel at a time, in reading order. Double-tap for the whole page; P turns it off." />
+        {panelMode ? <>
+          <Toggle checked={panelScrim} onChange={(value) => onPanelScrim(value)} title="Dim around the panel"
+            description="The rest of the page fades, so the panel in view stands alone." />
+          <Toggle checked={panelStartWhole} onChange={(value) => onPanelStartWhole(value)} title="Start each page on the whole page"
+            description="The page first, for its layout, then its panels. On pages of three panels or more." />
+          <Toggle checked={panelReveal} onChange={(value) => onPanelReveal(value)} title="End each page on the whole page"
+            description="The page again after its last panel, for what they make together." />
+        </> : null}
+      </section>
+      {count ? <section className="reader-settings-group">
+        <h3>This issue</h3>
+        <p className="reader-settings-note">{direction === "rtl" ? "Reads right to left, like manga." : "Reads left to right."}</p>
+        <div className="reader-settings-actions">
+          <button type="button" className="secondary-button" onClick={onFixPanels}><PencilSimple size={16} /> Fix panels on this page</button>
+          <button type="button" className="secondary-button" onClick={onReadAgain} disabled={rereading === "asking"} aria-busy={rereading === "asking"}>
+            {rereading === "asking" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />}
+            {rereading === "done" ? "Pages will be read again as you reach them" : rereading === "failed" ? "The pages could not be forgotten" : "Read this issue's panels again"}
+          </button>
+        </div>
+      </section> : null}
+    </aside>
+  </div>;
+}
+
 // Correcting a page's panels by hand, over the page itself: the finder's
 // rectangles (or none, for a page it could not read), each numbered in reading
 // order; drag one to move it, its handles to resize, an empty stretch of page
@@ -5614,12 +5669,7 @@ function ReaderView({
    * a trackpad used to keep the bars awake for as long as you read, and
    * bringing them back on every page turn covers the page you just turned to.
    */
-  // Brightness and warmth belong to the chrome, so they leave with it. Left
-  // to itself the panel sat over the comic until the gear was pressed again.
-  const hideChrome = useCallback(() => {
-    setChrome(false);
-    setSettingsOpen(false);
-  }, []);
+  const hideChrome = useCallback(() => setChrome(false), []);
   const wakeChrome = useCallback(() => {
     setChrome(true);
     window.clearTimeout(chromeTimer.current);
@@ -6030,29 +6080,15 @@ function ReaderView({
         onClick={() => { setSettingsOpen((open) => !open); wakeChrome(); }}><Gear size={20} /></button>
     </header>
 
-    {settingsOpen ? <div className="reader-settings glass-menu" {...hold(held)}>
-      <label><span>Brightness</span>
-        <input type="range" min="0.35" max="1" step="0.05" value={night.dim}
-          onChange={(event) => setNight((current) => ({ ...current, dim: Number(event.target.value) }))} />
-      </label>
-      <label><span>Warmth</span>
-        <input type="range" min="0" max="1" step="0.1" value={night.warm}
-          onChange={(event) => setNight((current) => ({ ...current, warm: Number(event.target.value) }))} />
-      </label>
-      <FollowSwitch following={panelMode} label="Panel view" onChange={() => togglePanelMode()} />
-      {panelMode ? <FollowSwitch following={panelScrim} label="Dim around the panel" onChange={() => setPanelScrim((value) => !value)} /> : null}
-      {panelMode ? <FollowSwitch following={panelStartWhole} label="Start each page on the whole page" onChange={() => setPanelStartWhole((value) => !value)} /> : null}
-      {panelMode ? <FollowSwitch following={panelReveal} label="End each page on the whole page" onChange={() => setPanelReveal((value) => !value)} /> : null}
-      {count ? <button type="button" className="ghost-button reader-settings-action" onClick={() => { setSettingsOpen(false); setFixingPanels(true); }}>
-        <PencilSimple size={16} /> Fix panels on this page
-      </button> : null}
-      {count ? <button type="button" className="ghost-button reader-settings-action" onClick={readPanelsAgain} disabled={rereading === "asking"} aria-busy={rereading === "asking"}>
-        {rereading === "asking" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />} {rereading === "done" ? "Pages will be read again as you reach them" : rereading === "failed" ? "The pages could not be forgotten" : "Read this issue's panels again"}
-      </button> : null}
-      <p className="reader-settings-note">{panelMode
-        ? "One panel at a time. Double-tap for the whole page; P turns it off."
-        : direction === "rtl" ? "Reading right to left." : "Reading left to right."}</p>
-    </div> : null}
+    {settingsOpen ? <ReaderSettingsDrawer night={night} onNight={setNight}
+      panelMode={panelMode} onTogglePanelMode={togglePanelMode}
+      panelScrim={panelScrim} onPanelScrim={setPanelScrim}
+      panelStartWhole={panelStartWhole} onPanelStartWhole={setPanelStartWhole}
+      panelReveal={panelReveal} onPanelReveal={setPanelReveal}
+      direction={direction} count={count} rereading={rereading}
+      onFixPanels={() => { setSettingsOpen(false); setFixingPanels(true); }}
+      onReadAgain={readPanelsAgain}
+      onClose={() => setSettingsOpen(false)} /> : null}
 
     {fixingPanels && pages.list[index] ? <PanelEditor fileId={fileId} count={count} pages={pages.list} startPage={index} readings={panels} direction={direction}
       onSaved={(number, data) => setPanels((current) => ({ ...current, [number]: data }))}

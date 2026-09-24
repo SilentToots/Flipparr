@@ -3451,7 +3451,6 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   -webkit-mask-size: var(--hole-w) var(--hole-h), 100% 100%; mask-size: var(--hole-w) var(--hole-h), 100% 100%;
   -webkit-mask-position: var(--hole-x) var(--hole-y), 0 0; mask-position: var(--hole-x) var(--hole-y), 0 0;
 }
-.reader-settings .follow-switch { width: 100%; }
 .reader-surface.zoomed .reader-page.shown { will-change: translate; }
 /* The page being read; the neighbours stay mounted so a turn is instant. */
 .reader-page.shown { visibility: visible; }
@@ -3565,15 +3564,21 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 @media (prefers-reduced-motion: reduce) { .reader-contents-page img { transition: none; } }
 .reader-contents-page:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-6); }
 @media (hover: hover) { .reader-contents-page:hover img { border-color: var(--violet-border); opacity: 1; } }
-.reader-settings {
-  position: absolute; z-index: 3; top: calc(var(--space-48) + env(safe-area-inset-top)); right: var(--space-16);
-  width: min(280px, calc(100vw - var(--space-32))); display: grid; gap: var(--space-12);
-  padding: var(--space-16); border-radius: var(--radius-16); background: var(--glass-menu-bg); box-shadow: var(--glass-rim), var(--glass-shadow);
-}
-.reader-settings label { display: grid; gap: var(--space-6); color: var(--text); font-size: var(--text-sm); }
-.reader-settings input[type="range"] { width: 100%; accent-color: var(--violet); }
-.reader-settings-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
-.reader-settings-action { justify-content: flex-start; width: 100%; }
+/* The reader's settings drawer: the app's drawer, narrower, with Settings'
+   grouped rows. Inside the reader (a stacking context of its own) the
+   drawer's layer sits over the page and its bars. */
+.reader-settings-drawer { width: min(420px, 100%); display: grid; align-content: start; gap: var(--space-24); }
+.reader-settings-drawer h2 { margin: 0 var(--space-48) 0 0; min-height: var(--control-height-md); display: flex; align-items: center; }
+/* On a phone the drawer's control is the back arrow at the top left, so the
+   title moves over for it instead of the X's room on the right. */
+@media (max-width: 640px) { .reader-settings-drawer h2 { margin: 0 0 0 calc(var(--space-48) + var(--space-8)); } }
+.reader-settings-drawer h3 { margin: 0 0 var(--space-8); }
+.reader-settings-drawer .toggle-row small { max-width: none; }
+.reader-settings-range { display: grid; gap: var(--space-8); padding: var(--space-12) 0; border-top: 1px solid var(--line); color: var(--text); font-size: var(--text-sm); }
+.reader-settings-drawer input[type="range"] { width: 100%; accent-color: var(--violet); }
+.reader-settings-note { margin: 0 0 var(--space-12); color: var(--muted); font-size: var(--text-sm); }
+.reader-settings-actions { display: grid; gap: var(--space-8); }
+.reader-settings-actions button { justify-content: flex-start; }
 
 /* The panel editor: the page at fit size with the panels drawn over it, in
    the reader's own chrome. The layer of rectangles lies exactly over the

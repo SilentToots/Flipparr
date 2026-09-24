@@ -261,6 +261,12 @@ Motion tokens:
 - **The toast** is a glass capsule centred at the foot of the page (over the
   content area above 640px, above the tab bar on a phone). It springs up,
   sinks away after about three seconds, and a new one replaces it.
+- **The reader's settings** (`.reader-settings-drawer`, since 2026-09-24) open
+  in the app's drawer, not a popover: a page pushed over the reader on a
+  phone with the back arrow, a 420px side panel above it elsewhere, Back and
+  Escape closing it. Inside, Settings' grouped rows (`.toggle-row`, a line
+  each, a title and an explanation) under Screen, Panel view and This issue,
+  with the two range sliders in the same rows.
 - **The panel editor** (`.panel-editor`, since 2026-09-24) is the reader's
   chrome over the page at fit size: a top bar with Done, the page number with
   its save status under it (Saving… / Saved / Unsaved changes) and a ‹ ›
