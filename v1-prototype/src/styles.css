@@ -3589,6 +3589,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-settings-tools { margin-top: 0; }
 .reader-settings-tools .advanced-card { grid-template-columns: minmax(0, 1fr); gap: var(--space-12); border: 0; background: var(--surface); }
 .reader-settings-tools .advanced-card button { width: auto; justify-self: start; padding: 0 var(--space-16); }
+.reader-settings-tools .direction-toggle { justify-self: start; }
 @media (max-width: 640px) {
   .reader-settings-drawer .settings-card { padding: var(--space-16); background: var(--surface-raised); }
 }
