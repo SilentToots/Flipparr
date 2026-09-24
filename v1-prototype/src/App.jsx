@@ -5019,8 +5019,7 @@ function ReaderSettingsDrawer({
       aria-labelledby="reader-settings-title" onMouseDown={(event) => event.stopPropagation()}>
       <DialogCloseButton onClose={requestClose} label="Close reading settings" drawer />
       <h2 id="reader-settings-title">Reading</h2>
-      <section className="reader-settings-group">
-        <h3>Screen</h3>
+      <SettingsCard title="Screen">
         <label className="reader-settings-range"><span>Brightness</span>
           <input type="range" min="0.35" max="1" step="0.05" value={night.dim}
             onChange={(event) => onNight({ ...night, dim: Number(event.target.value) })} />
@@ -5029,9 +5028,8 @@ function ReaderSettingsDrawer({
           <input type="range" min="0" max="1" step="0.1" value={night.warm}
             onChange={(event) => onNight({ ...night, warm: Number(event.target.value) })} />
         </label>
-      </section>
-      <section className="reader-settings-group">
-        <h3>Panel view</h3>
+      </SettingsCard>
+      <SettingsCard title="Panel view">
         <Toggle checked={panelMode} onChange={() => onTogglePanelMode()} title="Panel view"
           description="One panel at a time, in reading order. Double-tap for the whole page; P turns it off." />
         {panelMode ? <>
@@ -5042,18 +5040,24 @@ function ReaderSettingsDrawer({
           <Toggle checked={panelReveal} onChange={(value) => onPanelReveal(value)} title="End each page on the whole page"
             description="The page again after its last panel, for what they make together." />
         </> : null}
-      </section>
-      {count ? <section className="reader-settings-group">
-        <h3>This issue</h3>
-        <p className="reader-settings-note">{direction === "rtl" ? "Reads right to left, like manga." : "Reads left to right."}</p>
-        <div className="reader-settings-actions">
-          <button type="button" className="secondary-button" onClick={onFixPanels}><PencilSimple size={16} /> Fix panels on this page</button>
-          <button type="button" className="secondary-button" onClick={onReadAgain} disabled={rereading === "asking"} aria-busy={rereading === "asking"}>
-            {rereading === "asking" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />}
-            {rereading === "done" ? "Pages will be read again as you reach them" : rereading === "failed" ? "The pages could not be forgotten" : "Read this issue's panels again"}
-          </button>
+      </SettingsCard>
+      {count ? <SettingsCard title="This issue">
+        <p className="settings-card-lead">{direction === "rtl" ? "Reads right to left, like manga." : "Reads left to right."}</p>
+        <div className="advanced-tools reader-settings-tools">
+          <section className="advanced-card">
+            <div><strong>Fix panels on this page</strong><p>Move, resize, add or reorder them by hand. The arrows turn the page, and each page saves as you leave it.</p></div>
+            <button type="button" onClick={onFixPanels}><PencilSimple size={16} /> Fix</button>
+          </section>
+          <section className="advanced-card">
+            <div><strong>Read this issue&rsquo;s panels again</strong><p>Each page is read afresh as you reach it. Pages you fixed by hand are kept.</p>
+              {rereading === "done" ? <small className="rebuild-result">Pages will be read again as you reach them.</small> : null}
+              {rereading === "failed" ? <small className="rebuild-result">The pages could not be forgotten.</small> : null}</div>
+            <button type="button" onClick={onReadAgain} disabled={rereading === "asking"} aria-busy={rereading === "asking"}>
+              {rereading === "asking" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />} {rereading === "asking" ? "Reading…" : "Read again"}
+            </button>
+          </section>
         </div>
-      </section> : null}
+      </SettingsCard> : null}
     </aside>
   </div>;
 }

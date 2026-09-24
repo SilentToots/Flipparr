@@ -3567,18 +3567,31 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* The reader's settings drawer: the app's drawer, narrower, with Settings'
    grouped rows. Inside the reader (a stacking context of its own) the
    drawer's layer sits over the page and its bars. */
-.reader-settings-drawer { width: min(420px, 100%); display: grid; align-content: start; gap: var(--space-24); }
-.reader-settings-drawer h2 { margin: 0 var(--space-48) 0 0; min-height: var(--control-height-md); display: flex; align-items: center; }
+.reader-settings-drawer { width: min(440px, 100%); display: grid; align-content: start; gap: var(--space-16); }
+.reader-settings-drawer h2 { margin: 0 var(--space-48) var(--space-8) 0; min-height: var(--control-height-md); display: flex; align-items: center; }
 /* On a phone the drawer's control is the back arrow at the top left, so the
    title moves over for it instead of the X's room on the right. */
 @media (max-width: 640px) { .reader-settings-drawer h2 { margin: 0 0 0 calc(var(--space-48) + var(--space-8)); } }
-.reader-settings-drawer h3 { margin: 0 0 var(--space-8); }
+/* Settings' cards, on the drawer's surface: raised, no outline, 16px. */
+.reader-settings-drawer .settings-card { padding: var(--space-20); background: var(--surface-raised); }
+.reader-settings-drawer .settings-card > header { margin-bottom: var(--space-4); }
+.reader-settings-drawer .settings-card > header h3 { margin: 0; font-size: var(--text-md); }
+.reader-settings-drawer .toggle-row { min-height: 60px; padding: var(--space-8) 0; }
 .reader-settings-drawer .toggle-row small { max-width: none; }
+.reader-settings-drawer .toggle-row strong { font-size: var(--text-sm); }
 .reader-settings-range { display: grid; gap: var(--space-8); padding: var(--space-12) 0; border-top: 1px solid var(--line); color: var(--text); font-size: var(--text-sm); }
+.reader-settings-drawer .settings-card > header + .reader-settings-range { border-top: 0; }
 .reader-settings-drawer input[type="range"] { width: 100%; accent-color: var(--violet); }
-.reader-settings-note { margin: 0 0 var(--space-12); color: var(--muted); font-size: var(--text-sm); }
-.reader-settings-actions { display: grid; gap: var(--space-8); }
-.reader-settings-actions button { justify-content: flex-start; }
+.reader-settings-drawer .settings-card-lead { margin-bottom: var(--space-12); }
+/* The run drawer's tool rows, stacked: the drawer is too narrow for a
+   column of text beside a column of buttons, so each button sits under
+   its own line. */
+.reader-settings-tools { margin-top: 0; }
+.reader-settings-tools .advanced-card { grid-template-columns: minmax(0, 1fr); gap: var(--space-12); border: 0; background: var(--surface); }
+.reader-settings-tools .advanced-card button { width: auto; justify-self: start; padding: 0 var(--space-16); }
+@media (max-width: 640px) {
+  .reader-settings-drawer .settings-card { padding: var(--space-16); background: var(--surface-raised); }
+}
 
 /* The panel editor: the page at fit size with the panels drawn over it, in
    the reader's own chrome. The layer of rectangles lies exactly over the
