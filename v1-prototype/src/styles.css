@@ -401,8 +401,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   background-color: transparent;
   -webkit-backdrop-filter: blur(var(--scroll-edge-blur));
   backdrop-filter: blur(var(--scroll-edge-blur));
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
+  /* Two fades, intersected: out through the 24px below the header, and in
+     from the left over the page's inset, so the band does not end in a hard
+     line against the sidebar. The title sits inside the inset, so it is
+     always under the full frost. The right edge is the window's own. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent),
+    linear-gradient(to right, transparent, #000 var(--page-inset));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent),
+    linear-gradient(to right, transparent, #000 var(--page-inset));
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
   transition: background-color var(--motion-duration-standard) ease, bottom var(--motion-duration-standard) ease;
 }
 .page-header--condensed::before { background-color: var(--scroll-edge-bg); bottom: calc(var(--space-24) * -1); }
@@ -517,7 +525,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      bar zone), the blur on a child of it, and no transform on either. */
   .page-header { position: fixed; top: 0; left: 0; right: 0; margin: 0; padding-inline: var(--page-inset); transition: background-color var(--motion-duration-standard) ease; }
   .page-view { padding-top: calc(var(--page-header-height, 0px) + var(--space-8)); }
-  .page-header::before { inset: 0 0 0; }
+  .page-header::before {
+    inset: 0 0 0;
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-24)), transparent);
+  }
   .page-header--condensed::before { bottom: calc(var(--space-24) * -1); }
   .page-header--condensed { translate: none; background-color: var(--scroll-edge-bg); }
   .page-header--narrow { max-width: none; }
