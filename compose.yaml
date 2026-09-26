@@ -22,9 +22,17 @@ services:
     init: true
     user: "${PUID:-1000}:${PGID:-10}"
     ports:
-      # Loopback by default. Set FLIPPARR_BIND to publish elsewhere -- a tailnet
+      # Loopback by default. Set FLIPPARR_BIND to publish elsewhere -- a LAN
       # address, or 0.0.0.0 on a network you trust. Turn on authentication in
       # setup before publishing anywhere other people can reach.
+      #
+      # Never bind to an address that appears after Docker starts: a Tailscale
+      # or VPN interface address (100.x.y.z), especially one whose Tailscale
+      # runs in a container. At boot Docker restores this container before that
+      # address exists, the port bind fails, and a restart policy never retries
+      # a container that failed to start -- it stays down until someone starts
+      # it by hand. For tailnet access keep loopback and let Tailscale Serve
+      # forward to it (see docs/OPERATING.md, HTTPS).
       - "${FLIPPARR_BIND:-127.0.0.1}:${FLIPPARR_PORT:-8787}:8787"
     environment:
       TZ: "${TZ:-America/New_York}"

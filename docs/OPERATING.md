@@ -317,6 +317,24 @@ allowed through. Behind a reverse proxy this can mean *all* requests. See
 A metadata provider is unavailable or rate-limiting. The request fails quickly
 rather than hanging; your library is unaffected.
 
+**Flipparr is down after the machine reboots, and the proxy returns 502.**
+`docker ps -a` shows the container `Exited`, and the Docker log (`journalctl -u
+docker` or the system log) has `failed to bind host port <address>:<port>:
+cannot assign requested address`. `FLIPPARR_BIND` is set to an address that did
+not exist yet when Docker started — typically a Tailscale or VPN interface
+address. Docker's restart policies only apply to a container that started
+successfully, so one that fails its first start at boot is never retried.
+
+Set `FLIPPARR_BIND=127.0.0.1` (or a LAN address that is up before Docker) and
+reach the tailnet through [Tailscale Serve](#https) instead. A reverse proxy on
+the same Docker network needs no published port at all; it reaches the
+container by name. Then recreate, not just start, the container — a failed
+start can leave it attached to no network, which a plain start keeps:
+
+```bash
+docker compose up -d --force-recreate flipparr
+```
+
 **The container reports unhealthy.**
 The health check uses `GET /healthz`. If you have pinned an older image whose
 health check used `/`, enabling authentication will make it fail — upgrade, or
