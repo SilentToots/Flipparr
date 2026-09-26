@@ -87,7 +87,36 @@ sign-in on.
 
 Passwords are stored as a salted scrypt hash and never returned by the API.
 Signing in sets an `HttpOnly`, `SameSite=Lax` cookie, so page scripts cannot
-read your session, and cross-site requests do not carry it.
+read your session, and cross-site requests do not carry it. A session lasts 30
+days.
+
+### Failed sign-ins
+
+The first five wrong passwords cost nothing. After that, each failure makes the
+next attempt wait twice as long — 1, 2, 4, 8 … seconds, capped at 60 — and the
+sign-in page says how long. During the wait attempts are refused without the
+password being checked, so a correct guess cannot slip through. A successful
+sign-in, a password reset, or 15 quiet minutes clears it.
+
+There is deliberately no hard lockout. Behind a reverse proxy every request
+arrives from the proxy's address, so a lock on an address or an account would
+let anyone who can reach the sign-in page lock you out. A capped delay keeps
+guessing slow without that. Devices that are already signed in are never
+affected. The count is kept in memory, so restarting the container clears it.
+
+### Forgot your password
+
+There is no email to send a reset link to; being able to run a command on the
+server is the proof of ownership:
+
+```bash
+docker exec -it flipparr python app.py reset-password
+```
+
+It asks for the new password twice, keeps sign-in on, and signs every device
+out. Add `--username NAME` to change the username too, or `--password-stdin` to
+read the password from standard input in a script. Your settings, library and
+stored credentials are untouched.
 
 ### Behind a reverse proxy
 
@@ -324,11 +353,17 @@ as. This most often happens after running the container as root once, or after
 restoring a backup as a different user. The error names the file and the cause.
 
 Fix the ownership to match `PUID`/`PGID`, or delete `auth.json` to reset to no
-authentication and configure it again.
+authentication and configure it again. (To recover a forgotten password, use
+[`reset-password`](#forgot-your-password) instead: it keeps sign-in on.)
 
 The app deliberately refuses to serve rather than fall back to "no
 authentication", so a permissions problem cannot quietly leave your instance
 unprotected. `/healthz` keeps answering so the container does not restart-loop.
+
+**"Too many failed sign-ins. Try again in N seconds."**
+Someone — possibly a saved password on another device — has failed to sign in
+more than five times recently. Wait it out (a minute at most), or reset the
+password with [`reset-password`](#forgot-your-password), which ends the wait.
 
 **Sign-in is not being asked for, even though it is enabled.**
 If "skip sign-in on local addresses" is on, requests from private addresses are

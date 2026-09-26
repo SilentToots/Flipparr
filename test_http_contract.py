@@ -16,6 +16,8 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import zipfile
 import threading
@@ -327,9 +329,140 @@ class HttpContractTests(unittest.TestCase):
 
     def _configure_auth(self, **patch):
         """Set auth directly through the config layer, bypassing the HTTP API."""
+        # Failed sign-ins are remembered process-wide; start every test clean
+        # so the suite passes in any order.
+        app._LOGIN_THROTTLE.clear()
+        self.addCleanup(app._LOGIN_THROTTLE.clear)
         app.save_auth_config({"method": "forms", "username": "reader",
                               "password": "correct horse battery", **patch})
         self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+
+    def _login(self, password, username="reader"):
+        return self.post("/api/v1/auth/login", {"username": username, "password": password})
+
+    def test_the_first_failed_sign_ins_are_not_slowed(self):
+        self._configure_auth(localBypass=False)
+        for _ in range(app._LOGIN_FREE_FAILURES - 1):
+            self.assertEqual(self._login("wrong password").status, 401)
+        self.assertEqual(self._login("correct horse battery").status, 200)
+
+    def test_repeated_failures_make_sign_in_wait_even_for_the_right_password(self):
+        """A correct guess must not land inside the wait, or the wait only
+        slows the attacker's bookkeeping."""
+        self._configure_auth(localBypass=False)
+        self.assertEqual(self._login("wrong password").status, 401)
+        # The rest of the failures are recorded directly, so the wait is long
+        # enough (8s) that a slow test runner cannot outlast it.
+        config = app.load_auth_config()
+        for _ in range(app._LOGIN_FREE_FAILURES + 2):
+            app.record_login_result("reader", config, False)
+        refused = self._login("correct horse battery")
+        self.assertEqual(refused.status, 429)
+        wait = int(refused.headers.get("Retry-After"))
+        self.assertIn(wait, range(1, 9))
+        self.assertEqual(refused.json()["retryAfter"], wait)
+        self.assertIn(f"Try again in {wait} second", refused.json()["error"])
+
+    def test_the_wait_doubles_and_is_capped(self):
+        config = {"username": "reader", "passwordHash": "h"}
+        now = 1_000.0
+        waits = []
+        for _ in range(app._LOGIN_FREE_FAILURES + 9):
+            app.record_login_result("reader", config, False, now=now)
+            waits.append(app.login_retry_after("reader", config, now=now))
+            now += waits[-1]
+        app._LOGIN_THROTTLE.clear()
+        free = app._LOGIN_FREE_FAILURES - 1
+        self.assertEqual(waits[:free], [0] * free)
+        self.assertEqual(waits[free:free + 6], [1, 2, 4, 8, 16, 32])
+        self.assertEqual(set(waits[free + 6:]), {app._LOGIN_MAX_DELAY_SECONDS})
+
+    def test_a_quiet_spell_forgets_earlier_failures(self):
+        config = {"username": "reader", "passwordHash": "h"}
+        for _ in range(app._LOGIN_FREE_FAILURES):
+            app.record_login_result("reader", config, False, now=1_000.0)
+        later = 1_000.0 + app._LOGIN_FAILURE_WINDOW_SECONDS + 1
+        self.assertEqual(app.login_retry_after("reader", config, now=later), 0)
+        app._LOGIN_THROTTLE.clear()
+
+    def test_a_successful_sign_in_clears_the_failures(self):
+        config = {"username": "reader", "passwordHash": "h"}
+        for _ in range(app._LOGIN_FREE_FAILURES - 1):
+            app.record_login_result("reader", config, False, now=1_000.0)
+        app.record_login_result("reader", config, True, now=1_000.0)
+        app.record_login_result("reader", config, False, now=1_000.0)
+        self.assertEqual(app.login_retry_after("reader", config, now=1_000.0), 0)
+        app._LOGIN_THROTTLE.clear()
+
+    def test_invented_usernames_share_one_bucket(self):
+        """The table must not grow with every name an attacker makes up."""
+        config = {"username": "reader", "passwordHash": "h"}
+        for index in range(50):
+            app.record_login_result(f"guess-{index}", config, False, now=1_000.0)
+        self.assertEqual(set(app._LOGIN_THROTTLE), {"other"})
+        self.assertEqual(app.login_retry_after("reader", config, now=1_000.0), 0)
+        app._LOGIN_THROTTLE.clear()
+
+    def test_a_password_reset_ends_the_wait(self):
+        """The owner should not sit out an attacker's delay on a password the
+        attacker never had -- even when the reset ran in another process."""
+        self._configure_auth(localBypass=False)
+        config = app.load_auth_config()
+        for _ in range(app._LOGIN_FREE_FAILURES + 5):
+            app.record_login_result("reader", config, False)
+        self.assertEqual(self._login("correct horse battery").status, 429)
+        app.reset_password(None, "a brand new password")
+        self.assertEqual(self._login("a brand new password").status, 200)
+
+    def test_reset_password_signs_every_device_out_and_keeps_sign_in_on(self):
+        self._configure_auth(localBypass=False)
+        before = app.load_auth_config()
+        old_token = app.issue_session_token(before)
+        updated = app.reset_password(None, "a brand new password")
+        self.assertEqual(updated["method"], "forms")
+        self.assertEqual(updated["username"], "reader")
+        self.assertFalse(app.session_token_valid(old_token, app.load_auth_config()))
+        self.assertTrue(app.verify_password("a brand new password", app.load_auth_config()["passwordHash"]))
+        self.assertFalse(app.verify_password("correct horse battery", app.load_auth_config()["passwordHash"]))
+
+    def test_reset_password_refuses_a_short_password_and_changes_nothing(self):
+        self._configure_auth(localBypass=False)
+        before = app.load_auth_config()
+        with self.assertRaises(ValueError):
+            app.reset_password(None, "short")
+        self.assertEqual(app.load_auth_config(), before)
+
+    def test_reset_password_command_runs_outside_the_server(self):
+        """The recovery path is `docker exec ... app.py reset-password`, so it is
+        exercised as a real process against a config file, not a function call."""
+        config_file = _ROOT / "reset-command-auth.json"
+        config_file.unlink(missing_ok=True)
+        env = {**os.environ, "COMICARR_AUTH_CONFIG": str(config_file),
+               "FLIPPARR_AUTH_CONFIG": str(config_file)}
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(config_file),
+                                           "FLIPPARR_AUTH_CONFIG": str(config_file)}):
+            app.save_auth_config({"method": "forms", "username": "owner",
+                                  "password": "the old password"})
+            old_secret = app.load_auth_config()["sessionSecret"]
+        script = Path(app.__file__).resolve()
+        done = subprocess.run(
+            [sys.executable, "-B", str(script), "reset-password", "--password-stdin"],
+            input="the new password\n", capture_output=True, text=True, env=env, timeout=60,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("'owner'", done.stdout)
+        self.assertIn("Sign-in is on", done.stdout)
+        with patch.dict("app.os.environ", {"COMICARR_AUTH_CONFIG": str(config_file),
+                                           "FLIPPARR_AUTH_CONFIG": str(config_file)}):
+            stored = app.load_auth_config()
+        self.assertTrue(app.verify_password("the new password", stored["passwordHash"]))
+        self.assertNotEqual(stored["sessionSecret"], old_secret)
+        refused = subprocess.run(
+            [sys.executable, "-B", str(script), "reset-password", "--password-stdin"],
+            input="short\n", capture_output=True, text=True, env=env, timeout=60,
+        )
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("nothing was changed", refused.stderr)
 
     def test_local_bypass_is_off_by_default(self):
         """On by default made "require sign-in" appear to do nothing: a tunnel,

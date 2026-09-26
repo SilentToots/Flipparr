@@ -23,6 +23,7 @@ import base64
 import io
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import posixpath
@@ -539,14 +540,18 @@ def save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
         current["localBypass"] = patch["localBypass"]
     if not current["sessionSecret"]:
         current["sessionSecret"] = secrets.token_urlsafe(32)
+    _write_auth_config(current)
+    return current
+
+
+def _write_auth_config(config: dict[str, Any]) -> None:
     config_path = auth_config_path()
     with _AUTH_CONFIG_LOCK:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = config_path.parent / (config_path.name + ".tmp")
-        tmp.write_text(json.dumps(current, indent=2))
+        tmp.write_text(json.dumps(config, indent=2))
         os.chmod(tmp, 0o600)
         tmp.replace(config_path)
-    return current
 
 
 def public_auth_config() -> dict[str, Any]:
@@ -589,6 +594,88 @@ def session_token_valid(token: str, config: dict[str, Any]) -> bool:
         return False
     # Renaming the account or rotating the secret invalidates issued sessions.
     return hmac.compare_digest(username, str(config.get("username") or ""))
+
+
+# Failed sign-ins slow further attempts down rather than locking the account.
+# Every request through a reverse proxy arrives from the same address, so a
+# lock keyed to the caller or the account would let anyone who can reach the
+# sign-in page lock the owner out -- OWASP's reason to prefer a growing delay
+# over a hard lockout. The first few mistakes are free; after that each failure
+# doubles the wait, capped so the owner never waits long after someone else's
+# guessing. While a wait is running, attempts are refused without checking the
+# password, so a correct guess cannot land inside it. Signed-in devices are
+# never affected: only new sign-ins are throttled.
+_LOGIN_FREE_FAILURES = 5
+_LOGIN_MAX_DELAY_SECONDS = 60
+# A quiet spell this long forgets earlier failures.
+_LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+_LOGIN_THROTTLE_LOCK = threading.Lock()
+_LOGIN_THROTTLE: dict[str, dict[str, Any]] = {}
+
+
+def _login_throttle_key(username: str, config: dict[str, Any]) -> str:
+    # Two buckets, so the table cannot grow with invented usernames: the real
+    # account, and everything else (which can never succeed anyway).
+    configured = str(config.get("username") or "")
+    if configured and hmac.compare_digest(username, configured):
+        return "account"
+    return "other"
+
+
+def _login_bucket(key: str, config: dict[str, Any], now: float) -> dict[str, Any]:
+    bucket = _LOGIN_THROTTLE.get(key)
+    # A password reset (possibly from another process, the reset-password
+    # command) starts over: the owner should not wait out an attacker's delay
+    # on a password the attacker never had.
+    generation = hashlib.sha256(str(config.get("passwordHash") or "").encode()).hexdigest()
+    if (
+        bucket is None
+        or bucket["generation"] != generation
+        or now - bucket["lastFailure"] > _LOGIN_FAILURE_WINDOW_SECONDS
+    ):
+        bucket = {"failures": 0, "retryAt": 0.0, "lastFailure": now, "generation": generation}
+        _LOGIN_THROTTLE[key] = bucket
+    return bucket
+
+
+def login_retry_after(username: str, config: dict[str, Any], now: float | None = None) -> int:
+    """Seconds until another sign-in attempt is allowed; 0 when it is now."""
+    now = time.time() if now is None else now
+    with _LOGIN_THROTTLE_LOCK:
+        bucket = _login_bucket(_login_throttle_key(username, config), config, now)
+        return max(0, math.ceil(bucket["retryAt"] - now))
+
+
+def record_login_result(username: str, config: dict[str, Any], succeeded: bool,
+                        now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    key = _login_throttle_key(username, config)
+    with _LOGIN_THROTTLE_LOCK:
+        if succeeded:
+            _LOGIN_THROTTLE.pop(key, None)
+            return
+        bucket = _login_bucket(key, config, now)
+        bucket["failures"] += 1
+        bucket["lastFailure"] = now
+        excess = bucket["failures"] - _LOGIN_FREE_FAILURES
+        if excess >= 0:
+            bucket["retryAt"] = now + min(2 ** excess, _LOGIN_MAX_DELAY_SECONDS)
+
+
+def reset_password(username: str | None, password: str) -> dict[str, Any]:
+    """Set a new password from the server itself, for an owner who has lost it.
+
+    Keeps sign-in in whatever state it was, keeps the username unless a new one
+    is given, and replaces the session secret so every device signed in with
+    the old password is signed out.
+    """
+    current = load_auth_config()
+    name = (username if username is not None else current["username"]) or ""
+    patch: dict[str, Any] = {"username": name.strip(), "password": password}
+    updated = save_auth_config(patch)
+    updated["sessionSecret"] = secrets.token_urlsafe(32)
+    _write_auth_config(updated)
+    return updated
 
 
 def is_local_address(address: str) -> bool:
@@ -12345,10 +12432,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             username = str(payload.get("username") or "")
             password = str(payload.get("password") or "")
-            if not (
+            wait = login_retry_after(username, config)
+            if wait:
+                self.send_json(
+                    {"error": f"Too many failed sign-ins. Try again in {wait} "
+                              f"second{'s' if wait != 1 else ''}.",
+                     "retryAfter": wait},
+                    429, headers={"Retry-After": str(wait)},
+                )
+                return
+            succeeded = (
                 hmac.compare_digest(username, str(config["username"] or ""))
                 and verify_password(password, config["passwordHash"])
-            ):
+            )
+            record_login_result(username, config, succeeded)
+            if not succeeded:
                 # One message for both cases: a distinct "no such user" reply
                 # would let an attacker enumerate valid usernames.
                 self.send_json({"error": "Incorrect username or password"}, 401)
@@ -13172,7 +13270,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_json(self, payload: Any, status: int = 200) -> None:
+    def send_json(self, payload: Any, status: int = 200,
+                  headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload, indent=2, ensure_ascii=False).encode()
         body, encoding = _gzip_if_worthwhile(
             body, "application/json", self.headers.get("Accept-Encoding", "")
@@ -13185,6 +13284,8 @@ class Handler(BaseHTTPRequestHandler):
         # for the immutably cached assets below: without it a shared cache can
         # hand a compressed body to a client that never asked for one.
         self.send_header("Vary", "Accept-Encoding")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -13521,11 +13622,41 @@ class Handler(BaseHTTPRequestHandler):
         log_event("http_error", level="warning", detail=format % args)
 
 
+def reset_password_command(username: str | None, password_stdin: bool) -> int:
+    """`app.py reset-password`: the way back in for an owner who has lost the
+    password. There is no email to send a reset link to, so the proof of
+    ownership is being able to run a command on the server."""
+    import getpass
+    if password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = getpass.getpass("New password: ")
+        if getpass.getpass("Repeat it: ") != password:
+            print("The passwords did not match; nothing was changed.", file=sys.stderr)
+            return 1
+    try:
+        updated = reset_password(username, password)
+    except (ValueError, AuthConfigUnreadable) as exc:
+        print(f"{exc}; nothing was changed.", file=sys.stderr)
+        return 1
+    state = ("Sign-in is on" if updated["method"] == "forms"
+             else "Sign-in is still off; switch it on in Settings -> Security")
+    print(f"Password for '{updated['username']}' changed and every device signed out. {state}.")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", nargs="?", default="serve", choices=("serve", "reset-password"),
+                        help="serve (the default) or reset-password")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--username", help="reset-password: also change the username")
+    parser.add_argument("--password-stdin", action="store_true",
+                        help="reset-password: read the new password from standard input")
     args = parser.parse_args()
+    if args.command == "reset-password":
+        sys.exit(reset_password_command(args.username, args.password_stdin))
     load_persisted_remote_cache()
     load_persisted_provider_cache()
     try:
