@@ -102,15 +102,37 @@ The consequence: behind a proxy, with `FLIPPARR_TRUSTED_PROXIES` unset, either
 every request looks like it came from the proxy's own (private) address and the
 local bypass applies to everyone, or no request looks local at all.
 
-Set it to your proxy's address:
+Set it to your proxy's address or network. Entries are comma-separated, and
+each is an address or a network in CIDR form:
 
 ```yaml
-FLIPPARR_TRUSTED_PROXIES: "172.18.0.5"    # your reverse proxy's address
+FLIPPARR_TRUSTED_PROXIES: "172.18.0.0/16"   # the proxy's Docker network
 ```
 
+**If the proxy runs in Docker, use its network's subnet, not its container
+address.** Docker assigns container addresses on a bridge network in start
+order, so after a reboot the proxy can come back at a different address and
+another container can inherit the old one. The subnet does not change:
+
+```bash
+docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' <network>
+```
+
+Every container on that network is then trusted to report a client address, so
+keep it to the proxy and the apps behind it. A proxy on the host itself, or on
+another machine, is named by its address as before. An entry that does not
+parse is ignored and logged once as `invalid_trusted_proxy`.
+
 Then the app reads the real client address from `X-Forwarded-For`, and the
-bypass means what you expect. It also picks up `X-Forwarded-Proto: https` from a
-trusted proxy and marks the session cookie `Secure`.
+bypass means what you expect. The header is read from the right: each proxy
+appends the address it received the request from, so the right-hand end is
+written by your proxies and the left-hand end by whoever sent the request. The
+client is the right-most address that is not a trusted proxy. A client that
+sends its own `X-Forwarded-For: 127.0.0.1` gains nothing, even through a proxy
+that appends to the header rather than replacing it (nginx's
+`$proxy_add_x_forwarded_for`, which Nginx Proxy Manager uses). The app also
+picks up `X-Forwarded-Proto: https` from a trusted proxy and marks the session
+cookie `Secure`.
 
 If you are not sure of the proxy's address, leave the variable unset and turn
 the local bypass **off** — you will sign in once per device, which is correct

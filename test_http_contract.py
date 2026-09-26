@@ -630,6 +630,66 @@ class HttpContractTests(unittest.TestCase):
         with patch.dict("app.os.environ", cleared, clear=True):
             self.assertEqual(app.trusted_proxies(), ())
 
+    def test_a_trusted_proxy_may_be_named_by_its_network(self):
+        """Docker hands bridge addresses out in start order, so a proxy's address
+        changes across restarts while its network's subnet does not."""
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+            self.assertTrue(app.is_trusted_proxy("192.168.16.2"))
+            self.assertTrue(app.is_trusted_proxy("192.168.31.254"))
+            self.assertFalse(app.is_trusted_proxy("192.168.32.1"))
+            self.assertEqual(app.resolve_client_address("192.168.16.2", "203.0.113.9"), "203.0.113.9")
+
+    def test_a_single_address_is_still_trusted_exactly(self):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "10.0.0.5"}):
+            self.assertTrue(app.is_trusted_proxy("10.0.0.5"))
+            self.assertFalse(app.is_trusted_proxy("10.0.0.6"))
+
+    def test_a_client_supplied_forwarded_for_cannot_claim_to_be_local(self):
+        """nginx's $proxy_add_x_forwarded_for appends the real client to whatever
+        the client sent, so the left end of the header is the client's to write.
+        Only the right end, walked past our own proxies, can be believed."""
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+            # A routable address: Python counts the documentation ranges
+            # (203.0.113.0/24 and friends) as private.
+            resolved = app.resolve_client_address("192.168.16.2", "127.0.0.1, 8.8.8.8")
+        self.assertEqual(resolved, "8.8.8.8")
+        self.assertFalse(app.is_local_address(resolved))
+
+    def test_a_chain_of_trusted_proxies_is_walked_to_the_client(self):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "10.0.0.0/8, 192.168.16.2"}):
+            self.assertEqual(
+                app.resolve_client_address("192.168.16.2", "203.0.113.9, 10.1.2.3"), "203.0.113.9")
+
+    def test_forwarded_for_from_an_untrusted_peer_is_ignored(self):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+            self.assertEqual(app.resolve_client_address("203.0.113.9", "127.0.0.1"), "203.0.113.9")
+
+    def test_a_malformed_forwarded_hop_never_resolves_to_a_local_address(self):
+        """Falling back to the proxy's own, private, address would let a garbled
+        header pass the local-address bypass."""
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+            resolved = app.resolve_client_address("192.168.16.2", "not-an-address")
+        self.assertFalse(app.is_local_address(resolved))
+
+    def test_a_trusted_proxy_with_no_forwarded_header_is_the_caller(self):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+            self.assertEqual(app.resolve_client_address("192.168.16.5", ""), "192.168.16.5")
+
+    def test_an_ipv4_mapped_peer_matches_an_ipv4_network(self):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+            self.assertTrue(app.is_trusted_proxy("::ffff:192.168.16.2"))
+
+    def test_an_unparseable_entry_trusts_nothing_and_is_reported_once(self):
+        app._BAD_PROXY_ENTRIES_WARNED.clear()
+        buffer = io.StringIO()
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "npm.local, 10.0.0.5"}):
+            with contextlib.redirect_stdout(buffer):
+                self.assertTrue(app.is_trusted_proxy("10.0.0.5"))
+                self.assertFalse(app.is_trusted_proxy("192.168.1.1"))
+        warnings = [line for line in buffer.getvalue().splitlines() if "invalid_trusted_proxy" in line]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("npm.local", warnings[0])
+
     def test_unreadable_auth_config_fails_closed_rather_than_disabling_auth(self):
         """A config written as root and read as a normal user must not silently
         turn into "authentication disabled"."""

@@ -232,6 +232,78 @@ def trusted_proxies() -> tuple[str, ...]:
     )
 
 
+# Entries already reported as unparseable, so a typo is logged once rather
+# than on every request.
+_BAD_PROXY_ENTRIES_WARNED: set[str] = set()
+
+
+# Each entry is an address or a network in CIDR form. A network is what makes
+# this work under Docker: a bridge network hands out container addresses in
+# start order, so a proxy's address changes across restarts while the
+# network's subnet does not. An entry that does not parse is skipped, never
+# widened, so a typo can only trust less.
+def trusted_proxy_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    networks = []
+    for entry in trusted_proxies():
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            if entry not in _BAD_PROXY_ENTRIES_WARNED:
+                _BAD_PROXY_ENTRIES_WARNED.add(entry)
+                log_event(
+                    "invalid_trusted_proxy", level="warning", entry=entry,
+                    detail="FLIPPARR_TRUSTED_PROXIES entries must be an address "
+                           "(172.18.0.5) or a network (172.18.0.0/16); this one "
+                           "is ignored.",
+                )
+    return tuple(networks)
+
+
+def _parse_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    # A dual-stack socket reports an IPv4 peer as ::ffff:a.b.c.d.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return address.ipv4_mapped
+    return address
+
+
+def is_trusted_proxy(value: str) -> bool:
+    address = _parse_address(value)
+    if address is None:
+        return False
+    return any(address in network for network in trusted_proxy_networks())
+
+
+def resolve_client_address(peer: str, forwarded_for: str) -> str:
+    """The caller's real address, given the socket peer and X-Forwarded-For.
+
+    Every proxy appends the address it received the request from, so the header
+    reads client-supplied entries first and trusted hops last. Only the
+    right-hand end can be believed: walk it from the right, skipping our own
+    proxies, and the first address that is not one of them is the client. The
+    left-most entry is whatever the client chose to send -- believing it would
+    let anyone claim to be 127.0.0.1 through a proxy that appends (nginx's
+    $proxy_add_x_forwarded_for does). This is nginx's real_ip_recursive rule.
+    """
+    if not is_trusted_proxy(peer):
+        return peer
+    hops = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+    for hop in reversed(hops):
+        if _parse_address(hop) is None:
+            # Garbage in the chain: nothing to its left can be vouched for. Stop
+            # here, and return the unparseable hop rather than the trusted proxy
+            # before it -- a proxy's own address is private, so that would make
+            # a malformed header count as a local caller.
+            return hop
+        if not is_trusted_proxy(hop):
+            return hop
+        peer = hop
+    return peer
+
+
 # Set once, so a misconfigured proxy is reported rather than repeated on every
 # request for the life of the process.
 _PROXY_HEADER_WARNED = False
@@ -11825,12 +11897,7 @@ class Handler(BaseHTTPRequestHandler):
         treated as local — which would silently disable authentication.
         """
         peer = self.client_address[0] if self.client_address else ""
-        if peer in trusted_proxies():
-            forwarded = self.headers.get("X-Forwarded-For", "")
-            first = forwarded.split(",")[0].strip()
-            if first:
-                return first
-        return peer
+        return resolve_client_address(peer, self.headers.get("X-Forwarded-For", ""))
 
     def _request_is_https(self) -> bool:
         """Whether the browser reached us over TLS, which only a proxy can say.
@@ -11843,7 +11910,7 @@ class Handler(BaseHTTPRequestHandler):
         global _PROXY_HEADER_WARNED
         peer = self.client_address[0] if self.client_address else ""
         claimed = self.headers.get("X-Forwarded-Proto", "").strip().lower() == "https"
-        if peer in trusted_proxies():
+        if is_trusted_proxy(peer):
             return claimed
         if claimed and not _PROXY_HEADER_WARNED:
             # Otherwise this fails silently: the session cookie quietly loses

@@ -41,9 +41,10 @@ services:
       FLIPPARR_ACQUISITION_CONFIG: /config/acquisition-services.json
       FLIPPARR_SETTINGS_CONFIG: /config/settings.json
       FLIPPARR_AUTH_CONFIG: /config/auth.json
-      # Addresses whose X-Forwarded-For may be believed. Set this to the
-      # reverse proxy's address when running behind one, otherwise the
-      # "local addresses" auth bypass cannot see the real client.
+      # Addresses or networks (CIDR) whose X-Forwarded-For may be believed. Set
+      # this to the reverse proxy's Docker network subnet when running behind
+      # one -- not its container address, which changes across restarts --
+      # otherwise the "local addresses" auth bypass cannot see the real client.
       FLIPPARR_TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
       FLIPPARR_WEB_ROOT: /app/web
       FLIPPARR_LIBRARY_ROOT: /comics
