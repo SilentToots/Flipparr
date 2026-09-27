@@ -279,8 +279,9 @@ Motion tokens:
   approved, green in the library, muted declined or cancelled, red when an
   approval could not be carried out. Its text wraps, since a decline reason
   is a sentence. The admin answers under the card (Decline, then Approve as
-  the primary); a reader's Pull and Follow read "Request" and settle on
-  "Requested" with an hourglass. The admin's queue is the Pull List's first
+  the primary); a reader's Pull reads "Request" and their Follow "Request
+  follow", settling on "Requested" / "Follow requested" with an hourglass --
+  a follow and a pull are different asks, and the words say which. The admin's queue is the Pull List's first
   tab while any request exists; a reader's tab bar names the same place
   "Requests".
 - **The reader's settings** (`.reader-settings-drawer`, since 2026-09-24) open

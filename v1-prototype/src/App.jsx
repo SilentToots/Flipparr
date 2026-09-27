@@ -79,7 +79,7 @@ import {
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
   runModes, completeRunToPull, issueLabel, libraryRunMatches,
 } from "./discover.js";
-import { waitingKeys, runRequested, requestScope, adminQueue, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
+import { requestKey, waitingKeys, runRequested, requestScope, adminQueue, isFollow, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
 
 const NAV_ITEMS = [
   // Above 640px only, as the Apple TV app's sidebar leads with Search: its
@@ -1471,7 +1471,7 @@ function DiscoverCover({ src, alt, className = "", glyph = 22 }) {
 
 // The design's own control, not one of the app's button variants: a filled
 // purple pill with a light border and an inner highlight.
-function PullButton({ state, idleLabel, readerLabel = "Request", onClick, size = "sm" }) {
+function PullButton({ state, idleLabel, readerLabel = "Request", requestedLabel, onClick, size = "sm" }) {
   // A reader asks rather than pulls: "Request", then "Requested" until the
   // admin decides.
   const reader = !isAdmin(useViewer());
@@ -1482,7 +1482,8 @@ function PullButton({ state, idleLabel, readerLabel = "Request", onClick, size =
   return <button type="button" className={`pull-button pull-button-${size} pull-button-${look}`}
     onClick={onClick} disabled={state !== PULL_STATES.idle}
     aria-busy={state === PULL_STATES.pending || undefined}>
-    <span>{state === PULL_STATES.idle ? (reader ? readerLabel : idleLabel) : labels[state]}</span>
+    <span>{state === PULL_STATES.idle ? (reader ? readerLabel : idleLabel)
+      : state === PULL_STATES.requested && requestedLabel ? requestedLabel : labels[state]}</span>
     {state === PULL_STATES.pending ? <LoadingIndicator size={16} />
       : state === PULL_STATES.requested ? <Hourglass size={16} />
       : settled ? <FollowingIcon size={16} /> : <PullIcon />}
@@ -2232,6 +2233,7 @@ function DiscoverView({
     {drawer?.kind === "run" ? <DiscoverRunDrawer item={drawer.item} query={query}
       settled={pulled[runKey(drawer.item)]
         || (runRequested(waiting, drawer.item.provider, drawer.item.providerSeriesId) ? PULL_STATES.requested : undefined)}
+      followRequested={waiting.has(requestKey("discover_run", drawer.item))}
       onFollow={followFromDrawer} onUnfollow={unfollowFromDrawer} onPullIssues={pullFromDrawer}
       onClose={() => setDrawer(null)} /> : null}
   </>;
@@ -2560,10 +2562,10 @@ function RunSynopsis({ text, source, sourcePrefix = "From", loading = false, hea
 // drawer's band (a run that has ended has nothing to follow, so it has none);
 // under it one card pulls every released issue (or the whole of an ended
 // run), and one opens into the issue list to pick from. The story follows.
-function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullIssues, onClose }) {
+function DiscoverRunDrawer({ item, query, settled, followRequested = false, onFollow, onUnfollow, onPullIssues, onClose }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
-  // A reader asks: Follow becomes "Request run", Pull becomes "Request".
+  // A reader asks: Follow becomes "Request follow", Pull becomes "Request".
   const reader = !isAdmin(useViewer());
   const verb = reader ? "Request" : "Pull";
   const [preview, setPreview] = useState({ state: "loading", data: null, error: "" });
@@ -2572,8 +2574,9 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
   // Which action is running, and what the last one said, by action.
   const [busy, setBusy] = useState("");
   const [done, setDone] = useState(settled === PULL_STATES.queued ? { whole: reader ? "Already on the way." : "Already on your Pull List." }
-    : settled === PULL_STATES.requested ? { follow: "Requested. Waiting for approval.", whole: "Requested. Waiting for approval." } : {});
-  const [asked, setAsked] = useState(settled === PULL_STATES.requested);
+    : followRequested ? { follow: "Follow requested. Waiting for approval." } : {});
+  // A follow asked for, as opposed to some of the run's issues.
+  const [asked, setAsked] = useState(followRequested);
   const ids = runPreviewIds(item);
   const idsKey = JSON.stringify(ids);
   const source = ["metron", "comic_vine", "gcd"].find((provider) => ids[provider]);
@@ -2629,7 +2632,8 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
       if (result.requested) {
         // Asked, not done: nothing is followed or pulled until the admin says so.
         if (action === "follow") setAsked(true);
-        setDone((current) => ({ ...current, [action === "follow" ? "follow" : action]: "Requested. Waiting for approval." }));
+        setDone((current) => ({ ...current, [action === "follow" ? "follow" : action]:
+          action === "follow" ? "Follow requested. Waiting for approval." : "Requested. Waiting for approval." }));
       } else if (action === "follow" || action === "unfollow") {
         setFollowed(action === "follow");
         setDone((current) => ({ ...current, follow: action === "follow" ? "Following this run." : "No longer following this run." }));
@@ -2658,7 +2662,7 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
       </DiscoverDrawerHero>
       <div className="comic-drawer-body">
         {canFollow ? <div className="comic-drawer-follow">
-          {reader ? <PullButton size="md" readerLabel="Request run" onClick={() => commit("follow")}
+          {reader ? <PullButton size="md" readerLabel="Request follow" requestedLabel="Follow requested" onClick={() => commit("follow")}
             state={busy === "follow" ? PULL_STATES.pending : following ? PULL_STATES.queued
               : asked ? PULL_STATES.requested : run ? PULL_STATES.idle : PULL_STATES.pending} />
           : <FollowSwitch following={following} busy={busy === "follow" || busy === "unfollow" || !run}
@@ -5576,10 +5580,10 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       {edit === null && !admin && !isFollowing ? <button type="button"
         className={`glass-button glass-button--icon comic-drawer-follow-button${requested ? " active" : ""}`}
         onClick={() => onRequest()} disabled={requestBusy || requested}
-        aria-label={requested ? `${series.title} is requested` : `Request ${series.title}`}
-        title={requested ? "Waiting for approval" : "Ask for this run to be followed"}>
+        aria-label={requested ? `Following ${series.title} is requested` : `Request a follow of ${series.title}`}
+        title={requested ? "Waiting for approval" : "Ask for this run to be followed: new issues as they come out"}>
         {requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={20} /> : <FollowedIcon size={20} />}
-        <b>{requested ? "Requested" : "Request"}</b>
+        <b>{requested ? "Follow requested" : "Request follow"}</b>
       </button> : null}
     </DrawerTopBar>
     <header className="comic-drawer-hero">
@@ -5869,7 +5873,7 @@ function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructu
         {tab === "volumes" ? <div className="collection-volume-list">{volumes.length ? volumes.map((volume) => { const title = volume.subtitle ? `${volume.title}: ${volume.subtitle}` : volume.title; const needsContents = volume.coverageStatus !== "verified"; const canReviewContents = needsContents && volume.linkedFile; return <button className={needsContents ? "unplaced" : "placed"} onClick={() => canReviewContents ? onOpenContents(volume.linkedFile) : onOpenSeries(volume.run)} key={`${volume.run.id}-${volume.logicalVolumeKey || volume.id}`}><span className="collection-volume-cover"><CoverArt id={`collection-volume-${volume.id}`} title={title} cover={volume.cover} decorative placeholderSize={17} /></span><span><strong>{title}</strong><small>{volume.run.title} · {editionKindLabel(volume.editionKind)}{volume.volume ? ` · Vol. ${volume.volume}` : ""}{volume.copyCount > 1 ? ` · ${volume.copyCount} files` : ""}</small>{needsContents ? <b>{volume.coverageStatus === "partial" ? `${volume.contentsIssueCount || 0} issues confirmed · more may be included` : "Issue contents not confirmed"}</b> : <b>{volume.contentsIssueCount || 0} issues confirmed</b>}</span><ArrowRight size={16} /></button>; }) : <div className="drawer-empty"><Books size={27} /><strong>No volumes cataloged</strong></div>}</div> : null}
         {tab === "files" ? <div className="collection-volume-list">{files.map((file) => <button onClick={() => onOpenSeries(file.run)} key={file.id}><HardDrive size={20} weight="duotone" /><span><strong>{file.filename}</strong><small>{file.run.title} · {file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)}</small></span><ArrowRight size={16} /></button>)}</div> : null}
       </div>
-      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}{tab === "overview" && !isAdmin(viewer) && collection.monitoringStatus !== "monitored" ? <div className="drawer-actions"><button type="button" className="ghost-button" onClick={() => onRequest()} disabled={requestBusy || requested}>{requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={18} /> : <FollowedIcon size={18} />} {requested ? "Requested" : "Request collection"}</button></div> : null}
+      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}{tab === "overview" && !isAdmin(viewer) && collection.monitoringStatus !== "monitored" ? <div className="drawer-actions"><button type="button" className="ghost-button" onClick={() => onRequest()} disabled={requestBusy || requested}>{requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={18} /> : <FollowedIcon size={18} />} {requested ? "Follow requested" : "Request follow"}</button></div> : null}
     </aside>
   </div>;
 }
@@ -8316,7 +8320,9 @@ export function App() {
         return { ok: true, result };
       }
       const started = result.status === "approved";
-      showToast(started ? `${result.title} · on its way` : `${result.title} requested · waiting for approval`);
+      const follow = isFollow(result);
+      showToast(started ? (follow ? `Following ${result.title}` : `${result.title} · on its way`)
+        : follow ? `Asked to follow ${result.title} · waiting for approval` : `${result.title} requested · waiting for approval`);
       return { ok: true, result, requested: !started };
     } catch (error) {
       showToast(error.message, "error");

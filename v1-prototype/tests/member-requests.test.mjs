@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  requestKey, waitingKeys, runRequested, requestScope, adminQueue, requestNotifications,
+  requestKey, waitingKeys, runRequested, requestScope, adminQueue, requestNotifications, isFollow,
   REQUEST_STATE_LABELS, ADMIN_STATE_LABELS,
 } from "../src/member-requests.js";
 
@@ -33,7 +33,10 @@ test("a reader is told a failed approval is still waiting; the admin that it fai
 });
 
 test("what was asked for reads as a line", () => {
-  assert.equal(requestScope({ kind: "run" }), "The whole run");
+  assert.equal(requestScope({ kind: "run" }), "Follow the run");
+  assert.equal(requestScope({ kind: "discover_run" }), "Follow the run");
+  assert.equal(requestScope({ kind: "collection" }), "Follow the collection");
+  assert.equal(isFollow({ kind: "discover_issues" }), false, "a pull is not a follow");
   assert.equal(requestScope({ kind: "discover_issues", detail: { numbers: ["4"] } }), "Issue 4");
   assert.equal(requestScope({ kind: "discover_issues", detail: { numbers: ["1", "2", "3", "4", "5", "6"] } }),
     "Issues 1, 2, 3, 4 and 2 more");
@@ -60,7 +63,10 @@ test("the admin hears that requests wait; a reader hears what was decided since 
   assert.equal(admin.detail, "From Sam and Pat");
   assert.equal(admin.id, "requests-waiting:6", "a new request is news again");
   const [one] = requestNotifications(requests.slice(0, 1), { admin: true });
-  assert.equal(one.title, "Sam asked for Saga");
+  assert.equal(one.title, "Sam asked to follow Saga");
+  assert.equal(one.detail, "New issues as they come out");
+  const [pull] = requestNotifications([{ ...requests[0], kind: "discover_issues", detail: { numbers: ["3"] } }], { admin: true });
+  assert.deepEqual([pull.title, pull.detail], ["Sam asked for Saga", "Issue 3"]);
   const since = "2026-09-27T00:00:00Z";
   const decided = [
     { id: 1, state: "declined", title: "Old", decidedAt: "2026-09-20T00:00:00Z" },
@@ -75,4 +81,6 @@ test("the admin hears that requests wait; a reader hears what was decided since 
   assert.ok(reader.every((item) => item.news), "nothing here waits on the reader");
   const [approved] = requestNotifications([{ id: 9, state: "approved", title: "X", decidedAt: "2026-09-28T00:00:00Z" }], { since });
   assert.deepEqual([approved.kind, approved.severity], ["request", "info"], "approved is not yet added");
+  const [followed] = requestNotifications([{ id: 10, kind: "run", state: "approved", title: "Saga", decidedAt: "2026-09-28T00:00:00Z" }], { since });
+  assert.equal(followed.title, "You'll get Saga's new issues");
 });
