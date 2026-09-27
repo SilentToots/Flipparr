@@ -261,6 +261,16 @@ Motion tokens:
 - **The toast** is a glass capsule centred at the foot of the page (over the
   content area above 640px, above the tab bar on a phone). It springs up,
   sinks away after about three seconds, and a new one replaces it.
+- **Reader profiles** (since 2026-09-25) are drawn as a coloured disc with
+  white initials (`.profile-avatar`, 32px, 80px as `--lg`), in one of eight
+  profile colours (`--profile-*` tokens, each a 700 shade so the initials meet
+  AA). "Who's reading?" (`.profile-picker`) is the sign-in page's shape: the
+  F mark, the question, and the profiles as avatar tiles, a locked one marked
+  under its name; a PIN or password is asked for on the same card. In
+  Settings, the admin's Profiles list uses rows of avatar, name and a line of
+  facts (`.profile-row`, the fill one step up from the card), and a profile is
+  edited in the standard modal. The sidebar's foot shows who is reading
+  (`.sidebar-profile`), which opens Your profile.
 - **The reader's settings** (`.reader-settings-drawer`, since 2026-09-24) open
   in the app's drawer, not a popover: a page pushed over the reader on a
   phone with the back arrow, a 420px side panel above it elsewhere, Back and

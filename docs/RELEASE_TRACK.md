@@ -93,10 +93,21 @@ The initial user release supports:
 - provider degradation without losing local inventory or accepted corrections;
 - desktop and mobile-responsive operation for core workflows.
 
-Multi-user approvals, public Internet exposure, distributed workers,
-high-availability clustering, microservices, PostgreSQL, and Redis are not
-initial-release requirements. They require a measured constraint or approved
-product requirement before adoption.
+Public Internet exposure, distributed workers, high-availability clustering,
+microservices, PostgreSQL, and Redis are not initial-release requirements.
+They require a measured constraint or approved product requirement before
+adoption.
+
+**Amended 2026-09-25: household reader profiles are an approved product
+requirement** (the owner; plan in the project's reader-profiles plan). One
+install is still one household on a trusted network: one admin, and optional
+reader profiles, Plex-Home style, each with its own reading history, place and
+ratings, chosen on a shared device ("Who's reading?", optional PIN) or signed
+into with the reader's own password. Every route has an access class and is
+the admin's unless listed (`access_policy.py`). Phase 1 (profiles, per-reader
+history, the picker and the reader boundary) is in; reader requests that wait
+for the admin's approval, and content restrictions for younger readers, are
+later phases. Multi-tenant public hosting remains out of scope.
 
 The V2 production interface will use React, TypeScript, Vite, and Tailwind CSS
 as its implementation foundation. This is a V2 replacement decision, not a

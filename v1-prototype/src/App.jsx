@@ -4186,8 +4186,8 @@ function SecuritySettings({ onChanged, onSignOut }) {
     <Toggle
       checked={Boolean(config.localBypass)}
       onChange={(next) => save({ localBypass: next })}
-      title="Skip sign-in on local addresses"
-      description="Off by default. Anything reaching this app through a tunnel, reverse proxy or container bridge arrives from a private address and would be let straight in — so turn this on only if you know the traffic is genuinely local, and set FLIPPARR_TRUSTED_PROXIES when a proxy is in front."
+      title="Treat local addresses as a shared device"
+      description="Off by default. On, a device on the local network is a shared one: with one profile it opens as that profile without signing in; with readers it asks who is reading, and the admin needs their PIN or password. Anything reaching this app through a tunnel, reverse proxy or container bridge arrives from a private address and would be let straight in — so turn this on only if you know the traffic is genuinely local, and set FLIPPARR_TRUSTED_PROXIES when a proxy is in front."
     />
     </SettingsCard>
     <SettingsCard title="Credentials">
