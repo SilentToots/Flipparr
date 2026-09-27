@@ -154,6 +154,35 @@ keep it to the proxy and the apps behind it. A proxy on the host itself, or on
 another machine, is named by its address as before. An entry that does not
 parse is ignored and logged once as `invalid_trusted_proxy`.
 
+**Tightest: a network for just the proxy and Flipparr.** If the proxy's network
+also holds download clients or other apps, each of them is trusted too. Give the
+two their own small internal network instead, reach Flipparr by an alias that
+exists only there, and trust only that subnet:
+
+```bash
+docker network create --internal --subnet 172.16.88.0/29 flipparr-ingress
+```
+
+```yaml
+# compose.override.yaml, next to Flipparr's compose.yaml
+services:
+  flipparr:
+    networks:
+      proxy:              # keep whatever network reaches Prowlarr and SABnzbd
+      ingress:
+        aliases: [flipparr-ingress]
+networks:
+  ingress:
+    name: flipparr-ingress
+    external: true
+```
+
+Add the same network to the proxy's container, point the proxy host at
+`flipparr-ingress:8787`, and set `FLIPPARR_TRUSTED_PROXIES: "172.16.88.0/29"`.
+Pick any subnet no other network uses (`docker network inspect` lists them).
+`--internal` means the network has no route out, so it carries only the proxy's
+requests. Flipparr keeps its other network for everything it fetches.
+
 Then the app reads the real client address from `X-Forwarded-For`, and the
 bypass means what you expect. The header is read from the right: each proxy
 appends the address it received the request from, so the right-hand end is
