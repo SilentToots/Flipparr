@@ -48,6 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from access_policy import ADMIN, HOUSEHOLD, Viewer, allows, route_access
 from catalog_store import ADMIN_USER_ID, CatalogStore, _issue_release_state, normalized_person
 import page_panels as panel_finder
 from catalog_core_v2.language import (
@@ -359,8 +360,14 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # its edges. Off, the model is a fallback only. Each page is still sent
     # once.
     "visionReadsEveryPage": True,
+    # Whether a reader profile's page opens may ask the vision connector too.
+    # Off, readers get what the local finder reads and whatever the admin's
+    # reading already asked or corrected; the connector spends the admin's key.
+    "visionForReaders": False,
 }
-_APP_SETTINGS_BOOL_KEYS = frozenset({"collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage"})
+_APP_SETTINGS_BOOL_KEYS = frozenset({
+    "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
+})
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
 
@@ -428,6 +435,12 @@ _AUTH_CONFIG_LOCK = threading.Lock()
 _AUTH_METHODS = frozenset({"none", "forms"})
 _SESSION_COOKIE = "flipparr_session"
 _SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+# A shared device: one the admin signed in on with a password. It is what
+# offers the "Who's reading?" picker there, the way a Plex Home device does.
+# A reader signing in on their own phone never gets one.
+_DEVICE_COOKIE = "flipparr_device"
+_DEVICE_TTL_SECONDS = 365 * 24 * 60 * 60
+_PIN_PATTERN = re.compile(r"\d{4,6}")
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 _AUTH_EXEMPT_PATHS = frozenset({"/healthz", "/api/v1/auth/login", "/api/v1/auth/status"})
 # Legacy server-rendered view; it prints catalog data, so it is not public.
@@ -457,6 +470,12 @@ def hash_password(password: str, salt: bytes | None = None) -> str:
         password.encode("utf-8"), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
     )
     return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt.hex()}${derived.hex()}"
+
+
+# Checked against when a sign-in name belongs to nobody, so the answer costs
+# the same scrypt work either way. Its password is unknowable: a random salt
+# and a digest of nothing.
+_DUMMY_PASSWORD_HASH = f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${'00' * 16}${'00' * 32}"
 
 
 def verify_password(password: str, encoded: str) -> bool:
@@ -603,6 +622,270 @@ def session_token_valid(token: str, config: dict[str, Any]) -> bool:
     return hmac.compare_digest(username, str(config.get("username") or ""))
 
 
+# ---- Reader profiles: whose request this is ----------------------------------
+#
+# A profile's session cookie is `v2.<id>.<version>.<expiry>.<signature>`,
+# signed with the session secret. It is good while the profile exists, is not
+# switched off, and still has the version it was issued at -- a new password,
+# a changed role or "sign out everywhere" moves the version on, and every
+# cookie that profile had stops working. The device cookie says only "the
+# admin signed in here". Both are domain-separated, so neither passes for the
+# other. A cookie from before profiles (`<username>:<expiry>:<signature>`) is
+# the admin's, until the admin's first revocation, and is upgraded on sight.
+
+
+def _signed(config: dict[str, Any], message: str) -> str:
+    return hmac.new(config["sessionSecret"].encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def issue_profile_token(user: dict[str, Any], config: dict[str, Any], now: float | None = None) -> str:
+    expires = int(now if now is not None else time.time()) + _SESSION_TTL_SECONDS
+    user_id, version = int(user["id"]), int(user["sessionVersion"])
+    return f"v2.{user_id}.{version}.{expires}.{_signed(config, f'session|{user_id}|{version}|{expires}')}"
+
+
+def issue_device_token(config: dict[str, Any], now: float | None = None) -> str:
+    expires = int(now if now is not None else time.time()) + _DEVICE_TTL_SECONDS
+    return f"d1.{expires}.{_signed(config, f'device|{expires}')}"
+
+
+def device_token_valid(token: str, config: dict[str, Any], now: float | None = None) -> bool:
+    parts = str(token or "").split(".")
+    if len(parts) != 3 or parts[0] != "d1" or not config.get("sessionSecret"):
+        return False
+    _tag, expires, signature = parts
+    if not hmac.compare_digest(_signed(config, f"device|{expires}"), signature):
+        return False
+    try:
+        return int(expires) >= int(now if now is not None else time.time())
+    except ValueError:
+        return False
+
+
+def viewer_for(user: dict[str, Any] | None) -> Viewer | None:
+    if not user or user.get("disabled"):
+        return None
+    return Viewer(
+        id=int(user["id"]), name=str(user["name"]), role=str(user["role"]), colour=user.get("colour"),
+        can_request=bool(user.get("canRequest")), auto_approve=bool(user.get("autoApprove")),
+    )
+
+
+def resolve_session_token(
+    token: str, config: dict[str, Any], store: "CatalogStore", now: float | None = None,
+) -> tuple[Viewer | None, bool]:
+    """The profile a session cookie speaks for, and whether it is a pre-profiles cookie to upgrade."""
+    token = str(token or "")
+    if not config.get("sessionSecret") or not token:
+        return None, False
+    if token.startswith("v2."):
+        parts = token.split(".")
+        if len(parts) != 5:
+            return None, False
+        _tag, user_id, version, expires, signature = parts
+        if not hmac.compare_digest(_signed(config, f"session|{user_id}|{version}|{expires}"), signature):
+            return None, False
+        try:
+            if int(expires) < int(now if now is not None else time.time()):
+                return None, False
+            user = store.user(int(user_id))
+        except ValueError:
+            return None, False
+        if user is None or str(user["sessionVersion"]) != version:
+            return None, False
+        return viewer_for(user), False
+    # From before profiles: the admin's, while nothing has been revoked since.
+    if not session_token_valid(token, config):
+        return None, False
+    admin = store.user(ADMIN_USER_ID)
+    if admin is None or admin["sessionVersion"] != 0:
+        return None, False
+    return viewer_for(admin), True
+
+
+def admin_is_guarded(config: dict[str, Any], store: "CatalogStore") -> bool:
+    """Whether the admin profile needs something only the admin knows. Readers
+    are refused until it does: on a shared device anyone can tap a profile."""
+    return bool(config.get("passwordHash")) or bool(store.user_secrets(ADMIN_USER_ID)["pinHash"])
+
+
+def _valid_pin(pin: Any) -> str:
+    text = str(pin or "")
+    if not _PIN_PATTERN.fullmatch(text):
+        raise ValueError("A PIN is four to six digits")
+    return text
+
+
+def _login_taken_by_admin(login_name: Any, config: dict[str, Any]) -> bool:
+    name = str(login_name or "").strip()
+    return bool(name) and name.casefold() == str(config.get("username") or "").strip().casefold()
+
+
+class Throttled(Exception):
+    def __init__(self, wait: int):
+        super().__init__(f"retry in {wait}s")
+        self.wait = wait
+
+
+# What a profile may keep about itself on the server, so it follows them to
+# any device. Library views and recent searches stay in the browser.
+READER_PREF_KEYS = frozenset({"panelMode", "panelScrim", "panelStartWhole", "panelReveal"})
+
+
+def public_profile(user: dict[str, Any]) -> dict[str, Any]:
+    """A profile as the picker shows it: no sign-in name, nothing secret."""
+    return {
+        "id": user["id"], "name": user["name"], "colour": user["colour"], "role": user["role"],
+        "hasPin": user["hasPin"],
+        # The admin is never one tap away: without a PIN, their password.
+        "needsPassword": user["role"] == "admin" and not user["hasPin"],
+    }
+
+
+def profile_choices(store: "CatalogStore") -> list[dict[str, Any]]:
+    return [public_profile(user) for user in store.list_users() if not user["disabled"] and user["showOnPicker"]]
+
+
+def _checked(key: str, generation: str, secret: Any, hashed: str, *, max_delay: int) -> bool:
+    wait = _throttle_wait(key, generation)
+    if wait:
+        raise Throttled(wait)
+    ok = secret is not None and verify_password(str(secret), hashed)
+    _throttle_record(key, generation, ok, max_delay=max_delay)
+    return ok
+
+
+def check_profile_switch(store: "CatalogStore", config: dict[str, Any], user_id: int,
+                         pin: Any = None, password: Any = None) -> dict[str, Any]:
+    """The profile to switch to, once it has been shown what it asks for.
+
+    A PIN when the profile has one; for an admin without a PIN, the admin's
+    password; nothing for a reader with neither.
+    """
+    user = store.user(user_id)
+    if user is None or user["disabled"]:
+        raise LookupError("That profile is not available")
+    secrets_ = store.user_secrets(user_id)
+    if secrets_["pinHash"]:
+        if not _checked(f"pin:{user_id}", secrets_["pinHash"], pin, secrets_["pinHash"], max_delay=_PIN_MAX_DELAY_SECONDS):
+            raise PermissionError("That PIN is not right")
+    elif user["role"] == "admin":
+        hashed = config.get("passwordHash") if user_id == ADMIN_USER_ID else secrets_["passwordHash"]
+        key = "account" if user_id == ADMIN_USER_ID else f"user:{user_id}"
+        if hashed and not _checked(key, hashed, password, hashed, max_delay=_LOGIN_MAX_DELAY_SECONDS):
+            raise PermissionError("That password is not right")
+    return user
+
+
+def login_subject(username: str, config: dict[str, Any], store: "CatalogStore") -> tuple[str, str, dict[str, Any] | None]:
+    """Who a sign-in name belongs to: its throttle key, the hash to check, and the profile.
+
+    The admin's password stays in the sign-in config (where the
+    reset-password command finds it); a reader's is in their profile.
+    """
+    configured = str(config.get("username") or "")
+    if configured and hmac.compare_digest(username, configured):
+        return "account", str(config.get("passwordHash") or ""), store.user(ADMIN_USER_ID)
+    user = store.user_by_login(username) if username else None
+    if user and not user["disabled"]:
+        hashed = store.user_secrets(user["id"])["passwordHash"]
+        if hashed:
+            return f"user:{user['id']}", hashed, user
+    return "other", "", None
+
+
+def _profile_changes(store: "CatalogStore", config: dict[str, Any], target: dict[str, Any],
+                     payload: dict[str, Any], *, by_admin: bool) -> dict[str, Any]:
+    """The store fields a profile edit asks for, validated and hashed."""
+    changes: dict[str, Any] = {}
+    for key in ("name", "colour"):
+        if key in payload:
+            changes[key] = payload[key]
+    if "pin" in payload:
+        changes["pinHash"] = None if payload["pin"] in (None, "") else hash_password(_valid_pin(payload["pin"]))
+    is_admin_profile = target["id"] == ADMIN_USER_ID
+    if "loginName" in payload or "password" in payload:
+        if is_admin_profile:
+            raise ValueError("Your sign-in name and password are in Settings, Security")
+        if "loginName" in payload:
+            if _login_taken_by_admin(payload["loginName"], config):
+                raise ValueError("Another profile already signs in with that name")
+            changes["loginName"] = payload["loginName"]
+        if "password" in payload:
+            password = payload["password"]
+            if password in (None, ""):
+                changes["passwordHash"] = None
+            else:
+                if not isinstance(password, str) or len(password) < 8:
+                    raise ValueError("Password must be at least 8 characters")
+                login = changes.get("loginName", target["loginName"])
+                if not login:
+                    raise ValueError("Choose a sign-in name to go with the password")
+                if not by_admin and target["hasPassword"]:
+                    current = store.user_secrets(target["id"])["passwordHash"]
+                    if not verify_password(str(payload.get("currentPassword") or ""), current or ""):
+                        raise PermissionError("Your current password is not right")
+                changes["passwordHash"] = hash_password(password)
+    if by_admin:
+        for key in ("role", "canRequest", "autoApprove", "showOnPicker", "disabled"):
+            if key in payload:
+                changes[key] = payload[key]
+    # An admin with neither a PIN nor a password is anyone's, once readers exist.
+    stays_admin = changes.get("role", target["role"]) == "admin"
+    if stays_admin and "pinHash" in changes and changes["pinHash"] is None and store.reader_count():
+        still = (config.get("passwordHash") if is_admin_profile
+                 else changes.get("passwordHash", store.user_secrets(target["id"])["passwordHash"]))
+        if not still:
+            raise ValueError("While there are readers, an admin keeps a PIN or a password")
+    return changes
+
+
+def create_profile(store: "CatalogStore", config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """A profile made by the admin: a reader unless said otherwise."""
+    if not admin_is_guarded(config, store):
+        raise ValueError("Give your own profile a PIN, or a password in Security, before adding readers")
+    login = payload.get("loginName")
+    if _login_taken_by_admin(login, config):
+        raise ValueError("Another profile already signs in with that name")
+    password = payload.get("password")
+    password_hash = None
+    if password not in (None, ""):
+        if not isinstance(password, str) or len(password) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not str(login or "").strip():
+            raise ValueError("Choose a sign-in name to go with the password")
+        password_hash = hash_password(password)
+    pin = payload.get("pin")
+    return store.create_user(
+        payload.get("name"), role=str(payload.get("role") or "reader"), login_name=login,
+        password_hash=password_hash, pin_hash=None if pin in (None, "") else hash_password(_valid_pin(pin)),
+        colour=payload.get("colour"), can_request=bool(payload.get("canRequest", True)),
+        auto_approve=bool(payload.get("autoApprove", False)), show_on_picker=bool(payload.get("showOnPicker", True)),
+    )
+
+
+def own_prefs_patch(store: "CatalogStore", user_id: int, payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict) or not set(payload) <= READER_PREF_KEYS:
+        raise ValueError("Unknown reader settings")
+    if not all(isinstance(value, bool) for value in payload.values()):
+        raise ValueError("Reader settings are on or off")
+    prefs = {key: value for key, value in store.user_prefs(user_id).items() if key in READER_PREF_KEYS}
+    return store.set_user_prefs(user_id, {**prefs, **payload})
+
+
+def reader_catalog(payload: dict[str, Any]) -> dict[str, Any]:
+    """The catalog as a reader sees it: the library, without the admin's workbench.
+
+    The keys stay, emptied, so the client reads one shape for everyone.
+    """
+    for key in ("inbox", "roots", "requests", "replacementRequests"):
+        payload[key] = []
+    payload["activeScan"] = None
+    payload["lastScan"] = None
+    payload["enrichment"] = {}
+    return payload
+
+
 # Failed sign-ins slow further attempts down rather than locking the account.
 # Every request through a reverse proxy arrives from the same address, so a
 # lock keyed to the caller or the account would let anyone who can reach the
@@ -618,6 +901,55 @@ _LOGIN_MAX_DELAY_SECONDS = 60
 _LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _LOGIN_THROTTLE_LOCK = threading.Lock()
 _LOGIN_THROTTLE: dict[str, dict[str, Any]] = {}
+
+
+def _throttle_wait(key: str, generation: str, now: float | None = None) -> int:
+    """Seconds until another attempt against this key may be checked."""
+    now = time.time() if now is None else now
+    with _LOGIN_THROTTLE_LOCK:
+        bucket = _throttle_bucket(key, generation, now)
+        return max(0, math.ceil(bucket["retryAt"] - now))
+
+
+def _throttle_record(key: str, generation: str, succeeded: bool, now: float | None = None,
+                     max_delay: int = _LOGIN_MAX_DELAY_SECONDS) -> None:
+    now = time.time() if now is None else now
+    with _LOGIN_THROTTLE_LOCK:
+        if succeeded:
+            _LOGIN_THROTTLE.pop(key, None)
+            return
+        bucket = _throttle_bucket(key, generation, now)
+        bucket["failures"] += 1
+        bucket["lastFailure"] = now
+        excess = bucket["failures"] - _LOGIN_FREE_FAILURES
+        if excess >= 0:
+            bucket["retryAt"] = now + min(2 ** excess, max_delay)
+
+
+def _throttle_bucket(key: str, generation_source: str, now: float) -> dict[str, Any]:
+    generation = hashlib.sha256(str(generation_source or "").encode()).hexdigest()
+    bucket = _LOGIN_THROTTLE.get(key)
+    if (
+        bucket is None
+        or bucket["generation"] != generation
+        or now - bucket["lastFailure"] > _LOGIN_FAILURE_WINDOW_SECONDS
+    ):
+        bucket = {"failures": 0, "retryAt": 0.0, "lastFailure": now, "generation": generation}
+        _LOGIN_THROTTLE[key] = bucket
+    return bucket
+
+
+# A PIN has ten thousand values, so its delay grows further than a password's:
+# a child tapping at the admin's profile meets minutes, not seconds.
+_PIN_MAX_DELAY_SECONDS = 300
+
+
+def _too_many(wait: int) -> tuple[dict[str, Any], int, dict[str, str]]:
+    return (
+        {"error": f"Too many failed attempts. Try again in {wait} second{'s' if wait != 1 else ''}.",
+         "retryAfter": wait},
+        429, {"Retry-After": str(wait)},
+    )
 
 
 def _login_throttle_key(username: str, config: dict[str, Any]) -> str:
@@ -951,6 +1283,12 @@ def catalog_store() -> CatalogStore:
         # server runs, and the store outlives any one request.
         _CATALOG_STORE.preferred_language = preferred_language()
         return _CATALOG_STORE
+
+
+# Who is asking is always read from the real store. Routes reach the catalog
+# through `catalog_store`, which a test may stand in for; identity must not
+# change with it.
+_profiles_store = catalog_store
 
 
 PROVIDER_DEFINITIONS = {
@@ -9980,7 +10318,7 @@ def panel_model_session() -> Any:
     return _PANEL_MODEL["session"]
 
 
-def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
+def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     """Where the panels are on one page, in the order its run reads.
 
     Read from the 600px render the first time a page is asked about and kept,
@@ -10002,7 +10340,8 @@ def file_page_panels(file_id: int, index: int) -> dict[str, Any]:
     signature = _file_signature(path)
     record = store.page_panels(file_id, member)
     session = panel_model_session()
-    vision = vision_model_ready()
+    # A reader's page opens ask the vision connector only when the admin allows it.
+    vision = allow_vision and vision_model_ready()
     # Whether the connector reads every page, or only what the local tiers
     # could not: a local reading can be wrong while sure, and only a model
     # questions it.
@@ -11977,6 +12316,9 @@ class Handler(BaseHTTPRequestHandler):
         self._response_started = True
         self._status = code
         super().send_response(code, message)
+        for cookie in self._pending_cookies:
+            self.send_header("Set-Cookie", cookie)
+        self._pending_cookies = []
         # Returned on every response so a user can quote it and land on the
         # exact server-side record for their request.
         request_id = current_request_id()
@@ -12022,23 +12364,8 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _authorized(self, path: str) -> bool:
-        # An unreadable config denies everything except the health check, rather
-        # than quietly serving an unprotected instance.
-        config = load_auth_config()
-        if config["method"] == "none":
-            return True
-        if path in _AUTH_EXEMPT_PATHS:
-            return True
-        protected = path.startswith("/api/") or path in _PROTECTED_PATHS
-        if not protected:
-            # The app shell and its assets must load unauthenticated, or there
-            # is no page on which to present the login form.
-            return True
-        if config["localBypass"] and is_local_address(self._client_address()):
-            return True
-        cookie = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
-        morsel = cookie.get(_SESSION_COOKIE)
-        return bool(morsel and session_token_valid(morsel.value, config))
+        """Whether this request may reach `path` (GET), as the dispatcher decides it."""
+        return allows(route_access("GET", path), viewer=self.viewer, household=self._household)
 
     def _same_origin(self) -> bool:
         """Reject cross-site state changes.
@@ -12056,9 +12383,76 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    viewer: Viewer | None = None
+    _household = False
+    _pending_cookies: tuple[str, ...] | list[str] = ()
+
+    def _viewer(self) -> Viewer:
+        """The profile this request speaks for. Routes past the gate always have one."""
+        if self.viewer is None:
+            raise RuntimeError("This route needs a profile, and the request has none")
+        return self.viewer
+
     def _viewer_id(self) -> int:
-        """The profile this request speaks for."""
-        return ADMIN_USER_ID
+        return self._viewer().id
+
+    def _resolve_identity(self) -> None:
+        """Who is asking, and whether this is a shared device.
+
+        One profile and a shared device -- sign-in off, a device the admin
+        signed in on, or the local network when that is allowed -- is the
+        admin, exactly as before profiles. With more than one, a shared device
+        has to be told who is reading. The local network no longer means
+        "admin": on a NAS every device is local.
+        """
+        config = load_auth_config()
+        store = _profiles_store()
+        cookies = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+        viewer = None
+        session = cookies.get(_SESSION_COOKIE)
+        if session is not None and session.value:
+            viewer, legacy = resolve_session_token(session.value, config, store)
+            if viewer is not None and legacy:
+                admin = store.user(ADMIN_USER_ID)
+                self._set_cookie(_SESSION_COOKIE, issue_profile_token(admin, config), _SESSION_TTL_SECONDS)
+                self._set_cookie(_DEVICE_COOKIE, issue_device_token(config), _DEVICE_TTL_SECONDS)
+        device = cookies.get(_DEVICE_COOKIE)
+        household = (
+            config["method"] == "none"
+            or bool(device is not None and device_token_valid(device.value, config))
+            or bool(config["localBypass"] and is_local_address(self._client_address()))
+        )
+        if viewer is None and household:
+            enabled = [user for user in store.list_users() if not user["disabled"]]
+            if len(enabled) == 1:
+                viewer = viewer_for(enabled[0])
+        self.viewer = viewer
+        self._household = household
+
+    def _set_cookie(self, name: str, value: str, max_age: int) -> None:
+        attributes = [
+            f"{name}={value}", "Path=/", "HttpOnly",
+            # Lax keeps the cookie off cross-site POSTs, which is the CSRF risk
+            # a cookie session introduces.
+            "SameSite=Lax", f"Max-Age={max_age}",
+        ]
+        if self._request_is_https():
+            attributes.append("Secure")
+        if not isinstance(self._pending_cookies, list):
+            self._pending_cookies = []
+        # The last word on a cookie wins: an upgrade issued on the way in is
+        # replaced by a sign-in made by the route itself.
+        self._pending_cookies = [
+            cookie for cookie in self._pending_cookies if not cookie.startswith(f"{name}=")
+        ] + ["; ".join(attributes)]
+
+    def _sign_in_as(self, user: dict[str, Any], config: dict[str, Any], *, device: bool) -> None:
+        if not config.get("sessionSecret"):
+            # Sign-in off has never needed a secret; a profile cookie does.
+            config = save_auth_config({})
+        self._set_cookie(_SESSION_COOKIE, issue_profile_token(user, config), _SESSION_TTL_SECONDS)
+        if device:
+            self._set_cookie(_DEVICE_COOKIE, issue_device_token(config), _DEVICE_TTL_SECONDS)
 
     def _dispatch(self, route: Callable[[], None]) -> None:
         """Turn an unhandled failure into a JSON 500 rather than a dead socket.
@@ -12074,16 +12468,32 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         _REQUEST_CONTEXT.request_id = secrets.token_hex(6)
         self._status = None
+        # A connection carries several requests; nothing about who asked
+        # survives from one to the next.
+        self.viewer = None
+        self._household = False
+        self._pending_cookies = []
         started = time.monotonic()
         try:
+            access = route_access(self.command, path)
             try:
-                authorized = path == "/healthz" or self._authorized(path)
+                if path != "/healthz":
+                    self._resolve_identity()
             except AuthConfigUnreadable as exc:
                 log_exception("auth_config_unreadable", exc, path=path)
                 self.send_json({"error": f"Authentication is misconfigured: {exc}"}, 503)
                 return
-            if not authorized:
-                self.send_json({"error": "Authentication required"}, 401)
+            if not allows(access, viewer=self.viewer, household=self._household):
+                if self.viewer is None:
+                    # A shared device that has not said who is reading gets
+                    # the picker; anything else, the sign-in form.
+                    reason = "profile_required" if self._household else "signin_required"
+                    self.send_json({"error": "Authentication required", "reason": reason}, 401)
+                elif access == HOUSEHOLD:
+                    self.send_json({"error": "Profiles are switched on a shared device",
+                                    "reason": "shared_device_only"}, 403)
+                else:
+                    self.send_json({"error": "Your profile can't do that", "reason": "admin_only"}, 403)
                 return
             if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():
                 self.send_json({"error": "Cross-site request rejected"}, 403)
@@ -12107,6 +12517,7 @@ class Handler(BaseHTTPRequestHandler):
                 status=self._status,
                 duration_ms=round((time.monotonic() - started) * 1000, 1),
                 client=self._client_address(),
+                user=self.viewer.id if self.viewer is not None else None,
             )
             _REQUEST_CONTEXT.request_id = None
 
@@ -12133,16 +12544,32 @@ class Handler(BaseHTTPRequestHandler):
             # Reachable unauthenticated: the app needs to know whether to show a
             # login form. Deliberately does not reveal the username.
             config = load_auth_config()
+            profile_required = self.viewer is None and self._household and len(profile_choices(_profiles_store())) > 1
             self.send_json({
                 "method": config["method"],
-                "authenticated": self._authorized("/api/v1/catalog"),
+                "authenticated": self.viewer is not None,
+                "viewer": self.viewer.public() if self.viewer is not None else None,
+                "household": self._household,
+                "profileRequired": profile_required,
             })
+            return
+        if parsed_url.path == "/api/v1/profiles":
+            self.send_json({"profiles": profile_choices(_profiles_store())})
+            return
+        if parsed_url.path == "/api/v1/me":
+            store = _profiles_store()
+            self.send_json({"profile": store.user(self._viewer_id()),
+                            "prefs": store.user_prefs(self._viewer_id())})
+            return
+        if parsed_url.path == "/api/v1/users":
+            self.send_json({"users": _profiles_store().list_users()})
             return
         if parsed_url.path == "/api/v1/auth":
             self.send_json(public_auth_config())
             return
         if parsed_url.path == "/api/v1/catalog":
-            self.send_json(catalog_api_payload(viewer_id=self._viewer_id()))
+            payload = catalog_api_payload(viewer_id=self._viewer_id())
+            self.send_json(payload if self._viewer().is_admin else reader_catalog(payload))
             return
         if parsed_url.path == "/api/v1/settings":
             self.send_json(load_app_settings())
@@ -12283,6 +12710,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 payload = file_page_panels(
                     int(file_page_panels_match.group(1)), int(file_page_panels_match.group(2)),
+                    allow_vision=self._viewer().is_admin or bool(load_app_settings().get("visionForReaders")),
                 )
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
@@ -12445,29 +12873,69 @@ class Handler(BaseHTTPRequestHandler):
                 return
             username = str(payload.get("username") or "")
             password = str(payload.get("password") or "")
-            wait = login_retry_after(username, config)
+            store = _profiles_store()
+            key, hashed, user = login_subject(username, config, store)
+            wait = _throttle_wait(key, hashed)
             if wait:
-                self.send_json(
-                    {"error": f"Too many failed sign-ins. Try again in {wait} "
-                              f"second{'s' if wait != 1 else ''}.",
-                     "retryAfter": wait},
-                    429, headers={"Retry-After": str(wait)},
-                )
+                body, status, headers = _too_many(wait)
+                body["error"] = f"Too many failed sign-ins. Try again in {wait} second{'s' if wait != 1 else ''}."
+                self.send_json(body, status, headers=headers)
                 return
-            succeeded = (
-                hmac.compare_digest(username, str(config["username"] or ""))
-                and verify_password(password, config["passwordHash"])
-            )
-            record_login_result(username, config, succeeded)
+            # An unknown name still pays for a hash, so the answer's timing
+            # says nothing about which names exist.
+            succeeded = verify_password(password, hashed or _DUMMY_PASSWORD_HASH) and bool(hashed) and user is not None
+            _throttle_record(key, hashed, succeeded)
             if not succeeded:
                 # One message for both cases: a distinct "no such user" reply
                 # would let an attacker enumerate valid usernames.
                 self.send_json({"error": "Incorrect username or password"}, 401)
                 return
-            self.send_session_cookie(issue_session_token(config))
+            # The admin signing in makes this a shared device; a reader
+            # signing in on their own phone does not.
+            self._sign_in_as(user, config, device=user["role"] == "admin")
+            self.send_json({"status": "authenticated", "viewer": viewer_for(user).public()})
             return
         if parsed_url.path == "/api/v1/auth/logout":
+            if payload.get("forgetDevice"):
+                self._set_cookie(_DEVICE_COOKIE, "", 0)
             self.send_session_cookie("", expire=True)
+            return
+        if parsed_url.path == "/api/v1/profiles/switch":
+            config = load_auth_config()
+            store = _profiles_store()
+            try:
+                user = check_profile_switch(
+                    store, config, int(payload.get("userId") or 0), payload.get("pin"), payload.get("password"),
+                )
+            except Throttled as exc:
+                body, status, headers = _too_many(exc.wait)
+                self.send_json(body, status, headers=headers)
+                return
+            except (LookupError, ValueError, TypeError):
+                self.send_json({"error": "That profile is not available"}, 404)
+                return
+            except PermissionError as exc:
+                self.send_json({"error": str(exc)}, 403)
+                return
+            self._sign_in_as(user, config, device=False)
+            self.send_json({"status": "switched", "viewer": viewer_for(user).public()})
+            return
+        if parsed_url.path == "/api/v1/users":
+            try:
+                created = create_profile(_profiles_store(), load_auth_config(), payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(created, 201)
+            return
+        users_sign_out = re.fullmatch(r"/api/v1/users/(\d+)/sign-out", parsed_url.path)
+        if users_sign_out:
+            try:
+                _profiles_store().bump_session_version(int(users_sign_out.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json({"status": "signed out everywhere"})
             return
         if parsed_url.path == "/api/v1/auth":
             try:
@@ -12481,9 +12949,9 @@ class Handler(BaseHTTPRequestHandler):
                 # this call. Issue them a session in the same response, or the
                 # next request 401s and they are locked out of the very page
                 # they would use to fix it.
-                self.send_session_cookie(
-                    issue_session_token(updated), payload=public_auth_config()
-                )
+                admin = _profiles_store().user(ADMIN_USER_ID)
+                self._sign_in_as(admin, updated, device=True)
+                self.send_json(public_auth_config())
                 return
             self.send_json(public_auth_config())
             return
@@ -13155,6 +13623,45 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
             return
+        if parsed_url.path == "/api/v1/me/prefs":
+            try:
+                prefs = own_prefs_patch(_profiles_store(), self._viewer_id(), payload)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"prefs": prefs})
+            return
+        me = parsed_url.path == "/api/v1/me"
+        users_match = re.fullmatch(r"/api/v1/users/(\d+)", parsed_url.path)
+        if me or users_match:
+            store = _profiles_store()
+            config = load_auth_config()
+            target_id = self._viewer_id() if me else int(users_match.group(1))
+            target = store.user(target_id)
+            if target is None:
+                self.send_json({"error": "That profile does not exist"}, 404)
+                return
+            if me:
+                # A profile about itself: its name, colour, PIN, and -- for a
+                # reader -- a sign-in name and password. Roles and permissions
+                # are the admin's to give.
+                payload = {key: value for key, value in (payload or {}).items()
+                           if key in ("name", "colour", "pin", "loginName", "password", "currentPassword")}
+            try:
+                changes = _profile_changes(store, config, target, payload or {}, by_admin=not me)
+                updated = store.update_user(target_id, **changes)
+            except PermissionError as exc:
+                self.send_json({"error": str(exc)}, 403)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            if target_id == self._viewer_id() and updated["sessionVersion"] != target["sessionVersion"]:
+                # A new password ends every sign-in this profile had -- except
+                # the one making the change, which is issued afresh.
+                self._sign_in_as(updated, config, device=False)
+            self.send_json(updated)
+            return
         page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
         if page_panels_match:
             try:
@@ -13197,6 +13704,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        users_match = re.fullmatch(r"/api/v1/users/(\d+)", parsed_url.path)
+        if users_match:
+            user_id = int(users_match.group(1))
+            if user_id == self._viewer_id():
+                self.send_json({"error": "Switch to another admin profile to remove this one"}, 400)
+                return
+            try:
+                _profiles_store().delete_user(user_id)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"status": "removed"})
+            return
         page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
         if page_panels_match:
             try:
@@ -13262,28 +13785,11 @@ class Handler(BaseHTTPRequestHandler):
     def send_session_cookie(
         self, token: str, expire: bool = False, payload: Any = None
     ) -> None:
-        body = json.dumps(
+        self._set_cookie(_SESSION_COOKIE, "" if expire else token, 0 if expire else _SESSION_TTL_SECONDS)
+        self.send_json(
             payload if payload is not None
             else {"status": "signed out" if expire else "authenticated"}
-        ).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        attributes = [
-            f"{_SESSION_COOKIE}={token}", "Path=/", "HttpOnly",
-            # Lax keeps the cookie off cross-site POSTs, which is the CSRF risk
-            # a cookie session introduces.
-            "SameSite=Lax",
-        ]
-        if expire:
-            attributes.append("Max-Age=0")
-        else:
-            attributes.append(f"Max-Age={_SESSION_TTL_SECONDS}")
-        if self._request_is_https():
-            attributes.append("Secure")
-        self.send_header("Set-Cookie", "; ".join(attributes))
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        )
 
     def send_json(self, payload: Any, status: int = 200,
                   headers: dict[str, str] | None = None) -> None:
@@ -13298,8 +13804,10 @@ class Handler(BaseHTTPRequestHandler):
         # Required whenever a response varies by request header, and doubly so
         # for the immutably cached assets below: without it a shared cache can
         # hand a compressed body to a client that never asked for one.
-        self.send_header("Vary", "Accept-Encoding")
-        for name, value in (headers or {}).items():
+        # And by cookie: one profile's answers are not another's.
+        self.send_header("Vary", "Accept-Encoding, Cookie")
+        headers = {"Cache-Control": "private, no-store", **(headers or {})}
+        for name, value in headers.items():
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

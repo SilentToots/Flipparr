@@ -4128,8 +4128,6 @@ class ReaderProfileTests(LibraryFixture):
     and their own ratings; the library, and the admin, are shared by all."""
 
     def _reader(self, store, name="Sam", **kwargs):
-        if not store.user_secrets(ADMIN_USER_ID)["pinHash"]:
-            store.update_user(ADMIN_USER_ID, pinHash="scrypt$pin")
         return store.create_user(name, **kwargs)["id"]
 
     def test_a_library_from_before_profiles_is_the_admins_and_a_copy_is_kept_first(self):
@@ -4218,17 +4216,14 @@ class ReaderProfileTests(LibraryFixture):
             store = self._three_files(Path(folder))
             admin = store.user(ADMIN_USER_ID)
             self.assertEqual((admin["name"], admin["role"], admin["hasPin"], admin["hasPassword"]), ("Admin", "admin", False, False))
-            with self.assertRaises(ValueError, msg="an open admin profile on a shared device is no admin"):
-                store.create_user("Sam")
             sam = self._reader(store)
+            self.assertEqual(store.reader_count(), 1)
             with self.assertRaises(ValueError):
                 store.update_user(ADMIN_USER_ID, role="reader")
             with self.assertRaises(ValueError):
                 store.update_user(ADMIN_USER_ID, disabled=True)
             with self.assertRaises(ValueError):
                 store.delete_user(ADMIN_USER_ID)
-            with self.assertRaises(ValueError, msg="readers exist, so the admin keeps a PIN or a password"):
-                store.update_user(ADMIN_USER_ID, pinHash=None)
             # A second admin makes the first one's demotion possible.
             store.update_user(sam, role="admin")
             store.update_user(ADMIN_USER_ID, role="reader")

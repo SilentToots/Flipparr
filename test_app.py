@@ -6664,6 +6664,27 @@ class VisionInPanelPipelineTests(PagePanelTests):
              patch("app.ask_vision_model", return_value=answer) as ask:
             return app.file_page_panels(7, 1), store, ask
 
+    def test_a_readers_page_never_asks_the_connector_unless_the_admin_allows_it(self):
+        from pathlib import Path
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = None
+        store.file_reading_direction.return_value = "ltr"
+        store.manual_page_panels_near.return_value = []
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
+             patch("app._file_signature", return_value="sig"), \
+             patch.object(Path, "is_file", return_value=True), \
+             patch("app.panel_model_session", return_value=None), \
+             patch("app.vision_model_ready", return_value=True), \
+             patch("app.load_app_settings", return_value={"visionReadsEveryPage": True}), \
+             patch("app.render_file_page", return_value=self._page_png()), \
+             patch("app.ask_vision_model", side_effect=AssertionError("the connector was asked")) as ask:
+            result = app.file_page_panels(7, 1, allow_vision=False)
+        ask.assert_not_called()
+        self.assertEqual(result["source"], "auto", "the local finder's reading, kept for the admin to improve")
+
     def test_a_spread_is_asked_about_a_half_at_a_time(self):
         # Asked about the whole, a model loses a third of a spread's panels;
         # asked about each page it reads as well as on any page. Here it sees
@@ -7517,3 +7538,55 @@ class RelaunchIsAnotherComicTests(unittest.TestCase):
                    "preferredLanguage": "en"}
         self.assertGreaterEqual(app._release_candidate_score(
             {"title": "Batman 500 (1993) (Digital)", "categories": [{"id": 7030}]}, context)[0], 85)
+
+
+
+class ProfileTokenTests(unittest.TestCase):
+    """The cookies that say which profile a request speaks for."""
+
+    config = {"sessionSecret": "a secret", "username": "owner", "passwordHash": ""}
+
+    def _store(self, **user):
+        store = Mock()
+        record = {"id": 2, "name": "Sam", "role": "reader", "colour": None, "canRequest": True,
+                  "autoApprove": False, "disabled": False, "sessionVersion": 3, **user}
+        store.user.side_effect = lambda user_id: dict(record) if user_id == record["id"] else None
+        return store, record
+
+    def test_a_profile_cookie_speaks_for_its_profile_until_its_version_moves_on(self):
+        store, record = self._store()
+        token = app.issue_profile_token(record, self.config, now=1000)
+        viewer, legacy = app.resolve_session_token(token, self.config, store, now=2000)
+        self.assertEqual((viewer.id, viewer.role, legacy), (2, "reader", False))
+        moved, _ = self._store(sessionVersion=4)
+        self.assertIsNone(app.resolve_session_token(token, self.config, moved, now=2000)[0], "revoked")
+        off, _ = self._store(disabled=True)
+        self.assertIsNone(app.resolve_session_token(token, self.config, off, now=2000)[0], "switched off")
+        self.assertIsNone(app.resolve_session_token(token, self.config, store, now=1000 + app._SESSION_TTL_SECONDS + 1)[0],
+                          "expired")
+        forged = token.replace("v2.2.", "v2.1.")
+        self.assertIsNone(app.resolve_session_token(forged, self.config, store, now=2000)[0], "another profile's id")
+        self.assertIsNone(app.resolve_session_token(token, {**self.config, "sessionSecret": "other"}, store, now=2000)[0])
+
+    def test_a_device_cookie_is_not_a_session_and_a_session_is_not_a_device(self):
+        store, record = self._store()
+        device = app.issue_device_token(self.config, now=1000)
+        self.assertTrue(app.device_token_valid(device, self.config, now=2000))
+        self.assertIsNone(app.resolve_session_token(device, self.config, store, now=2000)[0])
+        session = app.issue_profile_token(record, self.config, now=1000)
+        self.assertFalse(app.device_token_valid(session, self.config, now=2000))
+        self.assertFalse(app.device_token_valid(device, self.config, now=1000 + app._DEVICE_TTL_SECONDS + 1))
+
+    def test_a_pin_slows_down_after_a_few_wrong_guesses(self):
+        app._LOGIN_THROTTLE.clear()
+        self.addCleanup(app._LOGIN_THROTTLE.clear)
+        store = Mock()
+        pin_hash = app.hash_password("2468")
+        store.user.return_value = {"id": 2, "name": "Admin two", "role": "admin", "disabled": False}
+        store.user_secrets.return_value = {"pinHash": pin_hash, "passwordHash": None}
+        self.assertEqual(app.check_profile_switch(store, self.config, 2, pin="2468")["id"], 2, "the right PIN opens it")
+        for _ in range(app._LOGIN_FREE_FAILURES):
+            with self.assertRaises(PermissionError):
+                app.check_profile_switch(store, self.config, 2, pin="0000")
+        with self.assertRaises(app.Throttled, msg="after that, even the right PIN waits its turn"):
+            app.check_profile_switch(store, self.config, 2, pin="2468")

@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import re
 import tempfile
 import zipfile
 import threading
@@ -60,10 +61,15 @@ _SERVERS: list = []
 
 
 class Response:
-    def __init__(self, status: int, headers, body: bytes):
+    def __init__(self, status: int, headers, body: bytes, set_cookies: list[str] | None = None):
         self.status = status
         self.headers = headers
         self.body = body
+        # Every Set-Cookie, by name: a dict of headers keeps only one of them.
+        self.cookies = {}
+        for header in set_cookies or []:
+            name, _, rest = header.partition("=")
+            self.cookies[name] = rest.split(";")[0]
 
     def json(self):
         return json.loads(self.body)
@@ -82,9 +88,11 @@ def request(
         req.add_header(name, value)
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
-            return Response(response.status, dict(response.headers), response.read())
+            return Response(response.status, dict(response.headers), response.read(),
+                            response.headers.get_all("Set-Cookie") or [])
     except urllib.error.HTTPError as exc:
-        return Response(exc.code, dict(exc.headers or {}), exc.read())
+        return Response(exc.code, dict(exc.headers or {}), exc.read(),
+                        (exc.headers.get_all("Set-Cookie") if exc.headers else None) or [])
 
 
 def _png_bytes(size: int = 4) -> bytes:
@@ -294,7 +302,9 @@ class HttpContractTests(unittest.TestCase):
         plain = self.get("/api/v1/catalog")
         gzipped = request("GET", self.base + "/api/v1/catalog", accept_encoding="gzip")
         self.assertEqual(gzipped.headers.get("Content-Encoding"), "gzip")
-        self.assertEqual(gzipped.headers.get("Vary"), "Accept-Encoding")
+        # JSON varies by who asks as well: one profile's answers are not another's.
+        self.assertEqual(gzipped.headers.get("Vary"), "Accept-Encoding, Cookie")
+        self.assertEqual(gzipped.headers.get("Cache-Control"), "private, no-store")
         # urllib does not auto-decompress, so the body is the compressed bytes.
         self.assertLess(len(gzipped.body), len(plain.body))
         self.assertEqual(gzip.decompress(gzipped.body), plain.body)
@@ -1483,3 +1493,226 @@ class HttpContractTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+# ---- Reader profiles ----------------------------------------------------------
+
+def _route_matchers() -> dict[str, list[str]]:
+    """Every route app.py's four handlers match, as (method -> patterns), read
+    from the source so a new route cannot hide from the census."""
+    import ast
+    tree = ast.parse(Path(app.__file__).read_text())
+    found: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name in ("_route_get", "_route_post", "_route_patch", "_route_delete")):
+            continue
+        method = node.name.rsplit("_", 1)[1].upper()
+        patterns = found.setdefault(method, [])
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Compare) and isinstance(sub.left, ast.Attribute) and sub.left.attr == "path":
+                comp = sub.comparators[0]
+                values = [comp] if isinstance(comp, ast.Constant) else list(getattr(comp, "elts", []))
+                patterns += [re.escape(v.value) for v in values if isinstance(v, ast.Constant)]
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("fullmatch", "match")
+                    and len(sub.args) > 1 and isinstance(sub.args[0], ast.Constant)
+                    and isinstance(sub.args[1], ast.Attribute) and sub.args[1].attr == "path"):
+                patterns.append(sub.args[0].value)
+    return found
+
+
+def _sample(pattern: str) -> str:
+    """A concrete path a route pattern matches."""
+    path = pattern.replace(r"(\d+)", "1").replace("([a-z_]+)", "metron").replace("([a-z0-9_]+)", "sabnzbd")
+    path = re.sub(r"\(\?:[^()]*\)\?", "", path)
+    path = path.replace("(issues|series)", "issues")
+    return path.replace("\\", "")
+
+
+# The routes a profile other than the admin can reach, by class. Everything else
+# in app.py must be the admin's; growing this list is a reviewed decision.
+NOT_ADMIN = {
+    ("GET", "/healthz"): "public",
+    ("GET", "/api/v1/auth/status"): "public",
+    ("POST", "/api/v1/auth/login"): "public",
+    ("POST", "/api/v1/auth/logout"): "public",
+    ("GET", "/api/v1/profiles"): "household",
+    ("POST", "/api/v1/profiles/switch"): "household",
+    ("GET", "/api/v1/me"): "signed_in",
+    ("PATCH", "/api/v1/me"): "signed_in",
+    ("PATCH", "/api/v1/me/prefs"): "signed_in",
+    ("GET", "/api/v1/catalog"): "reader",
+    ("GET", "/api/v1/art-swatch"): "reader",
+    ("GET", "/api/file-cover"): "reader",
+    ("GET", "/api/v1/files/1/cover/image"): "reader",
+    ("GET", "/api/v1/series/1/cover/image"): "reader",
+    ("GET", "/api/v1/series/1/backdrop"): "reader",
+    ("GET", "/api/v1/series/1/synopsis"): "reader",
+    ("GET", "/api/v1/issues/1/detail"): "reader",
+    ("GET", "/api/v1/reading"): "reader",
+    ("GET", "/api/v1/reading/runs"): "reader",
+    ("GET", "/api/v1/series/1/reading"): "reader",
+    ("GET", "/api/v1/files/1/progress"): "reader",
+    ("POST", "/api/v1/files/1/progress"): "reader",
+    ("GET", "/api/v1/files/1/pages"): "reader",
+    ("GET", "/api/v1/files/1/pages/1"): "reader",
+    ("GET", "/api/v1/files/1/pages/1/panels"): "reader",
+    ("POST", "/api/v1/issues/1/rating"): "reader",
+}
+
+
+class RouteCensusTests(unittest.TestCase):
+    def test_every_route_has_a_class_and_only_the_reviewed_ones_are_open(self):
+        import access_policy
+        seen = set()
+        for method, patterns in _route_matchers().items():
+            for pattern in patterns:
+                sample = _sample(pattern)
+                self.assertTrue(re.fullmatch(pattern, sample), f"{method} {pattern}: sample {sample} does not match")
+                expected = NOT_ADMIN.get((method, sample), "admin")
+                self.assertEqual(access_policy.route_access(method, sample), expected, f"{method} {sample}")
+                seen.add((method, sample))
+        # Every open route in the list is a route app.py actually has.
+        missing = {key for key in NOT_ADMIN if key not in seen and key != ("POST", "/api/v1/issues/1/rating")}
+        self.assertEqual(missing, set(), "listed as open but not in app.py")
+        self.assertEqual(access_policy.route_access("POST", "/api/v1/series/1/rating"), "reader")
+        # Anything not listed under /api is the admin's, even a route that does not exist yet.
+        self.assertEqual(access_policy.route_access("GET", "/api/v1/something-new"), "admin")
+        self.assertEqual(access_policy.route_access("GET", "/results"), "admin")
+        self.assertEqual(access_policy.route_access("GET", "/some/app/route"), "public")
+
+
+class ReaderProfileHttpTests(unittest.TestCase):
+    """Profiles end to end over HTTP, each test on its own library and sign-in config."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = _start_server()
+
+    def setUp(self):
+        folder = Path(tempfile.mkdtemp(dir=_ROOT))
+        env = {"COMICARR_DATABASE": str(folder / "profiles.db"), "COMICARR_AUTH_CONFIG": str(folder / "auth.json")}
+        patcher = patch.dict("app.os.environ", env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        app._LOGIN_THROTTLE.clear()
+        self.addCleanup(app._LOGIN_THROTTLE.clear)
+
+    def call(self, method, path, payload=None, cookies=None):
+        body = json.dumps(payload).encode() if payload is not None else (b"{}" if method != "GET" else None)
+        header = "; ".join(f"{name}={value}" for name, value in (cookies or {}).items())
+        headers = {"Cookie": header} if header else {}
+        return request(method, self.base + path, body, "application/json" if body is not None else None, headers=headers)
+
+    def _household_with_a_reader(self, **reader):
+        # Sign-in off, one profile: the admin, with no cookie at all.
+        self.assertEqual(self.call("PATCH", "/api/v1/me", {"pin": "2468"}).status, 200)
+        made = self.call("POST", "/api/v1/users", {"name": "Sam", "colour": "teal", **reader})
+        self.assertEqual(made.status, 201, made.body)
+        return made.json()["id"]
+
+    def test_a_reader_cannot_be_added_while_the_admin_is_one_tap_away(self):
+        refused = self.call("POST", "/api/v1/users", {"name": "Sam"})
+        self.assertEqual(refused.status, 400)
+        self.assertIn("PIN", refused.json()["error"])
+
+    def test_a_shared_device_asks_who_is_reading_and_the_admin_needs_their_pin(self):
+        sam = self._household_with_a_reader()
+        anonymous = self.call("GET", "/api/v1/catalog")
+        self.assertEqual((anonymous.status, anonymous.json()["reason"]), (401, "profile_required"))
+        status = self.call("GET", "/api/v1/auth/status").json()
+        self.assertEqual((status["profileRequired"], status["authenticated"], status["household"]), (True, False, True))
+        profiles = self.call("GET", "/api/v1/profiles").json()["profiles"]
+        self.assertEqual([(p["name"], p["hasPin"]) for p in profiles], [("Admin", True), ("Sam", False)])
+        self.assertNotIn("loginName", profiles[0], "the picker shows no sign-in names")
+        # Sam taps their own profile: no PIN, in.
+        switched = self.call("POST", "/api/v1/profiles/switch", {"userId": sam})
+        self.assertEqual(switched.status, 200)
+        cookies = switched.cookies
+        self.assertIn("flipparr_session", cookies)
+        catalog = self.call("GET", "/api/v1/catalog", cookies=cookies)
+        self.assertEqual(catalog.status, 200)
+        self.assertEqual((catalog.json()["inbox"], catalog.json()["roots"]), ([], []), "no admin workbench")
+        # The admin's things are the admin's.
+        for method, path in (("GET", "/api/v1/settings"), ("GET", "/api/v1/users"),
+                             ("POST", "/api/v1/requests"), ("DELETE", "/api/v1/series/1")):
+            denied = self.call(method, path, {} if method != "GET" else None, cookies=cookies)
+            self.assertEqual((denied.status, denied.json().get("reason")), (403, "admin_only"), f"{method} {path}")
+        # Switching to the admin: not without the PIN.
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": 1}, cookies=cookies).status, 403)
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "1111"}).status, 403)
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"})
+        self.assertEqual(admin.status, 200)
+        self.assertEqual(self.call("GET", "/api/v1/settings", cookies=admin.cookies).status, 200)
+
+    def test_each_profile_reads_and_rates_on_its_own(self):
+        sam = self._household_with_a_reader()
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        admin_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        me = self.call("GET", "/api/v1/me", cookies=sam_cookies).json()
+        self.assertEqual((me["profile"]["name"], me["prefs"]), ("Sam", {}))
+        saved = self.call("PATCH", "/api/v1/me/prefs", {"panelMode": True}, cookies=sam_cookies)
+        self.assertEqual(saved.json()["prefs"], {"panelMode": True})
+        self.assertEqual(self.call("GET", "/api/v1/me", cookies=admin_cookies).json()["prefs"], {}, "Sam's, not the admin's")
+        self.assertEqual(self.call("PATCH", "/api/v1/me/prefs", {"theme": "dark"}, cookies=sam_cookies).status, 400)
+        self.assertEqual(self.call("PATCH", "/api/v1/me", {"role": "admin"}, cookies=sam_cookies).json()["role"], "reader",
+                         "a reader cannot give themselves the admin's role")
+
+    def test_the_local_network_is_a_shared_device_not_the_admin(self):
+        # On a NAS every device is local. With readers, local means "ask who is reading".
+        self._household_with_a_reader()
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password",
+                              "localBypass": True})
+        anonymous = self.call("GET", "/api/v1/catalog")
+        self.assertEqual((anonymous.status, anonymous.json()["reason"]), (401, "profile_required"))
+        self.assertEqual(self.call("GET", "/api/v1/settings").status, 401)
+
+    def test_a_reader_signs_in_on_their_own_device_and_a_new_password_ends_the_old_sign_ins(self):
+        self.call("PATCH", "/api/v1/me", {"pin": "2468"})
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        admin = self.call("POST", "/api/v1/auth/login", {"username": "owner", "password": "the admin password"})
+        self.assertEqual(admin.status, 200)
+        self.assertIn("flipparr_device", admin.cookies, "the admin's device becomes a shared one")
+        made = self.call("POST", "/api/v1/users", {"name": "Sam", "loginName": "sam", "password": "sams password"},
+                         cookies=admin.cookies)
+        self.assertEqual(made.status, 201, made.body)
+        self.assertEqual(self.call("POST", "/api/v1/users", {"name": "Imposter", "loginName": "OWNER"},
+                                   cookies=admin.cookies).status, 400, "nobody else signs in as the admin")
+        sam = self.call("POST", "/api/v1/auth/login", {"username": "SAM", "password": "sams password"})
+        self.assertEqual(sam.status, 200)
+        self.assertNotIn("flipparr_device", sam.cookies, "a reader's own phone is not a shared device")
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam.cookies).status, 200)
+        own_phone = self.call("GET", "/api/v1/profiles", cookies=sam.cookies)
+        self.assertEqual((own_phone.status, own_phone.json()["reason"]), (403, "shared_device_only"),
+                         "no picker on a reader's own phone")
+        wrong = self.call("PATCH", "/api/v1/me", {"password": "a newer password", "currentPassword": "nope"},
+                          cookies=sam.cookies)
+        self.assertEqual(wrong.status, 403)
+        changed = self.call("PATCH", "/api/v1/me", {"password": "a newer password", "currentPassword": "sams password"},
+                            cookies=sam.cookies)
+        self.assertEqual(changed.status, 200)
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam.cookies).status, 401, "the old sign-in ended")
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=changed.cookies).status, 200, "but not the changer's")
+        # The admin can end a reader's sign-ins everywhere.
+        self.call("POST", f"/api/v1/users/{made.json()['id']}/sign-out", cookies=admin.cookies)
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=changed.cookies).status, 401)
+
+    def test_a_cookie_from_before_profiles_is_the_admins_and_is_upgraded(self):
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        legacy = {"flipparr_session": app.issue_session_token(app.load_auth_config())}
+        first = self.call("GET", "/api/v1/catalog", cookies=legacy)
+        self.assertEqual(first.status, 200)
+        self.assertTrue(first.cookies["flipparr_session"].startswith("v2.1."), "upgraded to a profile cookie")
+        self.assertIn("flipparr_device", first.cookies)
+        self.assertEqual(self.call("GET", "/api/v1/settings", cookies=first.cookies).status, 200)
+        # Once the admin's sign-ins have been ended, the old kind no longer counts.
+        app.catalog_store().bump_session_version(1)
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=legacy).status, 401)
+
+    def test_a_readers_request_never_reaches_an_admin_handler(self):
+        sam = self._household_with_a_reader()
+        cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        with patch("app.save_app_settings", side_effect=AssertionError("handler ran")) as saving:
+            refused = request("PATCH", self.base + "/api/v1/settings", json.dumps({"autoScanEnabled": False}).encode(),
+                              "application/json", headers={"Cookie": f"flipparr_session={cookies['flipparr_session']}"})
+        self.assertEqual(refused.status, 403)
+        saving.assert_not_called()

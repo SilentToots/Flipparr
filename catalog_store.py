@@ -3772,11 +3772,11 @@ class CatalogStore:
         password_hash: str | None = None, pin_hash: str | None = None, colour: str | None = None,
         can_request: bool = True, auto_approve: bool = False, show_on_picker: bool = True,
     ) -> dict[str, Any]:
-        """A new profile. Readers only once the admin can't be picked by anyone.
+        """A new profile.
 
-        On a shared device anyone can tap a profile, so a household with
-        readers but an open admin profile has no admin at all: the admin must
-        have a PIN or a password before the first reader is made.
+        The app, not the store, refuses a reader while the admin can be picked
+        by anyone: the admin's password lives in the sign-in config, which the
+        store never reads.
         """
         if role not in USER_ROLES:
             raise ValueError("A profile is an admin or a reader")
@@ -3786,12 +3786,6 @@ class CatalogStore:
         login = self._login_name(login_name)
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
-            if role == "reader":
-                admin = connection.execute(
-                    "SELECT 1 FROM users WHERE role='admin' AND disabled=0 AND (password_hash IS NOT NULL OR pin_hash IS NOT NULL)"
-                ).fetchone()
-                if admin is None:
-                    raise ValueError("Give your own profile a PIN or a password before adding readers")
             try:
                 cursor = connection.execute(
                     """INSERT INTO users(name, login_name, role, colour, password_hash, pin_hash,
@@ -3842,14 +3836,6 @@ class CatalogStore:
             )
             if losing_admin and self._enabled_admins(connection) <= 1:
                 raise ValueError("The library needs an admin: this is the last one")
-            # An admin left with neither a password nor a PIN is an admin
-            # anyone at a shared device can become.
-            stays_admin = values.get("role", current["role"]) == "admin"
-            unguarded = values.get("password_hash", current["password_hash"]) is None \
-                and values.get("pin_hash", current["pin_hash"]) is None
-            if stays_admin and unguarded and ("password_hash" in values or "pin_hash" in values) \
-                    and self._readers(connection):
-                raise ValueError("While there are readers, the admin keeps a PIN or a password")
             if not values:
                 return self.user(user_id)
             revoke = any(
@@ -3871,9 +3857,9 @@ class CatalogStore:
     def _enabled_admins(connection: sqlite3.Connection) -> int:
         return int(connection.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND disabled=0").fetchone()[0])
 
-    @staticmethod
-    def _readers(connection: sqlite3.Connection) -> int:
-        return int(connection.execute("SELECT COUNT(*) FROM users WHERE role='reader'").fetchone()[0])
+    def reader_count(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM users WHERE role='reader'").fetchone()[0])
 
     def delete_user(self, user_id: int) -> None:
         """Remove a profile and everything that was only theirs: history, ratings, settings."""
