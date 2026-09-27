@@ -7541,6 +7541,39 @@ class RelaunchIsAnotherComicTests(unittest.TestCase):
 
 
 
+class MemberRequestFactsTests(unittest.TestCase):
+    """What the admin is told about a request comes from Metron."""
+
+    def _metron(self, responses):
+        def fetch(provider, url, credential, **_):
+            for fragment, body in responses.items():
+                if fragment in url:
+                    return body
+            raise AssertionError(f"unexpected {url}")
+        return patch.multiple(app, fetch_provider_json=fetch, _provider_credential=lambda provider: "token")
+
+    def test_one_issue_is_told_by_its_own_rating_and_story(self):
+        series = {"genres": [{"id": 1, "name": "Humor"}, {"id": 2, "name": "Fantasy"}], "desc": "A land of Ooo, in long form, full of candy people and wizards and a dog who stretches."}
+        issue = {"number": "1", "rating": {"id": 2, "name": "Everyone"}, "desc": "It's Halloween in Ooo, and every ghost in the land has a costume party planned."}
+        with self._metron({"/series/16702/": series, "/issue/99/": issue}):
+            facts = app.member_request_facts("discover_issues", {
+                "provider": "metron", "providerSeriesId": "16702", "numbers": ["1"], "providerIssueId": "99"})
+        self.assertEqual((facts["rating"], facts["ratingFrom"], facts["genres"]), ("Everyone", None, ["Humor", "Fantasy"]))
+        self.assertTrue(facts["synopsis"].startswith("It's Halloween"), "the issue's own story, not the run's")
+
+    def test_a_run_is_told_by_its_first_issue_and_unknown_is_no_rating(self):
+        listing = {"results": [{"id": 12, "number": "2", "cover_date": "2020-02-01"}, {"id": 11, "number": "1", "cover_date": "2020-01-01"}]}
+        with self._metron({"/series/5/": {"genres": []}, "/issue/?series_id=5": listing,
+                           "/issue/11/": {"number": "1", "rating": {"name": "Mature"}}}):
+            facts = app.member_request_facts("discover_run", {"provider": "metron", "providerSeriesId": "5"})
+        self.assertEqual((facts["rating"], facts["ratingFrom"]), ("Mature", "Issue 1"))
+        with self._metron({"/series/5/": {}, "/issue/?series_id=5": listing, "/issue/11/": {"rating": {"name": "Unknown"}}}):
+            facts = app.member_request_facts("discover_run", {"provider": "metron", "providerSeriesId": "5"})
+        self.assertEqual((facts["rating"], facts["ratingFrom"]), (None, None))
+        self.assertEqual(app.member_request_facts("discover_run", {"provider": "gcd", "providerSeriesId": "5"}), {},
+                         "only Metron has ratings")
+
+
 class MemberRequestApprovalTests(unittest.TestCase):
     """Approving a reader's request is the admin's own call for it."""
 

@@ -4089,7 +4089,10 @@ class CatalogStore:
 
     def pending_member_request_count(self) -> int:
         with self._connect() as connection:
-            return int(connection.execute("SELECT COUNT(*) FROM member_requests WHERE status='pending'").fetchone()[0])
+            # Waiting on the admin: new, or approved and not carried out.
+            return int(connection.execute(
+                "SELECT COUNT(*) FROM member_requests WHERE status IN ('pending', 'failed')"
+            ).fetchone()[0])
 
     def claim_member_request(self, request_id: int, decided_by: int, status: str,
                              reason: str | None = None) -> dict[str, Any]:
@@ -4114,6 +4117,20 @@ class CatalogStore:
                 if exists is None:
                     raise LookupError("That request does not exist")
                 raise ValueError(f"That request was already {exists['status']}")
+        return self.member_request(request_id)
+
+    def add_member_request_detail(self, request_id: int, facts: dict[str, Any]) -> dict[str, Any] | None:
+        """Merge what was learned about a request after it was made -- its
+        rating, genres, synopsis -- into what the queue shows."""
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute("SELECT detail_json FROM member_requests WHERE id=?", (int(request_id),)).fetchone()
+            if row is None:
+                return None
+            detail = {**_load_json(row["detail_json"], {}), **facts}
+            connection.execute(
+                "UPDATE member_requests SET detail_json=?, updated_at=? WHERE id=?",
+                (json.dumps(detail, sort_keys=True), _utc_now(), int(request_id)),
+            )
         return self.member_request(request_id)
 
     def record_member_request_outcome(

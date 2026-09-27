@@ -284,6 +284,18 @@ Motion tokens:
   a follow and a pull are different asks, and the words say which. The admin's queue is the Pull List's first
   tab while any request exists; a reader's tab bar names the same place
   "Requests".
+- **Deciding requests** (since 2026-09-27) takes the device's shape, chosen by
+  input (`(hover: hover) and (pointer: fine)`), not width. Touch: a deck, one
+  card at a time with the next peeking under it (`.request-swipe-card`) --
+  swipe right approves, left declines, an Approve/Decline stamp fading in as
+  it is dragged, and the same two buttons under the card. Mouse and keyboard:
+  a list (`.request-queue-row`) with Decline and Approve on each row and keys
+  (↑↓ or J/K, A, D, Z) hinted above it -- Seerr's requests list, a moderation
+  queue's keys. Either way a decision is held five seconds in an Undo bar
+  (`.request-undo`, Gmail's) before it is sent; a decline offers "Add a
+  reason". Each card carries Metron's rating as a badge (green Everyone,
+  violet Teen, amber Teen Plus, red Mature, muted "Not rated"), the genres,
+  and the story, four lines with More.
 - **The reader's settings** (`.reader-settings-drawer`, since 2026-09-24) open
   in the app's drawer, not a popover: a page pushed over the reader on a
   phone with the back arrow, a 420px side panel above it elsewhere, Back and

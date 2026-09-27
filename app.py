@@ -1090,6 +1090,11 @@ def member_request_spec(payload: Any, catalog: dict[str, Any]) -> tuple[str, str
         if not released and not numbers:
             raise ValueError("Choose at least one issue")
         params.update({"numbers": numbers, "released": released})
+        # The one issue asked for, when the shelf or drawer knew its id: what
+        # its rating and synopsis are looked up by.
+        issue_id = str(payload.get("providerIssueId") or "").strip()
+        if len(numbers) == 1 and re.fullmatch(r"\d+", issue_id):
+            params["providerIssueId"] = issue_id
         detail["numbers"] = numbers
         key = "released" if released else ",".join(sorted(numbers))
         return kind, f"discover:{provider}:{provider_series_id}#{key}", title, params, detail
@@ -1137,6 +1142,89 @@ def approve_member_request(request_id: int, decided_by: int) -> dict[str, Any]:
         request_id, acquisition_request_id=acquisition_request_id, series_run_id=run_id)
 
 
+# ---- What a request is ---------------------------------------------------------
+#
+# The admin decides better knowing what was asked for: Metron's age rating
+# (Everyone, Teen, Teen Plus, Mature -- about half of issues have one), the
+# run's genres and what it is about. Looked up after the request is made, off
+# the request thread, through the same paced and cached provider queue as
+# everything else; a request is never held up or refused for want of it.
+
+_UNRATED = {"", "unknown"}
+
+
+def _metron_issue_for(series_id: str, number: str | None, credential: str) -> dict[str, Any] | None:
+    """The issue whose rating speaks for a request: the one asked for, or the run's first."""
+    query = {"series_id": series_id, **({"number": number} if number else {})}
+    listing = fetch_provider_json("metron", f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode(query), credential)
+    results = [row for row in (listing or {}).get("results") or [] if isinstance(row, dict) and row.get("id")]
+    if not results:
+        return None
+    first = results[0] if number else min(results, key=lambda row: str(row.get("cover_date") or "9999"))
+    return fetch_provider_json("metron", f"{METRON_API_BASE}/issue/{int(first['id'])}/", credential)
+
+
+def member_request_facts(kind: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Rating, genres and synopsis for a request, from Metron, or nothing."""
+    if kind in ("discover_run", "discover_issues"):
+        if params.get("provider") != "metron":
+            return {}
+        series_id = str(params.get("providerSeriesId") or "")
+    elif kind == "run":
+        series_id = str(catalog_store().confirmed_series_provider_ids(int(params["seriesId"])).get("metron") or "")
+    else:
+        return {}
+    if not re.fullmatch(r"\d+", series_id):
+        return {}
+    credential = _provider_credential("metron")
+    series = fetch_provider_json("metron", f"{METRON_API_BASE}/series/{series_id}/", credential) or {}
+    facts: dict[str, Any] = {
+        "genres": [str(genre.get("name")) for genre in series.get("genres") or []
+                   if isinstance(genre, dict) and genre.get("name")][:6],
+        "synopsis": _synopsis_text(series.get("desc")),
+    }
+    numbers = params.get("numbers") or []
+    one = str(numbers[0]) if kind == "discover_issues" and len(numbers) == 1 else None
+    issue_id = str(params.get("providerIssueId") or "")
+    issue = (fetch_provider_json("metron", f"{METRON_API_BASE}/issue/{issue_id}/", credential)
+             if re.fullmatch(r"\d+", issue_id) else _metron_issue_for(series_id, one, credential)) or {}
+    rating = str((issue.get("rating") or {}).get("name") or "").strip()
+    facts["rating"] = None if rating.casefold() in _UNRATED else rating
+    # Which issue the rating is from, when it stands in for a whole run.
+    facts["ratingFrom"] = None if one or not facts["rating"] else f"Issue {issue.get('number') or 1}"
+    if one:
+        facts["synopsis"] = _synopsis_text(issue.get("desc")) or facts["synopsis"]
+    return facts
+
+
+def _learn_about_member_request(request_id: int, kind: str, params: dict[str, Any]) -> None:
+    try:
+        facts = member_request_facts(kind, params)
+    except Exception as exc:  # noqa: BLE001 -- a request is still a request without its facts
+        log_event("member_request_facts_failed", level="info", request_id=request_id, error=str(exc))
+        return
+    if facts:
+        catalog_store().add_member_request_detail(request_id, facts)
+
+
+_FACTS_ASKED: set[int] = set()
+_FACTS_ASKED_LOCK = threading.Lock()
+
+
+def learn_about_waiting_requests(requests: list[dict[str, Any]]) -> None:
+    """A waiting request made before its facts were looked up -- or whose
+    lookup failed -- is looked up once more, once per start."""
+    for request in requests:
+        if request["status"] not in ("pending", "failed") or "genres" in (request.get("detail") or {}):
+            continue
+        with _FACTS_ASKED_LOCK:
+            if request["id"] in _FACTS_ASKED:
+                continue
+            _FACTS_ASKED.add(request["id"])
+        threading.Thread(target=_learn_about_member_request, args=(request["id"], request["kind"], request["params"]),
+                         name=f"flipparr-request-facts-{request['id']}", daemon=True).start()
+
+
 def ask_member_request(viewer: Viewer, payload: Any) -> tuple[dict[str, Any], bool]:
     """A reader's request, waiting -- or, for a reader the admin trusts
     (auto-approve) and for the admin, carried out at once, still recorded."""
@@ -1145,6 +1233,9 @@ def ask_member_request(viewer: Viewer, payload: Any) -> tuple[dict[str, Any], bo
     store = catalog_store()
     kind, key, title, params, detail = member_request_spec(payload, store.catalog())
     request, created = store.create_member_request(viewer.id, kind, key, title, params, detail)
+    if created:
+        threading.Thread(target=_learn_about_member_request, args=(request["id"], kind, params),
+                         name=f"flipparr-request-facts-{request['id']}", daemon=True).start()
     if created and (viewer.is_admin or viewer.auto_approve):
         request = approve_member_request(request["id"], viewer.id)
     return request, created
@@ -12868,6 +12959,7 @@ class Handler(BaseHTTPRequestHandler):
             payload["memberRequests"] = store.member_requests(user_id=None if admin else self._viewer_id(), limit=100)
             if admin:
                 payload.setdefault("stats", {})["pendingRequests"] = store.pending_member_request_count()
+                learn_about_waiting_requests(payload["memberRequests"])
             self.send_json(payload)
             return
         if parsed_url.path == "/api/v1/member-requests":

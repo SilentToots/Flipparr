@@ -79,7 +79,7 @@ import {
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
   runModes, completeRunToPull, issueLabel, libraryRunMatches,
 } from "./discover.js";
-import { requestKey, waitingKeys, runRequested, requestScope, adminQueue, isFollow, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
+import { requestKey, waitingKeys, runRequested, requestScope, adminQueue, isFollow, swipeDecision, ratingTone, UNDO_MS, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
 
 const NAV_ITEMS = [
   // Above 640px only, as the Apple TV app's sidebar leads with Search: its
@@ -2821,6 +2821,24 @@ function requestedOn(iso) {
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 }
 
+// What a request is, from Metron: its age rating, the run's genres and what
+// it is about. "Not rated" once looked up and there is none -- for a parent,
+// that is worth saying too.
+function RequestFacts({ detail, story = false }) {
+  const [open, setOpen] = useState(false);
+  if (!detail || !("genres" in detail)) return null;
+  const genres = detail.genres || [];
+  return <>
+    <span className="tag-line request-facts">
+      <StatusBadge tone={ratingTone(detail.rating)}>{detail.rating ? `Rated ${detail.rating}` : "Not rated"}</StatusBadge>
+      {genres.map((genre) => <StatusBadge tone="muted" key={genre}>{genre}</StatusBadge>)}
+    </span>
+    {detail.rating && detail.ratingFrom ? <small className="request-facts-note">Rating from {detail.ratingFrom.toLowerCase()}</small> : null}
+    {story && detail.synopsis ? <p className={`request-story${open ? " open" : ""}`}>{detail.synopsis}</p> : null}
+    {story && detail.synopsis?.length > 180 ? <button type="button" className="request-story-more" onClick={() => setOpen((value) => !value)}>{open ? "Less" : "More"}</button> : null}
+  </>;
+}
+
 // One request: what was asked for, by whom, where it stands, and -- for the
 // admin while it waits, or its reader while it is pending -- what to do.
 function MemberRequestCard({ request, admin, onDecide, aimed = false }) {
@@ -2851,6 +2869,7 @@ function MemberRequestCard({ request, admin, onDecide, aimed = false }) {
           <small>{request.requestedBy?.name} · {requestedOn(request.createdAt)}</small></span>
           : <small>Asked {requestedOn(request.createdAt)}</small>}
         <span className="tag-line"><StatusBadge tone={REQUEST_TONES[request.state] || "muted"}>{labels[request.state] || request.state}</StatusBadge></span>
+        {admin ? <RequestFacts detail={request.detail} /> : null}
         {request.state === "declined" && request.declineReason ? <small className="member-request-reason">&ldquo;{request.declineReason}&rdquo;</small> : null}
         {admin && request.status === "failed" && request.failure ? <small className="member-request-reason">{request.failure}</small> : null}
       </span>
@@ -2880,12 +2899,262 @@ function MemberRequestCard({ request, admin, onDecide, aimed = false }) {
   </article>;
 }
 
+// One waiting request as a card to swipe: right approves, left declines, the
+// buttons under it do the same. The card follows the finger; let go short of
+// a decision and it springs back. A vertical drag is left to the page's scroll.
+function SwipeCard({ request, onSwipe, peek = false }) {
+  const cardRef = useRef(null);
+  const drag = useRef(null);
+  const [dx, setDx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [leaving, setLeaving] = useState("");
+  const still = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  function fly(action) {
+    if (leaving) return;
+    if (still) { onSwipe(request, action); return; }
+    setLeaving(action);
+    window.setTimeout(() => onSwipe(request, action), 220);
+  }
+  function down(event) {
+    if (leaving || (event.pointerType === "mouse" && event.button !== 0) || event.target.closest("button, a, input")) return;
+    drag.current = { x: event.clientX, y: event.clientY, id: event.pointerId, horizontal: null, at: performance.now() };
+  }
+  function move(event) {
+    const current = drag.current;
+    if (!current || current.id !== event.pointerId) return;
+    const mx = event.clientX - current.x;
+    const my = event.clientY - current.y;
+    if (current.horizontal === null) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      current.horizontal = Math.abs(mx) > Math.abs(my);
+      if (!current.horizontal) { drag.current = null; return; }
+      cardRef.current?.setPointerCapture?.(event.pointerId);
+      setDragging(true);
+    }
+    setDx(mx);
+  }
+  function up(event) {
+    const current = drag.current;
+    drag.current = null;
+    setDragging(false);
+    if (!current?.horizontal) return;
+    const moved = event.clientX - current.x;
+    const action = swipeDecision(moved, cardRef.current?.offsetWidth || 320, performance.now() - current.at);
+    if (action) fly(action); else setDx(0);
+  }
+  const offset = leaving ? (leaving === "approve" ? "130%" : "-130%") : `${dx}px`;
+  const tilt = leaving ? (leaving === "approve" ? 12 : -12) : dx / 24;
+  const lean = Math.max(-1, Math.min(1, dx / 120));
+  const byline = [request.detail?.publisher, request.detail?.year].filter(Boolean).join(" · ");
+  return <div className="request-swipe">
+    <div className="request-swipe-pile">
+    {peek ? <div className="request-card request-swipe-peek" aria-hidden="true" /> : null}
+    <article ref={cardRef} className={`request-card request-swipe-card${dragging ? " dragging" : ""}${leaving ? " leaving" : ""}`}
+      style={{ transform: `translateX(${offset}) rotate(${tilt}deg)` }} tabIndex={0}
+      aria-label={`${request.title}, asked for by ${request.requestedBy?.name}. Swipe right to approve, left to decline.`}
+      onKeyDown={(event) => { if (event.key === "ArrowRight") fly("approve"); if (event.key === "ArrowLeft") fly("decline"); }}
+      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      <span className="request-swipe-stamp approve" style={{ opacity: Math.max(0, lean) }} aria-hidden="true">Approve</span>
+      <span className="request-swipe-stamp decline" style={{ opacity: Math.max(0, -lean) }} aria-hidden="true">Decline</span>
+      <div className="request-swipe-head">
+        <span className="request-cover request-swipe-cover">{request.detail?.cover
+          ? <img src={request.detail.cover} alt="" draggable="false" />
+          : <span className="cover-placeholder" aria-hidden="true"><BookOpen size={28} weight="duotone" /></span>}</span>
+        <span className="request-identity">
+          <strong>{request.title}</strong>
+          <small>{[requestScope(request), byline].filter(Boolean).join(" · ")}</small>
+          <span className="member-request-who"><ProfileAvatar profile={request.requestedBy} size="sm" />
+            <small>{request.requestedBy?.name} · {requestedOn(request.createdAt)}</small></span>
+          {request.status === "failed" ? <small className="member-request-reason">Couldn&rsquo;t be done: {request.failure}</small> : null}
+        </span>
+      </div>
+      <RequestFacts detail={request.detail} story />
+    </article>
+    </div>
+    <div className="request-swipe-actions">
+      <button type="button" className="secondary-button" onClick={() => fly("decline")} disabled={Boolean(leaving)}><X size={16} weight="bold" /> Decline</button>
+      <button type="button" className="primary-button" onClick={() => fly("approve")} disabled={Boolean(leaving)}>
+        <Check size={16} weight="bold" /> {request.status === "failed" ? "Try again" : "Approve"}</button>
+    </div>
+  </div>;
+}
+
+// Whether the device points precisely and hovers -- a mouse or trackpad. It
+// decides the request queue's shape by how it is used, not by how wide the
+// screen is: an iPad without a trackpad still swipes.
+const FINE_POINTER = "(hover: hover) and (pointer: fine)";
+
+function useFinePointer() {
+  const [fine, setFine] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.(FINE_POINTER).matches));
+  useEffect(() => {
+    const query = window.matchMedia?.(FINE_POINTER);
+    if (!query) return undefined;
+    const change = () => setFine(query.matches);
+    query.addEventListener?.("change", change);
+    return () => query.removeEventListener?.("change", change);
+  }, []);
+  return fine;
+}
+
+// One waiting request as a row, for a mouse and keyboard: everything about it
+// on show, Decline and Approve at its end -- Seerr's requests list.
+function QueueRow({ request, onDecide }) {
+  const byline = [request.detail?.publisher, request.detail?.year].filter(Boolean).join(" · ");
+  return <article className="request-card request-queue-row" tabIndex={0} data-queue-request={request.id}
+    aria-label={`${request.title}, asked for by ${request.requestedBy?.name}`}>
+    <span className="request-cover request-swipe-cover">{request.detail?.cover
+      ? <img src={request.detail.cover} alt="" />
+      : <span className="cover-placeholder" aria-hidden="true"><BookOpen size={28} weight="duotone" /></span>}</span>
+    <span className="request-identity">
+      <strong>{request.title}</strong>
+      <small>{[requestScope(request), byline].filter(Boolean).join(" · ")}</small>
+      <span className="member-request-who"><ProfileAvatar profile={request.requestedBy} size="sm" />
+        <small>{request.requestedBy?.name} · {requestedOn(request.createdAt)}</small></span>
+      {request.status === "failed" ? <small className="member-request-reason">Couldn&rsquo;t be done: {request.failure}</small> : null}
+      <RequestFacts detail={request.detail} story />
+    </span>
+    <span className="request-queue-actions">
+      <button type="button" className="secondary-button" onClick={() => onDecide(request, "decline")} title="Decline (D)"><X size={16} weight="bold" /> Decline</button>
+      <button type="button" className="primary-button" onClick={() => onDecide(request, "approve")} title="Approve (A)">
+        <Check size={16} weight="bold" /> {request.status === "failed" ? "Try again" : "Approve"}</button>
+    </span>
+  </article>;
+}
+
+// The admin's waiting requests as a deck: one card at a time, the next behind
+// it. A decision is held for a few seconds with Undo before it is sent --
+// approving starts downloads, and a swipe is easy to make by accident. Leaving
+// the page sends it; a request never sent simply stays waiting.
+function RequestDeck({ requests, onDecide }) {
+  const fine = useFinePointer();
+  const listRef = useRef(null);
+  const focusNext = useRef(null);
+  const [held, setHeld] = useState(null);
+  const [gone, setGone] = useState(() => new Set());
+  const [error, setError] = useState("");
+  const heldRef = useRef(null);
+  const timer = useRef(null);
+  const hide = (id, hidden) => setGone((current) => {
+    const next = new Set(current);
+    if (hidden) next.add(id); else next.delete(id);
+    return next;
+  });
+  async function send(entry) {
+    window.clearTimeout(timer.current);
+    if (heldRef.current === entry) { heldRef.current = null; setHeld(null); }
+    const failure = await onDecide(entry.request, entry.action, entry.action === "decline" ? { reason: entry.reason || "" } : undefined);
+    if (failure) setError(failure);
+    // Sent, and the queue reloaded: a decided request has left it; one whose
+    // approval failed is back, offering Try again.
+    hide(entry.request.id, false);
+  }
+  function decide(request, action) {
+    // Focus moves on to the next request once the list has re-rendered
+    // without this one, so a keyboard can keep going.
+    const rows = [...(listRef.current?.querySelectorAll("[data-queue-request]") || [])];
+    const at = rows.findIndex((row) => row.dataset.queueRequest === String(request.id));
+    focusNext.current = (rows[at + 1] || rows[at - 1])?.dataset.queueRequest || null;
+    if (heldRef.current) send(heldRef.current);
+    const entry = { request, action, reason: "" };
+    heldRef.current = entry;
+    setHeld(entry);
+    setError("");
+    hide(request.id, true);
+    timer.current = window.setTimeout(() => send(entry), UNDO_MS);
+  }
+  function undo() {
+    const entry = heldRef.current;
+    if (!entry) return;
+    window.clearTimeout(timer.current);
+    heldRef.current = null;
+    setHeld(null);
+    hide(entry.request.id, false);
+  }
+  function askReason() {
+    window.clearTimeout(timer.current);
+    setHeld({ ...heldRef.current, reasoning: true });
+  }
+  useEffect(() => {
+    if (!focusNext.current) return;
+    listRef.current?.querySelector(`[data-queue-request="${focusNext.current}"]`)?.focus();
+    focusNext.current = null;
+  }, [gone]);
+  // While a decision waits, Z takes it back from anywhere on the page -- the
+  // row that had focus is gone.
+  useEffect(() => {
+    if (!held || held.reasoning) return undefined;
+    function onKey(event) {
+      if (event.key.toLowerCase() !== "z" || event.metaKey || event.ctrlKey || event.altKey || event.target.closest?.("input, textarea")) return;
+      event.preventDefault();
+      undo();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [held]);
+  // Leaving the page sends what was decided rather than dropping it.
+  useEffect(() => () => {
+    window.clearTimeout(timer.current);
+    if (heldRef.current) onDecide(heldRef.current.request, heldRef.current.action,
+      heldRef.current.action === "decline" ? { reason: heldRef.current.reason || "" } : undefined);
+  }, []);
+  const deck = requests.filter((request) => !gone.has(request.id));
+  const [top, next] = deck;
+  // A mouse and keyboard: move with the arrows or J/K, decide with A or D,
+  // take it back with Z -- a moderation queue's keys, Gmail's Undo.
+  function onKeys(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey || event.target.closest("input, textarea")) return;
+    const key = event.key.toLowerCase();
+    if (key === "z") return;
+    const row = event.target.closest?.("[data-queue-request]");
+    const rows = [...(listRef.current?.querySelectorAll("[data-queue-request]") || [])];
+    if (["arrowdown", "j", "arrowup", "k"].includes(key)) {
+      event.preventDefault();
+      const at = rows.indexOf(row);
+      const step = key === "arrowdown" || key === "j" ? 1 : -1;
+      rows[Math.max(0, Math.min(rows.length - 1, at + step))]?.focus();
+      return;
+    }
+    const request = row && deck.find((item) => String(item.id) === row.dataset.queueRequest);
+    if (!request) return;
+    if (key === "a") { event.preventDefault(); decide(request, "approve"); }
+    if (key === "d") { event.preventDefault(); decide(request, "decline"); }
+  }
+  return <section className="request-deck" aria-label="Requests waiting">
+    {held ? <div className="request-undo" role="status">
+      {held.reasoning ? <form className="request-undo-reason" onSubmit={(event) => {
+        event.preventDefault();
+        const reason = new FormData(event.currentTarget).get("reason");
+        send({ ...heldRef.current, reason: String(reason || "") });
+      }}>
+        <input name="reason" autoFocus maxLength={300} placeholder="Why not? Shown to them" aria-label="Reason" />
+        <button className="primary-button">Decline</button>
+      </form> : <>
+        <span>{held.action === "approve" ? "Approved" : "Declined"} <strong>{held.request.title}</strong></span>
+        {held.action === "decline" ? <button type="button" onClick={askReason}>Add a reason</button> : null}
+        <button type="button" onClick={undo}>Undo</button>
+      </>}
+    </div> : null}
+    {error ? <p className="workbench-error" role="alert">{error}</p> : null}
+    {top && fine ? <>
+      <p className="request-deck-count">{deck.length === 1 ? "1 request waiting" : `${deck.length} requests waiting`}
+        <span className="request-keys" aria-hidden="true"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>A</kbd> approve · <kbd>D</kbd> decline · <kbd>Z</kbd> undo</span></p>
+      <div className="request-queue" ref={listRef} onKeyDown={onKeys}>
+        {deck.map((request) => <QueueRow request={request} onDecide={decide} key={request.id} />)}
+      </div>
+    </> : top ? <>
+      <p className="request-deck-count">{deck.length === 1 ? "1 request waiting" : `${deck.length} requests waiting`}</p>
+      <SwipeCard request={top} onSwipe={decide} peek={Boolean(next)} key={top.id} />
+    </> : held ? null : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>All caught up</strong><span>Nothing is waiting for you.</span></div>}
+  </section>;
+}
+
 // The admin's queue, as the Pull List's first tab: what waits, then what was decided.
 function MemberRequestList({ requests, admin, onDecide, focus }) {
   // The admin answers the oldest first; a reader looks for what they just asked.
   const queue = adminQueue(requests);
   const waiting = admin ? queue.waiting : [...queue.waiting].reverse();
-  const { decided } = queue;
+  // A request its reader took back is theirs; the admin's history leaves it out.
+  const decided = admin ? queue.decided.filter((request) => request.status !== "cancelled") : queue.decided;
   const aimed = focus?.requestId;
   if (!requests.length) {
     return <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" />
@@ -2894,10 +3163,11 @@ function MemberRequestList({ requests, admin, onDecide, focus }) {
         : "Find a run or an issue in Discover and tap Request. The admin says yes or no."}</span></div>;
   }
   return <>
-    {waiting.length ? <section className="request-list">{waiting.map((request) => <MemberRequestCard request={request} admin={admin}
+    {admin ? <RequestDeck requests={waiting} onDecide={onDecide} />
+      : waiting.length ? <section className="request-list">{waiting.map((request) => <MemberRequestCard request={request} admin={admin}
       onDecide={onDecide} aimed={String(aimed) === String(request.id)} key={request.id} />)}</section> : null}
     {decided.length ? <section className="request-list member-request-history" aria-label="Decided">
-      {waiting.length ? <h2 className="member-request-heading">Earlier</h2> : null}
+      {admin || waiting.length ? <h2 className="member-request-heading">Earlier</h2> : null}
       {decided.map((request) => <MemberRequestCard request={request} admin={admin} onDecide={onDecide}
         aimed={String(aimed) === String(request.id)} key={request.id} />)}
     </section> : null}
@@ -8407,6 +8677,7 @@ export function App() {
   async function pullDiscoveredIssue(issue) {
     if (!viewerIsAdmin) {
       return askAdmin({ kind: "discover_issues", provider: "metron", providerSeriesId: issue.providerSeriesId,
+        providerIssueId: issue.providerIssueId,
         numbers: [issue.number], title: issue.seriesTitle || issue.title, query: issue.seriesTitle,
         publisher: issue.publisher, cover: issue.cover });
     }

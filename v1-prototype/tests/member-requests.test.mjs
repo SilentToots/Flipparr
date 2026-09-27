@@ -84,3 +84,15 @@ test("the admin hears that requests wait; a reader hears what was decided since 
   const [followed] = requestNotifications([{ id: 10, kind: "run", state: "approved", title: "Saga", decidedAt: "2026-09-28T00:00:00Z" }], { since });
   assert.equal(followed.title, "You'll get Saga's new issues");
 });
+
+test("a swipe decides only when it is meant to", async () => {
+  const { swipeDecision, ratingTone } = await import("../src/member-requests.js");
+  assert.equal(swipeDecision(20, 300, 100), null, "a nudge");
+  assert.equal(swipeDecision(90, 300, 600), null, "a slow drag short of a third");
+  assert.equal(swipeDecision(110, 300, 600), "approve", "past a third, rightwards");
+  assert.equal(swipeDecision(-60, 300, 50), "decline", "a flick left");
+  assert.equal(ratingTone("Everyone"), "green");
+  assert.equal(ratingTone("Teen Plus"), "amber");
+  assert.equal(ratingTone("Mature"), "red");
+  assert.equal(ratingTone(null), "muted");
+});

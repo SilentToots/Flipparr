@@ -123,3 +123,30 @@ export function requestNotifications(requests, { admin = false, since = null } =
     }];
   });
 }
+
+// ---- Deciding by swipe --------------------------------------------------------
+
+/** How long a swiped decision waits for Undo before it is sent. */
+export const UNDO_MS = 5000;
+
+/**
+ * What a released drag decides: right approves, left declines, a short or
+ * slow drag decides nothing and the card springs back. A third of the card's
+ * width is a decision; so is a flick (fast, if shorter).
+ */
+export function swipeDecision(dx, width, elapsedMs) {
+  const distance = Math.abs(dx);
+  const speed = distance / Math.max(1, elapsedMs);
+  if (distance < 40) return null;
+  if (distance < width / 3 && speed < 0.8) return null;
+  return dx > 0 ? "approve" : "decline";
+}
+
+// Metron's ratings, as the badge colours say them: a parent reads green as
+// fine for anyone, red as grown-up. "Not rated" is said, not hidden -- for a
+// parent it is information too.
+const RATING_TONES = { everyone: "green", cca: "green", teen: "violet", "teen plus": "amber", mature: "red", explicit: "red", adult: "red" };
+
+export function ratingTone(rating) {
+  return RATING_TONES[String(rating || "").trim().toLowerCase()] || "muted";
+}

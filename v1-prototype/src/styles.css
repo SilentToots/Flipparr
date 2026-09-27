@@ -906,6 +906,61 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .member-request-error { margin: 0 var(--request-inset) var(--request-inset); }
 .member-request-history { margin-top: var(--space-24); }
 .member-request-heading { margin: 0; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+/* A request's cover fills its frame: a provider's full-size image was drawn
+   at its own size and only its corner showed. */
+.member-request .request-cover img, .request-swipe-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* What a request is: rating, genres, story. */
+.request-facts { margin-top: var(--space-2); }
+.request-facts-note { color: var(--muted); font-size: var(--text-xs); }
+.request-story { position: relative; margin: 0; color: var(--muted-strong); font-size: var(--text-sm); line-height: var(--leading-normal);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+.request-story.open { display: block; }
+.request-story-more { justify-self: start; padding: 0; border: 0; background: none; color: var(--violet-text); font: inherit; font-weight: var(--weight-semibold); cursor: pointer; }
+/* The admin's deck: one waiting request at a time, the next peeking behind.
+   The card follows a horizontal drag; a vertical one is the page's scroll. */
+.request-deck { display: grid; gap: var(--space-12); }
+.request-deck-count { margin: 0; color: var(--muted-strong); font-size: var(--text-sm); }
+.request-swipe-pile { display: grid; }
+.request-swipe-pile > * { grid-area: 1 / 1; }
+.request-swipe-peek { transform: translateY(var(--space-12)) scale(.96); opacity: .5; pointer-events: none; }
+.request-swipe { position: relative; display: grid; gap: var(--space-12); }
+.request-swipe-card {
+  position: relative; display: grid; gap: var(--space-12); padding: var(--space-20); touch-action: pan-y; user-select: none; cursor: grab;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) ease;
+}
+.request-swipe-card.dragging { transition: none; cursor: grabbing; }
+.request-swipe-card.leaving { opacity: 0; }
+.request-swipe-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.request-swipe-head { display: grid; grid-template-columns: var(--space-80) minmax(0, 1fr); gap: var(--space-16); }
+.request-swipe-cover { width: var(--space-80); }
+/* The title and its lines wrap here: this card is the one being decided on. */
+.request-swipe-head .request-identity :is(strong, small), .request-queue-row .request-identity strong { white-space: normal; }
+.request-swipe-stamp {
+  position: absolute; top: var(--space-16); z-index: 1; padding: var(--space-4) var(--space-12); border: 2px solid currentColor; border-radius: var(--radius-8);
+  font-size: var(--text-md); font-weight: var(--weight-bold); pointer-events: none;
+}
+.request-swipe-stamp.approve { left: var(--space-16); color: var(--green-text); transform: rotate(-8deg); }
+.request-swipe-stamp.decline { right: var(--space-16); color: var(--red-text); transform: rotate(8deg); }
+.request-swipe-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-12); }
+.request-swipe-actions button { justify-content: center; }
+@media (prefers-reduced-motion: reduce) { .request-swipe-card { transition: none; } }
+/* With a mouse and keyboard the queue is a list: every request on show,
+   Decline and Approve at the end of each row, keys to move and decide. */
+.request-queue { display: grid; gap: var(--space-12); }
+.request-queue-row { display: grid; grid-template-columns: var(--space-80) minmax(0, 1fr) auto; gap: var(--space-16); align-items: start; padding: var(--space-20); }
+.request-queue-row .request-identity small { white-space: normal; }
+.request-queue-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.request-queue-actions { display: flex; gap: var(--space-8); }
+.request-deck-count { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-8); }
+.request-keys { color: var(--muted); font-size: var(--text-xs); }
+.request-keys kbd { display: inline-block; min-width: var(--space-20); padding: 0 var(--space-4); border: 1px solid var(--line-strong); border-radius: var(--radius-4); font: inherit; text-align: center; }
+/* Held for a few seconds, with Undo, before it is sent. */
+.request-undo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8) var(--space-12); padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-12); background: var(--surface-raised); font-size: var(--text-sm); }
+.request-undo > span { flex: 1; min-width: 0; }
+.request-undo > button { padding: 0; border: 0; background: none; color: var(--violet-text); font: inherit; font-weight: var(--weight-semibold); cursor: pointer; }
+.request-undo-reason { display: flex; gap: var(--space-8); width: 100%; }
+.request-undo-reason input { flex: 1; min-width: 0; min-height: var(--control-height-md); padding: 0 var(--space-12); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--bg); color: var(--text); font-size: var(--text-input); }
 .request-ownership { display: block; max-width: 320px; margin-top: var(--space-2); }
 .request-ownership .ownership.compact { width: 100%; display: grid; gap: var(--space-6); padding: 0; }
 .request-ownership .ownership.compact .ownership-label { font-size: var(--text-sm); }
