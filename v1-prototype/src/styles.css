@@ -893,6 +893,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .request-identity strong em { color: var(--muted-weak); font-style: normal; font-weight: var(--weight-medium); }
 .request-identity small { overflow: hidden; color: var(--status-muted-text); font-size: var(--text-sm); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
 .request-identity .tag-line { min-height: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+/* A reader's request: the Pull List's card, with who asked and, while it
+   waits, the answer under it. Its text wraps -- a decline reason is a
+   sentence, not a label. */
+.member-request { display: grid; grid-template-columns: var(--request-cover) minmax(0, 1fr); gap: var(--request-gap); padding: var(--request-inset); }
+.member-request .request-identity small { white-space: normal; }
+.member-request-who { display: flex; align-items: center; gap: var(--space-8); min-width: 0; }
+.member-request-reason { color: var(--muted-strong); }
+.member-request-actions { padding: 0 var(--request-inset) var(--request-inset); }
+.member-request-actions .settings-card-actions { justify-content: flex-end; margin: 0; }
+.member-request-decline { display: grid; gap: var(--space-12); }
+.member-request-error { margin: 0 var(--request-inset) var(--request-inset); }
+.member-request-history { margin-top: var(--space-24); }
+.member-request-heading { margin: 0; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
 .request-ownership { display: block; max-width: 320px; margin-top: var(--space-2); }
 .request-ownership .ownership.compact { width: 100%; display: grid; gap: var(--space-6); padding: 0; }
 .request-ownership .ownership.compact .ownership-label { font-size: var(--text-sm); }
@@ -3690,6 +3703,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   font-size: var(--text-xs); font-weight: var(--weight-bold); letter-spacing: 0;
 }
 .profile-avatar--lg { width: var(--space-80); height: var(--space-80); font-size: var(--text-2xl); }
+.profile-avatar--sm { width: var(--space-24); height: var(--space-24); font-size: var(--text-xs); }
 .profile-avatar--violet { background: var(--profile-violet); }
 .profile-avatar--blue { background: var(--profile-blue); }
 .profile-avatar--teal { background: var(--profile-teal); }

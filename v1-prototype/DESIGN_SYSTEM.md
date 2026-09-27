@@ -272,6 +272,17 @@ Motion tokens:
   facts (`.profile-row`, the fill one step up from the card), and a profile is
   edited in the standard modal. The sidebar's foot shows who is reading
   (`.sidebar-profile`), which opens Your profile.
+- **Readers' requests** (since 2026-09-27) use the Pull List's card
+  (`.request-card` with `.member-request`): cover, title, what was asked
+  ("The whole run", "Issues 1, 2, 3"), who and when (a 24px
+  `.profile-avatar--sm`), and a status badge -- amber waiting, violet
+  approved, green in the library, muted declined or cancelled, red when an
+  approval could not be carried out. Its text wraps, since a decline reason
+  is a sentence. The admin answers under the card (Decline, then Approve as
+  the primary); a reader's Pull and Follow read "Request" and settle on
+  "Requested" with an hourglass. The admin's queue is the Pull List's first
+  tab while any request exists; a reader's tab bar names the same place
+  "Requests".
 - **The reader's settings** (`.reader-settings-drawer`, since 2026-09-24) open
   in the app's drawer, not a popover: a page pushed over the reader on a
   phone with the back arrow, a 420px side panel above it elsewhere, Back and

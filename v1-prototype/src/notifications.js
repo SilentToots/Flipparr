@@ -1,3 +1,5 @@
+import { requestNotifications } from "./member-requests.js";
+
 // Everything waiting on the reader, in one list, each knowing where it goes.
 //
 // The bell used to show `catalog.inbox` alone, so a download that failed --
@@ -142,11 +144,14 @@ function enrichmentNotifications(enrichment) {
 // Failures first: a stopped download, a source that stopped, and a damaged
 // file are all blocking; an uncertain match is a judgement call that can wait,
 // and news that something arrived needs nothing at all.
-const RANK = { download: 0, source: 1, file: 2, metadata: 3, acquired: 4 };
+// A reader's request waiting on the admin is work for the admin; a decision
+// is news for the reader.
+const RANK = { download: 0, request: 1, source: 2, file: 3, metadata: 4, acquired: 5 };
 
-export function buildNotifications(catalog, dismissed = [], seenUntil = null) {
+export function buildNotifications(catalog, dismissed = [], seenUntil = null, { admin = true } = {}) {
   const hidden = new Set(dismissed);
   return [
+    ...requestNotifications(catalog?.memberRequests, { admin, since: seenUntil }),
     ...requestJobNotifications(catalog?.requests, "series"),
     ...requestJobNotifications(catalog?.replacementRequests, "replacement"),
     ...enrichmentNotifications(catalog?.enrichment),
@@ -168,7 +173,8 @@ export function pruneDismissed(catalog, dismissed = []) {
   // An arrival announcement stops being generated as soon as the watermark
   // moves past it, so pruning against the live set alone would forget its
   // dismissal and let it come back. They are kept while the run still exists.
-  return dismissed.filter((id) => live.has(id) || id.startsWith("acquired:"));
+  // A reader's decision announcements are the same: kept while they last.
+  return dismissed.filter((id) => live.has(id) || id.startsWith("acquired:") || id.startsWith("request:"));
 }
 
 export function readSeenUntil(storage) {

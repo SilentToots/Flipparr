@@ -44,7 +44,9 @@ test("a reader is shown only what a reader can do", () => {
   const admin = { id: 1, role: "admin" };
   assert.equal(can(reader, "nav.library"), true);
   assert.equal(can(reader, "settings.profile"), true);
-  assert.equal(can(reader, "nav.discover"), false);
+  assert.equal(can(reader, "nav.discover"), true, "to find something to ask for");
+  assert.equal(can(reader, "nav.requests"), true, "their requests");
+  assert.equal(can(reader, "settings.profiles"), false);
   assert.equal(can(reader, "drawer.edit"), false);
   assert.equal(can(admin, "drawer.edit"), true);
   assert.equal(can(null, "drawer.edit"), true, "before anyone is known, nothing is hidden; the server decides");

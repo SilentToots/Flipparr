@@ -62,6 +62,14 @@ test("what the server already knows outranks nothing at all", () => {
   assert.equal(pullState(null), PULL_STATES.idle);
 });
 
+test("a reader's request still waiting marks the issue, from any device", () => {
+  const issue = { providerSeriesId: "9", providerIssueId: "1", number: "4" };
+  const waiting = new Set(["discover:metron:9#4"]);
+  assert.equal(pullState(issue, {}, waiting), PULL_STATES.requested);
+  assert.equal(pullState({ ...issue, number: "5" }, {}, waiting), PULL_STATES.idle);
+  assert.equal(pullState({ ...issue, owned: true }, {}, waiting), PULL_STATES.owned, "arrived outranks asked");
+});
+
 test("this session's answer outranks a refetch that has not caught up", () => {
   // The catalog poll is not instant, so the row can come back still saying
   // nothing has been asked for. The click is the more recent fact.

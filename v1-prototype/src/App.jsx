@@ -4,6 +4,7 @@ import { FlipparrMark } from "./brand.jsx";
 import {
   Users,
   UserCircle,
+  Hourglass,
   ArrowsClockwise,
   ArrowCounterClockwise,
   CaretRight,
@@ -72,11 +73,12 @@ import {
 } from "./panel-editor.js";
 import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel } from "./ratings.js";
 import {
-  pullState, issueKey, PULL_STATES, PULL_LABELS, shelfState, splitSearchResults,
+  pullState, issueKey, PULL_STATES, PULL_LABELS, READER_PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
   runModes, completeRunToPull, issueLabel, libraryRunMatches,
 } from "./discover.js";
+import { waitingKeys, runRequested, requestScope, adminQueue, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
 
 const NAV_ITEMS = [
   // Above 640px only, as the Apple TV app's sidebar leads with Search: its
@@ -93,7 +95,8 @@ const NAV_ITEMS = [
 
 // What a rail badge counts, said in words for the tooltip and screen readers.
 const NAV_COUNT_LABELS = {
-  requests: (n) => `${n} download${n === 1 ? "" : "s"} stopped and waiting for you`,
+  // Stopped downloads and readers' requests: both wait on the admin.
+  requests: (n) => `${n} waiting for you on the Pull List`,
   settings: (n) => `${n} item${n === 1 ? "" : "s"} in Library health need${n === 1 ? "s" : ""} a decision`,
 };
 
@@ -873,7 +876,9 @@ const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAli
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
   const viewer = useViewer();
   const admin = isAdmin(viewer);
-  const items = NAV_ITEMS.filter(({ id }) => can(viewer, `nav.${id}`));
+  // A reader's Pull List is what they have asked for.
+  const items = NAV_ITEMS.filter(({ id }) => can(viewer, `nav.${id}`))
+    .map((item) => (item.id === "requests" && !admin ? { ...item, label: "Requests" } : item));
   const [collapsed, setCollapsed] = useCollapsingTabBar(active);
   // While the bar folds or opens, the glass pill sits out: its blur was
   // being re-placed and re-animated on every frame of the width animation,
@@ -901,7 +906,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   }
   // Library health is the admin's; a reader's Settings has nothing waiting.
   const counts = {
-    requests: jobsNeedingAttention(catalog),
+    requests: admin ? jobsNeedingAttention(catalog) + (catalog?.stats?.pendingRequests ?? 0) : 0,
     settings: admin ? catalog?.stats?.needAttention ?? 0 : 0,
   };
   return (
@@ -1092,7 +1097,7 @@ function GlassSelectMenu({ options, value, label, anchor, onChoose, onClose, onD
 // trap, and adds the outside-click that a menu needs and a modal gets from
 // its backdrop. It must be mounted and unmounted rather than hidden: the
 // hook's effect runs once, on mount.
-const NOTIFICATION_KINDS = { download: "Download", source: "Metadata source", file: "Comic file", metadata: "Metadata", acquired: "Added" };
+const NOTIFICATION_KINDS = { download: "Download", request: "Request", source: "Metadata source", file: "Comic file", metadata: "Metadata", acquired: "Added" };
 
 function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
   const dialogRef = useDialog(onClose);
@@ -1108,8 +1113,9 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [onClose]);
   const blocking = items.filter((item) => item.severity === "error").length;
-  const actionable = items.filter((item) => item.kind !== "acquired").length;
-  const heading = actionable ? "Needs attention" : "Recently added";
+  const actionable = items.filter((item) => item.kind !== "acquired" && !item.news).length;
+  // A reader's bell is news about what they asked for, none of it work.
+  const heading = actionable ? "Needs attention" : items.length && items.every((item) => item.news) ? "Your requests" : "Recently added";
   const shown = items.slice(0, 5);
   return <div className="notifications-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
     <header><strong id="notifications-title">{heading}</strong>{items.length ? <b>{items.length}</b> : null}</header>
@@ -1123,7 +1129,7 @@ function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
       // never the same click.
       <div className="notifications-item" key={item.id}>
         <button type="button" className="notifications-open" onClick={() => { onClose(); onOpen(item); }}>
-          {item.kind === "acquired"
+          {item.kind === "acquired" || (item.news && item.severity === "info")
             ? <CheckCircle size={17} weight="fill" className="severity-done" />
             : <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />}
           <span><strong>{item.title}</strong><small>{NOTIFICATION_KINDS[item.kind]} · {item.detail}</small></span>
@@ -1464,13 +1470,20 @@ function DiscoverCover({ src, alt, className = "", glyph = 22 }) {
 
 // The design's own control, not one of the app's button variants: a filled
 // purple pill with a light border and an inner highlight.
-function PullButton({ state, idleLabel, onClick, size = "sm" }) {
+function PullButton({ state, idleLabel, readerLabel = "Request", onClick, size = "sm" }) {
+  // A reader asks rather than pulls: "Request", then "Requested" until the
+  // admin decides.
+  const reader = !isAdmin(useViewer());
+  const labels = reader ? READER_PULL_LABELS : PULL_LABELS;
   const settled = state === PULL_STATES.queued || state === PULL_STATES.owned;
-  return <button type="button" className={`pull-button pull-button-${size} pull-button-${state}`}
+  // Requested reads as settled, like On Pull List: the fill that says "done".
+  const look = state === PULL_STATES.requested ? PULL_STATES.queued : state;
+  return <button type="button" className={`pull-button pull-button-${size} pull-button-${look}`}
     onClick={onClick} disabled={state !== PULL_STATES.idle}
     aria-busy={state === PULL_STATES.pending || undefined}>
-    <span>{state === PULL_STATES.idle ? idleLabel : PULL_LABELS[state]}</span>
+    <span>{state === PULL_STATES.idle ? (reader ? readerLabel : idleLabel) : labels[state]}</span>
     {state === PULL_STATES.pending ? <LoadingIndicator size={16} />
+      : state === PULL_STATES.requested ? <Hourglass size={16} />
       : settled ? <FollowingIcon size={16} /> : <PullIcon />}
   </button>;
 }
@@ -1509,6 +1522,8 @@ function PullCardSkeleton() {
 const SHELF_COPY = {
   empty: { title: "Nothing listed for this week", detail: "Metron has no shipping dates for these days yet." },
   unavailable: { title: "Release dates need Metron", detail: "Connect Metron in Settings. It is the only source with comic shop shipping dates." },
+  // A reader cannot connect anything: it is the admin's to set up.
+  readerUnavailable: { title: "Release dates aren't set up", detail: "The admin can connect Metron, the source of comic shop shipping dates." },
 };
 
 /**
@@ -1517,7 +1532,8 @@ const SHELF_COPY = {
  * The chevrons page by the visible width rather than by a card, because a row
  * that moves 120px on a click reads as a twitch rather than as navigation.
  */
-function ReleaseShelf({ title, date, subtitle, state, issues = [], error, pulled, onPull, onOpen, onRetry }) {
+function ReleaseShelf({ title, date, subtitle, state, issues = [], error, pulled, waiting, onPull, onOpen, onRetry }) {
+  const copyKey = state === "unavailable" && !isAdmin(useViewer()) ? "readerUnavailable" : state;
   const { scroller, atStart, atEnd, measure, page } = useShelfPaging([issues.length, state]);
   const heading = date ? `${title} - ${date}` : title;
   return <section className="release-shelf" aria-label={heading}>
@@ -1533,7 +1549,7 @@ function ReleaseShelf({ title, date, subtitle, state, issues = [], error, pulled
       {[0, 1, 2, 3, 4, 5, 6, 7].map((item) => <PullCardSkeleton key={item} />)}
     </div> : null}
     {state === "ready" ? <div className="shelf-row" ref={scroller} onScroll={measure}>
-      {issues.map((issue) => <PullCard issue={issue} state={pullState(issue, pulled)}
+      {issues.map((issue) => <PullCard issue={issue} state={pullState(issue, pulled, waiting)}
         onPull={onPull} onOpen={onOpen} key={issueKey(issue)} />)}
     </div> : null}
     {state === "error" ? <div className="shelf-message" role="status">
@@ -1543,7 +1559,7 @@ function ReleaseShelf({ title, date, subtitle, state, issues = [], error, pulled
     </div> : null}
     {state === "empty" || state === "unavailable" ? <div className="shelf-message">
       <MagnifyingGlass size={18} />
-      <span><strong>{SHELF_COPY[state].title}</strong><small>{SHELF_COPY[state].detail}</small></span>
+      <span><strong>{SHELF_COPY[copyKey].title}</strong><small>{SHELF_COPY[copyKey].detail}</small></span>
     </div> : null}
   </section>;
 }
@@ -2044,11 +2060,15 @@ function DiscoverView({
   useEffect(() => { if (query) remember("query", query); }, [query]);
 
   function mark(key, state) { setPulled((current) => ({ ...current, [key]: state })); }
+  // A reader's pull is a request: its card says so until the admin decides.
+  const settledBy = (result) => (result?.requested ? PULL_STATES.requested : PULL_STATES.queued);
+  // What this profile has asked for and is still waiting on, from any device.
+  const waiting = useMemo(() => waitingKeys(catalog?.memberRequests), [catalog]);
   async function pullIssue(issue) {
     const key = issueKey(issue);
     mark(key, PULL_STATES.pending);
     const result = await onPullIssue(issue);
-    mark(key, result?.ok ? PULL_STATES.queued : PULL_STATES.idle);
+    mark(key, result?.ok ? settledBy(result) : PULL_STATES.idle);
   }
   async function pullRun(item) {
     const key = `run:${item.provider}-${item.providerSeriesId}`;
@@ -2059,7 +2079,7 @@ function DiscoverView({
       ? await onPullIssues({ provider: item.provider, providerSeriesId: item.providerSeriesId,
           released: true, title: item.title, query })
       : await onDiscoverRequest({ ...item, query });
-    mark(key, result?.ok ? PULL_STATES.queued : PULL_STATES.idle);
+    mark(key, result?.ok ? settledBy(result) : PULL_STATES.idle);
   }
   // From the run drawer. Following, or taking every released issue or the
   // whole of an ended run, settles the card behind it; a handful of chosen
@@ -2067,7 +2087,7 @@ function DiscoverView({
   const runKey = (item) => `run:${item?.provider}-${item?.providerSeriesId}`;
   async function followFromDrawer(target) {
     const result = await onDiscoverRequest(target);
-    if (result?.ok && drawer?.item) mark(runKey(drawer.item), PULL_STATES.queued);
+    if (result?.ok && drawer?.item) mark(runKey(drawer.item), settledBy(result));
     return result;
   }
   // Unfollowing frees the card to offer the run again.
@@ -2078,7 +2098,7 @@ function DiscoverView({
   }
   async function pullFromDrawer(target) {
     const result = await onPullIssues(target);
-    if (result?.ok && (target.released || target.complete) && drawer?.item) mark(runKey(drawer.item), PULL_STATES.queued);
+    if (result?.ok && (target.released || target.complete) && drawer?.item) mark(runKey(drawer.item), settledBy(result));
     return result;
   }
 
@@ -2140,7 +2160,8 @@ function DiscoverView({
         </div> : null}
         {discovery.state === "done" && fresh.length ? <div className="new-run-grid">
           {fresh.map((item) => <NewRunCard item={item}
-            state={pulled[`run:${item.provider}-${item.providerSeriesId}`] || PULL_STATES.idle}
+            state={pulled[`run:${item.provider}-${item.providerSeriesId}`]
+              || (runRequested(waiting, item.provider, item.providerSeriesId) ? PULL_STATES.requested : PULL_STATES.idle)}
             onPull={pullRun} onOpen={(run) => { remember("run", run); openCatalogRun(run); }}
             key={`${item.provider}-${item.providerSeriesId}`} />)}
         </div> : null}
@@ -2185,30 +2206,32 @@ function DiscoverView({
           ? `Runs you follow, then new #1s — from ${picks.weeksUsed} of ${picks.weeksTotal} weeks, one could not be fetched.`
           : "New issues of runs you follow, then this week's #1s."}
         state="ready" issues={picks.issues}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })} /> : null}
+        pulled={pulled} waiting={waiting} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })} /> : null}
       <ReleaseShelf title="Latest Releases" date={formatShelfDate(data.latest?.date)}
         state={shelfState(data.latest, data.available, releases.state === "loading")}
         issues={data.latest?.issues} error={data.latest?.error || data.error}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
+        pulled={pulled} waiting={waiting} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
       <ReleaseShelf title="Upcoming Releases" date={formatShelfDate(data.upcoming?.date)}
         state={shelfState(data.upcoming, data.available, releases.state === "loading")}
         issues={data.upcoming?.issues} error={data.upcoming?.error || data.error}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
+        pulled={pulled} waiting={waiting} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
       {/* The week before last: a comic is easy to miss by a few days, and by
           the time you look the shelf it was on has moved up. */}
       <ReleaseShelf title="Previous Releases" date={formatShelfDate(data.previous?.date)}
         state={shelfState(data.previous, data.available, releases.state === "loading")}
         issues={data.previous?.issues} error={data.previous?.error || data.error}
-        pulled={pulled} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
+        pulled={pulled} waiting={waiting} onPull={pullIssue} onOpen={(issue) => setDrawer({ kind: "issue", issue })}
         onRetry={loadReleases} />
     </>}
     {drawer?.kind === "issue" ? <DiscoverIssueDrawer issue={drawer.issue}
-      state={pullState(drawer.issue, pulled)} onPull={pullIssue}
+      state={pullState(drawer.issue, pulled, waiting)} onPull={pullIssue}
       onOpenRun={(item) => setDrawer({ kind: "run", item })} onClose={() => setDrawer(null)} /> : null}
     {drawer?.kind === "run" ? <DiscoverRunDrawer item={drawer.item} query={query}
-      settled={pulled[runKey(drawer.item)]} onFollow={followFromDrawer} onUnfollow={unfollowFromDrawer} onPullIssues={pullFromDrawer}
+      settled={pulled[runKey(drawer.item)]
+        || (runRequested(waiting, drawer.item.provider, drawer.item.providerSeriesId) ? PULL_STATES.requested : undefined)}
+      onFollow={followFromDrawer} onUnfollow={unfollowFromDrawer} onPullIssues={pullFromDrawer}
       onClose={() => setDrawer(null)} /> : null}
   </>;
 }
@@ -2539,12 +2562,17 @@ function RunSynopsis({ text, source, sourcePrefix = "From", loading = false, hea
 function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullIssues, onClose }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
+  // A reader asks: Follow becomes "Request run", Pull becomes "Request".
+  const reader = !isAdmin(useViewer());
+  const verb = reader ? "Request" : "Pull";
   const [preview, setPreview] = useState({ state: "loading", data: null, error: "" });
   const [choosing, setChoosing] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   // Which action is running, and what the last one said, by action.
   const [busy, setBusy] = useState("");
-  const [done, setDone] = useState(settled === PULL_STATES.queued ? { whole: "Already on your Pull List." } : {});
+  const [done, setDone] = useState(settled === PULL_STATES.queued ? { whole: reader ? "Already on the way." : "Already on your Pull List." }
+    : settled === PULL_STATES.requested ? { follow: "Requested. Waiting for approval.", whole: "Requested. Waiting for approval." } : {});
+  const [asked, setAsked] = useState(settled === PULL_STATES.requested);
   const ids = runPreviewIds(item);
   const idsKey = JSON.stringify(ids);
   const source = ["metron", "comic_vine", "gcd"].find((provider) => ids[provider]);
@@ -2597,11 +2625,15 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
           : { ...target, released: true });
     setBusy("");
     if (result?.ok) {
-      if (action === "follow" || action === "unfollow") {
+      if (result.requested) {
+        // Asked, not done: nothing is followed or pulled until the admin says so.
+        if (action === "follow") setAsked(true);
+        setDone((current) => ({ ...current, [action === "follow" ? "follow" : action]: "Requested. Waiting for approval." }));
+      } else if (action === "follow" || action === "unfollow") {
         setFollowed(action === "follow");
         setDone((current) => ({ ...current, follow: action === "follow" ? "Following this run." : "No longer following this run." }));
       } else {
-        setDone((current) => ({ ...current, [action]: "On your Pull List." }));
+        setDone((current) => ({ ...current, [action]: reader ? "On the way." : "On your Pull List." }));
       }
       if (action === "choose") setSelected(new Set());
       load();
@@ -2625,9 +2657,12 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
       </DiscoverDrawerHero>
       <div className="comic-drawer-body">
         {canFollow ? <div className="comic-drawer-follow">
-          <FollowSwitch following={following} busy={busy === "follow" || busy === "unfollow" || !run}
+          {reader ? <PullButton size="md" readerLabel="Request run" onClick={() => commit("follow")}
+            state={busy === "follow" ? PULL_STATES.pending : following ? PULL_STATES.queued
+              : asked ? PULL_STATES.requested : run ? PULL_STATES.idle : PULL_STATES.pending} />
+          : <FollowSwitch following={following} busy={busy === "follow" || busy === "unfollow" || !run}
             label={busy === "follow" ? "Following…" : busy === "unfollow" ? "Stopping…" : following ? "Following Run" : "Follow Run"}
-            onChange={(on) => commit(on ? "follow" : "unfollow")} />
+            onChange={(on) => commit(on ? "follow" : "unfollow")} />}
           <small className="comic-drawer-follow-note" role="status" aria-live="polite">{done.follow || waiting || followSummary.detail}</small>
         </div> : null}
         {preview.state === "error" ? <div className="shelf-message">
@@ -2637,12 +2672,12 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
         </div> : <section className="run-pull-options" aria-label="Pull issues">
           <div className="run-pull-option">
             <span className="run-pull-option-copy">
-              <strong>{run ? wholeSummary.label : completed ? "Pull complete run" : "Pull all released"}</strong>
+              <strong>{(run ? wholeSummary.label : completed ? "Pull complete run" : "Pull all released").replace(/^Pull/, verb)}</strong>
               <small role="status" aria-live="polite">{done.whole || waiting || wholeSummary.detail}</small>
             </span>
             <button type="button" className="pull-button pull-button-md pull-button-idle"
               disabled={!run || wholeSummary.disabled || Boolean(busy)} onClick={() => commit("whole")} aria-busy={busy === "whole" || undefined}>
-              <span>{busy === "whole" ? "Pulling…" : "Pull"}</span>
+              <span>{busy === "whole" ? `${verb === "Pull" ? "Pulling" : "Requesting"}…` : verb}</span>
               {busy === "whole" ? <LoadingIndicator size={16} /> : <PullIcon />}
             </button>
           </div>
@@ -2651,7 +2686,7 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
               onClick={() => setChoosing((open) => !open)}>
               <span className="run-pull-option-copy">
                 <strong>Choose issues</strong>
-                <small>{choosing ? "Tick the issues you want to pull." : "Pick single issues from this run."}</small>
+                <small>{choosing ? `Tick the issues you want to ${verb.toLowerCase()}.` : "Pick single issues from this run."}</small>
               </span>
               <ChevronDown />
             </button>
@@ -2670,7 +2705,7 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
                 </div>)}
               </div> : issues.map((issue, index) => {
                 const available = selectableIssue(issue);
-                const note = issue.owned ? "In library" : issue.queued ? "On Pull List"
+                const note = issue.owned ? "In library" : issue.queued ? (reader ? "On the way" : "On Pull List")
                   : issue.releaseState === "upcoming" ? "Not out yet"
                   : issue.releaseState === "unknown" ? "Release date unknown" : null;
                 const date = formatLongDate(issue.publicationDate) || issue.publicationYear;
@@ -2688,7 +2723,7 @@ function DiscoverRunDrawer({ item, query, settled, onFollow, onUnfollow, onPullI
                 <small role="status" aria-live="polite">{done.choose || chooseSummary.detail}</small>
                 <button type="button" className="pull-button pull-button-md pull-button-idle"
                   disabled={!run || chooseSummary.disabled || Boolean(busy)} onClick={() => commit("choose")} aria-busy={busy === "choose" || undefined}>
-                  <span>{busy === "choose" ? "Pulling…" : chooseSummary.disabled ? "Pull issues" : chooseSummary.label}</span>
+                  <span>{busy === "choose" ? `${verb === "Pull" ? "Pulling" : "Requesting"}…` : (chooseSummary.disabled ? "Pull issues" : chooseSummary.label).replace(/^Pull/, verb)}</span>
                   {busy === "choose" ? <LoadingIndicator size={16} /> : <PullIcon />}
                 </button>
               </footer>
@@ -2766,9 +2801,120 @@ function ImportLibraryView({ onNavigate, onStartInventory, onScanLibrary, onUpda
     <section className="focused-panel add-panel"><div className="panel-icon"><FolderOpen size={30} weight="duotone" /></div><h2>Add another library folder</h2><p>We’ll inventory the issues and volumes already in this folder, use covers and metadata from the files, and check for damaged archives. Online details can be refreshed after the library is visible.</p><label className="form-field"><span>Library folder</span><div className="path-input"><input value={path} placeholder="/comics-archive" onChange={(event) => setPath(event.target.value)} /><button type="button" onClick={chooseFolder}>Choose folder</button></div>{pickerState ? <small>{pickerState}</small> : null}</label><label className="check-row"><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Useful when each series has its own folder</small></span></label><div className="safety-note"><ShieldCheck size={22} weight="fill" /><span><strong>Your files stay untouched</strong><small>No files will be renamed, moved, or modified during this scan.</small></span></div><div className="docker-path-note"><HardDrive size={20} /><span><strong>Using Docker?</strong><small>Mount each NAS share into the Flipparr container first, then enter its container path here. Avoid adding a folder inside an existing source.</small></span></div><div className="panel-actions"><button className={`primary-button ${busy ? "loading" : ""}`} disabled={busy || !path.trim()} onClick={() => onStartInventory(path, recursive)}>{busy ? <LoadingSpinner size={19} /> : <UploadSimple size={19} />} {busy ? "Scanning…" : "Import and scan folder"}</button><button className="ghost-button" onClick={() => onNavigate("settings", "library")}>Cancel</button></div></section></>;
 }
 
-function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDeletePull, onRefresh }) {
+// ---- Readers' requests ----------------------------------------------------------
+
+const REQUEST_TONES = { pending: "amber", failed: "red", approved: "violet", available: "green", declined: "muted", cancelled: "muted" };
+
+function requestedOn(iso) {
+  const date = iso ? new Date(iso) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+}
+
+// One request: what was asked for, by whom, where it stands, and -- for the
+// admin while it waits, or its reader while it is pending -- what to do.
+function MemberRequestCard({ request, admin, onDecide, aimed = false }) {
+  const [busy, setBusy] = useState("");
+  const [declining, setDeclining] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const waiting = request.status === "pending" || request.status === "failed";
+  const labels = admin ? ADMIN_STATE_LABELS : REQUEST_STATE_LABELS;
+  async function decide(action, body) {
+    setBusy(action);
+    setError("");
+    const failure = await onDecide(request, action, body);
+    if (failure) setError(failure);
+    setBusy("");
+    if (!failure) setDeclining(false);
+  }
+  const byline = [request.detail?.publisher, request.detail?.year].filter(Boolean).join(" · ");
+  return <article className={`request-card member-request-card${aimed ? " request-aimed" : ""}`} data-member-request={request.id}>
+    <div className="member-request">
+      <span className="request-cover">{request.detail?.cover
+        ? <img src={request.detail.cover} alt="" loading="lazy" />
+        : <span className="cover-placeholder" aria-hidden="true"><BookOpen size={24} weight="duotone" /></span>}</span>
+      <span className="request-identity">
+        <strong>{request.title}</strong>
+        <small>{[requestScope(request), byline].filter(Boolean).join(" · ")}</small>
+        {admin ? <span className="member-request-who"><ProfileAvatar profile={request.requestedBy} size="sm" />
+          <small>{request.requestedBy?.name} · {requestedOn(request.createdAt)}</small></span>
+          : <small>Asked {requestedOn(request.createdAt)}</small>}
+        <span className="tag-line"><StatusBadge tone={REQUEST_TONES[request.state] || "muted"}>{labels[request.state] || request.state}</StatusBadge></span>
+        {request.state === "declined" && request.declineReason ? <small className="member-request-reason">&ldquo;{request.declineReason}&rdquo;</small> : null}
+        {admin && request.status === "failed" && request.failure ? <small className="member-request-reason">{request.failure}</small> : null}
+      </span>
+    </div>
+    {admin && waiting ? <div className="member-request-actions">
+      {declining ? <form className="member-request-decline" onSubmit={(event) => { event.preventDefault(); decide("decline", { reason }); }}>
+        <label className="form-field"><span>Reason</span>
+          <input value={reason} maxLength={300} autoFocus onChange={(event) => setReason(event.target.value)} placeholder="Optional, shown to them" />
+        </label>
+        <div className="settings-card-actions">
+          <button type="button" className="secondary-button" onClick={() => setDeclining(false)} disabled={Boolean(busy)}>Back</button>
+          <button className="danger-button" disabled={Boolean(busy)} aria-busy={busy === "decline"}>{busy === "decline" ? <LoadingSpinner size={16} /> : null} Decline</button>
+        </div>
+      </form> : <div className="settings-card-actions">
+        <button type="button" className="secondary-button" onClick={() => setDeclining(true)} disabled={Boolean(busy)}>Decline</button>
+        <button type="button" className="primary-button" onClick={() => decide("approve")} disabled={Boolean(busy)} aria-busy={busy === "approve"}>
+          {busy === "approve" ? <LoadingSpinner size={16} /> : <Check size={16} weight="bold" />} {request.status === "failed" ? "Try again" : "Approve"}
+        </button>
+      </div>}
+    </div> : null}
+    {!admin && request.status === "pending" ? <div className="member-request-actions"><div className="settings-card-actions">
+      <button type="button" className="secondary-button" onClick={() => decide("cancel")} disabled={Boolean(busy)} aria-busy={busy === "cancel"}>
+        {busy === "cancel" ? <LoadingSpinner size={16} /> : null} Cancel request
+      </button>
+    </div></div> : null}
+    {error ? <p className="workbench-error member-request-error" role="alert">{error}</p> : null}
+  </article>;
+}
+
+// The admin's queue, as the Pull List's first tab: what waits, then what was decided.
+function MemberRequestList({ requests, admin, onDecide, focus }) {
+  // The admin answers the oldest first; a reader looks for what they just asked.
+  const queue = adminQueue(requests);
+  const waiting = admin ? queue.waiting : [...queue.waiting].reverse();
+  const { decided } = queue;
+  const aimed = focus?.requestId;
+  if (!requests.length) {
+    return <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" />
+      <strong>{admin ? "No requests" : "Nothing requested yet"}</strong>
+      <span>{admin ? "When a reader asks for a run or an issue, it waits here for you."
+        : "Find a run or an issue in Discover and tap Request. The admin says yes or no."}</span></div>;
+  }
+  return <>
+    {waiting.length ? <section className="request-list">{waiting.map((request) => <MemberRequestCard request={request} admin={admin}
+      onDecide={onDecide} aimed={String(aimed) === String(request.id)} key={request.id} />)}</section> : null}
+    {decided.length ? <section className="request-list member-request-history" aria-label="Decided">
+      {waiting.length ? <h2 className="member-request-heading">Earlier</h2> : null}
+      {decided.map((request) => <MemberRequestCard request={request} admin={admin} onDecide={onDecide}
+        aimed={String(aimed) === String(request.id)} key={request.id} />)}
+    </section> : null}
+  </>;
+}
+
+// A reader's page: what they asked for and what became of it.
+function MyRequestsView({ catalog, backendStatus, focus, onDecide }) {
+  const loading = catalogPending(catalog, backendStatus);
+  return <><PageHeader title="Requests" />
+    {loading ? <CatalogLoading title="Loading your requests…" detail="" />
+      : <MemberRequestList requests={catalog?.memberRequests || []} admin={false} onDecide={onDecide} focus={focus} />}
+  </>;
+}
+
+function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDeletePull, onRefresh, onDecide }) {
   const [releaseJob, setReleaseJob] = useState(null);
-  const [tab, setTab] = useState("wanted");
+  // Readers' requests come first while any wait: they are the admin's to answer.
+  const memberRequests = catalog?.memberRequests || [];
+  const pendingAsks = memberRequests.filter((request) => request.status === "pending" || request.status === "failed").length;
+  const [tab, setTabState] = useState(() => (pendingAsks ? "asks" : "wanted"));
+  // The catalog often arrives after the page: open on Requests then, unless
+  // a tab has already been chosen.
+  const tabChosen = useRef(false);
+  const setTab = (next) => { tabChosen.current = true; setTabState(next); };
+  useEffect(() => {
+    if (pendingAsks && !tabChosen.current) setTabState("asks");
+  }, [pendingAsks]);
   const [searchingMissing, setSearchingMissing] = useState(false);
   const [searchMissingMessage, setSearchMissingMessage] = useState("");
   // The Wanted list's own action, the way Radarr and Sonarr put one there:
@@ -2829,6 +2975,7 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
   useEffect(() => {
     if (!focus || aimedAt.current === focus) return;
     aimedAt.current = focus;
+    if (focus.tab) { setTab(focus.tab); return undefined; }
     // Ask which tab actually holds the row rather than assuming: a failure or
     // an arrival is exactly the case that is not on Wanted.
     const all = [...(catalog?.requests || []), ...(catalog?.replacementRequests || [])];
@@ -2847,9 +2994,13 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
     }, 60);
     return () => clearTimeout(timer);
   }, [focus]);
-  const entries = buckets[tab] ?? [];
-  const tabCopy = PULL_LIST_COPY[tab];
+  const entries = tab === "asks" ? [] : buckets[tab] ?? [];
+  const tabCopy = PULL_LIST_COPY[tab] ?? PULL_LIST_COPY.wanted;
   const loading = catalogPending(catalog, backendStatus);
+  const tabs = [
+    ...(memberRequests.length ? [{ id: "asks", label: "Requests", count: loading ? null : <b>{pendingAsks}</b> }] : []),
+    ...PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> })),
+  ];
   // Searching for everything missing is Wanted's own action, so it sits at
   // the head of that list, beside how much there is to find, rather than in
   // the page header.
@@ -2866,9 +3017,9 @@ function RequestsView({ catalog, backendStatus, focus, onCancelReplacement, onDe
       {searchingMissing ? <><LoadingSpinner size={14} /> Finding…</> : "Find"}
     </button>
   </div> : null;
-  return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={PULL_LIST_TABS.filter(({ id }) => id !== "failed" || tabCount(buckets.failed)).map(({ id, label }) => ({ id, label, className: id === "failed" ? "request-tab-failed" : "", count: loading ? null : <b>{tabCount(buckets[id])}</b> }))} />} />{wantedBar}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}<section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
+  return <><PageHeader title="Pull List" tools={<SegmentedTabs label="Pull List" value={tab} onChange={setTab} items={tabs} />} />{wantedBar}{tab === "wanted" && searchMissingMessage ? <p className="request-search-result" role="status">{searchMissingMessage}</p> : null}{tab === "asks" && !loading ? <MemberRequestList requests={memberRequests} admin onDecide={onDecide} focus={focus} /> : <section className="request-list">{loading ? <CatalogLoading title="Loading your pull list…" detail="Bringing in followed runs, wanted issues, and downloads." /> : entries.length ? entries.map(({ kind, request }) => kind === "replacement"
     ? <ReplacementRequestRow request={request} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onCancel={onCancelReplacement} onFindRelease={setReleaseJob} onRefresh={onRefresh} key={`replacement-${request.id}`} />
-    : <RequestRow request={request} tab={tab} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
+    : <RequestRow request={request} tab={tab} progress={progress} openByDefault={tab === "failed" || tab === "downloading"} onFindRelease={setReleaseJob} onRefresh={onRefresh} onDelete={onDeletePull} key={`series-${request.id}`} />) : <div className="empty-state request-empty"><CheckCircle size={34} weight="duotone" /><strong>{tabCopy.emptyTitle}</strong><span>{tabCopy.emptyDetail}</span></div>}</section>}{releaseJob ? <ReleaseSearchModal job={releaseJob} onClose={() => setReleaseJob(null)} onGrabbed={async () => { await onRefresh?.(); setReleaseJob(null); }} /> : null}</>;
 }
 
 function acquisitionFailureDetails(job) {
@@ -5169,7 +5320,7 @@ function ComicDrawerCreators({ creators }) {
 
 function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRead, readingVersion = 0,
   coverBusy = false, coverError = "", onSelectSeriesCover, onUploadSeriesCover,
-  backdropBusy = false, backdropError = "", onSaveBackdrop, onSetDirection, onRate, onRateIssue, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0 }) {
+  backdropBusy = false, backdropError = "", onSaveBackdrop, onSetDirection, onRate, onRateIssue, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0, requested = false }) {
   const admin = isAdmin(useViewer());
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
@@ -5347,6 +5498,15 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         </button>
         <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => setEdit("")} aria-label={`Edit ${series.title}`} title="Edit"><PencilSimple size={20} /></button>
       </> : null}
+      {/* A reader asks for a run to be followed; the admin decides. */}
+      {edit === null && !admin && !isFollowing ? <button type="button"
+        className={`glass-button glass-button--icon comic-drawer-follow-button${requested ? " active" : ""}`}
+        onClick={() => onRequest()} disabled={requestBusy || requested}
+        aria-label={requested ? `${series.title} is requested` : `Request ${series.title}`}
+        title={requested ? "Waiting for approval" : "Ask for this run to be followed"}>
+        {requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={20} /> : <FollowedIcon size={20} />}
+        <b>{requested ? "Requested" : "Request"}</b>
+      </button> : null}
     </DrawerTopBar>
     <header className="comic-drawer-hero">
       {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={pageArt ? () => setBackdropFailed(true) : undefined} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
@@ -5561,7 +5721,7 @@ function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
   return <div className="story-arc-list">{arcs.map((arc) => <article key={arc.id}><header><div><span>{arc.type === "specials" ? "Specials / one-shots" : "Series run"}</span><strong>{arc.name}</strong></div><b className={arc.status}>{arc.status === "complete" ? "Complete" : arc.status === "partial" ? "Partially owned" : arc.status === "cataloged" ? "Not owned" : "Missing"}</b></header><div className="arc-progress-copy"><strong>{arc.ownedIssueCount} of {arc.issueCount || "unknown"} issues owned</strong><span>{arc.volumeCount} volume{arc.volumeCount === 1 ? "" : "s"} · {arc.fileCount} file{arc.fileCount === 1 ? "" : "s"}</span></div><div className="arc-run-links">{arc.runs.map((run) => <button onClick={() => onOpenSeries(run)} key={run.id}><span>{run.title} ({run.year})</span><ArrowRight size={15} /></button>)}</div></article>)}</div>;
 }
 
-function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructure, onOpenSeries, onOpenContents, onRequest, onViewRequests, requestBusy, onEditIssue, onUnfollow, unfollowBusy = false }) {
+function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructure, onOpenSeries, onOpenContents, onRequest, onViewRequests, requestBusy, onEditIssue, onUnfollow, unfollowBusy = false, requested = false }) {
   const viewer = useViewer();
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
@@ -5635,7 +5795,7 @@ function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructu
         {tab === "volumes" ? <div className="collection-volume-list">{volumes.length ? volumes.map((volume) => { const title = volume.subtitle ? `${volume.title}: ${volume.subtitle}` : volume.title; const needsContents = volume.coverageStatus !== "verified"; const canReviewContents = needsContents && volume.linkedFile; return <button className={needsContents ? "unplaced" : "placed"} onClick={() => canReviewContents ? onOpenContents(volume.linkedFile) : onOpenSeries(volume.run)} key={`${volume.run.id}-${volume.logicalVolumeKey || volume.id}`}><span className="collection-volume-cover"><CoverArt id={`collection-volume-${volume.id}`} title={title} cover={volume.cover} decorative placeholderSize={17} /></span><span><strong>{title}</strong><small>{volume.run.title} · {editionKindLabel(volume.editionKind)}{volume.volume ? ` · Vol. ${volume.volume}` : ""}{volume.copyCount > 1 ? ` · ${volume.copyCount} files` : ""}</small>{needsContents ? <b>{volume.coverageStatus === "partial" ? `${volume.contentsIssueCount || 0} issues confirmed · more may be included` : "Issue contents not confirmed"}</b> : <b>{volume.contentsIssueCount || 0} issues confirmed</b>}</span><ArrowRight size={16} /></button>; }) : <div className="drawer-empty"><Books size={27} /><strong>No volumes cataloged</strong></div>}</div> : null}
         {tab === "files" ? <div className="collection-volume-list">{files.map((file) => <button onClick={() => onOpenSeries(file.run)} key={file.id}><HardDrive size={20} weight="duotone" /><span><strong>{file.filename}</strong><small>{file.run.title} · {file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)}</small></span><ArrowRight size={16} /></button>)}</div> : null}
       </div>
-      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}
+      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}{tab === "overview" && !isAdmin(viewer) && collection.monitoringStatus !== "monitored" ? <div className="drawer-actions"><button type="button" className="ghost-button" onClick={() => onRequest()} disabled={requestBusy || requested}>{requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={18} /> : <FollowedIcon size={18} />} {requested ? "Requested" : "Request collection"}</button></div> : null}
     </aside>
   </div>;
 }
@@ -7548,9 +7708,10 @@ export function App() {
     });
   }
 
+  const viewerIsAdmin = isAdmin(authStatus?.viewer);
   const notifications = useMemo(
-    () => buildNotifications(catalog, dismissedNotifications, seenUntil),
-    [catalog, dismissedNotifications, seenUntil]);
+    () => buildNotifications(catalog, dismissedNotifications, seenUntil, { admin: viewerIsAdmin }),
+    [catalog, dismissedNotifications, seenUntil, viewerIsAdmin]);
   useEffect(() => {
     if (!catalog || !dismissedNotifications.length) return;
     const pruned = pruneDismissed(catalog, dismissedNotifications);
@@ -8067,10 +8228,60 @@ export function App() {
     } catch (error) { setIssueError(error.message); }
     setIssueBusy(false);
   }
+  // A reader's Follow and Pull ask the admin instead. The answer is a
+  // request waiting (or, for a reader the admin trusts, started at once), and
+  // the caller's card settles on "Requested".
+  async function askAdmin(body) {
+    try {
+      const result = await apiRequest("/api/v1/member-requests", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      await loadCatalog();
+      if (result.status === "already") {
+        showToast(result.message);
+        return { ok: true, result };
+      }
+      const started = result.status === "approved";
+      showToast(started ? `${result.title} · on its way` : `${result.title} requested · waiting for approval`);
+      return { ok: true, result, requested: !started };
+    } catch (error) {
+      showToast(error.message, "error");
+      return { ok: false, error: error.message };
+    }
+  }
+  // Approve, decline or cancel a reader's request. Returns an error to show on
+  // the card, or nothing.
+  async function decideMemberRequest(request, action, body) {
+    try {
+      const result = await apiRequest(`/api/v1/member-requests/${request.id}/${action}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+      });
+      await loadCatalog();
+      if (action === "approve") {
+        showToast(result.status === "failed" ? `${request.title} couldn't be added · ${result.failure || "try again"}`
+          : `${request.title} approved · on its way`, result.status === "failed" ? "error" : undefined);
+      } else {
+        showToast(action === "decline" ? `${request.title} declined` : `${request.title} request cancelled`);
+      }
+      // A failed approval is on the card itself (status and reason), so it is
+      // not said again beneath it.
+      return "";
+    } catch (error) {
+      await loadCatalog();
+      return error.message;
+    }
+  }
   async function createAcquisitionRequest(target) {
     const collection = target?.isCollectionSeries ? target.collection : target;
     const isCollection = Boolean(collection?.runs);
     const requestKey = `${isCollection ? "collection" : "series"}:${collection.id}`;
+    if (!viewerIsAdmin) {
+      setRequestBusyKey(requestKey);
+      const asked = await askAdmin(isCollection ? { kind: "collection", collectionId: collection.id }
+        : { kind: "run", seriesId: collection.id });
+      setRequestBusyKey("");
+      return asked;
+    }
     setRequestBusyKey(requestKey);
     try {
       const request = await apiRequest("/api/v1/requests", {
@@ -8103,6 +8314,11 @@ export function App() {
     }
   }
   async function pullDiscoveredIssue(issue) {
+    if (!viewerIsAdmin) {
+      return askAdmin({ kind: "discover_issues", provider: "metron", providerSeriesId: issue.providerSeriesId,
+        numbers: [issue.number], title: issue.seriesTitle || issue.title, query: issue.seriesTitle,
+        publisher: issue.publisher, cover: issue.cover });
+    }
     try {
       const result = await apiRequest("/api/v1/discover/pull-issue", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -8126,7 +8342,11 @@ export function App() {
     }
   }
 
-  async function pullDiscoveredIssues({ provider, providerSeriesId, numbers, released, title, query }) {
+  async function pullDiscoveredIssues({ provider, providerSeriesId, numbers, released, title, query, publisher, cover, year }) {
+    if (!viewerIsAdmin) {
+      return askAdmin({ kind: "discover_issues", provider, providerSeriesId, numbers, released: Boolean(released),
+        title, query: query || title, publisher, cover, year });
+    }
     try {
       const result = await apiRequest("/api/v1/discover/pull-issue", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -8146,6 +8366,11 @@ export function App() {
   }
 
   async function requestDiscoveredSeries(target) {
+    if (!viewerIsAdmin) {
+      return askAdmin({ kind: "discover_run", provider: target.provider, providerSeriesId: target.providerSeriesId,
+        title: target.title, query: target.query || target.title, publisher: target.publisher,
+        cover: target.cover, year: Number.isInteger(target.year) ? target.year : undefined });
+    }
     try {
       const result = await apiRequest("/api/v1/discover", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -8700,7 +8925,7 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "profile" ? <ProfileView onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); }} /> : null}{finished ? <FinishDrawer key={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{selectedSeries ? <SeriesDrawer key={selectedSeries.id} readingVersion={readingVersion} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
+  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "profile" ? <ProfileView onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? (viewerIsAdmin ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} onDecide={decideMemberRequest} /> : <MyRequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onDecide={decideMemberRequest} />) : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); }} /> : null}{finished ? <FinishDrawer key={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{selectedSeries ? <SeriesDrawer key={selectedSeries.id} readingVersion={readingVersion} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onRequest={() => createAcquisitionRequest(selectedSeries)} requested={waitingKeys(catalog?.memberRequests).has(`run:${selectedSeries.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} requested={waitingKeys(catalog?.memberRequests).has(`collection:${selectedCollection.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
       onClose={() => setPicker(null)} canAdd={isAdmin(authStatus?.viewer)} onAdd={() => setAddingProfile(true)} /> : null}{addingProfile ? <AddProfileSheet onClose={() => setAddingProfile(false)}
       onAdded={() => { setAddingProfile(false); setProfilesVersion((value) => value + 1); showToast("Profile added"); }} /> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider>;
 }

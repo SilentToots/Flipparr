@@ -81,7 +81,7 @@ export function migrateLegacyKeys(storage, viewerId, keys = LEGACY_KEYS) {
 // would be refused. The admin sees everything.
 
 const READER_SURFACES = new Set([
-  "nav.library", "nav.settings",
+  "nav.search", "nav.library", "nav.discover", "nav.requests", "nav.settings",
   "settings.profile", "settings.reader",
 ]);
 

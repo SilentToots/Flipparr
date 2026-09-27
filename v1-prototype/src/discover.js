@@ -8,7 +8,7 @@
 // not happen to contain.
 
 /** Where a run sits once the reader has acted on it, so a card cannot lie. */
-export const PULL_STATES = { idle: "idle", pending: "pending", queued: "queued", owned: "owned" };
+export const PULL_STATES = { idle: "idle", pending: "pending", queued: "queued", owned: "owned", requested: "requested" };
 
 /**
  * What an issue's Pull button should say.
@@ -17,11 +17,14 @@ export const PULL_STATES = { idle: "idle", pending: "pending", queued: "queued",
  * that stays on "Pull Issue" after a successful pull invites a second click,
  * and a second click is a second acquisition request.
  */
-export function pullState(issue, pulled = {}) {
+export function pullState(issue, pulled = {}, waiting = null) {
   const local = pulled[issueKey(issue)];
   if (local) return local;
   if (issue?.owned) return PULL_STATES.owned;
   if (issue?.queued || issue?.following) return PULL_STATES.queued;
+  // A reader's request for this issue, from this device or another, still
+  // waiting on the admin. Keyed as the server keys it (member-requests.js).
+  if (waiting?.has(`discover:metron:${issue?.providerSeriesId}#${issue?.number}`)) return PULL_STATES.requested;
   return PULL_STATES.idle;
 }
 
@@ -38,7 +41,12 @@ export const PULL_LABELS = {
   pending: "Pulling…",
   queued: "On Pull List",
   owned: "In library",
+  requested: "Requested",
 };
+
+// A reader asks rather than pulls, and has no Pull List of their own: what
+// the household is getting is "on the way".
+export const READER_PULL_LABELS = { ...PULL_LABELS, pending: "Requesting…", queued: "On the way" };
 
 /**
  * A shelf's state, from what the endpoint returned.
