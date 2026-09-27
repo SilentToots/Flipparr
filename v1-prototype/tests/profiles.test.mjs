@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   setStorageProfile, profileKey, profileStorage, migrateLegacyKeys, can, isAdmin,
-  initials, pinInput, profileColour, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS,
+  initials, pinInput, profileColour, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS, nextProfileColour,
 } from "../src/profiles.js";
 
 function memoryStorage(initial = {}) {
@@ -93,4 +93,12 @@ test("choosing a lock sends what it needs, and nothing it cannot use", () => {
   assert.deepEqual(lockPatch({ ...sam, hasPassword: true }, "password"), { switchLock: "password" }, "keeps the password it has");
   assert.deepEqual(lockPatch({ id: 1, role: "admin", hasPin: true }, "password", { password: "ignored!!" }),
     { switchLock: "password", pin: null }, "the admin's password is Security's");
+});
+
+test("a new profile gets the first colour nobody has, as the server gives it", () => {
+  assert.equal(nextProfileColour([{ id: 1, colour: null }]), "blue", "the admin with none is violet");
+  assert.equal(nextProfileColour([{ colour: null }, { colour: "blue" }, { colour: "pink" }]), "teal");
+  assert.equal(nextProfileColour([]), "violet");
+  const all = ["violet", "blue", "teal", "green", "amber", "orange", "red", "pink"].map((colour) => ({ colour }));
+  assert.equal(nextProfileColour(all), "violet", "past eight, the palette again");
 });

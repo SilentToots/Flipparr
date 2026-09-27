@@ -3824,6 +3824,8 @@ class CatalogStore:
         login = self._login_name(login_name)
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
+            if colour is None:
+                colour = self._next_profile_colour(connection)
             try:
                 cursor = connection.execute(
                     """INSERT INTO users(name, login_name, role, colour, password_hash, pin_hash,
@@ -3836,6 +3838,17 @@ class CatalogStore:
                 raise ValueError("Another profile already signs in with that name") from exc
             user_id = int(cursor.lastrowid)
         return self.user(user_id)
+
+    @staticmethod
+    def _next_profile_colour(connection: sqlite3.Connection) -> str:
+        """A new profile's colour, chosen for it rather than by anyone: the
+        first in the palette nobody has, so profiles side by side on the
+        picker differ. A profile with none is drawn violet, so counts as it."""
+        taken = [row[0] or PROFILE_COLOURS[0] for row in connection.execute("SELECT colour FROM users ORDER BY id")]
+        for colour in PROFILE_COLOURS:
+            if colour not in taken:
+                return colour
+        return PROFILE_COLOURS[len(taken) % len(PROFILE_COLOURS)]
 
     _USER_FIELDS = {
         "name": "name", "loginName": "login_name", "role": "role", "colour": "colour",

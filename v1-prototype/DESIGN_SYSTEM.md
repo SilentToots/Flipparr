@@ -264,7 +264,8 @@ Motion tokens:
 - **Reader profiles** (since 2026-09-25) are drawn as a coloured disc with
   white initials (`.profile-avatar`, 32px, 80px as `--lg`), in one of eight
   profile colours (`--profile-*` tokens, each a 700 shade so the initials meet
-  AA). "Who's reading?" (`.profile-picker`) is the sign-in page's shape: the
+  AA). The colour is given, never chosen: a new profile gets the first one
+  nobody has, and a picture is how a profile is made its own. "Who's reading?" (`.profile-picker`) is the sign-in page's shape: the
   F mark, the question, and the profiles as avatar tiles, a locked one marked
   under its name; a PIN or password is asked for on the same card. In
   Settings, the admin's Profiles list uses rows of avatar, name and a line of

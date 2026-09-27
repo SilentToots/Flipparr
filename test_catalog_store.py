@@ -4211,6 +4211,19 @@ class ReaderProfileTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=49")
             self.assertIsNone(CatalogStore(store.database_path).user(sam)["avatar"])
 
+    def test_a_new_profile_is_given_a_colour_nobody_else_has(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            # The admin has none, and is drawn violet; the next is the palette's next.
+            made = [store.create_user(f"Reader {n}")["colour"] for n in range(3)]
+            self.assertEqual(made, ["blue", "teal", "green"])
+            store.update_user(store.list_users()[1]["id"], colour="pink")
+            self.assertEqual(store.create_user("Another")["colour"], "blue", "a colour given up is free again")
+            self.assertEqual(store.create_user("Chosen", colour="red")["colour"], "red", "a colour asked for is kept")
+            for n in range(4):
+                store.create_user(f"More {n}")
+            self.assertIn(store.create_user("Tenth")["colour"], catalog_store.PROFILE_COLOURS, "past eight, colours repeat")
+
     def test_profiles_from_before_the_lock_choice_keep_asking_what_they_asked(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

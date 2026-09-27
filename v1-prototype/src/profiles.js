@@ -103,6 +103,16 @@ export function profileColour(profile) {
   return PROFILE_COLOURS.includes(profile?.colour) ? profile.colour : "violet";
 }
 
+/**
+ * The colour the server gives a new profile: the first in the palette no
+ * profile has (one with none is drawn violet). Nobody chooses it; this is
+ * only so the Add sheet can show the profile as it will look.
+ */
+export function nextProfileColour(profiles) {
+  const taken = (profiles || []).map((profile) => profile?.colour || PROFILE_COLOURS[0]);
+  return PROFILE_COLOURS.find((colour) => !taken.includes(colour)) ?? PROFILE_COLOURS[taken.length % PROFILE_COLOURS.length];
+}
+
 /** One or two letters for an avatar: the first of each of the first two words. */
 export function initials(name) {
   const words = String(name || "").trim().split(/\s+/).filter(Boolean);

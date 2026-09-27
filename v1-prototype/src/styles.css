@@ -3723,15 +3723,6 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-row > span:not(.profile-avatar) { display: grid; gap: var(--space-2); flex: 1; min-width: 0; }
 .profile-row small { color: var(--muted); font-size: var(--text-sm); }
 @media (hover: hover) { .profile-row:hover { background: var(--surface-hover); } }
-/* The eight colours on one line at any width: a column each, the gap
-   narrowing on a phone before a swatch would. */
-.profile-colours { display: grid; grid-template-columns: repeat(8, minmax(0, var(--control-height-sm))); gap: var(--space-8); }
-@media (max-width: 640px) { .profile-colours { gap: var(--space-4); } }
-.profile-colour {
-  display: grid; place-items: center; width: 100%; aspect-ratio: 1; height: auto; padding: 0;
-  border: 2px solid transparent; border-radius: var(--radius-pill); color: var(--color-neutral-0); cursor: pointer;
-}
-.profile-colour.chosen { border-color: var(--color-neutral-0); }
 .profile-form { display: grid; gap: var(--space-16); }
 /* What switching to a profile asks for: the choice, what it means, and the one field it needs. */
 .switch-lock { display: grid; gap: var(--space-12); }
