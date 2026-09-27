@@ -56,3 +56,9 @@ test("the publisher row skips what More by already shows and matches suffix vari
   assert.deepEqual(publisher.runs.map((r) => r.title), ["Paper Girls", "Saga"], "closest in year first");
   assert.equal(relatedRuns(run(9, "Solo", 2000, "Nobody"), all).publisher, null);
 });
+
+test("runs with no publisher are not grouped under the placeholder", () => {
+  const series = { id: 1, title: "A", publisher: "Publisher unknown" };
+  const all = [series, { id: 2, title: "B", publisher: "Publisher unknown" }];
+  assert.equal(relatedRuns(series, all).publisher, null);
+});

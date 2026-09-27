@@ -1316,15 +1316,20 @@ function HeaderSearchField({ field, className = "page-header-search" }) {
 
 function Ownership({ series, compact = false }) {
   const percent = Math.max(5, Math.round((series.owned / series.total) * 100));
-  const catalogUnknown = series.catalogKnown === false || series.status === "unknown";
+  // "Match needs attention" is the admin's to act on. A reader sees what is
+  // owned -- as a count alone, since a run waiting on its match has no total
+  // to trust yet.
+  const admin = isAdmin(useViewer());
+  const reviewing = series.status === "warning" && admin;
+  const catalogUnknown = series.catalogKnown === false || series.status === "unknown" || (series.status === "warning" && !admin);
   const volumeCount = series.inventory?.editionCount || 0;
   const collectedOnly = volumeCount > 0 && !series.inventory?.directIssueFiles;
   const coveredIssues = series.issues?.filter((issue) => issue.ownership !== "unowned").length || 0;
   const arcCoverageKnown = collectedOnly && coveredIssues > 0;
   const ownedLabel = arcCoverageKnown ? `${coveredIssues} issue${coveredIssues === 1 ? "" : "s"} owned` : collectedOnly ? `${volumeCount} volume${volumeCount === 1 ? "" : "s"} owned` : `${series.owned} owned`;
-  const label = series.status === "warning" ? seriesAttentionLabel(series) : catalogUnknown ? ownedLabel : compact ? `${series.owned} of ${series.total} owned` : `${series.owned} of ${series.total}`;
+  const label = reviewing ? seriesAttentionLabel(series) : catalogUnknown ? ownedLabel : compact ? `${series.owned} of ${series.total} owned` : `${series.owned} of ${series.total}`;
   const coverageDetail = arcCoverageKnown ? `${coveredIssues} issue${coveredIssues === 1 ? "" : "s"} collected in ${volumeCount} volume${volumeCount === 1 ? "" : "s"}${series.family ? " · complete-series progress is tracked separately" : ""}` : "";
-  const detail = series.status === "warning" ? [coverageDetail, seriesAttentionDetail(series)].filter(Boolean).join(" · ") : series.isCollectionSeries ? series.ownership : coverageDetail || series.ownership;
+  const detail = reviewing ? [coverageDetail, seriesAttentionDetail(series)].filter(Boolean).join(" · ") : series.isCollectionSeries ? series.ownership : coverageDetail || series.ownership;
   // An issue that is not out yet is not missing. Counting the two together
   // read as a gap to close on a run that is simply still being published.
   const summary = series.releaseSummary || {};
@@ -1334,7 +1339,7 @@ function Ownership({ series, compact = false }) {
     ? Math.max(0, shortfall - upcoming)
     : Math.max(0, Number(summary.releasedMissing));
   const plural = (count) => (count === 1 ? "" : "s");
-  const compactDetail = series.status === "warning"
+  const compactDetail = reviewing
     ? "Review required"
     : catalogUnknown
       ? "Series total unknown"
@@ -1349,17 +1354,17 @@ function Ownership({ series, compact = false }) {
   // the label -- "23 owned" above "23 issues owned · complete-run progress
   // unknown". Use the concise form at every width, not just on mobile. Warning
   // rows keep the long form: theirs explains what needs attention.
-  const showsConciseDetail = compact || (catalogUnknown && series.status !== "warning");
+  const showsConciseDetail = compact || (catalogUnknown && !reviewing);
   const visibleDetail = showsConciseDetail ? compactDetail : detail;
   if (compact) {
     return <span className={`ownership ${series.status} compact`}>
-      <span className="ownership-label">{catalogUnknown || series.status === "warning"
+      <span className="ownership-label">{catalogUnknown || reviewing
         ? label
         : <><strong>{series.owned}</strong> of {series.total} Owned</>}</span>
-      {series.status !== "warning" && !catalogUnknown ? <span className="progress"><i style={{ width: `${percent}%` }} /></span> : null}
+      {!reviewing && !catalogUnknown ? <span className="progress"><i style={{ width: `${percent}%` }} /></span> : null}
     </span>;
   }
-  return <div className={`ownership ${series.status}`}><div className="ownership-label">{series.status === "warning" ? <WarningCircle size={19} weight="fill" /> : catalogUnknown ? <ClockCounterClockwise size={19} weight="fill" /> : <CheckCircle size={19} weight="fill" />}<strong>{label}</strong></div>{series.status !== "warning" && !catalogUnknown ? <div className="progress"><i style={{ width: `${percent}%` }} /></div> : null}{visibleDetail && visibleDetail !== label ? <span>{visibleDetail}</span> : null}</div>;
+  return <div className={`ownership ${reviewing || series.status !== "warning" ? series.status : ""}`}><div className="ownership-label">{reviewing ? <WarningCircle size={19} weight="fill" /> : catalogUnknown ? <ClockCounterClockwise size={19} weight="fill" /> : <CheckCircle size={19} weight="fill" />}<strong>{label}</strong></div>{!reviewing && !catalogUnknown ? <div className="progress"><i style={{ width: `${percent}%` }} /></div> : null}{visibleDetail && visibleDetail !== label ? <span>{visibleDetail}</span> : null}</div>;
 }
 
 function CollectionCoverage({ series, editionsOn }) {
@@ -1867,6 +1872,7 @@ function useRunReading(version) {
 }
 
 function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onRead, readingVersion, catalog, backendStatus }) {
+  const libraryAdmin = isAdmin(useViewer());
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
   // The page's own search: it narrows what you already have, as you type.
   const [query, setQuery] = useState("");
@@ -1962,7 +1968,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} view={view} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
-      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={runReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>The comic catalogs may have it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button></div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>Open any run and choose Follow run to monitor future issues.</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
+      {effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={runReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>The comic catalogs may have it.</span><button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button></div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>{libraryAdmin ? "Open any run and choose Follow run to monitor future issues." : "Open any run and choose Request follow to ask for its new issues."}</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </div>
     </>
@@ -3424,8 +3430,13 @@ const SETTINGS_SECTIONS = [
 
 // The sections a profile is shown: everything for the admin; a reader's own
 // profile and reader settings.
+// A reader's sections say only what is theirs: the vision models behind
+// panel view are the admin's.
+const READER_SECTION_DETAIL = { reader: "How panel view reads a page, one panel at a time." };
+
 function settingsSectionsFor(viewer) {
-  return SETTINGS_SECTIONS.filter((item) => can(viewer, `settings.${item.id}`));
+  return SETTINGS_SECTIONS.filter((item) => can(viewer, `settings.${item.id}`))
+    .map((item) => (!isAdmin(viewer) && READER_SECTION_DETAIL[item.id] ? { ...item, detail: READER_SECTION_DETAIL[item.id] } : item));
 }
 
 // One block of a settings section, as a titled card; `action` sits at the
@@ -3928,7 +3939,7 @@ function ProfileView({ onRead, onNavigate, authStatus, onSwitch }) {
     </section>
     <section className="profile-history" aria-labelledby="profile-history-title">
       <h2 id="profile-history-title">Reading history</h2>
-      {activity && !history.length ? <p className="profile-history-empty">Comics you open appear here, newest first.</p> : null}
+      {activity && !history.length ? <p className="profile-history-empty">Comics you read appear here, newest first.</p> : null}
       <div className="profile-history-shelf">{history.map((item) => {
         const fraction = item.finishedAt ? 1 : item.pageCount ? Math.min(1, (item.page + 1) / item.pageCount) : 0;
         return <button type="button" className="profile-history-card" key={item.fileId} onClick={() => onRead({ id: item.fileId })}>
@@ -4646,7 +4657,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         </> : null}
         {current === "reader" ? <>
           <SettingsCard title="Panel view">
-            <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice is remembered on this device. The rest of the page dims around the panel being read, which the same settings can turn off. Flipparr finds the panels itself, and a page it gets wrong can be fixed by hand from the same settings &mdash; drawn, moved and numbered over the page &mdash; and stays as you left it.</p>
+            <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice follows your profile to any device. The rest of the page dims around the panel being read, which the same settings can turn off.{admin ? <> Flipparr finds the panels itself, and a page it gets wrong can be fixed by hand from the same settings &mdash; drawn, moved and numbered over the page &mdash; and stays as you left it.</> : null}</p>
           </SettingsCard>
           {/* Claude and ChatGPT are filed here, not under Metadata sources:
               they contribute nothing to what a comic is, only to how a hard

@@ -70,7 +70,9 @@ export function relatedRuns(series, allSeries = [], limit = 12) {
   }
   if (moreBy) moreBy.runs = [...moreBy.runs].sort(byYearThenTitle).slice(0, limit);
   const shown = new Set((moreBy?.runs || []).map((run) => run.id));
-  const key = normalizedPublisher(series?.publisher);
+  // "Publisher unknown" is the catalog's placeholder, not a publisher: runs
+  // that share it have nothing in common.
+  const key = /^publisher unknown$/i.test(String(series?.publisher || "").trim()) ? "" : normalizedPublisher(series?.publisher);
   const year = Number(series?.year) || 0;
   const publisherRuns = key
     ? others
