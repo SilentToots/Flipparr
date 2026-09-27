@@ -4425,6 +4425,7 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             store.update_acquisition_job(job_id, "queued", message)
         except Exception as inner:  # noqa: BLE001
             log_exception("direct_site_failure_not_recorded", inner, level="warning")
+        _resume_run_after_pack_failure(job_id, title)
 
 
 def _download_filename(response: Any, fallback: str) -> str:
@@ -5573,6 +5574,30 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     return None
 
 
+def _resume_run_after_pack_failure(job_id: int, release_title: str) -> None:
+    """A run pack that did not arrive hands the run straight to its single issues.
+
+    Grabbing a pack stops the per-issue searches -- the rest of the run rides
+    on it -- so a pack that fails left every other issue waiting for the next
+    scheduled sweep. Y: The Last Man's sixty issues did, behind a DirectSite
+    pack whose link opened a file host's page. The job the pack was grabbed
+    against is left to its own fallback.
+    """
+    try:
+        context = catalog_store().get_acquisition_job_context(job_id)
+        request_id = int(str(context.get("requestId") or "").strip() or 0)
+        if not request_id or not _release_pack_coverage(release_title, context):
+            return
+    except Exception:  # noqa: BLE001 -- the scheduled sweep is still there
+        return
+    log_event("run_pack_fell_back", request_id=request_id, job_id=job_id, release=release_title[:200])
+    threading.Thread(
+        target=_automatic_release_grabs, args=(request_id,),
+        kwargs={"skip_run_pack": True, "exclude": frozenset({int(job_id)})},
+        name=f"flipparr-run-singles-{request_id}", daemon=True,
+    ).start()
+
+
 def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str, Any] | None:
     """One search for the run, before asking for its issues one at a time.
 
@@ -5619,9 +5644,19 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         pass
     except Exception as exc:  # noqa: BLE001 -- Usenet's packs still stand
         log_event("run_pack_direct_site_failed", level="warning", request_id=request_id, error=str(exc)[:160])
+    # A pack that already failed for this run -- a DirectSite link that opens
+    # a file host's page, an NZB that would not complete -- is not tried again.
+    try:
+        refused = set(store.rejected_acquisition_release_keys(lead_job))
+    except Exception:  # noqa: BLE001
+        refused = set()
     offers: list[tuple[int, int, dict[str, Any]]] = []
     for candidate in candidates:
         if not candidate.get("pack"):
+            continue
+        if {str(candidate.get(key) or "") for key in ("postUrl", "releaseKey", "guid")} & refused:
+            log_event("run_pack_declined", level="info", request_id=request_id,
+                      release=str(candidate.get("title") or ""), reason="failed before")
             continue
         worth, why = _pack_worth_taking(context, candidate, numbers)
         if not worth:
@@ -5709,7 +5744,10 @@ def _say_on_the_row(job_id: int, reason: str) -> None:
         log_exception("grab_reason_not_recorded", exc, level="warning")
 
 
-def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = False) -> None:
+def _automatic_release_grabs(
+    request_id: int | None = None, *, backoff: bool = False, skip_run_pack: bool = False,
+    exclude: frozenset[int] = frozenset(),
+) -> None:
     """Grab the best release for every job still waiting on one.
 
     `backoff` is for the scheduled sweep, which must not ask the indexer about
@@ -5747,13 +5785,14 @@ def _automatic_release_grabs(request_id: int | None = None, *, backoff: bool = F
     except Exception as exc:
         log_exception("automatic_grab_lookup_failed", exc, level="warning")
         return
+    job_ids = [job_id for job_id in job_ids if job_id not in exclude]
     if not job_ids:
         return
     # A run that is mostly missing is one question -- "who has this run?" --
     # and asking it once can answer every job at a stroke. Only for a named
     # request: the whole-backlog sweep spans many runs, and each would need its
     # own search.
-    if request_id is not None:
+    if request_id is not None and not skip_run_pack:
         pack = _grab_run_pack(store, int(request_id), job_ids)
         if pack:
             log_event(
@@ -5892,6 +5931,7 @@ def _fallback_after_sab_failure(
         job_id, release_key, release_title, message,
         kind=kind, sab_nzo_id=kept_nzo, sab_storage=storage or None,
     )
+    _resume_run_after_pack_failure(job_id, release_title)
     failure_count = int(failure.get("failureCount") or 0)
     if failure_count >= MAX_AUTOMATIC_RELEASE_FAILURES:
         detail = (

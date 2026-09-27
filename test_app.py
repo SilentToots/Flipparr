@@ -3930,6 +3930,7 @@ class RunPackPassTests(unittest.TestCase):
         store.get_acquisition_job_context.return_value = {
             "requestId": "48", "seriesTitle": "Batman", "issueNumber": "1", "runIssueCount": 163,
         }
+        store.rejected_acquisition_release_keys.return_value = set()
         return store
 
     @staticmethod
@@ -3974,6 +3975,32 @@ class RunPackPassTests(unittest.TestCase):
             grabbed = app._grab_run_pack(store, 48, jobs)
         self.assertEqual(grabbed["covers"], 40)
         grab.assert_called_once_with(101, "gc-pack")
+
+    def test_a_pack_that_failed_before_is_not_taken_again(self):
+        store = self._store()
+        dead = {**self._pack(cid="gc-dead", first=1, last=60), "postUrl": "https://comics.example/y-1-60"}
+        store.rejected_acquisition_release_keys.return_value = {"https://comics.example/y-1-60"}
+        with patch("app.search_prowlarr_releases", return_value={"candidates": [dead]}), \
+             patch("app.grab_release_candidate") as grab:
+            self.assertIsNone(app._grab_run_pack(store, 48, [100 + n for n in range(1, 41)]))
+        grab.assert_not_called()
+
+    def test_a_run_pack_that_fails_hands_the_run_to_its_single_issues_at_once(self):
+        """Y: The Last Man's sixty issues waited behind a pack that never came."""
+        store = self._store()
+        started = []
+        class Thread:
+            def __init__(self, target, args, kwargs, **_):
+                started.append((target, args, kwargs))
+            def start(self):
+                pass
+        with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread):
+            app._resume_run_after_pack_failure(101, "Batman 001-100 (Digital)")
+            app._resume_run_after_pack_failure(101, "Batman 001 (2016) (Digital)")
+        self.assertEqual(len(started), 1, "a single issue failing is its own fallback's business")
+        target, args, kwargs = started[0]
+        self.assertEqual((target, args, kwargs), (app._automatic_release_grabs, (48,),
+                                                  {"skip_run_pack": True, "exclude": frozenset({101})}))
 
     def test_no_pack_means_the_run_falls_back_to_singles(self):
         store = self._store()
