@@ -4263,6 +4263,40 @@ class ReaderProfileTests(LibraryFixture):
             with self.assertRaises(ValueError):
                 store.create_member_request(pat, "everything", "x", "All of it", {})
 
+    def test_a_runs_rating_is_what_was_found_unless_the_admin_says_otherwise(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = int(store.catalog()["series"][0]["id"])
+            self.assertEqual(store.runs_needing_rating(), [run])
+            store.record_run_rating(run, "teen", "metron", "Teen (issue 1)")
+            self.assertEqual(store.runs_needing_rating(), [], "looked for, not asked again")
+            series = store.catalog()["series"][0]
+            self.assertEqual((series["ageRating"], series["ageRatingSource"], series["ageRatingNote"]),
+                             ("teen", "metron", "Teen (issue 1)"))
+            store.set_run_rating_override(run, "mature")
+            series = store.catalog()["series"][0]
+            self.assertEqual((series["ageRating"], series["ageRatingSource"], series["ageRatingFound"]),
+                             ("mature", "admin", "teen"), "the admin's word, with what was found kept")
+            self.assertEqual(store.run_age_ratings(), {run: "mature"})
+            store.set_run_rating_override(run, None)
+            self.assertEqual(store.run_age_ratings(), {run: "teen"})
+            # Nothing found is remembered, and looked for again when asked to.
+            store.record_run_rating(run, None, "cover", "NONE")
+            self.assertEqual((store.run_age_ratings()[run], store.runs_needing_rating()), (None, []))
+            self.assertEqual(store.forget_unfound_ratings(), 1)
+            self.assertEqual(store.runs_needing_rating(), [run])
+            self.assertEqual(store.rating_summary()["runs"], 1)
+            with self.assertRaises(ValueError):
+                store.set_run_rating_override(run, "pg-13")
+            self.assertEqual(store.run_for_file(self._file_id(store, "Example 001.cbz")), run)
+            # A profile's limits.
+            sam = store.create_user("Sam")
+            self.assertEqual((sam["maxRating"], sam["allowUnrated"], sam["canDiscover"]), (None, False, True))
+            limited = store.update_user(sam["id"], maxRating="everyone", canDiscover=False)
+            self.assertEqual((limited["maxRating"], limited["canDiscover"]), ("everyone", False))
+            with self.assertRaises(ValueError):
+                store.update_user(sam["id"], maxRating="R")
+
     def test_a_new_profile_is_given_a_colour_nobody_else_has(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

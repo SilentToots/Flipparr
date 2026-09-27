@@ -8,6 +8,8 @@ import datetime as dt
 import difflib
 import hashlib
 import json
+
+import content_rating
 import math
 import re
 import sqlite3
@@ -20,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1760,6 +1762,22 @@ class CatalogStore:
             # time it is entered right.
             if "pin_length" not in user_columns:
                 connection.execute("ALTER TABLE users ADD COLUMN pin_length INTEGER")
+            # 54: age ratings. A run's is found (Metron, then its cover) or
+            # set by the admin, who always has the last word; a profile may
+            # have a highest rating it reads, whether it sees unrated comics,
+            # and whether it may browse Discover (which cannot be filtered:
+            # provider results carry no rating).
+            run_columns = {row["name"] for row in connection.execute("PRAGMA table_info(series_runs)")}
+            for column in ("age_rating", "age_rating_source", "age_rating_note", "age_rating_checked_at",
+                           "age_rating_override"):
+                if column not in run_columns:
+                    connection.execute(f"ALTER TABLE series_runs ADD COLUMN {column} TEXT")
+            if "max_rating" not in user_columns:
+                connection.execute("ALTER TABLE users ADD COLUMN max_rating TEXT")
+            if "allow_unrated" not in user_columns:
+                connection.execute("ALTER TABLE users ADD COLUMN allow_unrated INTEGER NOT NULL DEFAULT 0")
+            if "can_discover" not in user_columns:
+                connection.execute("ALTER TABLE users ADD COLUMN can_discover INTEGER NOT NULL DEFAULT 1")
             if "switch_lock" not in user_columns:
                 connection.execute(
                     "ALTER TABLE users ADD COLUMN switch_lock TEXT NOT NULL DEFAULT 'open' "
@@ -3771,6 +3789,7 @@ class CatalogStore:
     _USER_PUBLIC = (
         "id, name, login_name, role, colour, can_request, auto_approve, show_on_picker, "
         "session_version, disabled, created_at, updated_at, last_seen_at, avatar_source, avatar_updated_at, switch_lock, pin_length, "
+        "max_rating, allow_unrated, can_discover, "
         "password_hash IS NOT NULL AS has_password, pin_hash IS NOT NULL AS has_pin"
     )
 
@@ -3795,6 +3814,8 @@ class CatalogStore:
             "avatarSource": row["avatar_source"],
             "switchLock": row["switch_lock"],
             "pinLength": row["pin_length"],
+            "maxRating": row["max_rating"], "allowUnrated": bool(row["allow_unrated"]),
+            "canDiscover": bool(row["can_discover"]),
         }
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -3900,6 +3921,7 @@ class CatalogStore:
         "passwordHash": "password_hash", "pinHash": "pin_hash", "canRequest": "can_request",
         "autoApprove": "auto_approve", "showOnPicker": "show_on_picker", "disabled": "disabled",
         "switchLock": "switch_lock", "pinLength": "pin_length",
+        "maxRating": "max_rating", "allowUnrated": "allow_unrated", "canDiscover": "can_discover",
     }
     # What ends a profile's sign-ins everywhere when it changes: a new
     # password, a changed role, being switched off. A PIN is not a sign-in.
@@ -3923,6 +3945,10 @@ class CatalogStore:
                 raise ValueError("Choose one of the profile colours")
             elif column == "switch_lock" and value not in SWITCH_LOCKS:
                 raise ValueError("A profile opens with nothing, a PIN or a password")
+            elif column == "max_rating" and value is not None and value not in content_rating.RATINGS:
+                raise ValueError("Choose one of the ratings")
+            elif column in ("allow_unrated", "can_discover"):
+                value = int(bool(value))
             elif column in ("can_request", "auto_approve", "show_on_picker", "disabled"):
                 value = int(bool(value))
             values[column] = value
@@ -4380,6 +4406,97 @@ class CatalogStore:
             file_id, _load_json(row["parsed_json"], {}), _load_json(row["result_json"], {}), {}
         )
         return self.get_file_workbench(file_id)
+
+    # ---- Age ratings -------------------------------------------------------
+
+    def runs_needing_rating(self, *, limit: int = 20, stale_before: str | None = None) -> list[int]:
+        """Runs whose rating has not been looked for, or not since `stale_before`
+        -- never one the admin has rated themselves."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT id FROM series_runs
+                   WHERE age_rating_override IS NULL
+                     AND (age_rating_checked_at IS NULL OR (? IS NOT NULL AND age_rating_checked_at < ?))
+                   ORDER BY age_rating_checked_at IS NOT NULL, id LIMIT ?""",
+                (stale_before, stale_before, int(limit)),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def record_run_rating(self, series_run_id: int, rating: str | None, source: str | None, note: str | None) -> None:
+        """What looking for a run's rating found -- or that nothing was, which
+        is recorded too, so the run is not asked about again straight away."""
+        if rating is not None and rating not in content_rating.RATINGS:
+            raise ValueError("Unknown rating")
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE series_runs SET age_rating=?, age_rating_source=?, age_rating_note=?,
+                          age_rating_checked_at=? WHERE id=?""",
+                (rating, source if rating else None, (note or None) if rating else None, _utc_now(), int(series_run_id)),
+            )
+
+    def set_run_rating_override(self, series_run_id: int, rating: str | None) -> None:
+        """The admin's own rating for a run, or None to go back to what was found."""
+        if rating is not None and rating not in content_rating.RATINGS:
+            raise ValueError("Choose one of the ratings")
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE series_runs SET age_rating_override=?, updated_at=? WHERE id=?",
+                (rating, _utc_now(), int(series_run_id)),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("That run is not in the catalog")
+
+    def forget_unfound_ratings(self) -> int:
+        """Look again at every run nothing was found for -- when a new way of
+        finding ratings is turned on. Returns how many."""
+        with self._write_lock, self._connect() as connection:
+            return connection.execute(
+                "UPDATE series_runs SET age_rating_checked_at=NULL WHERE age_rating IS NULL AND age_rating_override IS NULL"
+            ).rowcount
+
+    def run_age_ratings(self) -> dict[int, str | None]:
+        """Every run's rating as it applies: the admin's, else what was found."""
+        with self._connect() as connection:
+            return {int(row["id"]): row["rating"] for row in connection.execute(
+                "SELECT id, COALESCE(age_rating_override, age_rating) AS rating FROM series_runs")}
+
+    def rating_summary(self) -> dict[str, int]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS runs,
+                          SUM(COALESCE(age_rating_override, age_rating) IS NOT NULL) AS rated,
+                          SUM(age_rating_override IS NOT NULL) AS by_admin,
+                          SUM(age_rating_override IS NULL AND age_rating_source='metron') AS by_metron,
+                          SUM(age_rating_override IS NULL AND age_rating_source='cover') AS by_cover,
+                          SUM(age_rating_checked_at IS NULL AND age_rating_override IS NULL) AS waiting
+                   FROM series_runs"""
+            ).fetchone()
+        return {key: int(row[key] or 0) for key in ("runs", "rated", "by_admin", "by_metron", "by_cover", "waiting")}
+
+    def run_for_file(self, file_id: int) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT series_run_id FROM file_identities WHERE file_id=?", (int(file_id),)).fetchone()
+        return int(row["series_run_id"]) if row and row["series_run_id"] is not None else None
+
+    def run_for_issue(self, issue_id: int) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT series_run_id FROM issues WHERE id=?", (int(issue_id),)).fetchone()
+        return int(row["series_run_id"]) if row and row["series_run_id"] is not None else None
+
+    def run_for_path(self, path: str) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT file_identities.series_run_id FROM files
+                   JOIN file_identities ON file_identities.file_id = files.id WHERE files.path=?""", (str(path),)).fetchone()
+        return int(row["series_run_id"]) if row and row["series_run_id"] is not None else None
+
+    def newest_file_of_run(self, series_run_id: int) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT files.id FROM files JOIN file_identities ON file_identities.file_id = files.id
+                   WHERE file_identities.series_run_id=? ORDER BY files.id DESC LIMIT 1""", (int(series_run_id),)).fetchone()
+        return int(row["id"]) if row else None
 
     def confirmed_series_provider_ids(self, series_run_id: int) -> dict[str, str]:
         """A run's confirmed provider ids, by provider."""
@@ -9057,6 +9174,12 @@ class CatalogStore:
                 "publisher": run["publisher"] or "Publisher unknown",
                 "acquisitionPreference": run["acquisition_preference"],
                 "monitoringStatus": run["monitoring_status"],
+                # The admin's mark outranks what was found, and is said to be theirs.
+                "ageRating": run["age_rating_override"] or run["age_rating"],
+                "ageRatingSource": "admin" if run["age_rating_override"] else run["age_rating_source"],
+                "ageRatingNote": None if run["age_rating_override"] else run["age_rating_note"],
+                "ageRatingFound": run["age_rating"], "ageRatingFoundSource": run["age_rating_source"],
+                "ageRatingOverride": run["age_rating_override"],
                 # "medium", not "format": the series payload already uses
                 # "format" for the shape of its files ("Single issues").
                 "medium": run["format"] or "comic",
@@ -9277,6 +9400,9 @@ class CatalogStore:
                     "publisher": group["publisher"], "run": run,
                     "acquisitionPreference": group["acquisitionPreference"],
                     "monitoringStatus": group["monitoringStatus"],
+                    **{key: group.get(key) for key in (
+                        "ageRating", "ageRatingSource", "ageRatingNote", "ageRatingFound",
+                        "ageRatingFoundSource", "ageRatingOverride")},
                     "medium": group.get("medium") or "comic",
                     "readingDirection": group.get("readingDirection"),
                     "yourRating": group.get("yourRating"),

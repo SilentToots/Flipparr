@@ -49,6 +49,11 @@ class Viewer:
     can_request: bool = False
     auto_approve: bool = False
     avatar: str | None = None
+    # What the profile may read: its highest rating (None: no limit), whether
+    # it sees unrated comics, and whether it may browse Discover.
+    max_rating: str | None = None
+    allow_unrated: bool = False
+    can_discover: bool = True
 
     @property
     def is_admin(self) -> bool:
@@ -58,6 +63,8 @@ class Viewer:
         return {
             "id": self.id, "name": self.name, "role": self.role, "colour": self.colour,
             "canRequest": self.can_request, "autoApprove": self.auto_approve, "avatar": self.avatar,
+            "maxRating": self.max_rating, "allowUnrated": self.allow_unrated,
+            "canDiscover": self.is_admin or self.can_discover,
         }
 
 

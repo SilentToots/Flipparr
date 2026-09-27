@@ -1779,6 +1779,53 @@ class ReaderProfileHttpTests(unittest.TestCase):
         straight = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=trusted).json()
         self.assertEqual((straight["status"], straight["decidedBy"]), ("approved", sam))
 
+    def test_a_profile_with_a_rating_limit_sees_only_what_is_within_it(self):
+        store, run = self._library_of_one_run()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        # The admin reads everything, and cannot be limited.
+        self.assertEqual(self.call("PATCH", "/api/v1/users/1", {"maxRating": "everyone"}, cookies=admin).status, 400)
+        limited = self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone"}, cookies=admin).json()
+        self.assertEqual((limited["maxRating"], limited["allowUnrated"], limited["canDiscover"]), ("everyone", False, False),
+                         "a first limit keeps the profile out of Discover too")
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        file_id = store.catalog()["series"][0]["fileDetails"][0]["id"]
+        def sees():
+            catalog = self.call("GET", "/api/v1/catalog", cookies=reader).json()
+            # A reading route about the run, and one about its file: both answer
+            # as if absent when the run is hidden (the file here is no real
+            # archive, so a visible one answers 422, not 404).
+            reading = self.call("GET", f"/api/v1/series/{run}/reading", cookies=reader).status
+            pages = self.call("GET", f"/api/v1/files/{file_id}/pages", cookies=reader).status
+            return [item["id"] for item in catalog["series"]], reading if pages == 404 or reading == 404 else 200
+        self.assertEqual(sees(), ([], 404), "unrated is hidden, and its pages answer as if absent")
+        store.record_run_rating(run, "mature", "metron", "Mature (issue 1)")
+        self.assertEqual(sees(), ([], 404))
+        self.assertEqual(self.call("GET", f"/api/v1/series/{run}/reading", cookies=reader).status, 404)
+        self.assertEqual(self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=reader).status,
+                         404, "nothing to ask for that it cannot see")
+        # The admin's word: this run is for everyone.
+        self.assertEqual(self.call("POST", f"/api/v1/series/{run}/age-rating", {"rating": "everyone"}, cookies=admin).status, 200)
+        visible, pages = sees()
+        self.assertEqual((visible, pages), ([str(run)], 200))
+        self.assertEqual(self.call("POST", f"/api/v1/series/{run}/age-rating", {"rating": "everyone"}, cookies=reader).status,
+                         403, "a reader cannot rate a run")
+        # Discover is off for it; on again when the admin says so.
+        self.assertEqual(self.call("GET", "/api/v1/discover/releases", cookies=reader).json().get("reason"), "discover_off")
+        self.assertEqual(self.call("POST", "/api/v1/member-requests", {"kind": "discover_run", "provider": "metron",
+                                   "providerSeriesId": "1", "title": "X"}, cookies=reader).status, 403)
+        self.call("PATCH", f"/api/v1/users/{sam}", {"canDiscover": True}, cookies=admin)
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertNotEqual(self.call("GET", "/api/v1/discover/releases", cookies=reader).status, 403)
+        # Unrated allowed; and the admin, unlimited, sees everything throughout.
+        store.set_run_rating_override(run, None)
+        store.record_run_rating(run, None, None, None)
+        self.call("PATCH", f"/api/v1/users/{sam}", {"allowUnrated": True}, cookies=admin)
+        self.assertEqual(sees()[0], [str(run)])
+        self.assertEqual(len(self.call("GET", "/api/v1/catalog", cookies=admin).json()["series"]), 1)
+        summary = self.call("GET", "/api/v1/ratings", cookies=admin).json()
+        self.assertEqual((summary["runs"], summary["rated"]), (1, 0))
+
     def test_the_picker_knows_how_many_digits_a_pin_has(self):
         sam = self._household_with_a_reader()
         lengths = lambda: {p["name"]: p["pinLength"] for p in self.call("GET", "/api/v1/profiles").json()["profiles"]}

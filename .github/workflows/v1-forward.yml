@@ -28,11 +28,11 @@ jobs:
       - name: Secret hygiene
         run: python tools/check_secret_hygiene.py
       - name: Test suites
-        run: python -B -m unittest test_app test_catalog_store test_http_contract test_page_panels
+        run: python -B -m unittest test_app test_catalog_store test_http_contract test_page_panels test_content_rating
       # The suites share a process and previously depended on which module
       # imported `app` first. Running a second order proves that stays fixed.
       - name: Test suites, reversed order
-        run: python -B -m unittest test_page_panels test_http_contract test_catalog_store test_app
+        run: python -B -m unittest test_content_rating test_page_panels test_http_contract test_catalog_store test_app
 
   web:
     runs-on: ubuntu-latest

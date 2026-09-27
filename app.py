@@ -51,6 +51,7 @@ from typing import Any, Callable, Iterable
 from access_policy import ADMIN, HOUSEHOLD, Viewer, allows, route_access
 from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogStore, _issue_release_state, normalized_person
 import page_panels as panel_finder
+import content_rating
 from catalog_core_v2.language import (
     LANGUAGE_NAMES,
     detect_language as detect_release_language,
@@ -364,9 +365,14 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # Off, readers get what the local finder reads and whatever the admin's
     # reading already asked or corrected; the connector spends the admin's key.
     "visionForReaders": False,
+    # Whether a run Metron has no rating for has its cover read by the vision
+    # connector for the rating printed there (DC's "13+ TEEN", Marvel's
+    # "RATED T+"). One cover per run, on the admin's key; off until asked.
+    "ratingsFromCovers": False,
 }
 _APP_SETTINGS_BOOL_KEYS = frozenset({
     "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
+    "ratingsFromCovers",
 })
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
@@ -669,6 +675,8 @@ def viewer_for(user: dict[str, Any] | None) -> Viewer | None:
         id=int(user["id"]), name=str(user["name"]), role=str(user["role"]), colour=user.get("colour"),
         can_request=bool(user.get("canRequest")), auto_approve=bool(user.get("autoApprove")),
         avatar=user.get("avatar"),
+        max_rating=user.get("maxRating"), allow_unrated=bool(user.get("allowUnrated")),
+        can_discover=bool(user.get("canDiscover", True)),
     )
 
 
@@ -864,6 +872,17 @@ def _profile_changes(store: "CatalogStore", config: dict[str, Any], target: dict
         for key in ("role", "canRequest", "autoApprove", "showOnPicker", "disabled"):
             if key in payload:
                 changes[key] = payload[key]
+        # What the profile may read. The admin reads everything. A limit set
+        # for the first time keeps the profile out of Discover too, unless
+        # said otherwise: its shelves and results carry no rating to filter by.
+        if any(key in payload for key in ("maxRating", "allowUnrated", "canDiscover")):
+            if changes.get("role", target["role"]) == "admin":
+                raise ValueError("The admin reads everything")
+            for key in ("maxRating", "allowUnrated", "canDiscover"):
+                if key in payload:
+                    changes[key] = payload[key] or None if key == "maxRating" else bool(payload[key])
+            if changes.get("maxRating") and not target.get("maxRating") and "canDiscover" not in payload:
+                changes["canDiscover"] = False
     # What switching to the profile asks for, checked against the secrets it
     # will have after this edit.
     after = {
@@ -1003,11 +1022,26 @@ def clear_profile_avatar(user_id: int) -> dict[str, Any]:
     return _profiles_store().set_user_avatar(user_id, None)
 
 
-def reader_catalog(payload: dict[str, Any]) -> dict[str, Any]:
-    """The catalog as a reader sees it: the library, without the admin's workbench.
+def reader_catalog(payload: dict[str, Any], viewer: "Viewer | None" = None) -> dict[str, Any]:
+    """The catalog as a reader sees it: the library, without the admin's workbench,
+    and -- for a profile with a rating limit -- without the runs above it.
 
     The keys stay, emptied, so the client reads one shape for everyone.
     """
+    if viewer is not None and viewer.max_rating:
+        payload["series"] = [item for item in payload.get("series") or []
+                             if viewer_may_see_run(viewer, item.get("ageRating"))]
+        visible = {str(item["id"]) for item in payload["series"]}
+        families = []
+        for family in payload.get("families") or []:
+            runs = [run for run in family.get("runs") or [] if str(run.get("id")) in visible]
+            if runs:
+                families.append({**family, "runs": runs})
+        payload["families"] = families
+        stats = payload.setdefault("stats", {})
+        stats["series"] = len(payload["series"])
+        stats["families"] = len(families)
+        stats["files"] = sum(len(item.get("fileDetails") or []) for item in payload["series"])
     for key in ("inbox", "roots", "requests", "replacementRequests"):
         payload[key] = []
     payload["activeScan"] = None
@@ -1207,6 +1241,135 @@ def _learn_about_member_request(request_id: int, kind: str, params: dict[str, An
         catalog_store().add_member_request_detail(request_id, facts)
 
 
+# ---- Age ratings ----------------------------------------------------------------
+#
+# Every run's rating is looked for in the background: Metron's rating of its
+# first and latest issues (the stricter), then -- when the admin has turned it
+# on -- the rating printed on its newest cover, read by the vision connector.
+# The admin's own mark outranks both and stops the looking. What is found, or
+# that nothing was, is kept; a run with none is looked at again after a month,
+# or at once when cover reading is switched on. A failed call (Metron cooling
+# down, the connector out of credit) records nothing, so the run is tried again.
+
+RATING_POLL_SECONDS = 15 * 60
+RATING_STALE_DAYS = 30
+RATING_BATCH = 10
+RATING_COVER_LONG_EDGE = 1200
+_RATINGS_STOP = threading.Event()
+_RATINGS_WAKE = threading.Event()
+_RATINGS_THREAD: threading.Thread | None = None
+
+
+def _metron_run_readings(series_id: str, credential: str) -> list[tuple[str, str]]:
+    """Metron's rating of a run's first and latest issues: (rating, issue number)."""
+    listing = fetch_provider_json(
+        "metron", f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode({"series_id": series_id}), credential)
+    results = sorted(
+        (row for row in (listing or {}).get("results") or [] if isinstance(row, dict) and row.get("id")),
+        key=lambda row: str(row.get("cover_date") or "9999"),
+    )
+    picks = [results[0], results[-1]] if len(results) > 1 else results
+    readings = []
+    for row in {int(row["id"]): row for row in picks}.values():
+        issue = fetch_provider_json("metron", f"{METRON_API_BASE}/issue/{int(row['id'])}/", credential) or {}
+        readings.append((str((issue.get("rating") or {}).get("name") or ""), str(issue.get("number") or row.get("number") or "")))
+    return readings
+
+
+def metron_configured() -> bool:
+    try:
+        _provider_credential("metron")
+    except (ValueError, KeyError):
+        return False
+    return True
+
+
+def _cover_for_rating(file_id: int) -> bytes:
+    """A run's cover, small enough to send and large enough that a rating box reads."""
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(render_file_page(file_id, 0, "read"))).convert("RGB")
+    image.thumbnail((RATING_COVER_LONG_EDGE, RATING_COVER_LONG_EDGE))
+    out = io.BytesIO()
+    image.save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
+def find_run_rating(series_run_id: int) -> tuple[str | None, str | None, str | None]:
+    """(rating, source, note) for a run, or Nones when nothing says. Raises
+    when a source could not be asked, so nothing is recorded."""
+    store = catalog_store()
+    metron_id = str(store.confirmed_series_provider_ids(series_run_id).get("metron") or "")
+    if re.fullmatch(r"\d+", metron_id) and metron_configured():
+        known = [(content_rating.normalize_rating(name), f"{name} (issue {number})")
+                 for name, number in _metron_run_readings(metron_id, _provider_credential("metron"))]
+        known = [(rating, note) for rating, note in known if rating]
+        if known:
+            return content_rating.strictest(*(rating for rating, _ in known)), "metron", ", ".join(note for _, note in known)
+    if load_app_settings().get("ratingsFromCovers") and vision_provider():
+        file_id = store.newest_file_of_run(series_run_id)
+        if file_id is not None:
+            answer = ask_vision_model(_cover_for_rating(file_id), content_rating.COVER_PROMPT)
+            rating, printed = content_rating.rating_from_cover_answer(answer)
+            if rating:
+                return rating, "cover", f"\u201c{printed}\u201d on the cover"
+            return None, "cover", None
+    return None, None, None
+
+
+def rate_runs_pass(limit: int = RATING_BATCH) -> int:
+    """Look for the ratings of up to `limit` runs. Returns how many were settled."""
+    store = catalog_store()
+    stale = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=RATING_STALE_DAYS)).isoformat()
+    settled = 0
+    for run_id in store.runs_needing_rating(limit=limit, stale_before=stale):
+        if _RATINGS_STOP.is_set():
+            break
+        try:
+            rating, source, note = find_run_rating(run_id)
+        except Exception as exc:  # noqa: BLE001 -- asked again next pass
+            log_event("run_rating_skipped", level="info", series_run_id=run_id, error=str(exc)[:200])
+            continue
+        store.record_run_rating(run_id, rating, source, note)
+        settled += 1
+    return settled
+
+
+def ratings_worker(stop_event: threading.Event = _RATINGS_STOP) -> None:
+    """Settle ratings a batch at a time: shortly after starting, every quarter
+    hour, and at once when woken (cover reading switched on, "Check now")."""
+    stop_event.wait(120)
+    while not stop_event.is_set():
+        try:
+            while rate_runs_pass() == RATING_BATCH and not stop_event.is_set():
+                pass
+        except Exception as exc:  # noqa: BLE001
+            log_exception("ratings_pass_failed", exc, level="warning")
+        _RATINGS_WAKE.wait(RATING_POLL_SECONDS)
+        _RATINGS_WAKE.clear()
+
+
+def start_ratings_worker() -> threading.Thread:
+    global _RATINGS_THREAD
+    if _RATINGS_THREAD and _RATINGS_THREAD.is_alive():
+        return _RATINGS_THREAD
+    _RATINGS_STOP.clear()
+    _RATINGS_THREAD = threading.Thread(target=ratings_worker, name="flipparr-ratings", daemon=True)
+    _RATINGS_THREAD.start()
+    return _RATINGS_THREAD
+
+
+def look_for_ratings_again() -> int:
+    """Look again at every run nothing was found for, now. Returns how many."""
+    count = catalog_store().forget_unfound_ratings()
+    _RATINGS_WAKE.set()
+    return count
+
+
+def viewer_may_see_run(viewer: "Viewer | None", rating: str | None) -> bool:
+    return viewer is None or viewer.is_admin or content_rating.allows(rating, viewer.max_rating, viewer.allow_unrated)
+
+
 _FACTS_ASKED: set[int] = set()
 _FACTS_ASKED_LOCK = threading.Lock()
 
@@ -1231,7 +1394,12 @@ def ask_member_request(viewer: Viewer, payload: Any) -> tuple[dict[str, Any], bo
     if not viewer.is_admin and not viewer.can_request:
         raise PermissionError("Requests are turned off for this profile")
     store = catalog_store()
+    if not viewer.is_admin and not viewer.can_discover and isinstance(payload, dict) \
+            and str(payload.get("kind") or "").startswith("discover"):
+        raise PermissionError("Discover is off for this profile")
     kind, key, title, params, detail = member_request_spec(payload, store.catalog())
+    if kind == "run" and not viewer_may_see_run(viewer, store.run_age_ratings().get(int(params["seriesId"]))):
+        raise LookupError("That run is not in the library")
     request, created = store.create_member_request(viewer.id, kind, key, title, params, detail)
     if created:
         threading.Thread(target=_learn_about_member_request, args=(request["id"], kind, params),
@@ -12817,6 +12985,45 @@ class Handler(BaseHTTPRequestHandler):
         if device:
             self._set_cookie(_DEVICE_COOKIE, issue_device_token(config), _DEVICE_TTL_SECONDS)
 
+    def _only_visible_runs(self, payload: Any) -> Any:
+        """A reading list without the runs above this profile's rating: items
+        and history by their run, and a by-run map by its keys."""
+        viewer = self._viewer()
+        if viewer is None or viewer.is_admin or not viewer.max_rating or not isinstance(payload, dict):
+            return payload
+        ratings = catalog_store().run_age_ratings()
+        def keep(run_id: Any) -> bool:
+            return run_id in (None, "") or viewer_may_see_run(viewer, ratings.get(int(run_id)))
+        for key in ("items", "history"):
+            if isinstance(payload.get(key), list):
+                payload[key] = [item for item in payload[key] if keep(item.get("seriesRunId"))]
+        if isinstance(payload.get("runs"), dict):
+            payload["runs"] = {run_id: value for run_id, value in payload["runs"].items() if keep(run_id)}
+        return payload
+
+    def _run_visible(self, path: str) -> bool:
+        """Whether the run a reading route is about is one this profile may see."""
+        store = catalog_store()
+        run_id = None
+        for pattern, lookup in (
+            (r"/api/v1/files/(\d+)(?:/.*)?", store.run_for_file),
+            (r"/api/v1/series/(\d+)(?:/.*)?", int),
+            (r"/api/v1/issues/(\d+)(?:/.*)?", store.run_for_issue),
+        ):
+            match = re.fullmatch(pattern, path)
+            if match:
+                run_id = lookup(int(match.group(1)))
+                break
+        else:
+            if path == "/api/file-cover":
+                source = (urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("path") or [""])[0]
+                run_id = store.run_for_path(source) if source else None
+            else:
+                return True
+        if run_id is None:
+            return True
+        return viewer_may_see_run(self.viewer, store.run_age_ratings().get(int(run_id)))
+
     def _dispatch(self, route: Callable[[], None]) -> None:
         """Turn an unhandled failure into a JSON 500 rather than a dead socket.
 
@@ -12861,6 +13068,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():
                 self.send_json({"error": "Cross-site request rejected"}, 403)
                 return
+            if self.viewer is not None and not self.viewer.is_admin:
+                # A profile kept out of Discover, and one kept from a run above
+                # its rating: the run answers as if it did not exist.
+                if path.startswith("/api/v1/discover") and not self.viewer.can_discover:
+                    self.send_json({"error": "Discover is off for this profile", "reason": "discover_off"}, 403)
+                    return
+                if self.viewer.max_rating and not self._run_visible(path):
+                    self.send_json({"error": "Not found"}, 404)
+                    return
             try:
                 route()
             except Exception as exc:
@@ -12936,7 +13152,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if parsed_url.path == "/api/v1/me/activity":
-            self.send_json(_profiles_store().reading_activity(self._viewer_id()))
+            self.send_json(self._only_visible_runs(_profiles_store().reading_activity(self._viewer_id())))
             return
         if parsed_url.path == "/api/v1/me":
             store = _profiles_store()
@@ -12953,7 +13169,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/catalog":
             admin = self._viewer().is_admin
             payload = catalog_api_payload(viewer_id=self._viewer_id())
-            payload = payload if admin else reader_catalog(payload)
+            payload = payload if admin else reader_catalog(payload, self._viewer())
             # Readers' requests: everyone's for the admin, a reader's own for them.
             store = catalog_store()
             payload["memberRequests"] = store.member_requests(user_id=None if admin else self._viewer_id(), limit=100)
@@ -12961,6 +13177,13 @@ class Handler(BaseHTTPRequestHandler):
                 payload.setdefault("stats", {})["pendingRequests"] = store.pending_member_request_count()
                 learn_about_waiting_requests(payload["memberRequests"])
             self.send_json(payload)
+            return
+        if parsed_url.path == "/api/v1/ratings":
+            settings = load_app_settings()
+            self.send_json({**catalog_store().rating_summary(),
+                            "fromCovers": bool(settings.get("ratingsFromCovers")),
+                            "visionConnected": vision_provider() is not None,
+                            "metronConnected": metron_configured()})
             return
         if parsed_url.path == "/api/v1/member-requests":
             admin = self._viewer().is_admin
@@ -13136,10 +13359,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if parsed_url.path == "/api/v1/reading":
-            self.send_json(continue_reading(user_id=self._viewer_id()))
+            self.send_json(self._only_visible_runs(continue_reading(user_id=self._viewer_id())))
             return
         if parsed_url.path == "/api/v1/reading/runs":
-            self.send_json(reading_by_run(user_id=self._viewer_id()))
+            self.send_json(self._only_visible_runs(reading_by_run(user_id=self._viewer_id())))
             return
         series_reading_match = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
         if series_reading_match:
@@ -13390,6 +13613,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._sign_in_as(store.user(ADMIN_USER_ID), config, device=config["method"] == "forms")
             self.send_json(profile_record(created, config), 201)
             return
+        if parsed_url.path == "/api/v1/ratings/check":
+            self.send_json({"lookingAgain": look_for_ratings_again()})
+            return
         if parsed_url.path == "/api/v1/member-requests":
             try:
                 request, created = ask_member_request(self._viewer(), payload)
@@ -13628,6 +13854,19 @@ class Handler(BaseHTTPRequestHandler):
             # untouched until the next sweep.
             _start_automatic_release_grabs({"id": request.get("acquisitionRequestId")})
             self.send_json(request, 201)
+            return
+        series_age_rating = re.fullmatch(r"/api/v1/series/(\d+)/age-rating", parsed_url.path)
+        if series_age_rating:
+            # The admin's own rating for a run; null goes back to what was found.
+            try:
+                catalog_store().set_run_rating_override(int(series_age_rating.group(1)), (payload or {}).get("rating") or None)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"status": "saved"})
             return
         series_format = re.fullmatch(r"/api/v1/series/(\d+)/format", parsed_url.path)
         if series_format:
@@ -14186,7 +14425,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/settings":
             try:
+                was_reading_covers = bool(load_app_settings().get("ratingsFromCovers"))
                 updated = save_app_settings(payload if isinstance(payload, dict) else {})
+                if updated.get("ratingsFromCovers") and not was_reading_covers:
+                    look_for_ratings_again()
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
@@ -14716,6 +14958,7 @@ def main() -> None:
     start_acquisition_import_worker()
     start_release_research_worker()
     start_auto_scan_worker()
+    start_ratings_worker()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     log_event("server_started", host=args.host, port=args.port,
               version=APP_VERSION, build=APP_BUILD)

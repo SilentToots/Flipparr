@@ -7574,6 +7574,51 @@ class MemberRequestFactsTests(unittest.TestCase):
                          "only Metron has ratings")
 
 
+class RunRatingTests(unittest.TestCase):
+    """A run's rating: Metron's stricter reading, else its cover, else none."""
+
+    def _store(self, metron_id="5"):
+        store = Mock()
+        store.confirmed_series_provider_ids.return_value = {"metron": metron_id} if metron_id else {}
+        store.newest_file_of_run.return_value = 42
+        return store
+
+    def test_metron_says_first_and_the_stricter_issue_wins(self):
+        store = self._store()
+        with patch.object(app, "catalog_store", return_value=store), patch.object(app, "metron_configured", return_value=True), \
+                patch.object(app, "_provider_credential", return_value="t"), \
+                patch.object(app, "_metron_run_readings", return_value=[("Teen", "1"), ("Teen Plus", "24")]), \
+                patch.object(app, "ask_vision_model") as vision:
+            self.assertEqual(app.find_run_rating(7), ("teen_plus", "metron", "Teen (issue 1), Teen Plus (issue 24)"))
+        vision.assert_not_called()
+
+    def test_a_cover_is_read_only_when_asked_and_metron_says_nothing(self):
+        store = self._store()
+        unknown = patch.object(app, "_metron_run_readings", return_value=[("Unknown", "1")])
+        with patch.object(app, "catalog_store", return_value=store), patch.object(app, "metron_configured", return_value=True), \
+                patch.object(app, "_provider_credential", return_value="t"), unknown, \
+                patch.object(app, "vision_provider", return_value="anthropic"), \
+                patch.object(app, "_cover_for_rating", return_value=b"jpeg"), \
+                patch.object(app, "ask_vision_model", return_value="13+ TEEN") as vision:
+            with patch.object(app, "load_app_settings", return_value={"ratingsFromCovers": False}):
+                self.assertEqual(app.find_run_rating(7), (None, None, None))
+            vision.assert_not_called()
+            with patch.object(app, "load_app_settings", return_value={"ratingsFromCovers": True}):
+                self.assertEqual(app.find_run_rating(7), ("teen", "cover", "\u201c13+ TEEN\u201d on the cover"))
+        store.newest_file_of_run.assert_called_with(7)
+
+    def test_a_failed_lookup_records_nothing_so_it_is_tried_again(self):
+        store = self._store()
+        store.runs_needing_rating.return_value = [7, 8]
+        def find(run_id):
+            if run_id == 7:
+                raise app.VisionUnavailable("out of credit")
+            return ("mature", "metron", "Mature (issue 1)")
+        with patch.object(app, "catalog_store", return_value=store), patch.object(app, "find_run_rating", side_effect=find):
+            self.assertEqual(app.rate_runs_pass(), 1)
+        store.record_run_rating.assert_called_once_with(8, "mature", "metron", "Mature (issue 1)")
+
+
 class MemberRequestApprovalTests(unittest.TestCase):
     """Approving a reader's request is the admin's own call for it."""
 

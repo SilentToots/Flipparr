@@ -54,7 +54,7 @@ RUN if [ "$PANEL_MODEL" = "1" ]; then \
       && python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/mednasserallah/manga-panel-detector-yolo26n-onnx/resolve/main/manga_panel_detector_fp32_1024.onnx', 'models/panels.onnx')"; \
     fi
 ENV FLIPPARR_PANEL_MODEL=/app/models/panels.onnx
-COPY app.py catalog_store.py page_panels.py access_policy.py ./
+COPY app.py catalog_store.py page_panels.py access_policy.py content_rating.py ./
 COPY catalog_core_v2/ ./catalog_core_v2/
 COPY --from=web-build /build/v1-prototype/dist/client ./web
 
