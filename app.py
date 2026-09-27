@@ -4669,6 +4669,96 @@ def _zero_filled_megabytes(path: Path) -> int:
     return missing
 
 
+# ---- Packs ------------------------------------------------------------------
+#
+# A pack is several comics zipped into one file -- DirectSite' "Batman Beyond
+# 2.0 #1 - 40 + TPBs" arrived as one 479 MB ".cbz" holding twenty .cbr issues
+# and not one page, and was refused as unreadable while the issue it was
+# grabbed for sat inside it. A pack is opened: only the files whose names say
+# they are the wanted issue are copied out, and each is then judged like any
+# downloaded comic. The rest of the pack is left where it is and goes with the
+# download. A pack without the issue is refused as not holding it -- for this
+# issue only; another issue may well be in it.
+
+COMIC_PACK_MEMBER_TYPES = frozenset({".cbr", ".cbz", ".cb7", ".cbt", ".pdf"})
+PACK_MEMBER_MAX_BYTES = 2 * 1024 * 1024 * 1024
+_PAGE_IMAGE_TYPES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".jxl", ".bmp", ".tif", ".tiff"})
+
+
+def _comic_pack_members(path: Path) -> list[zipfile.ZipInfo] | None:
+    """The comics inside a file that is a pack of them, or None when it is a comic
+    (it has pages of its own) or not a zip at all."""
+    if path.suffix.lower() not in {".cbz", ".zip"}:
+        return None
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = [entry for entry in archive.infolist() if not entry.is_dir()]
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return None
+    if any(Path(entry.filename).suffix.lower() in _PAGE_IMAGE_TYPES for entry in entries):
+        return None
+    members = [entry for entry in entries if Path(entry.filename).suffix.lower() in COMIC_PACK_MEMBER_TYPES]
+    return members or None
+
+
+def _pack_member_matches(name: str, context: dict[str, Any]) -> bool:
+    """Whether a pack's file names the wanted issue of the wanted series."""
+    parsed = parse_filename(Path(name))
+    number = parsed.issue
+    if context.get("format") == "manga" and not number:
+        number = _manga_file_volume(name)
+    if not number or _issue_key(number) != _issue_key(context.get("issueNumber")):
+        return False
+    wanted = normalized_title(_without_leading_article(context.get("seriesTitle") or ""))
+    title = normalized_title(_without_leading_article(parsed.title or ""))
+    return bool(wanted) and difflib.SequenceMatcher(None, title, wanted).ratio() >= 0.55
+
+
+def _pack_holdings(members: list[zipfile.ZipInfo]) -> str:
+    """What a pack holds, in a few words: "#1-#20", or its size when unreadable."""
+    numbers = sorted(
+        number for number in (_issue_number(parse_filename(Path(entry.filename)).issue) for entry in members)
+        if number is not None
+    )
+    if numbers:
+        return f"#{numbers[0]}" if numbers[0] == numbers[-1] else f"#{numbers[0]}-#{numbers[-1]}"
+    return f"{len(members)} files"
+
+
+def _unpack_comic_packs(candidates: list[Path], context: dict[str, Any]) -> tuple[list[Path], Path | None]:
+    """The candidates with every pack replaced by the wanted issue's file from
+    inside it, and the folder those files were copied to (None if none were)."""
+    kept: list[Path] = []
+    unpacked_dir: Path | None = None
+    missing: list[str] = []
+    for path in candidates:
+        members = _comic_pack_members(path)
+        if not members:
+            kept.append(path)
+            continue
+        wanted = [entry for entry in members
+                  if _pack_member_matches(Path(entry.filename).name, context) and entry.file_size <= PACK_MEMBER_MAX_BYTES]
+        if not wanted:
+            missing.append(f"{path.name} is a pack of {len(members)} comics ({_pack_holdings(members)})")
+            continue
+        unpacked_dir = unpacked_dir or Path(tempfile.mkdtemp(prefix="flipparr-pack-"))
+        with zipfile.ZipFile(path) as archive:
+            for entry in wanted:
+                # Its own name only: a path inside a zip is never a path here.
+                target = unpacked_dir / _safe_path_component(Path(entry.filename).name, "issue.cbz")
+                with archive.open(entry) as inside, target.open("wb") as outside:
+                    shutil.copyfileobj(inside, outside, 1024 * 1024)
+                kept.append(target)
+        log_event("comic_pack_unpacked", pack=path.name, members=len(members), taken=len(wanted))
+    if not kept and missing:
+        wanted_label = f"{context.get('seriesTitle')} {_number_label(context)}"
+        raise DownloadContentMismatch(
+            f"The download is a pack, and {wanted_label} is not in it: " + "; ".join(missing),
+            kind="contradiction",
+        )
+    return kept, unpacked_dir
+
+
 def select_downloaded_comic(
     source: Path, context: dict[str, Any], completed_root: Path = SAB_COMPLETE_ROOT,
     *, release_title: str | None = None,
@@ -4678,6 +4768,19 @@ def select_downloaded_comic(
         raise DownloadContentMismatch(
             "The completed download does not contain a supported comic file", kind="format",
         )
+    candidates, unpacked_dir = _unpack_comic_packs(candidates, context)
+    try:
+        selected = _select_downloaded_comic(candidates, source, context, release_title)
+    except Exception:
+        if unpacked_dir is not None:
+            shutil.rmtree(unpacked_dir, ignore_errors=True)
+        raise
+    return {**selected, "unpackedDir": str(unpacked_dir)} if unpacked_dir is not None else selected
+
+
+def _select_downloaded_comic(
+    candidates: list[Path], source: Path, context: dict[str, Any], release_title: str | None,
+) -> dict[str, Any]:
     converted_dir: Path | None = None
     if context.get("format") == "manga":
         archives = [path for path in candidates if path.suffix.lower() in MANGA_FILE_TYPES]
@@ -5072,9 +5175,12 @@ def import_uploaded_comic(job_id: int, stream: Any, length: int, filename: str) 
 
 
 def _discard_converted(selected: dict[str, Any] | None) -> None:
-    folder = (selected or {}).get("convertedDir")
-    if folder:
-        shutil.rmtree(folder, ignore_errors=True)
+    # What was made for the import -- a converted ebook, an issue copied out
+    # of a pack -- goes once it is filed or refused.
+    for key in ("convertedDir", "unpackedDir"):
+        folder = (selected or {}).get(key)
+        if folder:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def _import_selected_comic(
@@ -5500,8 +5606,21 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
     except Exception as exc:  # noqa: BLE001 -- singles are always the fallback
         log_event("run_pack_search_failed", level="warning", request_id=request_id, error=str(exc))
         return None
+    candidates = list(search.get("candidates") or [])
+    # DirectSite posts whole runs as packs ("Batman Beyond 2.0 #1-40 + TPBs")
+    # that Usenet may not carry. For a run that is mostly missing, a pack
+    # holding it is the best answer wherever it is, so DirectSite' packs are
+    # weighed here too -- when it can be downloaded from at all. Its single
+    # issues stay a person's choice, as before.
+    try:
+        _enabled_acquisition_service("flaresolverr")
+        candidates += [item for item in _direct_site_candidates(lead_job, context, title) if item.get("pack")]
+    except ValueError:
+        pass
+    except Exception as exc:  # noqa: BLE001 -- Usenet's packs still stand
+        log_event("run_pack_direct_site_failed", level="warning", request_id=request_id, error=str(exc)[:160])
     offers: list[tuple[int, int, dict[str, Any]]] = []
-    for candidate in search.get("candidates") or []:
+    for candidate in candidates:
         if not candidate.get("pack"):
             continue
         worth, why = _pack_worth_taking(context, candidate, numbers)
@@ -5520,7 +5639,8 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
     offers.sort(key=lambda item: (item[0], item[1]))
     covered, _size, candidate = offers[0]
     try:
-        send_release_to_sabnzbd(lead_job, str(candidate["id"]))
+        # SABnzbd for Usenet, Flipparr's own download for DirectSite.
+        grab_release_candidate(lead_job, str(candidate["id"]))
     except Exception as exc:  # noqa: BLE001 -- a pack that cannot be sent is not a reason to stop
         log_event(
             "run_pack_grab_failed", level="warning", request_id=request_id,

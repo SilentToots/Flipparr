@@ -3842,6 +3842,76 @@ class ManualImportTests(unittest.TestCase):
         self.assertFalse(staging.exists() and any(staging.rglob("*")))
 
 
+class ComicPackDownloadTests(unittest.TestCase):
+    """A pack -- comics zipped into one file -- gives up the issue it was grabbed
+    for. DirectSite' "Batman Beyond 2.0 #1 - 40 + TPBs" came as one .cbz of
+    twenty .cbr issues, and was refused as unreadable with #2 inside it."""
+
+    JOB = {"seriesTitle": "Batman Beyond 2.0", "seriesYear": 2013, "issueNumber": "2",
+           "publisher": "DC Comics", "format": "comic", "preferredLanguage": "en"}
+
+    @staticmethod
+    def _inventory(parsed):
+        return {"file_health": {"status": "ok"}, "embedded_metadata": {},
+                "lookup_identity": {"title": parsed.title, "issue": parsed.issue}}
+
+    @staticmethod
+    def _pack(root, extra=None):
+        source = root / "Batman Beyond 2.0 #1 - 40 + TPBs (2013-2014)"
+        source.mkdir()
+        with zipfile.ZipFile(source / "Batman Beyond 2.0 #1 \u2013 40 + TPBs (2013-2014).cbz", "w") as pack:
+            for number in (1, 2, 3):
+                comic = io.BytesIO()
+                with zipfile.ZipFile(comic, "w") as inner:
+                    inner.writestr("001.jpg", b"page")
+                pack.writestr(f"Batman Beyond 2.0 001-020 (2013-2014)/Batman Beyond 2.0 00{number} (2013) "
+                              "(digital) (Son of Ultron-Empire).cbz", comic.getvalue())
+            for name, body in (extra or {}).items():
+                pack.writestr(name, body)
+        return source
+
+    def test_the_wanted_issue_is_taken_out_of_the_pack_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = self._pack(root)
+            with patch("app.inventory_file", side_effect=self._inventory):
+                selected = app.select_downloaded_comic(source, self.JOB, root)
+            try:
+                self.assertEqual(Path(selected["path"]).name,
+                                 "Batman Beyond 2.0 002 (2013) (digital) (Son of Ultron-Empire).cbz")
+                self.assertTrue(selected["issueMatch"])
+                self.assertEqual(len(list(Path(selected["unpackedDir"]).iterdir())), 1, "only #2 is copied out")
+            finally:
+                app._discard_converted(selected)
+            self.assertFalse(Path(selected["path"]).exists(), "the copy goes once filed")
+
+    def test_a_pack_without_the_issue_is_refused_for_that_issue_and_says_what_it_holds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = self._pack(root)
+            with patch("app.inventory_file", side_effect=self._inventory), \
+                    self.assertRaises(app.DownloadContentMismatch) as caught:
+                app.select_downloaded_comic(source, {**self.JOB, "issueNumber": "25"}, root)
+        self.assertEqual(caught.exception.kind, "contradiction")
+        self.assertIn("#1-#3", str(caught.exception))
+
+    def test_a_path_inside_a_pack_never_leaves_the_folder_it_is_copied_to(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            comic = io.BytesIO()
+            with zipfile.ZipFile(comic, "w") as inner:
+                inner.writestr("001.jpg", b"page")
+            source = self._pack(root, {"../../Batman Beyond 2.0 002 (2013) escaped.cbz": comic.getvalue()})
+            with patch("app.inventory_file", side_effect=self._inventory):
+                selected = app.select_downloaded_comic(source, self.JOB, root)
+            try:
+                unpacked = Path(selected["unpackedDir"])
+                self.assertTrue(all(path.parent == unpacked for path in unpacked.iterdir()))
+                self.assertFalse((root.parent / "Batman Beyond 2.0 002 (2013) escaped.cbz").exists())
+            finally:
+                app._discard_converted(selected)
+
+
 class RunPackPassTests(unittest.TestCase):
     """One search for the run, before asking for its issues one at a time.
 
@@ -3889,6 +3959,21 @@ class RunPackPassTests(unittest.TestCase):
              patch("app.send_release_to_sabnzbd", return_value={"status": "grabbed"}) as send:
             app._grab_run_pack(store, 48, jobs)
         send.assert_called_once_with(101, "big-lean")
+
+    def test_a_direct_site_pack_holding_the_run_is_taken_when_usenet_has_none(self):
+        """Batman Beyond 2.0's forty issues were on DirectSite as one pack, and
+        the run went out as forty singles because only Usenet was asked."""
+        store = self._store()
+        jobs = [100 + n for n in range(1, 41)]
+        direct_site = [self._pack(cid="gc-pack", title="Batman #1 - 40 + TPBs", first=1, last=40, size=480_000_000),
+                     {"id": "gc-single", "title": "Batman #1", "matchScore": 95, "sizeBytes": 30_000_000}]
+        with patch("app.search_prowlarr_releases", return_value={"candidates": []}), \
+             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app._direct_site_candidates", return_value=direct_site), \
+             patch("app.grab_release_candidate", return_value={"status": "downloading"}) as grab:
+            grabbed = app._grab_run_pack(store, 48, jobs)
+        self.assertEqual(grabbed["covers"], 40)
+        grab.assert_called_once_with(101, "gc-pack")
 
     def test_no_pack_means_the_run_falls_back_to_singles(self):
         store = self._store()
