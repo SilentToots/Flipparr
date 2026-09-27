@@ -3737,3 +3737,85 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 }
 .sidebar-profile span:last-child { min-width: 0; overflow-wrap: anywhere; }
 @media (hover: hover) { .sidebar-profile:hover { background: var(--surface-soft); } }
+
+/* A profile's picture fills its disc. */
+.profile-avatar { overflow: hidden; }
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-avatar--fill { width: 100%; height: 100%; font-size: var(--text-xs); }
+.profile-avatar--xl { width: calc(var(--space-80) * 2); height: calc(var(--space-80) * 2); font-size: var(--text-2xl); }
+.profile-avatar--add { background: var(--surface-soft); color: var(--muted-strong); }
+
+/* The header's avatar, beside the bell, and its menu -- the bell's shape. */
+.appbar-profile { position: relative; display: flex; }
+.appbar-profile-button { padding: var(--space-2); overflow: hidden; }
+.profile-menu {
+  position: absolute; z-index: 60; top: calc(100% + var(--space-8)); right: 0; width: min(300px, calc(100vw - var(--space-32)));
+  padding: var(--space-6); display: grid; gap: var(--space-2); border-radius: var(--radius-16);
+}
+.profile-menu :is(.profile-menu-self, .profile-menu-item) {
+  display: flex; align-items: center; gap: var(--space-10); width: 100%; min-height: var(--control-height-md); padding: var(--space-6) var(--space-8);
+  border: 0; border-radius: var(--radius-8); background: transparent; color: var(--text); font-size: var(--text-sm); text-align: left; cursor: pointer;
+}
+.profile-menu .profile-menu-self { min-height: var(--space-64); }
+.profile-menu-self > span:not(.profile-avatar) { display: grid; gap: var(--space-2); flex: 1; min-width: 0; }
+.profile-menu-self small { color: var(--muted); font-size: var(--text-xs); }
+.profile-menu-item > span:not(.profile-avatar):not(.profile-menu-plus) { flex: 1; min-width: 0; }
+.profile-menu-label { margin: var(--space-6) var(--space-8) 0; color: var(--muted); font-size: var(--text-xs); }
+.profile-menu-loading { display: flex; justify-content: center; margin: var(--space-8) 0; }
+.profile-menu-plus { display: grid; place-items: center; width: var(--control-height-sm); height: var(--control-height-sm); border-radius: var(--radius-pill); background: var(--surface-soft); }
+.profile-menu-quiet { color: var(--muted-strong); }
+@media (hover: hover) { .profile-menu :is(.profile-menu-self, .profile-menu-item):hover { background: var(--glass-bg-hover); } }
+
+/* The picker over the app, as Switch profile opens it. */
+.profile-picker--overlay { position: fixed; inset: 0; z-index: 95; overflow-y: auto; }
+.profile-picker-close { position: absolute; top: calc(var(--space-16) + env(safe-area-inset-top)); left: var(--space-16); }
+.profile-picker-list button[aria-current="true"] small { color: var(--violet-text); }
+
+/* Adding a profile: a name and a colour. */
+.add-profile-sheet form { display: grid; gap: var(--space-16); margin-top: var(--space-16); }
+.add-profile-preview { display: flex; justify-content: center; }
+.add-profile-submit { justify-self: stretch; }
+
+/* A profile's picture, and the covers it can come from. */
+.profile-picture-editor { display: grid; justify-items: start; gap: var(--space-12); }
+.profile-picture-actions { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+.library-picture-picker { width: min(760px, 100%); display: grid; gap: var(--space-16); }
+.library-picture-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: var(--space-12);
+  max-height: min(60vh, 560px); overflow-y: auto; padding: var(--space-2);
+}
+.library-picture-grid button { display: grid; gap: var(--space-6); padding: 0; border: 0; border-radius: var(--radius-8); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.library-picture-grid img, .library-picture-grid .cover-placeholder { width: 100%; aspect-ratio: var(--cover-ratio); object-fit: cover; border-radius: var(--radius-4); background: var(--surface-soft); }
+.library-picture-grid span:last-child { font-size: var(--text-xs); color: var(--muted-strong); overflow-wrap: anywhere; }
+.library-picture-grid button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* A profile's own page: the picture large over a blur of itself, the name,
+   the numbers, and the history -- Plex's profile page, for comics. */
+.profile-hero {
+  position: relative; isolation: isolate; overflow: hidden; display: grid; justify-items: center; gap: var(--space-12);
+  padding: var(--space-40) var(--space-20) var(--space-32); border-radius: var(--radius-24); background: var(--surface-raised); text-align: center;
+}
+.profile-hero-backdrop { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; object-fit: cover; filter: blur(40px) saturate(1.2); opacity: .45; transform: scale(1.2); }
+.profile-hero h2 { margin: var(--space-4) 0 0; font-size: var(--text-2xl); }
+.profile-hero-since { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.profile-stats { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-8) var(--space-24); margin: var(--space-8) 0 0; }
+.profile-stats div { display: grid; justify-items: center; gap: var(--space-2); }
+.profile-stats dd { margin: 0; color: var(--text); font-size: var(--text-xl); font-weight: var(--weight-bold); }
+.profile-stats dt { color: var(--muted); font-size: var(--text-sm); }
+.profile-stats-loading { margin: var(--space-8) 0; }
+/* Five numbers on a phone: three over two, never four and an orphan. */
+@media (max-width: 640px) { .profile-stats { gap: var(--space-12) 0; } .profile-stats div { flex: 0 0 33%; } }
+.profile-hero-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-8); margin-top: var(--space-8); }
+.profile-history { display: grid; gap: var(--space-12); margin-top: var(--space-32); }
+.profile-history h2 { margin: 0; font-size: var(--text-xl); }
+.profile-history-empty { margin: 0; color: var(--muted); }
+.profile-history-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(128px, 160px); gap: var(--space-16); overflow-x: auto; padding-bottom: var(--space-8); scrollbar-width: none; }
+.profile-history-shelf::-webkit-scrollbar { display: none; }
+.profile-history-card { position: relative; display: grid; gap: var(--space-4); padding: 0; border: 0; border-radius: var(--radius-8); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.profile-history-cover { position: relative; display: block; aspect-ratio: var(--cover-ratio); border-radius: var(--radius-4); overflow: hidden; background: var(--surface-soft); margin-bottom: var(--space-4); }
+.profile-history-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-history-done { position: absolute; top: var(--space-6); right: var(--space-6); display: grid; place-items: center; width: var(--space-24); height: var(--space-24); border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); }
+.profile-history-card strong { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.profile-history-card small { color: var(--muted); font-size: var(--text-xs); }
+.profile-history-progress { position: absolute; left: 0; right: 0; bottom: 0; height: var(--space-4); background: linear-gradient(to right, var(--violet) var(--progress), var(--scrim-strong) var(--progress)); }
+.profile-history-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
