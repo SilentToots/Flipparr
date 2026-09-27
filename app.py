@@ -527,6 +527,13 @@ def save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
         if not username:
             raise ValueError("A username is required to set a password")
         current["passwordHash"] = hash_password(password)
+        # A new password signs every device out: sessions are signed with this
+        # secret, so replacing it voids them all. Changing a password because
+        # it may have leaked would do little if a session taken with the old
+        # one stayed good for its remaining 30 days. The caller of the settings
+        # API is issued a fresh session in the same response, so only the
+        # other devices have to sign in again.
+        current["sessionSecret"] = secrets.token_urlsafe(32)
     if method == "forms":
         if not username:
             raise ValueError("A username is required to enable authentication")
@@ -671,11 +678,9 @@ def reset_password(username: str | None, password: str) -> dict[str, Any]:
     """
     current = load_auth_config()
     name = (username if username is not None else current["username"]) or ""
-    patch: dict[str, Any] = {"username": name.strip(), "password": password}
-    updated = save_auth_config(patch)
-    updated["sessionSecret"] = secrets.token_urlsafe(32)
-    _write_auth_config(updated)
-    return updated
+    # Setting the password replaces the session secret, which signs out every
+    # device.
+    return save_auth_config({"username": name.strip(), "password": password})
 
 
 def is_local_address(address: str) -> bool:

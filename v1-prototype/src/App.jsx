@@ -19,6 +19,7 @@ import {
   Trash,
   Check,
   CheckCircle,
+  Copy,
   ClockCounterClockwise,
   CloudArrowDown,
   Database,
@@ -6371,6 +6372,63 @@ function FileRunWorkbench({ data, busy, error, onClose, onMove }) {
   return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}><section className="modal file-run-workbench" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="file-run-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close run assignment" /><span className="eyebrow">Change publication run</span><h2 id="file-run-title">{data.file.filename}</h2><p className="workbench-intro">This file is currently attached to <strong>{current.seriesTitle}</strong>. Changing its run updates only the catalog relationship—the comic file will not be renamed, moved, or modified.</p><form onSubmit={submit} className="run-assignment-form"><div className="run-assignment-choice"><button type="button" className={mode === "new" ? "active" : ""} onClick={() => setMode("new")}><Plus size={18} /><span><strong>Separate into a new run</strong><small>Use this when the file represents a distinct series, miniseries, or group of one-shots.</small></span></button><button type="button" className={mode === "existing" ? "active" : ""} onClick={() => setMode("existing")}><Books size={18} /><span><strong>Move to an existing run</strong><small>Attach this file to another canonical run already in the library.</small></span></button></div>{mode === "existing" ? <label className="form-field"><span>Publication run</span><GlassSelect label="Publication run" placeholder="Choose a run…" value={seriesId} onChange={setSeriesId} className="glass-select--fill" options={existingRuns.map((run) => ({ value: run.id, label: `${run.title}${run.year ? ` (${run.year})` : ""}` }))} /></label> : <div className="run-assignment-fields"><label className="form-field"><span>New run title</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Publication run title…" required /></label><label className="form-field"><span>Start year</span><input type="number" min="1800" max="2200" value={year} onChange={(event) => setYear(event.target.value)} /></label><label className="form-field"><span>Publisher</span><input value={publisher} onChange={(event) => setPublisher(event.target.value)} /></label></div>}<div className="run-assignment-note"><ShieldCheck size={20} weight="fill" /><span><strong>Reversible catalog change</strong><small>You can use Change run again later. Covers, volume metadata, and issue-content evidence remain attached to this file.</small></span></div>{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="metadata-edit-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy || (mode === "existing" ? !seriesId : !title.trim())}>{busy ? <LoadingSpinner size={18} /> : <ArrowRight size={18} />} {mode === "existing" ? "Move file" : "Create run and move file"}</button></div></form></section></div>;
 }
 
+// The way back in for a forgotten password. There is no email to send a reset
+// link to, so recovery is a command on the server (see OPERATING.md, "Forgot
+// your password"); this puts it where someone locked out will look.
+const RESET_PASSWORD_COMMAND = "docker exec -it flipparr python app.py reset-password";
+
+function ForgotPassword() {
+  // "copied", "failed", or "" before either.
+  const [copyState, setCopyState] = useState("");
+  const commandRef = useRef(null);
+  // The clipboard API exists only on HTTPS and localhost. Over plain HTTP the
+  // button would do nothing, so it is left out and the command stays
+  // selectable instead.
+  const canCopy = typeof window !== "undefined" && window.isSecureContext
+    && Boolean(navigator.clipboard?.writeText);
+  useEffect(() => {
+    if (copyState !== "copied") return undefined;
+    const timer = setTimeout(() => setCopyState(""), 2000);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(RESET_PASSWORD_COMMAND);
+      setCopyState("copied");
+    } catch {
+      // A browser can still refuse (permissions, an unfocused page). Select
+      // the command so copying it by hand is one keystroke, and say so --
+      // a button that silently does nothing reads as broken.
+      const selection = window.getSelection();
+      if (commandRef.current && selection) selection.selectAllChildren(commandRef.current);
+      setCopyState("failed");
+    }
+  }
+  const copied = copyState === "copied";
+  return <details className="login-help">
+    <summary>Forgot your password?</summary>
+    {/* Its own box: a <details> lays its children out in an internal slot,
+        so layout set on the element itself never reaches them. */}
+    <div className="login-help-body">
+      <p>Run this where Flipparr is installed:</p>
+      <div className="copy-field">
+        {/* Each word kept whole: a line break inside "reset-password" reads
+            as two words. The spaces stay real, so a hand selection copies
+            the command exactly. */}
+        <code ref={commandRef}>{RESET_PASSWORD_COMMAND.split(" ").map((word, index) =>
+          <span key={index}>{index ? " " : ""}<span className="copy-field-word">{word}</span></span>)}</code>
+        {canCopy ? <button type="button" className={copied ? "copied" : ""} onClick={copy}
+          aria-label={copied ? "Copied" : "Copy command"} title={copied ? "Copied" : "Copy command"}>
+          {copied ? <Check size={18} weight="bold" /> : <Copy size={18} />}
+        </button> : null}
+      </div>
+      {copyState === "failed" ? <p role="status">Couldn’t copy it here. The command is selected, so copy it by hand.</p> : null}
+      <p>It signs every device out. If your container isn’t named flipparr, use its name.</p>
+      <span className="sr-only" aria-live="polite">{copied ? "Command copied" : ""}</span>
+    </div>
+  </details>;
+}
+
 function LoginView({ onSignedIn }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -6417,6 +6475,7 @@ function LoginView({ onSignedIn }) {
     <button className="primary-button login-submit" disabled={busy || !username || !password} aria-busy={busy}>
       {busy ? <LoadingSpinner size={18} /> : <ShieldCheck size={18} />} {busy ? "Signing in…" : "Sign in"}
     </button>
+    <ForgotPassword />
   </form></div>;
 }
 

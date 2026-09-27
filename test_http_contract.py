@@ -895,6 +895,35 @@ class HttpContractTests(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=20) as response:
             self.assertEqual(response.status, 200)
 
+    def _catalog_status(self, cookie):
+        return request("GET", self.base + "/api/v1/catalog", headers={"Cookie": cookie}).status
+
+    def test_changing_the_password_signs_other_devices_out_but_not_the_changer(self):
+        """A password changed because it may have leaked must also end the
+        sessions taken with it."""
+        self._configure_auth(localBypass=False)
+        config = app.load_auth_config()
+        cookie = lambda token: f"{app._SESSION_COOKIE}={token}"
+        this_device = cookie(app.issue_session_token(config))
+        other_device = cookie(app.issue_session_token(config))
+        changed = self.post("/api/v1/auth", {"username": "reader", "password": "a different password"},
+                            headers={"Cookie": this_device})
+        self.assertEqual(changed.status, 200)
+        fresh = changed.headers.get("Set-Cookie", "").split(";")[0]
+        self.assertIn(app._SESSION_COOKIE, fresh, "the changer was not issued a new session")
+        self.assertEqual(self._catalog_status(fresh), 200)
+        self.assertEqual(self._catalog_status(other_device), 401)
+        self.assertEqual(self._catalog_status(this_device), 401)
+
+    def test_settings_that_leave_the_password_alone_keep_everyone_signed_in(self):
+        self._configure_auth(localBypass=False)
+        config = app.load_auth_config()
+        other_device = f"{app._SESSION_COOKIE}={app.issue_session_token(config)}"
+        this_device = f"{app._SESSION_COOKIE}={app.issue_session_token(config)}"
+        toggled = self.post("/api/v1/auth", {"localBypass": False}, headers={"Cookie": this_device})
+        self.assertEqual(toggled.status, 200)
+        self.assertEqual(self._catalog_status(other_device), 200)
+
     def test_requiring_sign_in_without_a_password_is_refused_clearly(self):
         """Isolated to its own config file: the suite shares one auth.json, and a
         password stored by an earlier test would otherwise satisfy this one."""

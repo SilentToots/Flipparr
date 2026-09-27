@@ -88,7 +88,8 @@ sign-in on.
 Passwords are stored as a salted scrypt hash and never returned by the API.
 Signing in sets an `HttpOnly`, `SameSite=Lax` cookie, so page scripts cannot
 read your session, and cross-site requests do not carry it. A session lasts 30
-days.
+days. Setting a new password, in Settings or with `reset-password`, signs every
+other device out; the device you changed it on stays signed in.
 
 ### Failed sign-ins
 
@@ -107,7 +108,8 @@ affected. The count is kept in memory, so restarting the container clears it.
 ### Forgot your password
 
 There is no email to send a reset link to; being able to run a command on the
-server is the proof of ownership:
+server is the proof of ownership. **Forgot your password?** on the sign-in page
+shows this command with a copy button:
 
 ```bash
 docker exec -it flipparr python app.py reset-password
