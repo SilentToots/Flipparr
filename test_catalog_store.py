@@ -4275,8 +4275,8 @@ class ReaderProfileTests(LibraryFixture):
                              ("teen", "metron", "Teen (issue 1)"))
             store.set_run_rating_override(run, "mature")
             series = store.catalog()["series"][0]
-            self.assertEqual((series["ageRating"], series["ageRatingSource"], series["ageRatingFound"]),
-                             ("mature", "admin", "teen"), "the admin's word, with what was found kept")
+            self.assertEqual((series["ageRating"], series["ageRatingSource"], series["ageRatingFound"], series["ageRatingNote"]),
+                             ("mature", "admin", "teen", "Teen (issue 1)"), "the admin's word, with what was found kept")
             self.assertEqual(store.run_age_ratings(), {run: "mature"})
             store.set_run_rating_override(run, None)
             self.assertEqual(store.run_age_ratings(), {run: "teen"})

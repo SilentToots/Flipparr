@@ -284,6 +284,17 @@ Motion tokens:
   a follow and a pull are different asks, and the words say which. The admin's queue is the Pull List's first
   tab while any request exists; a reader's tab bar names the same place
   "Requests".
+- **Age ratings** (since 2026-09-27) are one scale everywhere -- Everyone,
+  Teen, Teen+, Mature -- whatever the source said. A run's shows in its drawer
+  as a badge in the rating colours; its Edit sheet has an "Age rating" card
+  (a GlassSelect, since five choices do not fit across a phone) with Auto,
+  saying where the found rating came from. A profile's limit is "What they can
+  read" in its editor: a highest rating (a GlassSelect: No limit, Up to
+  Everyone, Up to Teen, Up to Teen+), then, only once limited, Unrated comics
+  and Discover as switches. Settings, Profiles has a Ratings card: how many
+  runs are rated and from where, Look again, and the switch that lets the
+  vision connector read covers (a `Toggle` that cannot be used yet is
+  `disabled` and says why in its line).
 - **Deciding requests** (since 2026-09-27) takes the device's shape, chosen by
   input (`(hover: hover) and (pointer: fine)`), not width. Touch: a deck, one
   card at a time with the next peeking under it (`.request-swipe-card`) --

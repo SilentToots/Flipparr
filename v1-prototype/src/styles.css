@@ -3823,6 +3823,8 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-form { display: grid; gap: var(--space-16); }
 /* What switching to a profile asks for: the choice, what it means, and the one field it needs. */
 .switch-lock { display: grid; gap: var(--space-12); }
+/* A switch that cannot be used yet says why in its line, and looks it. */
+.toggle-row--off { opacity: var(--button-disabled-opacity); cursor: default; }
 .switch-lock .settings-card-note { margin: 0; }
 .profile-form-identity { display: flex; align-items: center; gap: var(--space-16); font-size: var(--text-lg); }
 /* The admin's editor for a profile: Settings' cards on the modal's raised

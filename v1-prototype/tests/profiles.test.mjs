@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   setStorageProfile, profileKey, profileStorage, migrateLegacyKeys, can, isAdmin,
-  initials, pinInput, profileColour, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS, nextProfileColour,
+  initials, pinInput, profileColour, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS, nextProfileColour, ratingSource, limitLabel,
 } from "../src/profiles.js";
 
 function memoryStorage(initial = {}) {
@@ -103,4 +103,26 @@ test("a new profile gets the first colour nobody has, as the server gives it", (
   assert.equal(nextProfileColour([]), "violet");
   const all = ["violet", "blue", "teal", "green", "amber", "orange", "red", "pink"].map((colour) => ({ colour }));
   assert.equal(nextProfileColour(all), "violet", "past eight, the palette again");
+});
+
+test("a profile kept out of Discover has neither Discover nor the catalogs' search", () => {
+  const kept = { id: 2, role: "reader", canDiscover: false };
+  assert.equal(can(kept, "nav.discover"), false);
+  assert.equal(can(kept, "nav.search"), false);
+  assert.equal(can(kept, "discover.search"), false);
+  assert.equal(can(kept, "nav.library"), true);
+  assert.equal(can({ id: 3, role: "reader" }, "discover.search"), true);
+  assert.equal(can({ id: 1, role: "admin", canDiscover: false }, "nav.discover"), true, "the admin always");
+});
+
+test("a run's rating says where it came from", () => {
+  assert.equal(ratingSource({ ageRatingFound: "teen", ageRatingFoundSource: "metron", ageRatingNote: "Teen (issue 1)" }),
+    "Teen, from Metron (Teen (issue 1)).");
+  assert.equal(ratingSource({ ageRatingFound: "teen", ageRatingFoundSource: "cover", ageRatingNote: "“13+ TEEN” on the cover" }),
+    "Teen, read from the cover (“13+ TEEN” on the cover).");
+  assert.match(ratingSource({ ageRatingOverride: "mature" }), /^Set by you\.$/);
+  assert.match(ratingSource({}), /^No rating found yet/);
+  assert.equal(limitLabel({ maxRating: "everyone" }), "Up to Everyone");
+  assert.equal(limitLabel({ maxRating: "teen", allowUnrated: true }), "Up to Teen, unrated allowed");
+  assert.equal(limitLabel({}), "");
 });

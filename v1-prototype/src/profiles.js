@@ -85,10 +85,38 @@ const READER_SURFACES = new Set([
   "settings.profile", "settings.reader",
 ]);
 
+// Discover and the catalogs' search show every new cover, rated or not, so a
+// profile the admin has kept out of Discover has neither.
+const DISCOVER_SURFACES = new Set(["nav.discover", "nav.search", "discover.search"]);
+
 export function can(viewer, surface) {
   if (!viewer) return true;
   if (viewer.role === "admin") return true;
-  return READER_SURFACES.has(surface);
+  if (DISCOVER_SURFACES.has(surface) && viewer.canDiscover === false) return false;
+  return READER_SURFACES.has(surface) || surface === "discover.search";
+}
+
+// ---- Age ratings ----------------------------------------------------------------
+
+export const RATINGS = ["everyone", "teen", "teen_plus", "mature"];
+export const RATING_LABELS = { everyone: "Everyone", teen: "Teen", teen_plus: "Teen+", mature: "Mature" };
+
+/** Where a run's rating came from, in a sentence for the admin. */
+export function ratingSource(series) {
+  const found = series?.ageRatingFound;
+  const foundText = found
+    ? series.ageRatingFoundSource === "cover" ? `${RATING_LABELS[found]}, read from the cover (${series.ageRatingNote || "printed there"})`
+      : `${RATING_LABELS[found]}, from Metron${series.ageRatingNote ? ` (${series.ageRatingNote})` : ""}`
+    : null;
+  if (series?.ageRatingOverride) return `Set by you.${foundText ? ` Found: ${foundText}.` : ""}`;
+  if (foundText) return `${foundText.charAt(0).toUpperCase()}${foundText.slice(1)}.`;
+  return "No rating found yet. Profiles limited by rating see it only if they are allowed unrated comics.";
+}
+
+/** A profile's limit in a few words, for its row: "Everyone", "Teen, unrated allowed". */
+export function limitLabel(profile) {
+  if (!profile?.maxRating) return "";
+  return `Up to ${RATING_LABELS[profile.maxRating] || profile.maxRating}${profile.allowUnrated ? ", unrated allowed" : ""}`;
 }
 
 export function isAdmin(viewer) {

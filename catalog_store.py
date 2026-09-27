@@ -9177,7 +9177,8 @@ class CatalogStore:
                 # The admin's mark outranks what was found, and is said to be theirs.
                 "ageRating": run["age_rating_override"] or run["age_rating"],
                 "ageRatingSource": "admin" if run["age_rating_override"] else run["age_rating_source"],
-                "ageRatingNote": None if run["age_rating_override"] else run["age_rating_note"],
+                # What was found, said even under the admin's mark.
+                "ageRatingNote": run["age_rating_note"],
                 "ageRatingFound": run["age_rating"], "ageRatingFoundSource": run["age_rating_source"],
                 "ageRatingOverride": run["age_rating_override"],
                 # "medium", not "format": the series payload already uses
