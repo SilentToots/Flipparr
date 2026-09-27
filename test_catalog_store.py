@@ -4297,6 +4297,29 @@ class ReaderProfileTests(LibraryFixture):
             with self.assertRaises(ValueError):
                 store.update_user(sam["id"], maxRating="R")
 
+    def test_requests_from_before_story_arcs_are_kept_when_arcs_arrive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            sam = self._reader(store)
+            store.create_member_request(sam, "run", "run:1", "Example", {"seriesId": 1})
+            # The table as schema 52 made it, with its CHECK on kind.
+            with sqlite3.connect(store.database_path) as connection:
+                sql = connection.execute("SELECT sql FROM sqlite_master WHERE name='member_requests'").fetchone()[0]
+                old = sql.replace("kind TEXT NOT NULL,", "kind TEXT NOT NULL CHECK(kind IN ('run', 'collection', 'discover_run', 'discover_issues')),", 1)
+                old = old.replace("-- Validated in Python (MEMBER_REQUEST_KINDS); no CHECK, so a\n                    -- new kind is not a table rebuild.\n", "")
+                connection.execute("ALTER TABLE member_requests RENAME TO member_requests_now")
+                connection.execute(old.replace("member_requests_now", "member_requests"))
+                connection.execute("INSERT INTO member_requests SELECT * FROM member_requests_now")
+                connection.execute("DROP TABLE member_requests_now")
+                connection.execute("UPDATE schema_info SET version=54")
+                self.assertIn("kind IN (", connection.execute("SELECT sql FROM sqlite_master WHERE name='member_requests'").fetchone()[0])
+            reopened = CatalogStore(store.database_path)
+            self.assertEqual([r["title"] for r in reopened.member_requests()], ["Example"], "kept")
+            arc, created = reopened.create_member_request(sam, "discover_arc", "discover:arc:metron:482", "Hush", {"arcId": "482"})
+            self.assertEqual((arc["kind"], created), ("discover_arc", True))
+            with sqlite3.connect(store.database_path) as connection:
+                self.assertNotIn("kind IN (", connection.execute("SELECT sql FROM sqlite_master WHERE name='member_requests'").fetchone()[0])
+
     def test_a_new_profile_is_given_a_colour_nobody_else_has(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

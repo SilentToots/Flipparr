@@ -920,6 +920,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    The card follows a horizontal drag; a vertical one is the page's scroll. */
 .request-deck { display: grid; gap: var(--space-12); }
 .request-deck-count { margin: 0; color: var(--muted-strong); font-size: var(--text-sm); }
+/* Story arcs in Discover's search: rows, since an arc has a name and not yet a cover. */
+.arc-results { display: grid; gap: var(--space-8); }
+.arc-row { display: flex; align-items: center; gap: var(--space-12); width: 100%; min-height: var(--space-64); padding: var(--space-8) var(--space-12);
+  border: 0; border-radius: var(--radius-12); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+.arc-row > span:not(.arc-row-icon) { display: grid; gap: var(--space-2); flex: 1; min-width: 0; }
+.arc-row small { color: var(--muted); font-size: var(--text-sm); }
+.arc-row-icon { display: grid; place-items: center; width: var(--control-height-sm); height: var(--control-height-sm); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--violet-text); }
+@media (hover: hover) { .arc-row:hover { background: var(--surface-hover); } }
+.arc-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.arc-issue-list .discover-issue-row { grid-template-columns: 36px minmax(0, 1fr); cursor: default; }
 .request-swipe-pile { display: grid; }
 .request-swipe-pile > * { grid-area: 1 / 1; }
 .request-swipe-peek { transform: translateY(var(--space-12)) scale(.96); opacity: .5; pointer-events: none; }

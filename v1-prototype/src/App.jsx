@@ -1989,7 +1989,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onSearch, onR
 // results, over your library and the catalogs, and nothing else.
 function DiscoverView({
   mode = "discover", query, catalog, backendStatus, onSearch, onClearSearch,
-  onOpenSeries, onOpenCollection, onDiscoverRequest, onUnfollowRun, onPullIssue, onPullIssues,
+  onOpenSeries, onOpenCollection, onDiscoverRequest, onUnfollowRun, onPullIssue, onPullIssues, onPullArc,
 }) {
   const [draft, setDraft] = useState(query || "");
   const [releases, setReleases] = useState(() => {
@@ -2000,6 +2000,10 @@ function DiscoverView({
     { state: "idle", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
   const [pulled, setPulled] = useState({});
   const [drawer, setDrawer] = useState(null);
+  // Story arcs matching the search, asked beside it so runs are not held up.
+  const [arcs, setArcs] = useState([]);
+  const latestQuery = useRef(query);
+  latestQuery.current = query;
   const searching = Boolean(query);
   const [recent, setRecent] = useState(() => readRecent(profileStorage()));
   function remember(kind, item) {
@@ -2048,6 +2052,10 @@ function DiscoverView({
       return;
     }
     setDiscovery({ state: "loading", results: [], error: "", providersChecked: [], providersAnswered: [], fallbacks: [] });
+    setArcs([]);
+    apiRequest(`/api/v1/discover/arcs?query=${encodeURIComponent(cleaned)}`)
+      .then((result) => { if (cleaned === String(latestQuery.current || "").trim()) setArcs(result.arcs || []); })
+      .catch(() => setArcs([]));
     try {
       // One answer: titles, a creator's runs and a publisher's, ranked together.
       const result = await apiRequest(`/api/v1/discover?query=${encodeURIComponent(cleaned)}`);
@@ -2151,6 +2159,17 @@ function DiscoverView({
         </div> : <p className="discover-note">Nothing in your library matches “{query}”.</p>}
       </section>
 
+      {arcs.length ? <section className="discover-results" aria-label="Story arcs">
+        <header><h2>{arcs.length} <span>{arcs.length === 1 ? "Story Arc" : "Story Arcs"}</span></h2></header>
+        <div className="arc-results">
+          {arcs.map((arc) => <button type="button" className="arc-row" onClick={() => setDrawer({ kind: "arc", arc })} key={arc.providerArcId}>
+            <span className="arc-row-icon" aria-hidden="true"><Books size={20} /></span>
+            <span><strong>{arc.name}</strong><small>Story arc</small></span>
+            <CaretRight size={16} aria-hidden="true" />
+          </button>)}
+        </div>
+      </section> : null}
+
       <section className="discover-results" aria-label="New matches">
         <header>
           <h2>{discovery.state === "loading" ? null : <>{fresh.length} </>}<span>{fresh.length === 1 ? "New Match" : "New Matches"}</span></h2>
@@ -2237,6 +2256,8 @@ function DiscoverView({
     {drawer?.kind === "issue" ? <DiscoverIssueDrawer issue={drawer.issue}
       state={pullState(drawer.issue, pulled, waiting)} onPull={pullIssue}
       onOpenRun={(item) => setDrawer({ kind: "run", item })} onClose={() => setDrawer(null)} /> : null}
+    {drawer?.kind === "arc" ? <StoryArcDrawer arc={drawer.arc} waiting={waiting} onPull={onPullArc}
+      onClose={() => setDrawer(null)} /> : null}
     {drawer?.kind === "run" ? <DiscoverRunDrawer item={drawer.item} query={query}
       settled={pulled[runKey(drawer.item)]
         || (runRequested(waiting, drawer.item.provider, drawer.item.providerSeriesId) ? PULL_STATES.requested : undefined)}
@@ -2569,6 +2590,89 @@ function RunSynopsis({ text, source, sourcePrefix = "From", loading = false, hea
 // drawer's band (a run that has ended has nothing to follow, so it has none);
 // under it one card pulls every released issue (or the whole of an ended
 // run), and one opens into the issue list to pick from. The story follows.
+// A story arc: its issues in reading order across every series it runs
+// through, what the library holds of each, and one button for the rest --
+// Pull arc, or for a reader, Request arc.
+function StoryArcDrawer({ arc, waiting, onPull, onClose }) {
+  const { closing, requestClose } = useDrawerExit(onClose);
+  const dialogRef = useDialog(requestClose);
+  const reader = !isAdmin(useViewer());
+  const [detail, setDetail] = useState({ state: "loading", data: null, error: "" });
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(waiting?.has(requestKey("discover_arc", { arcId: arc.providerArcId })) ? "Requested. Waiting for approval." : "");
+  async function load() {
+    setDetail({ state: "loading", data: null, error: "" });
+    try {
+      setDetail({ state: "done", data: await apiRequest(`/api/v1/discover/arc?id=${encodeURIComponent(arc.providerArcId)}`), error: "" });
+    } catch (error) {
+      setDetail({ state: "error", data: null, error: error.message });
+    }
+  }
+  useEffect(() => { load(); }, [arc.providerArcId]);
+  const data = detail.data;
+  const issues = data?.issues || [];
+  const seriesNames = [...new Set((data?.series || []).map((series) => `${series.title}${series.year ? ` (${series.year})` : ""}`))];
+  async function pull() {
+    if (!data || busy) return;
+    setBusy(true);
+    const result = await onPull({ arcId: arc.providerArcId, name: data.name || arc.name, cover: data.cover, issueCount: issues.length });
+    setBusy(false);
+    if (result?.ok) {
+      setDone(result.requested ? "Requested. Waiting for approval." : reader ? "On the way." : "On your Pull List.");
+      load();
+    }
+  }
+  const verb = reader ? "Request" : "Pull";
+  const label = !data ? `${verb} arc` : data.missing === issues.length ? `${verb} all ${issues.length} issues`
+    : `${verb} ${data.missing} missing issue${data.missing === 1 ? "" : "s"}`;
+  const nothingLeft = Boolean(data) && !data.missing;
+  const toned = toneProps(useArtTone(data?.cover));
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
+    <aside className={`series-drawer comic-drawer discover-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
+      role="dialog" aria-modal="true" aria-labelledby="story-arc-title" onMouseDown={(event) => event.stopPropagation()}>
+      <DiscoverDrawerHero art={data?.cover} titleId="story-arc-title" title={data?.name || arc.name}
+        cover={<DiscoverCover src={data?.cover} alt={`${arc.name} cover`} glyph={30} />}
+        byline={["Story arc", data ? `${issues.length} issue${issues.length === 1 ? "" : "s"}` : null, seriesNames.slice(0, 2).join(", ")].filter(Boolean).join(" • ")}
+        onClose={requestClose} closeLabel="Close story arc">
+        {data ? <StatusBadge tone="muted">{data.owned} in library</StatusBadge> : null}
+      </DiscoverDrawerHero>
+      <div className="comic-drawer-body">
+        {detail.state === "error" ? <div className="shelf-message">
+          <WarningCircle size={18} />
+          <span><strong>This arc&rsquo;s issues could not be listed</strong><small>{detail.error}</small></span>
+          <button type="button" onClick={load}>Try again</button>
+        </div> : <section className="run-pull-options" aria-label="Pull the arc">
+          <div className="run-pull-option">
+            <span className="run-pull-option-copy">
+              <strong>{nothingLeft ? "Every issue is here or on the way" : label}</strong>
+              <small role="status" aria-live="polite">{done || (detail.state === "loading" ? "Getting the arc’s issues…"
+                : seriesNames.length > 1 ? `Across ${seriesNames.length} series, in reading order.` : "In reading order.")}</small>
+            </span>
+            <button type="button" className="pull-button pull-button-md pull-button-idle"
+              disabled={!data || nothingLeft || busy || Boolean(done)} onClick={pull} aria-busy={busy || undefined}>
+              <span>{busy ? `${reader ? "Requesting" : "Pulling"}…` : verb}</span>
+              {busy ? <LoadingIndicator size={16} /> : <PullIcon />}
+            </button>
+          </div>
+        </section>}
+        {detail.state === "loading" ? <div role="status" aria-busy="true">
+          {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}><i /><span className="discover-cover" /><span><i /><i /></span></div>)}
+        </div> : <div className="discover-issue-list arc-issue-list">
+          {issues.map((issue) => <div className="discover-issue-row" key={issue.providerIssueId}>
+            <DiscoverCover src={issue.cover} alt="" glyph={16} />
+            <span>
+              <strong>{issue.seriesTitle} #{issue.number}</strong>
+              <small>{[seriesNames.length > 1 && issue.seriesYear ? `${issue.seriesTitle} (${issue.seriesYear})` : null, formatLongDate(issue.coverDate),
+                issue.owned ? "In library" : issue.queued ? (reader ? "On the way" : "On Pull List") : null].filter(Boolean).join(" · ") || " "}</small>
+            </span>
+          </div>)}
+        </div>}
+        {data?.description ? <RunSynopsis text={data.description} source="Metron" /> : null}
+      </div>
+    </aside>
+  </div>;
+}
+
 function DiscoverRunDrawer({ item, query, settled, followRequested = false, onFollow, onUnfollow, onPullIssues, onClose }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
@@ -8810,6 +8914,24 @@ export function App() {
     }
   }
 
+  async function pullStoryArc({ arcId, name, cover, issueCount }) {
+    if (!viewerIsAdmin) {
+      return askAdmin({ kind: "discover_arc", provider: "metron", arcId, title: name, cover, issueCount });
+    }
+    try {
+      const result = await apiRequest("/api/v1/discover/pull-arc", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ arcId }),
+      });
+      await loadCatalog();
+      const failed = (result.failed || []).map((item) => item.title).filter(Boolean);
+      showToast(`${name} · ${result.count} issue${result.count === 1 ? "" : "s"} added to your Pull List${failed.length ? ` · ${failed.join(", ")} could not be pulled` : ""}`,
+        failed.length ? "error" : undefined);
+      return { ok: true, result };
+    } catch (error) {
+      showToast(error.message, "error");
+      return { ok: false, error: error.message };
+    }
+  }
   async function requestDiscoveredSeries(target) {
     if (!viewerIsAdmin) {
       return askAdmin({ kind: "discover_run", provider: target.provider, providerSeriesId: target.providerSeriesId,
@@ -9381,7 +9503,7 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "profile" ? <ProfileView onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) && !can(authStatus?.viewer, "nav.discover") ? <><PageHeader title="Discover" /><div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>Discover is off for this profile</strong><span>New comics come through the admin.</span></div></> : null}{SEARCH_VIEWS.has(active) && can(authStatus?.viewer, "nav.discover") ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? (viewerIsAdmin ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} onDecide={decideMemberRequest} /> : <MyRequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onDecide={decideMemberRequest} />) : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); }} /> : null}{finished ? <FinishDrawer key={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{selectedSeries ? <SeriesDrawer key={selectedSeries.id} readingVersion={readingVersion} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onSetAgeRating={setSeriesAgeRating} onRequest={() => createAcquisitionRequest(selectedSeries)} requested={waitingKeys(catalog?.memberRequests).has(`run:${selectedSeries.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} requested={waitingKeys(catalog?.memberRequests).has(`collection:${selectedCollection.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
+  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "profile" ? <ProfileView onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) && !can(authStatus?.viewer, "nav.discover") ? <><PageHeader title="Discover" /><div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>Discover is off for this profile</strong><span>New comics come through the admin.</span></div></> : null}{SEARCH_VIEWS.has(active) && can(authStatus?.viewer, "nav.discover") ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} onPullArc={pullStoryArc} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? (viewerIsAdmin ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} onDecide={decideMemberRequest} /> : <MyRequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onDecide={decideMemberRequest} />) : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); }} /> : null}{finished ? <FinishDrawer key={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{selectedSeries ? <SeriesDrawer key={selectedSeries.id} readingVersion={readingVersion} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onSetAgeRating={setSeriesAgeRating} onRequest={() => createAcquisitionRequest(selectedSeries)} requested={waitingKeys(catalog?.memberRequests).has(`run:${selectedSeries.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} requested={waitingKeys(catalog?.memberRequests).has(`collection:${selectedCollection.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
       onClose={() => setPicker(null)} canAdd={isAdmin(authStatus?.viewer)} onAdd={() => setAddingProfile(true)} /> : null}{addingProfile ? <AddProfileSheet onClose={() => setAddingProfile(false)}
       onAdded={() => { setAddingProfile(false); setProfilesVersion((value) => value + 1); showToast("Profile added"); }} /> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider>;
 }

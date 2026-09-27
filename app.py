@@ -1104,6 +1104,14 @@ def member_request_spec(payload: Any, catalog: dict[str, Any]) -> tuple[str, str
             raise AlreadyHandled(f"{family.get('name')} is already followed")
         return kind, f"collection:{family_id}", str(family.get("name") or "Untitled collection"), {
             "collectionId": int(family_id)}, {"publisher": family.get("publisher")}
+    if kind == "discover_arc":
+        arc_id = str(payload.get("arcId") or "").strip()
+        if str(payload.get("provider") or "metron") != "metron" or not re.fullmatch(r"\d+", arc_id):
+            raise ValueError("Choose a story arc from Discover")
+        title = _request_text(payload.get("title")) or "Untitled arc"
+        detail = {"cover": _cover_url(payload.get("cover")), "provider": "metron",
+                  "issueCount": payload.get("issueCount") if isinstance(payload.get("issueCount"), int) else None}
+        return kind, f"discover:arc:metron:{arc_id}", title, {"provider": "metron", "arcId": arc_id}, detail
     if kind in ("discover_run", "discover_issues"):
         provider = str(payload.get("provider") or "").strip().lower()
         provider_series_id = str(payload.get("providerSeriesId") or "").strip()
@@ -1148,6 +1156,11 @@ def _carry_out_member_request(request: dict[str, Any]) -> tuple[int | None, int 
         made = catalog_store().create_acquisition_request("collection", int(params["collectionId"]), None, None)
         _start_automatic_release_grabs(made)
         return int(made["id"]), None
+    if kind == "discover_arc":
+        result = pull_story_arc(params["arcId"])
+        first = result["pulled"][0]
+        made, run = first.get("request") or {}, first.get("series") or {}
+        return (int(made["id"]) if made.get("id") else None), (int(run["id"]) if run.get("id") else None)
     if kind == "discover_run":
         result = request_discovered_series(params["provider"], params["query"], params["providerSeriesId"], "either")
     else:
@@ -1200,6 +1213,23 @@ def _metron_issue_for(series_id: str, number: str | None, credential: str) -> di
 
 def member_request_facts(kind: str, params: dict[str, Any]) -> dict[str, Any]:
     """Rating, genres and synopsis for a request, from Metron, or nothing."""
+    if kind == "discover_arc":
+        credential = _provider_credential("metron")
+        arc = fetch_provider_json("metron", f"{METRON_API_BASE}/arc/{params['arcId']}/", credential) or {}
+        rows = _arc_issue_rows(str(params["arcId"]), credential)
+        if not rows:
+            return {"genres": [], "synopsis": _synopsis_text(arc.get("desc")), "rating": None, "ratingFrom": None}
+        first = fetch_provider_json("metron", f"{METRON_API_BASE}/issue/{int(rows[0]['id'])}/", credential) or {}
+        series_id = str((rows[0].get("series") or {}).get("id") or "")
+        series = fetch_provider_json("metron", f"{METRON_API_BASE}/series/{series_id}/", credential) or {} if series_id else {}
+        rating = str((first.get("rating") or {}).get("name") or "").strip()
+        return {
+            "genres": [str(genre.get("name")) for genre in series.get("genres") or [] if isinstance(genre, dict) and genre.get("name")][:6],
+            "synopsis": _synopsis_text(arc.get("desc")) or _synopsis_text(series.get("desc")),
+            "rating": None if rating.casefold() in _UNRATED else rating,
+            "ratingFrom": None if rating.casefold() in _UNRATED else f"Issue {first.get('number') or 1}",
+            "issueCount": len(rows),
+        }
     if kind in ("discover_run", "discover_issues"):
         if params.get("provider") != "metron":
             return {}
@@ -11224,6 +11254,128 @@ def discovered_issue_detail(provider_issue_id: str) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Story arcs
+# ---------------------------------------------------------------------------
+#
+# Metron keeps story arcs as their own records -- "Hush" is Batman #608-619,
+# twelve issues -- with the issues in them across every series they run
+# through. Searching Discover finds them; an arc's drawer lists its issues in
+# reading order with what the library holds; Pull arc asks for the missing
+# ones, one pull per series, through the same path as pulling any issues.
+# Arcs are volunteer-maintained: an arc still being published is often not
+# one yet (Hush 2's chapters carry no arc in September 2026), and the run's
+# own issue list is the way to pull it until it is.
+
+ARC_MAX_PAGES = 10
+
+
+def discover_story_arcs(query: str) -> dict[str, Any]:
+    """Metron's story arcs whose names match, for Discover's search."""
+    cleaned = " ".join(str(query or "").split())
+    if len(cleaned) < 2 or not metron_configured():
+        return {"arcs": [], "available": metron_configured()}
+    listing = fetch_provider_json(
+        "metron", f"{METRON_API_BASE}/arc/?" + urllib.parse.urlencode({"name": cleaned}), _provider_credential("metron"))
+    arcs = [
+        {"provider": "metron", "providerArcId": str(row["id"]), "name": str(row.get("name") or "").strip()}
+        for row in (listing or {}).get("results") or [] if isinstance(row, dict) and row.get("id") and row.get("name")
+    ]
+    return {"arcs": arcs[:8], "available": True}
+
+
+def _arc_issue_rows(arc_id: str, credential: str) -> list[dict[str, Any]]:
+    """An arc's issues from Metron, every page, in reading order (by cover date)."""
+    url = f"{METRON_API_BASE}/arc/{arc_id}/issue_list/"
+    rows: list[dict[str, Any]] = []
+    for _ in range(ARC_MAX_PAGES):
+        page = fetch_provider_json("metron", url, credential) or {}
+        rows.extend(row for row in page.get("results") or [] if isinstance(row, dict) and row.get("id"))
+        url = page.get("next")
+        if not url:
+            break
+    return sorted(rows, key=lambda row: (str(row.get("cover_date") or "9999"), _issue_sort_key(row.get("number"))))
+
+
+def _issue_sort_key(number: Any) -> tuple[float, str]:
+    match = re.match(r"-?\d+(?:\.\d+)?", str(number or ""))
+    return (float(match.group()) if match else float("inf"), str(number or ""))
+
+
+def story_arc_detail(arc_id: str) -> dict[str, Any]:
+    """An arc and its issues, each with what the library holds of it."""
+    arc_id = str(arc_id or "").strip()
+    if not re.fullmatch(r"\d+", arc_id):
+        raise ValueError("Choose a story arc")
+    credential = _provider_credential("metron")
+    arc = fetch_provider_json("metron", f"{METRON_API_BASE}/arc/{arc_id}/", credential) or {}
+    rows = _arc_issue_rows(arc_id, credential)
+    # The library's runs: by their confirmed Metron id first, by title and
+    # year when a run has none.
+    relevance = _library_relevance()
+    by_metron = catalog_store().runs_by_provider_series("metron")
+    by_run = {entry["runId"]: entry for entry in relevance.values()}
+    issues = []
+    for row in rows:
+        series = row.get("series") or {}
+        series_id = str(series.get("id") or "")
+        title = str(series.get("name") or "").strip()
+        year = series.get("year_began")
+        run_id = by_metron.get(series_id)
+        entry = by_run.get(str(run_id)) if run_id is not None else None
+        entry = entry or relevance.get(f"{normalized_title(title)}|{year or ''}")
+        key = _issue_key(row.get("number"))
+        issues.append({
+            "providerIssueId": str(row["id"]), "providerSeriesId": series_id,
+            "seriesTitle": title, "seriesYear": year, "number": str(row.get("number") or ""),
+            "coverDate": row.get("cover_date"), "cover": row.get("image"),
+            "owned": bool(entry and key in entry["owned"]),
+            "queued": bool(entry and key in entry["queued"]),
+            "runId": entry["runId"] if entry else None,
+        })
+    series_list: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        group = series_list.setdefault(issue["providerSeriesId"], {
+            "providerSeriesId": issue["providerSeriesId"], "title": issue["seriesTitle"], "year": issue["seriesYear"],
+            "issueCount": 0, "missing": 0,
+        })
+        group["issueCount"] += 1
+        group["missing"] += 0 if issue["owned"] or issue["queued"] else 1
+    return {
+        "provider": "metron", "providerArcId": arc_id, "name": str(arc.get("name") or ""),
+        "description": _synopsis_text(arc.get("desc")),
+        "cover": arc.get("image") or (issues[0]["cover"] if issues else None),
+        "issues": issues, "series": list(series_list.values()),
+        "missing": sum(1 for issue in issues if not (issue["owned"] or issue["queued"])),
+        "owned": sum(1 for issue in issues if issue["owned"]),
+    }
+
+
+def pull_story_arc(arc_id: str) -> dict[str, Any]:
+    """Ask for every issue of an arc the library has not got and is not getting,
+    one pull per series. What could not be pulled is said, and the rest still is."""
+    detail = story_arc_detail(arc_id)
+    groups: dict[str, list[str]] = {}
+    for issue in detail["issues"]:
+        if not (issue["owned"] or issue["queued"]):
+            groups.setdefault(issue["providerSeriesId"], []).append(issue["number"])
+    if not groups:
+        raise ValueError("Every issue of this arc is in your library or on the way")
+    titles = {group["providerSeriesId"]: group["title"] for group in detail["series"]}
+    pulled, failed = [], []
+    for series_id, numbers in groups.items():
+        try:
+            result = pull_discovered_issues("metron", series_id, numbers, query=titles.get(series_id, ""))
+            pulled.append({"providerSeriesId": series_id, "title": titles.get(series_id), "numbers": result["numbers"],
+                           "request": result.get("request"), "series": result.get("series")})
+        except Exception as exc:  # noqa: BLE001 -- the other series are still pulled
+            failed.append({"providerSeriesId": series_id, "title": titles.get(series_id), "error": str(exc)})
+    if not pulled:
+        raise ValueError(f"The arc could not be pulled: {failed[0]['error']}")
+    return {"name": detail["name"], "pulled": pulled, "failed": failed,
+            "count": sum(len(item["numbers"]) for item in pulled)}
+
+
 def request_discovered_series(
     provider: str, query: str, provider_series_id: str,
     acquisition_preference: str = "either",
@@ -13239,6 +13391,22 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_json({"error": f"This issue's details are unavailable: {exc}"}, 502)
             return
+        if parsed_url.path == "/api/v1/discover/arcs":
+            query = (urllib.parse.parse_qs(parsed_url.query).get("query") or [""])[0]
+            try:
+                self.send_json(discover_story_arcs(query))
+            except Exception as exc:
+                self.send_json({"arcs": [], "error": f"Story arcs are unavailable: {exc}"}, 502)
+            return
+        if parsed_url.path == "/api/v1/discover/arc":
+            arc_id = (urllib.parse.parse_qs(parsed_url.query).get("id") or [""])[0]
+            try:
+                self.send_json(story_arc_detail(arc_id))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            except Exception as exc:
+                self.send_json({"error": f"This arc's issues could not be listed: {exc}"}, 502)
+            return
         if parsed_url.path == "/api/v1/discover/releases":
             try:
                 self.send_json(release_calendar())
@@ -13793,6 +13961,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(request, 201)
             return
 
+        if parsed_url.path == "/api/v1/discover/pull-arc":
+            try:
+                result = pull_story_arc(str((payload or {}).get("arcId") or ""))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:
+                self.send_json({"error": f"The arc could not be pulled: {exc}"}, 502)
+                return
+            # Each series' pull started its own searches, as any pull does.
+            self.send_json(result)
+            return
         if parsed_url.path == "/api/v1/discover/pull-issue":
             try:
                 numbers = payload.get("numbers")

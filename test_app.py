@@ -8,6 +8,7 @@ import os
 import tempfile
 import threading
 import types
+import contextlib
 import unittest
 import urllib.error
 import urllib.parse
@@ -7572,6 +7573,72 @@ class MemberRequestFactsTests(unittest.TestCase):
         self.assertEqual((facts["rating"], facts["ratingFrom"]), (None, None))
         self.assertEqual(app.member_request_facts("discover_run", {"provider": "gcd", "providerSeriesId": "5"}), {},
                          "only Metron has ratings")
+
+
+class StoryArcTests(unittest.TestCase):
+    """Story arcs from Metron: found by name, listed in reading order with what
+    the library holds, pulled a series at a time."""
+
+    ARC_ROWS = [
+        {"id": 3, "number": "610", "cover_date": "2003-02-01", "series": {"id": 796, "name": "Batman", "year_began": 1940}},
+        {"id": 1, "number": "608", "cover_date": "2002-12-01", "series": {"id": 796, "name": "Batman", "year_began": 1940}},
+        {"id": 2, "number": "609", "cover_date": "2003-01-01", "series": {"id": 796, "name": "Batman", "year_began": 1940}},
+        {"id": 9, "number": "1", "cover_date": "2003-06-01", "series": {"id": 5000, "name": "Batman: Gotham Knights", "year_began": 2000}},
+    ]
+
+    def _patches(self, relevance=None, by_metron=None):
+        def fetch(provider, url, credential, **_):
+            if "/arc/?" in url:
+                return {"results": [{"id": 482, "name": "Hush"}, {"id": 1595, "name": "Hush Beyond"}]}
+            if url.endswith("/arc/482/issue_list/"):
+                return {"results": self.ARC_ROWS, "next": None}
+            if url.endswith("/arc/482/"):
+                return {"name": "Hush", "desc": "A mystery villain dismantles Batman's life piece by piece, and the whole of his rogues' gallery is in on it."}
+            raise AssertionError(url)
+        store = Mock()
+        store.runs_by_provider_series.return_value = by_metron or {}
+        return [patch.object(app, "fetch_provider_json", side_effect=fetch), patch.object(app, "_provider_credential", return_value="t"),
+                patch.object(app, "metron_configured", return_value=True), patch.object(app, "catalog_store", return_value=store),
+                patch.object(app, "_library_relevance", return_value=relevance or {})]
+
+    def test_an_arc_is_found_by_name_and_listed_in_reading_order(self):
+        library = {"runId": "7", "owned": {app._issue_key("608")}, "queued": {app._issue_key("609")}, "following": False}
+        with contextlib.ExitStack() as stack:
+            for item in self._patches(relevance={"batman|1940": library}):
+                stack.enter_context(item)
+            self.assertEqual([arc["name"] for arc in app.discover_story_arcs("hush")["arcs"]], ["Hush", "Hush Beyond"])
+            detail = app.story_arc_detail("482")
+        self.assertEqual([issue["number"] for issue in detail["issues"]], ["608", "609", "610", "1"], "by cover date")
+        self.assertEqual([(issue["owned"], issue["queued"]) for issue in detail["issues"][:3]], [(True, False), (False, True), (False, False)])
+        self.assertEqual((detail["missing"], detail["owned"]), (2, 1))
+        self.assertEqual([(group["title"], group["missing"]) for group in detail["series"]],
+                         [("Batman", 1), ("Batman: Gotham Knights", 1)])
+
+    def test_pulling_an_arc_asks_for_what_is_missing_one_series_at_a_time(self):
+        library = {"runId": "7", "owned": {app._issue_key("608")}, "queued": set(), "following": False}
+        pulls = []
+        def pull(provider, series_id, numbers, *, released=False, query=""):
+            pulls.append((series_id, numbers, query))
+            if series_id == "5000":
+                raise RuntimeError("Metron is cooling down")
+            return {"numbers": numbers, "request": {"id": 11}, "series": {"id": 7}}
+        with contextlib.ExitStack() as stack:
+            for item in self._patches(relevance={"batman|1940": library}):
+                stack.enter_context(item)
+            stack.enter_context(patch.object(app, "pull_discovered_issues", side_effect=pull))
+            result = app.pull_story_arc("482")
+        self.assertEqual(pulls, [("796", ["609", "610"], "Batman"), ("5000", ["1"], "Batman: Gotham Knights")])
+        self.assertEqual((result["count"], [item["title"] for item in result["failed"]]), (2, ["Batman: Gotham Knights"]),
+                         "one series failing does not stop the others")
+
+    def test_an_arc_already_here_has_nothing_to_pull(self):
+        everything = {"runId": "7", "owned": {app._issue_key(n) for n in ("608", "609", "610")}, "queued": set(), "following": False}
+        gotham = {"runId": "8", "owned": {app._issue_key("1")}, "queued": set(), "following": False}
+        with contextlib.ExitStack() as stack:
+            for item in self._patches(relevance={"batman|1940": everything, "x": gotham}, by_metron={"5000": 8}):
+                stack.enter_context(item)
+            with self.assertRaisesRegex(ValueError, "in your library or on the way"):
+                app.pull_story_arc("482")
 
 
 class RunRatingTests(unittest.TestCase):

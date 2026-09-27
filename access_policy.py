@@ -114,7 +114,7 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # bounds; adding a run or pulling issues stays the admin's, and a reader
     # asks for them instead.
     (frozenset({"GET"}), r"/api/v1/discover", READER),
-    (frozenset({"GET"}), r"/api/v1/discover/(run|issue|releases)", READER),
+    (frozenset({"GET"}), r"/api/v1/discover/(run|issue|releases|arcs|arc)", READER),
     # Asking, and seeing what became of it. Approving and declining are the
     # admin's (unlisted); cancelling is the asker's, which the handler checks.
     (frozenset({"GET", "POST"}), r"/api/v1/member-requests", READER),

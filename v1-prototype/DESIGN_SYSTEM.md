@@ -295,6 +295,12 @@ Motion tokens:
   runs are rated and from where, Look again, and the switch that lets the
   vision connector read covers (a `Toggle` that cannot be used yet is
   `disabled` and says why in its line).
+- **Story arcs** (since 2026-09-27) are found by Discover's search in their
+  own section, as rows (`.arc-row`: an icon, the name, "Story arc") since an
+  arc has a name but no cover until opened. An arc opens in Discover's drawer:
+  its cover, "Story arc - N issues - the series", one pull option ("Pull all 12
+  issues", "Pull 3 missing issues", "Request" for a reader), and its issues in
+  reading order as the run drawer's rows without the checkbox.
 - **Deciding requests** (since 2026-09-27) takes the device's shape, chosen by
   input (`(hover: hover) and (pointer: fine)`), not width. Touch: a deck, one
   card at a time with the next peeking under it (`.request-swipe-card`) --

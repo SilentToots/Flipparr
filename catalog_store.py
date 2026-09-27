@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -41,7 +41,7 @@ SWITCH_LOCKS = ("open", "pin", "password")
 # be followed, a run found in Discover to be added and followed, or chosen
 # issues of a Discover run. Each becomes, on approval, exactly the call the
 # admin's own button makes.
-MEMBER_REQUEST_KINDS = ("run", "collection", "discover_run", "discover_issues")
+MEMBER_REQUEST_KINDS = ("run", "collection", "discover_run", "discover_issues", "discover_arc")
 MEMBER_REQUEST_STATES = ("pending", "approved", "declined", "cancelled", "failed")
 # A profile's colour on the picker and in the nav: the design system's own
 # accent names, never a free value, so a colour is always one the UI can draw.
@@ -1309,7 +1309,9 @@ class CatalogStore:
                 CREATE TABLE IF NOT EXISTS member_requests (
                     id INTEGER PRIMARY KEY,
                     requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    kind TEXT NOT NULL CHECK(kind IN ('run', 'collection', 'discover_run', 'discover_issues')),
+                    -- Validated in Python (MEMBER_REQUEST_KINDS); no CHECK, so a
+                    -- new kind is not a table rebuild.
+                    kind TEXT NOT NULL,
                     target_key TEXT NOT NULL,
                     title TEXT NOT NULL,
                     params_json TEXT NOT NULL DEFAULT '{}',
@@ -1762,6 +1764,30 @@ class CatalogStore:
             # time it is entered right.
             if "pin_length" not in user_columns:
                 connection.execute("ALTER TABLE users ADD COLUMN pin_length INTEGER")
+            # 55: member_requests loses its CHECK on kind (story arcs are a new
+            # kind; kinds are validated in Python). SQLite cannot drop a
+            # constraint in place, so the table is copied, counted and swapped.
+            request_sql = (connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='member_requests'").fetchone() or [""])[0] or ""
+            if "kind IN (" in request_sql:
+                before = connection.execute("SELECT COUNT(*) FROM member_requests").fetchone()[0]
+                connection.execute("SAVEPOINT member_requests_kinds")
+                connection.execute(
+                    re.sub(r"CREATE TABLE (?:IF NOT EXISTS )?member_requests",
+                           "CREATE TABLE member_requests_rebuilt",
+                           re.sub(r"\s*CHECK\s*\(\s*kind IN \([^)]*\)\s*\)", "", request_sql, count=1), count=1)
+                )
+                connection.execute("INSERT INTO member_requests_rebuilt SELECT * FROM member_requests")
+                after = connection.execute("SELECT COUNT(*) FROM member_requests_rebuilt").fetchone()[0]
+                if after != before:
+                    connection.execute("ROLLBACK TO member_requests_kinds")
+                    raise RuntimeError("Rebuilding member_requests would lose requests; nothing was changed")
+                connection.execute("DROP TABLE member_requests")
+                connection.execute("ALTER TABLE member_requests_rebuilt RENAME TO member_requests")
+                connection.execute("CREATE INDEX IF NOT EXISTS member_requests_by_status ON member_requests(status, created_at)")
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS member_requests_by_requester ON member_requests(requested_by, created_at DESC)")
+                connection.execute("RELEASE member_requests_kinds")
             # 54: age ratings. A run's is found (Metron, then its cover) or
             # set by the admin, who always has the last word; a profile may
             # have a highest rating it reads, whether it sees unrated comics,
@@ -4497,6 +4523,17 @@ class CatalogStore:
                 """SELECT files.id FROM files JOIN file_identities ON file_identities.file_id = files.id
                    WHERE file_identities.series_run_id=? ORDER BY files.id DESC LIMIT 1""", (int(series_run_id),)).fetchone()
         return int(row["id"]) if row else None
+
+    def runs_by_provider_series(self, provider: str) -> dict[str, int]:
+        """Every run with a confirmed id at a provider: provider series id -> run."""
+        with self._connect() as connection:
+            return {
+                str(row["provider_id"]): int(row["series_run_id"])
+                for row in connection.execute(
+                    "SELECT provider_id, series_run_id FROM series_provider_ids WHERE provider=? AND confirmed=1",
+                    (provider,),
+                )
+            }
 
     def confirmed_series_provider_ids(self, series_run_id: int) -> dict[str, str]:
         """A run's confirmed provider ids, by provider."""

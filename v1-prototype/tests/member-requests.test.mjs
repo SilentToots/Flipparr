@@ -96,3 +96,11 @@ test("a swipe decides only when it is meant to", async () => {
   assert.equal(ratingTone("Mature"), "red");
   assert.equal(ratingTone(null), "muted");
 });
+
+test("a story arc is asked for as one request", async () => {
+  const { requestKey, requestScope, isFollow } = await import("../src/member-requests.js");
+  assert.equal(requestKey("discover_arc", { arcId: "482" }), "discover:arc:metron:482");
+  assert.equal(requestScope({ kind: "discover_arc", detail: { issueCount: 12 } }), "Story arc · 12 issues");
+  assert.equal(requestScope({ kind: "discover_arc", detail: {} }), "Story arc");
+  assert.equal(isFollow({ kind: "discover_arc" }), false, "an arc is pulled, not followed");
+});

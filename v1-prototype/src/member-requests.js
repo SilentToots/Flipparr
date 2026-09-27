@@ -9,6 +9,7 @@
 export function requestKey(kind, target) {
   if (kind === "run") return `run:${target.seriesId}`;
   if (kind === "collection") return `collection:${target.collectionId}`;
+  if (kind === "discover_arc") return `discover:arc:metron:${target.arcId}`;
   const run = `discover:${target.provider}:${target.providerSeriesId}`;
   if (kind === "discover_run") return run;
   if (target.released) return `${run}#released`;
@@ -62,6 +63,10 @@ export function requestScope(request) {
     return `Issues ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
   }
   if (request?.kind === "collection") return "Follow the collection";
+  if (request?.kind === "discover_arc") {
+    const count = request.detail?.issueCount;
+    return count ? `Story arc · ${count} issue${count === 1 ? "" : "s"}` : "Story arc";
+  }
   return "Follow the run";
 }
 
