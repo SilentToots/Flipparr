@@ -5,6 +5,7 @@ import {
   Users,
   UserCircle,
   Hourglass,
+  Backspace,
   ArrowsClockwise,
   ArrowCounterClockwise,
   CaretRight,
@@ -66,7 +67,7 @@ import {
 } from "./design-icons.jsx";
 import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
 import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
-import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, nextProfileColour, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
+import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, nextProfileColour, pinInput, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import {
   HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
@@ -3944,10 +3945,77 @@ function ProfileView({ onRead, onNavigate, authStatus, onSwitch }) {
 // "Who's reading?" -- a shared device with more than one profile asks before
 // showing anyone's library. A profile with a PIN asks for it; the admin
 // without a PIN asks for their password; a reader with neither just opens.
+// A PIN the way a phone's lock screen asks for one: a dot for each digit and
+// a pad of keys -- no field, no Continue. The last digit opens the profile.
+// Bottom right is Cancel until there is a digit to delete. A PIN whose length
+// is not known yet (set before lengths were kept) gets a ✓ key, once.
+const PIN_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+function PinPad({ length = null, busy = false, error = "", onSubmit, onCancel, onInput }) {
+  const [pin, setPin] = useState("");
+  const [shakes, setShakes] = useState(0);
+  const pinRef = useRef("");
+  const submitting = useRef(false);
+  async function submit(value) {
+    if (submitting.current) return;
+    submitting.current = true;
+    const ok = await onSubmit(value);
+    submitting.current = false;
+    // Wrong: the dots shake and empty, ready for another go.
+    if (!ok) { pinRef.current = ""; setPin(""); setShakes((count) => count + 1); }
+  }
+  function press(key) {
+    if (busy || submitting.current) return;
+    if (key === "Enter") {
+      if (!length && pinRef.current.length >= 4) submit(pinRef.current);
+      return;
+    }
+    const next = pinInput(pinRef.current, key);
+    if (next === pinRef.current) return;
+    onInput?.();
+    pinRef.current = next;
+    setPin(next);
+    if (length && next.length === length) submit(next);
+  }
+  // A keyboard types on the pad too. Escape inside an overlay is the dialog's,
+  // which takes it back to the profiles.
+  useEffect(() => {
+    function onKey(event) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (/^\d$/.test(event.key) || event.key === "Backspace" || event.key === "Enter") {
+        event.preventDefault();
+        press(event.key);
+      } else if (event.key === "Escape") {
+        onCancel();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  const dots = Math.max(length || 4, pin.length);
+  return <div className="pin-pad" role="group" aria-label="PIN">
+    <div className={`pin-dots${shakes ? " pin-dots--wrong" : ""}`} key={shakes} aria-hidden="true">
+      {Array.from({ length: dots }, (_, index) => <i className={index < pin.length ? "filled" : ""} key={index} />)}
+    </div>
+    <p className="sr-only" aria-live="polite">{length ? `${pin.length} of ${length} digits` : `${pin.length} digits`}</p>
+    <p className="pin-pad-message" role={error ? "alert" : undefined}>{busy ? <LoadingSpinner size={16} /> : error || " "}</p>
+    <div className="pin-keys">
+      {PIN_KEYS.map((key) => <button type="button" className="pin-key" onClick={() => press(key)} disabled={busy} key={key}>{key}</button>)}
+      {length ? <span aria-hidden="true" /> : <button type="button" className="pin-key pin-key--quiet" onClick={() => press("Enter")}
+        disabled={busy || pin.length < 4} aria-label="Enter PIN"><Check size={24} weight="bold" /></button>}
+      <button type="button" className="pin-key" onClick={() => press("0")} disabled={busy}>0</button>
+      {pin ? <button type="button" className="pin-key pin-key--quiet" onClick={() => press("Backspace")} disabled={busy} aria-label="Delete"><Backspace size={24} /></button>
+        : <button type="button" className="pin-key pin-key--quiet pin-key--text" onClick={onCancel} disabled={busy}>Cancel</button>}
+    </div>
+  </div>;
+}
+
 function WhoIsReadingView({ signInAvailable, overlay = false, current = null, ask = null, onClose, canAdd = false, onAdd }) {
   const [profiles, setProfiles] = useState(null);
   const [asking, setAsking] = useState(ask);
-  const overlayRef = useDialog(overlay ? () => onClose?.() : null);
+  // Escape while a PIN or password is asked goes back to the profiles, not out.
+  const overlayRef = useDialog(overlay ? () => (asking ? back() : onClose?.()) : null);
+  function back() { setAsking(null); setError(""); }
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -3963,9 +4031,11 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
         body: JSON.stringify({ userId: profile.id, ...proof }),
       });
       enterProfile(result.viewer.id);
+      return true;
     } catch (failure) {
       setError(failure.message);
       setBusy(false);
+      return false;
     }
   }
   function choose(profile) {
@@ -3985,7 +4055,11 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
     <div className="profile-picker-card">
       <FlipparrMark size={48} />
       <h1>{asking ? asking.name : "Who’s reading?"}</h1>
-      {asking ? <form className="profile-picker-secret" onSubmit={(event) => {
+      {asking?.lock === "pin" ? <div className="profile-picker-secret">
+        <ProfileAvatar profile={asking} size="lg" />
+        <PinPad length={asking.pinLength} busy={busy} error={error} onCancel={back} onInput={() => setError("")}
+          onSubmit={(pin) => enter(asking, { pin })} />
+      </div> : asking ? <form className="profile-picker-secret" onSubmit={(event) => {
         event.preventDefault();
         enter(asking, asking.lock === "pin" ? { pin: secret } : { password: secret });
       }}>

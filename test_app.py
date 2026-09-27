@@ -7618,7 +7618,7 @@ class ProfileTokenTests(unittest.TestCase):
         store = Mock()
         pin_hash = app.hash_password("2468")
         store.user.return_value = {"id": 2, "name": "Admin two", "role": "admin", "disabled": False,
-                                   "hasPin": True, "hasPassword": False, "switchLock": "pin"}
+                                   "hasPin": True, "hasPassword": False, "switchLock": "pin", "pinLength": 4}
         store.user_secrets.return_value = {"pinHash": pin_hash, "passwordHash": None}
         self.assertEqual(app.check_profile_switch(store, self.config, 2, pin="2468")["id"], 2, "the right PIN opens it")
         for _ in range(app._LOGIN_FREE_FAILURES):

@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import re
+import sqlite3
 import tempfile
 import zipfile
 import threading
@@ -1777,6 +1778,21 @@ class ReaderProfileHttpTests(unittest.TestCase):
         trusted = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
         straight = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=trusted).json()
         self.assertEqual((straight["status"], straight["decidedBy"]), ("approved", sam))
+
+    def test_the_picker_knows_how_many_digits_a_pin_has(self):
+        sam = self._household_with_a_reader()
+        lengths = lambda: {p["name"]: p["pinLength"] for p in self.call("GET", "/api/v1/profiles").json()["profiles"]}
+        self.assertEqual(lengths(), {"Admin": 4, "Sam": None}, "a tap needs no digits")
+        # A PIN from before lengths were kept is learned when it is entered right.
+        with sqlite3.connect(os.environ["COMICARR_DATABASE"]) as connection:
+            connection.execute("UPDATE users SET pin_length=NULL WHERE id=1")
+        self.assertEqual(lengths()["Admin"], None)
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "0000"}).status, 403)
+        self.assertEqual(lengths()["Admin"], None, "not from a wrong guess")
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"})
+        self.assertEqual(lengths()["Admin"], 4)
+        self.call("PATCH", f"/api/v1/users/{sam}", {"switchLock": "pin", "pin": "135790"}, cookies=admin.cookies)
+        self.assertEqual(lengths()["Sam"], 6)
 
     def test_each_profile_reads_and_rates_on_its_own(self):
         sam = self._household_with_a_reader()

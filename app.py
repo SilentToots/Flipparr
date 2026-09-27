@@ -761,9 +761,13 @@ READER_PREF_KEYS = frozenset({"panelMode", "panelScrim", "panelStartWhole", "pan
 def public_profile(user: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     """A profile as the picker shows it: no sign-in name, nothing secret --
     only whether it opens with a tap, a PIN or a password."""
+    lock = profile_lock(user, config)
     return {
         "id": user["id"], "name": user["name"], "colour": user["colour"], "role": user["role"],
-        "avatar": user.get("avatar"), "lock": profile_lock(user, config),
+        "avatar": user.get("avatar"), "lock": lock,
+        # How many digits, so the pad draws that many dots -- what a phone's
+        # lock screen shows. Unknown for a PIN set before it was recorded.
+        "pinLength": user.get("pinLength") if lock == "pin" else None,
     }
 
 
@@ -798,6 +802,9 @@ def check_profile_switch(store: "CatalogStore", config: dict[str, Any], user_id:
     if lock == "pin":
         if not _checked(f"pin:{user_id}", secrets_["pinHash"], pin, secrets_["pinHash"], max_delay=_PIN_MAX_DELAY_SECONDS):
             raise PermissionError("That PIN is not right")
+        if not user.get("pinLength"):
+            # A PIN from before lengths were kept, now known.
+            user = store.update_user(user_id, pinLength=len(str(pin)))
     elif lock == "password":
         hashed = config.get("passwordHash") if user_id == ADMIN_USER_ID else secrets_["passwordHash"]
         key = "account" if user_id == ADMIN_USER_ID else f"user:{user_id}"
@@ -832,6 +839,7 @@ def _profile_changes(store: "CatalogStore", config: dict[str, Any], target: dict
             changes[key] = payload[key]
     if "pin" in payload:
         changes["pinHash"] = None if payload["pin"] in (None, "") else hash_password(_valid_pin(payload["pin"]))
+        changes["pinLength"] = None if payload["pin"] in (None, "") else len(str(payload["pin"]))
     is_admin_profile = target["id"] == ADMIN_USER_ID
     if "loginName" in payload or "password" in payload:
         if is_admin_profile:
@@ -915,6 +923,7 @@ def create_profile(store: "CatalogStore", config: dict[str, Any], payload: dict[
     return store.create_user(
         payload.get("name"), role=str(payload.get("role") or "reader"), login_name=login,
         password_hash=password_hash, pin_hash=None if pin in (None, "") else hash_password(_valid_pin(pin)),
+        pin_length=None if pin in (None, "") else len(str(pin)),
         colour=payload.get("colour"), can_request=bool(payload.get("canRequest", True)),
         auto_approve=bool(payload.get("autoApprove", False)), show_on_picker=bool(payload.get("showOnPicker", True)),
         switch_lock=lock,

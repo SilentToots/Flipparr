@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1285,7 +1285,8 @@ class CatalogStore:
                     last_seen_at TEXT,
                     avatar_source TEXT,
                     avatar_updated_at TEXT,
-                    switch_lock TEXT NOT NULL DEFAULT 'open' CHECK(switch_lock IN ('open', 'pin', 'password'))
+                    switch_lock TEXT NOT NULL DEFAULT 'open' CHECK(switch_lock IN ('open', 'pin', 'password')),
+                    pin_length INTEGER
                 );
                 /* A reader's own settings that should follow them to any
                    device -- how panel view steps, for one -- as a small JSON
@@ -1753,6 +1754,12 @@ class CatalogStore:
             # which secrets it happens to have. Existing profiles keep what
             # they asked for before: a PIN if they had one; the admin, without
             # one, their password.
+            # 53: how many digits the PIN has, so the picker's number pad
+            # shows that many dots and opens on the last one, as a phone's
+            # lock screen does. A PIN set before this is learned the first
+            # time it is entered right.
+            if "pin_length" not in user_columns:
+                connection.execute("ALTER TABLE users ADD COLUMN pin_length INTEGER")
             if "switch_lock" not in user_columns:
                 connection.execute(
                     "ALTER TABLE users ADD COLUMN switch_lock TEXT NOT NULL DEFAULT 'open' "
@@ -3763,7 +3770,7 @@ class CatalogStore:
 
     _USER_PUBLIC = (
         "id, name, login_name, role, colour, can_request, auto_approve, show_on_picker, "
-        "session_version, disabled, created_at, updated_at, last_seen_at, avatar_source, avatar_updated_at, switch_lock, "
+        "session_version, disabled, created_at, updated_at, last_seen_at, avatar_source, avatar_updated_at, switch_lock, pin_length, "
         "password_hash IS NOT NULL AS has_password, pin_hash IS NOT NULL AS has_pin"
     )
 
@@ -3787,6 +3794,7 @@ class CatalogStore:
             ),
             "avatarSource": row["avatar_source"],
             "switchLock": row["switch_lock"],
+            "pinLength": row["pin_length"],
         }
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -3841,7 +3849,7 @@ class CatalogStore:
         self, name: str, *, role: str = "reader", login_name: str | None = None,
         password_hash: str | None = None, pin_hash: str | None = None, colour: str | None = None,
         can_request: bool = True, auto_approve: bool = False, show_on_picker: bool = True,
-        switch_lock: str = "open",
+        switch_lock: str = "open", pin_length: int | None = None,
     ) -> dict[str, Any]:
         """A new profile.
 
@@ -3864,10 +3872,12 @@ class CatalogStore:
             try:
                 cursor = connection.execute(
                     """INSERT INTO users(name, login_name, role, colour, password_hash, pin_hash,
-                                         can_request, auto_approve, show_on_picker, switch_lock, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         can_request, auto_approve, show_on_picker, switch_lock, pin_length,
+                                         created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (name, login, role, colour, password_hash, pin_hash, int(bool(can_request)),
-                     int(bool(auto_approve)), int(bool(show_on_picker)), switch_lock, now, now),
+                     int(bool(auto_approve)), int(bool(show_on_picker)), switch_lock,
+                     pin_length if pin_hash else None, now, now),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("Another profile already signs in with that name") from exc
@@ -3889,7 +3899,7 @@ class CatalogStore:
         "name": "name", "loginName": "login_name", "role": "role", "colour": "colour",
         "passwordHash": "password_hash", "pinHash": "pin_hash", "canRequest": "can_request",
         "autoApprove": "auto_approve", "showOnPicker": "show_on_picker", "disabled": "disabled",
-        "switchLock": "switch_lock",
+        "switchLock": "switch_lock", "pinLength": "pin_length",
     }
     # What ends a profile's sign-ins everywhere when it changes: a new
     # password, a changed role, being switched off. A PIN is not a sign-in.

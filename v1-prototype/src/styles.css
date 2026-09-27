@@ -3727,6 +3727,34 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-picker-secret .form-field { width: 100%; text-align: left; }
 .profile-picker-secret input { min-height: var(--control-height-md); padding: 0 var(--space-14); font-size: var(--text-input); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--bg); color: var(--text); }
 .profile-picker-actions { display: flex; gap: var(--space-12); }
+/* The PIN pad: a phone lock screen's dots and keys. Round keys a thumb can
+   hit, three across; the last digit opens the profile, so there is no
+   button to press after it. */
+.pin-pad { display: grid; justify-items: center; gap: var(--space-12); }
+.pin-dots { display: flex; gap: var(--space-16); min-height: var(--space-16); align-items: center; }
+.pin-dots i { width: var(--space-12); height: var(--space-12); border: 2px solid var(--text); border-radius: var(--radius-pill); }
+.pin-dots i.filled { background: var(--text); }
+.pin-dots--wrong { animation: pin-wrong .4s ease-in-out; }
+@keyframes pin-wrong {
+  20%, 60% { transform: translateX(calc(var(--space-8) * -1)); }
+  40%, 80% { transform: translateX(var(--space-8)); }
+}
+@media (prefers-reduced-motion: reduce) { .pin-dots--wrong { animation: none; } }
+.pin-pad-message { min-height: var(--space-20); margin: 0; display: flex; align-items: center; color: var(--red-text); font-size: var(--text-sm); }
+.pin-keys { display: grid; grid-template-columns: repeat(3, var(--space-80)); gap: var(--space-16) var(--space-24); }
+.pin-key {
+  display: grid; place-items: center; width: var(--space-80); height: var(--space-80); padding: 0;
+  border: 0; border-radius: var(--radius-pill); background: var(--surface-raised); color: var(--text);
+  font: inherit; font-size: var(--text-2xl); font-weight: var(--weight-medium); cursor: pointer;
+  transition: background var(--motion-duration-fast) ease;
+}
+.pin-key:active:not(:disabled) { background: var(--surface-hover); }
+@media (hover: hover) { .pin-key:hover:not(:disabled) { background: var(--surface-hover); } }
+.pin-key:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pin-key:disabled { cursor: default; }
+.pin-key--quiet { background: transparent; }
+.pin-key--quiet:disabled { opacity: var(--button-disabled-opacity); }
+.pin-key--text { font-size: var(--text-md); }
 .profile-picker-other { border: 0; background: transparent; color: var(--muted); font-size: var(--text-sm); text-decoration: underline; cursor: pointer; }
 
 .profile-rows { display: grid; gap: var(--space-8); }
