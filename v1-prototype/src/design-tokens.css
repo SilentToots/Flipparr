@@ -63,6 +63,23 @@
   --color-amber-700: #b45309;
   --color-red-500: #f06b62;
   --color-red-700: #b91c1c;
+  /* The four families reader profiles add; the 700s carry white initials at
+     AA contrast, as the other families' 700s do. */
+  --color-blue-700: #1d4ed8;
+  --color-teal-700: #0f766e;
+  --color-orange-700: #c2410c;
+  --color-pink-700: #be185d;
+
+  /* Reader profiles: one colour per profile, a disc behind white initials.
+     Names match PROFILE_COLOURS in profiles.js and catalog_store.py. */
+  --profile-violet: var(--color-violet-700);
+  --profile-blue: var(--color-blue-700);
+  --profile-teal: var(--color-teal-700);
+  --profile-green: var(--color-green-700);
+  --profile-amber: var(--color-amber-700);
+  --profile-orange: var(--color-orange-700);
+  --profile-red: var(--color-red-700);
+  --profile-pink: var(--color-pink-700);
 
   /* Semantic color tokens.
 

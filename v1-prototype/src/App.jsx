@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { createPortal } from "react-dom";
 import { FlipparrMark } from "./brand.jsx";
 import {
+  Users,
+  UserCircle,
   ArrowsClockwise,
   ArrowCounterClockwise,
   CaretRight,
@@ -63,6 +65,7 @@ import {
 } from "./design-icons.jsx";
 import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
 import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
+import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, PROFILE_COLOURS, VIEWER_CACHE_KEY } from "./profiles.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import {
   HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
@@ -174,6 +177,69 @@ function editionKindLabel(kind) {
 // hardcover is still a volume, and the files stay visible and fixable either
 // way — the user just isn't offered edition management.
 const CollectedEditionsContext = createContext(false);
+
+// Reader profiles. The profile reading this page, as the server resolved it;
+// null before it answers, and for the admin the whole app is theirs anyway.
+// The server refuses what a reader may not do -- this only keeps a reader
+// from being shown controls that would be refused.
+const ViewerContext = createContext(null);
+function useViewer() {
+  return useContext(ViewerContext);
+}
+
+// Browser storage is the profile's own (profiles.js). Which profile was last
+// reading on this device is known before anything renders, so the first
+// paint already reads that profile's sort, view and settings.
+function cachedViewerId() {
+  try { return Number(window.localStorage.getItem(VIEWER_CACHE_KEY)) || null; } catch { return null; }
+}
+setStorageProfile(typeof window === "undefined" ? null : cachedViewerId());
+
+function storable() {
+  try {
+    window.localStorage.setItem("flipparr.probe", "1");
+    window.localStorage.removeItem("flipparr.probe");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A profile's reader settings live on the server, so they follow the person to
+// any device; the browser keeps a copy for the first paint. The server's word
+// wins for what it has.
+async function syncReaderPrefs() {
+  try {
+    const me = await apiRequest("/api/v1/me");
+    const prefs = me?.prefs || {};
+    if (!Object.keys(prefs).length) return;
+    const storage = profileStorage();
+    let local = {};
+    try { local = JSON.parse(storage.getItem("flipparr.reader") || "{}") || {}; } catch { local = {}; }
+    storage.setItem("flipparr.reader", JSON.stringify({ ...local, ...prefs }));
+  } catch {
+    // Offline or refused: the browser's copy stands.
+  }
+}
+
+// Enter a profile: remember it on this device, hand the browser's settings
+// from before profiles to the admin, and start the page afresh. A reload is
+// the one sure way that nothing -- a cached answer, an open drawer, a
+// component's state -- carries one profile's library into another's.
+function enterProfile(viewerId) {
+  LAST_ANSWERS.clear();
+  try {
+    if (viewerId) {
+      window.localStorage.setItem(VIEWER_CACHE_KEY, String(viewerId));
+      migrateLegacyKeys(window.localStorage, viewerId);
+    } else {
+      window.localStorage.removeItem(VIEWER_CACHE_KEY);
+    }
+  } catch {
+    // A browser that keeps nothing starts every profile fresh.
+  }
+  window.location.reload();
+}
 
 function useCollectedEditions() {
   return useContext(CollectedEditionsContext);
@@ -561,6 +627,8 @@ async function apiRequest(path, options) {
     // signed out" apart from "the backend is down", and the message alone
     // cannot do that -- the server sends readable prose, not a status code.
     error.status = response.status;
+    // Why, when the server says: "profile_required" asks for the picker.
+    error.reason = payload.reason || "";
     throw error;
   }
   return payload;
@@ -803,6 +871,9 @@ function useCollapsingTabBar(resetKey) {
 const SIDEBAR_COUNT_SKELETON = { display: "inline-block", width: 24, verticalAlign: "middle" };
 
 function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary }) {
+  const viewer = useViewer();
+  const admin = isAdmin(viewer);
+  const items = NAV_ITEMS.filter(({ id }) => can(viewer, `nav.${id}`));
   const [collapsed, setCollapsed] = useCollapsingTabBar(active);
   // While the bar folds or opens, the glass pill sits out: its blur was
   // being re-placed and re-animated on every frame of the width animation,
@@ -838,7 +909,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
         onFocusCapture={(event) => { if (event.target.matches?.(":focus-visible")) setCollapsed(false); }}>
         {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}
         <span className={`nav-glass glass-indicator${morphing ? " nav-glass--waiting" : ""}`} aria-hidden="true" style={navGlass || { opacity: 0 }} />
-        {NAV_ITEMS.map(({ id, label, icon: Icon, count, desktopOnly }) => (
+        {items.map(({ id, label, icon: Icon, count, desktopOnly }) => (
           <button className={`nav-item ${active === id ? "active" : ""}${desktopOnly ? " nav-item--desktop" : ""}`} data-nav={id} key={id} onClick={() => onNavigate(id)} aria-label={(counts[id] ?? count) ? `${label}. ${NAV_COUNT_LABELS[id]?.(counts[id] ?? count) ?? `${counts[id] ?? count}`}` : label} aria-current={active === id ? "page" : undefined}>
             <Icon size={null} /><span>{label}</span>{(counts[id] ?? count) ? <b className={(counts[id] ?? count) > 9 ? "wide" : ""} title={NAV_COUNT_LABELS[id]?.(counts[id] ?? count)}>{counts[id] ?? count}</b> : null}
           </button>
@@ -867,19 +938,26 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
               invisible until one runs, and the only other way in was two
               clicks deep under Import library. It turns while any scan runs:
               started here, from the folders page, or on the server. */}
-          <button type="button" className={`sidebar-scan${scanning ? " scanning" : ""}`}
+          {admin ? <button type="button" className={`sidebar-scan${scanning ? " scanning" : ""}`}
             onClick={onScanLibrary} disabled={scanning} aria-busy={scanning}
             aria-label={scanning ? "Scanning your library" : "Scan library"}
             title={scanning ? "Scanning your library…"
               : catalog?.lastScan?.iso ? `Scan library · last scanned ${catalog.lastScan.date}, ${catalog.lastScan.time}`
               : "Scan library"}>
             <ArrowsClockwise size={16} />
-          </button>
+          </button> : null}
         </span>
       </div>
       <div className="sidebar-session">
-        {authStatus?.method === "forms" && authStatus?.authenticated
-          ? <button type="button" className="sign-out-button" onClick={onSignOut}><SignOut size={16} /> Sign out</button>
+        {/* Who is reading, once there is more than one person it could be: a
+            tap opens their profile, where switching and signing out live. */}
+        {viewer && (authStatus?.household || authStatus?.method === "forms")
+          ? <button type="button" className="sidebar-profile" onClick={() => onNavigate("settings", "profile")}>
+            <ProfileAvatar profile={viewer} /><span>{viewer.name}</span>
+          </button>
+          : null}
+        {authStatus?.method === "forms" && authStatus?.authenticated && !authStatus?.household
+          ? <button type="button" className="sign-out-button" onClick={() => onSignOut()}><SignOut size={16} /> Sign out</button>
           : null}
       </div>
     </aside>
@@ -1896,17 +1974,17 @@ function DiscoverView({
   const [pulled, setPulled] = useState({});
   const [drawer, setDrawer] = useState(null);
   const searching = Boolean(query);
-  const [recent, setRecent] = useState(() => readRecent(window.localStorage));
+  const [recent, setRecent] = useState(() => readRecent(profileStorage()));
   function remember(kind, item) {
     setRecent((current) => {
       const next = rememberRecent(current, recentEntry(kind, item));
-      writeRecent(window.localStorage, next);
+      writeRecent(profileStorage(), next);
       return next;
     });
   }
   function clearRecent() {
     setRecent([]);
-    writeRecent(window.localStorage, []);
+    writeRecent(profileStorage(), []);
   }
   const openLibraryRun = (item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item);
   const openCatalogRun = (run) => setDrawer({ kind: "run", item: run });
@@ -2631,6 +2709,10 @@ function formatShelfDate(iso) {
 }
 
 function CatalogEmpty({ onAdd }) {
+  // Adding folders is the admin's; a reader is told what to expect instead.
+  if (!isAdmin(useViewer())) {
+    return <div className="empty-state"><Books size={35} weight="duotone" /><strong>No comics yet</strong><span>Comics appear here once the library&rsquo;s admin adds them.</span></div>;
+  }
   return <div className="empty-state"><Books size={35} weight="duotone" /><strong>Your library is ready for its first comics</strong><span>Choose a folder to scan without changing your files.</span><button className="primary-button" onClick={onAdd}><FolderOpen size={18} /> Import library</button></div>;
 }
 
@@ -3162,6 +3244,8 @@ function MetadataComparison({ comparison }) {
 // Each section's name, the line under its title, and -- for a phone's list of
 // them, grouped as iOS Settings groups its rows -- its icon and group.
 const SETTINGS_SECTIONS = [
+  { id: "profile", label: "Your profile", icon: UserCircle, group: "you",
+    detail: "Your name, colour and PIN, and who is reading on this device." },
   { id: "health", label: "Library health", icon: Heartbeat, group: "library",
     detail: "Damaged files and matches waiting for you to confirm or fix." },
   { id: "library", label: "Library folders", icon: FolderOpen, group: "library",
@@ -3174,9 +3258,17 @@ const SETTINGS_SECTIONS = [
     detail: "Where issue titles, dates, covers and matches come from." },
   { id: "reader", label: "Reader", icon: BookOpen, group: "reading",
     detail: "Panel view, and the models that can help it with the pages it cannot read." },
+  { id: "profiles", label: "Profiles", icon: Users, group: "app",
+    detail: "Who reads this library. Each profile keeps its own place, history and ratings." },
   { id: "security", label: "Security", icon: LockSimple, group: "app",
     detail: "Who can reach this app, and how they sign in." },
 ];
+
+// The sections a profile is shown: everything for the admin; a reader's own
+// profile and reader settings.
+function settingsSectionsFor(viewer) {
+  return SETTINGS_SECTIONS.filter((item) => can(viewer, `settings.${item.id}`));
+}
 
 // One block of a settings section, as a titled card; `action` sits at the
 // title's end.
@@ -3203,12 +3295,12 @@ function useBuild() {
   return build;
 }
 
-function SettingsIndex({ counts = {}, onOpen }) {
+function SettingsIndex({ counts = {}, onOpen, sections = SETTINGS_SECTIONS }) {
   const build = useBuild();
-  const groups = [...new Set(SETTINGS_SECTIONS.map((item) => item.group))];
+  const groups = [...new Set(sections.map((item) => item.group))];
   return <nav className="settings-index" aria-label="Settings sections">
     {groups.map((group) => <ul key={group}>
-      {SETTINGS_SECTIONS.filter((item) => item.group === group).map(({ id, label, icon: Icon }) => <li key={id}>
+      {sections.filter((item) => item.group === group).map(({ id, label, icon: Icon }) => <li key={id}>
         <button type="button" onClick={() => onOpen(id)}
           aria-label={counts[id] ? `${label}. ${counts[id]} need${counts[id] === 1 ? "s" : ""} a decision` : undefined}>
           <span className={`settings-index-icon settings-index-icon--${id}`} aria-hidden="true"><Icon size={18} weight="fill" /></span>
@@ -3443,7 +3535,349 @@ function SetupView({ catalog, onFinish }) {
   </div>;
 }
 
-function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, onAuthChanged, onSignOut, section, onSectionChange, health, onScanLibrary, scanState, scanProgress }) {
+// ---- Reader profiles ----------------------------------------------------------
+//
+// A profile is drawn as a coloured disc with its initials, the way a Plex Home
+// or Netflix profile is; the colours are the design tokens' profile palette.
+function ProfileAvatar({ profile, size = "md" }) {
+  return <span className={`profile-avatar profile-avatar--${size} profile-avatar--${profileColour(profile)}`} aria-hidden="true">
+    {initials(profile?.name)}
+  </span>;
+}
+
+// "Who's reading?" -- a shared device with more than one profile asks before
+// showing anyone's library. A profile with a PIN asks for it; the admin
+// without a PIN asks for their password; a reader with neither just opens.
+function WhoIsReadingView({ signInAvailable }) {
+  const [profiles, setProfiles] = useState(null);
+  const [asking, setAsking] = useState(null);
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    apiRequest("/api/v1/profiles").then((data) => setProfiles(data.profiles || [])).catch((failure) => setError(failure.message));
+  }, []);
+  async function enter(profile, proof = {}) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await apiRequest("/api/v1/profiles/switch", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile.id, ...proof }),
+      });
+      enterProfile(result.viewer.id);
+    } catch (failure) {
+      setError(failure.message);
+      setBusy(false);
+    }
+  }
+  function choose(profile) {
+    if (profile.hasPin || profile.needsPassword) {
+      setAsking(profile);
+      setSecret("");
+      setError("");
+    } else {
+      enter(profile);
+    }
+  }
+  return <div className="login-shell profile-picker">
+    <div className="profile-picker-card">
+      <FlipparrMark size={48} />
+      <h1>{asking ? asking.name : "Who’s reading?"}</h1>
+      {asking ? <form className="profile-picker-secret" onSubmit={(event) => {
+        event.preventDefault();
+        enter(asking, asking.hasPin ? { pin: secret } : { password: secret });
+      }}>
+        <ProfileAvatar profile={asking} size="lg" />
+        <label className="form-field"><span>{asking.hasPin ? "PIN" : "Password"}</span>
+          <input type="password" autoFocus value={secret} name={asking.hasPin ? "pin" : "password"}
+            inputMode={asking.hasPin ? "numeric" : undefined}
+            autoComplete={asking.hasPin ? "off" : "current-password"}
+            onChange={(event) => setSecret(asking.hasPin ? event.target.value.replace(/\D/g, "").slice(0, 6) : event.target.value)} />
+        </label>
+        {error ? <p className="login-error" role="alert">{error}</p> : null}
+        <div className="profile-picker-actions">
+          <button type="button" className="secondary-button" onClick={() => { setAsking(null); setError(""); }}>Back</button>
+          <button className="primary-button" disabled={busy || !secret} aria-busy={busy}>
+            {busy ? <LoadingSpinner size={18} /> : null} Continue
+          </button>
+        </div>
+      </form> : <>
+        {profiles === null && !error ? <LoadingSpinner size={22} /> : null}
+        <ul className="profile-picker-list">
+          {(profiles || []).map((profile) => <li key={profile.id}>
+            <button type="button" onClick={() => choose(profile)} disabled={busy}>
+              <ProfileAvatar profile={profile} size="lg" />
+              <span>{profile.name}</span>
+              {profile.hasPin || profile.needsPassword ? <small><LockSimple size={12} /> Locked</small> : null}
+            </button>
+          </li>)}
+        </ul>
+        {error ? <p className="login-error" role="alert">{error}</p> : null}
+        {signInAvailable ? <button type="button" className="profile-picker-other" onClick={() => enterProfile(null)}>
+          Sign in with a password instead
+        </button> : null}
+      </>}
+    </div>
+  </div>;
+}
+
+function ColourChoice({ value, onChange }) {
+  return <div className="profile-colours" role="radiogroup" aria-label="Colour">
+    {PROFILE_COLOURS.map((colour) => <button type="button" key={colour} role="radio" aria-checked={value === colour}
+      aria-label={colour} className={`profile-colour profile-avatar--${colour}${value === colour ? " chosen" : ""}`}
+      onClick={() => onChange(colour)}>{value === colour ? <Check size={14} weight="bold" /> : null}</button>)}
+  </div>;
+}
+
+// The admin's list of profiles. Readers read and rate; the library, what is
+// downloaded and every setting stay the admin's.
+function ProfilesSettings() {
+  const [users, setUsers] = useState(() => lastAnswer("/api/v1/users")?.users ?? null);
+  const [security, setSecurity] = useState(() => lastAnswer("/api/v1/auth") ?? null);
+  const [editing, setEditing] = useState(null);
+  const [error, setError] = useState("");
+  async function load() {
+    try {
+      const [list, auth] = await Promise.all([apiRequest("/api/v1/users"), apiRequest("/api/v1/auth")]);
+      setUsers(list.users || []);
+      setSecurity(auth);
+      setError("");
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+  useEffect(() => { load(); }, []);
+  const owner = users?.find((user) => user.id === 1);
+  const guarded = Boolean(owner?.hasPin || security?.configured);
+  return <>
+    <SettingsCard title="Profiles" action={<button type="button" className="secondary-button" onClick={() => setEditing({})} disabled={!guarded}><Plus size={18} /> Add profile</button>}>
+      <p className="settings-card-lead">Everyone who reads this library gets their own place, history and ratings. Readers can read and rate; the library, downloads and settings stay yours.</p>
+      {users && !guarded ? <p className="settings-card-note">First give your own profile a PIN (in Your profile) or a password (in Security), so nobody at a shared device can open yours.</p> : null}
+      {users === null && !error ? <CatalogLoading title="Loading profiles…" detail="" /> : null}
+      {error ? <p className="workbench-error" role="alert">{error}</p> : null}
+      <div className="profile-rows">
+        {(users || []).map((user) => <button type="button" className="profile-row" key={user.id} onClick={() => setEditing(user)}>
+          <ProfileAvatar profile={user} />
+          <span><strong>{user.name}</strong><small>{[
+            user.role === "admin" ? "Admin" : "Reader",
+            user.disabled ? "Off" : "",
+            user.hasPin ? "PIN" : "",
+            user.loginName ? `Signs in as ${user.loginName}` : "",
+          ].filter(Boolean).join(" · ")}</small></span>
+          <CaretRight size={16} aria-hidden="true" />
+        </button>)}
+      </div>
+    </SettingsCard>
+    <SettingsCard title="Shared devices">
+      <p className="settings-card-lead">A device you sign in on with your password asks &ldquo;Who&rsquo;s reading?&rdquo; from then on, like a Plex Home. A reader who signs in with their own password on their own phone gets only their profile.</p>
+    </SettingsCard>
+    {editing ? <ProfileEditorModal user={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} /> : null}
+  </>;
+}
+
+function ProfileEditorModal({ user, onClose, onSaved }) {
+  const dialogRef = useDialog(onClose);
+  const creating = !user.id;
+  const owner = user.id === 1;
+  const [name, setName] = useState(user.name || "");
+  const [colour, setColour] = useState(user.colour || "blue");
+  const [pin, setPin] = useState("");
+  const [loginName, setLoginName] = useState(user.loginName || "");
+  const [password, setPassword] = useState("");
+  const [showOnPicker, setShowOnPicker] = useState(user.showOnPicker ?? true);
+  const [enabled, setEnabled] = useState(!user.disabled);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  async function call(path, method, body) {
+    return apiRequest(path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  }
+  async function save(event) {
+    event.preventDefault();
+    setBusy("save");
+    setError("");
+    const payload = { name, colour, showOnPicker };
+    if (!owner) payload.disabled = !enabled;
+    if (pin) payload.pin = pin;
+    if (!owner && (loginName || user.loginName) && loginName !== (user.loginName || "")) payload.loginName = loginName || null;
+    if (!owner && password) payload.password = password;
+    try {
+      if (creating) await call("/api/v1/users", "POST", payload);
+      else await call(`/api/v1/users/${user.id}`, "PATCH", payload);
+      await onSaved();
+    } catch (failure) {
+      setError(failure.message);
+      setBusy("");
+    }
+  }
+  async function act(kind) {
+    setBusy(kind);
+    setError("");
+    try {
+      if (kind === "pin") await call(`/api/v1/users/${user.id}`, "PATCH", { pin: null });
+      if (kind === "signout") await call(`/api/v1/users/${user.id}/sign-out`, "POST", {});
+      if (kind === "remove") await call(`/api/v1/users/${user.id}`, "DELETE");
+      await onSaved();
+    } catch (failure) {
+      setError(failure.message);
+      setBusy("");
+    }
+  }
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal profile-editor" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="profile-editor-title" onMouseDown={(event) => event.stopPropagation()}>
+    <DialogCloseButton onClose={onClose} label="Close profile" />
+    <span className="eyebrow">{creating ? "New profile" : owner ? "Admin" : "Reader"}</span>
+    <h2 id="profile-editor-title">{creating ? "Add a profile" : user.name}</h2>
+    <form onSubmit={save}>
+      <label className="form-field"><span>Name</span>
+        <input value={name} maxLength={40} autoFocus={creating} onChange={(event) => setName(event.target.value)} placeholder="Their name" />
+      </label>
+      <div className="form-field"><span>Colour</span><ColourChoice value={colour} onChange={setColour} /></div>
+      <label className="form-field"><span>{user.hasPin ? "New PIN" : "PIN"}</span>
+        <input type="password" inputMode="numeric" autoComplete="off" value={pin}
+          onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+          placeholder={user.hasPin ? "Four to six digits, to replace it" : "Optional, four to six digits"} />
+      </label>
+      {owner ? <p className="settings-card-note">Your sign-in name and password are in Security.</p> : <>
+        <label className="form-field"><span>Sign-in name</span>
+          <input value={loginName} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            onChange={(event) => setLoginName(event.target.value.trim())} placeholder="Optional, for their own devices" />
+        </label>
+        <label className="form-field"><span>{user.hasPassword ? "New password" : "Password"}</span>
+          <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)}
+            placeholder={user.hasPassword ? "At least 8 characters, to replace it" : "Optional, at least 8 characters"} />
+        </label>
+      </>}
+      <Toggle checked={showOnPicker} onChange={setShowOnPicker} title="Show on shared devices"
+        description="Listed when a shared device asks who is reading." />
+      {owner || creating ? null : <Toggle checked={enabled} onChange={setEnabled} title="Profile on"
+        description="Off, this profile cannot be opened or signed in to. Its history is kept." />}
+      {error ? <p className="workbench-error" role="alert">{error}</p> : null}
+      <div className="provider-modal-actions">
+        {!creating ? <>
+          {user.hasPin ? <button type="button" className="secondary-button" onClick={() => act("pin")} disabled={Boolean(busy)}>Remove PIN</button> : null}
+          <button type="button" className="secondary-button" onClick={() => act("signout")} disabled={Boolean(busy)}>Sign out everywhere</button>
+        </> : null}
+        <span />
+        {!creating && !owner ? <button type="button" className="danger-button" onClick={() => act("remove")} disabled={Boolean(busy)}>Remove</button> : null}
+        <button className="primary-button" disabled={Boolean(busy) || !name.trim()}>
+          {busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : creating ? "Add profile" : "Save"}
+        </button>
+      </div>
+    </form>
+  </section></div>;
+}
+
+// A profile about itself: name, colour, PIN; a reader's own sign-in; and who
+// is reading on this device.
+function YourProfileSettings({ authStatus, onSignOut }) {
+  const viewer = useViewer();
+  const [profile, setProfile] = useState(() => lastAnswer("/api/v1/me")?.profile ?? null);
+  const [name, setName] = useState(profile?.name ?? viewer?.name ?? "");
+  const [colour, setColour] = useState(profile?.colour ?? viewer?.colour ?? "violet");
+  const [pin, setPin] = useState("");
+  const [loginName, setLoginName] = useState(profile?.loginName ?? "");
+  const [password, setPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState({ card: "", text: "" });
+  const admin = isAdmin(viewer);
+  useEffect(() => {
+    apiRequest("/api/v1/me").then((data) => {
+      setProfile(data.profile);
+      setName(data.profile?.name ?? "");
+      setColour(data.profile?.colour ?? "violet");
+      setLoginName(data.profile?.loginName ?? "");
+    }).catch(() => {});
+  }, []);
+  async function patch(body, done) {
+    setBusy(done);
+    setError({ card: "", text: "" });
+    setMessage("");
+    try {
+      const updated = await apiRequest("/api/v1/me", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      setProfile(updated);
+      setPin("");
+      setPassword("");
+      setCurrentPassword("");
+      setMessage("Saved");
+    } catch (failure) {
+      setError({ card: done, text: failure.message });
+    } finally {
+      setBusy("");
+    }
+  }
+  function saveProfile(event) {
+    event.preventDefault();
+    const body = { name, colour };
+    if (pin) body.pin = pin;
+    patch(body, "profile");
+  }
+  function saveSignIn(event) {
+    event.preventDefault();
+    const body = { loginName: loginName || null };
+    if (password) Object.assign(body, { password, currentPassword });
+    patch(body, "signin");
+  }
+  const household = Boolean(authStatus?.household);
+  return <>
+    <SettingsCard title="Profile">
+      <form className="profile-form" onSubmit={saveProfile}>
+        <div className="profile-form-identity"><ProfileAvatar profile={{ name, colour }} size="lg" /><strong>{name || "Your profile"}</strong></div>
+        <label className="form-field"><span>Name</span><input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label>
+        <div className="form-field"><span>Colour</span><ColourChoice value={colour} onChange={setColour} /></div>
+        <label className="form-field"><span>{profile?.hasPin ? "New PIN" : "PIN"}</span>
+          <input type="password" inputMode="numeric" autoComplete="off" value={pin}
+            onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder={admin ? "Four to six digits, asked on shared devices" : "Optional, four to six digits"} />
+        </label>
+        {error.card === "profile" ? <p className="workbench-error" role="alert">{error.text}</p> : null}
+        <div className="settings-card-actions">
+          <button className="primary-button" disabled={Boolean(busy) || !name.trim()} aria-busy={busy === "profile"}>
+            {busy === "profile" ? <LoadingSpinner size={18} /> : null} Save
+          </button>
+          {profile?.hasPin ? <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => patch({ pin: null }, "profile")}>Remove PIN</button> : null}
+          {message ? <small>{message}</small> : null}
+        </div>
+      </form>
+    </SettingsCard>
+    {admin ? null : <SettingsCard title="Your own sign-in">
+      <form className="profile-form" onSubmit={saveSignIn}>
+        <p className="settings-card-lead">A name and password let you sign in to your profile on your own phone, without a shared device.</p>
+        <label className="form-field"><span>Sign-in name</span>
+          <input value={loginName} autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username"
+            onChange={(event) => setLoginName(event.target.value.trim())} />
+        </label>
+        <label className="form-field"><span>{profile?.hasPassword ? "New password" : "Password"}</span>
+          <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" />
+        </label>
+        {profile?.hasPassword && password ? <label className="form-field"><span>Current password</span>
+          <input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+        </label> : null}
+        {error.card === "signin" ? <p className="workbench-error" role="alert">{error.text}</p> : null}
+        <div className="settings-card-actions">
+          <button className="primary-button" disabled={Boolean(busy)} aria-busy={busy === "signin"}>{busy === "signin" ? <LoadingSpinner size={18} /> : null} Save sign-in</button>
+        </div>
+      </form>
+    </SettingsCard>}
+    <SettingsCard title="This device">
+      <p className="settings-card-lead">{household
+        ? "This is a shared device: switching asks who is reading."
+        : "Signed in on this device as you."}</p>
+      <div className="settings-card-actions">
+        {household ? <button type="button" className="secondary-button" onClick={() => onSignOut()}><UserCircle size={18} /> Switch profile</button> : null}
+        {authStatus?.method === "forms" ? <button type="button" className="secondary-button" onClick={() => onSignOut({ forgetDevice: true })}>
+          <SignOut size={18} /> {household ? "Sign out and forget this device" : "Sign out"}
+        </button> : null}
+      </div>
+    </SettingsCard>
+  </>;
+}
+
+function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, onAuthChanged, onSignOut, section, onSectionChange, health, onScanLibrary, scanState, scanProgress, authStatus }) {
+  const viewer = useViewer();
+  const admin = isAdmin(viewer);
+  const sections = settingsSectionsFor(viewer);
   const settingsLast = lastAnswer("/api/v1/settings");
   const [collectedEditions, setCollectedEditions] = useState(Boolean(settingsLast?.collectedEditionsEnabled));
   const [savingCollectedEditions, setSavingCollectedEditions] = useState(false);
@@ -3453,6 +3887,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   const [autoScanInterval, setAutoScanInterval] = useState(Number(settingsLast?.autoScanIntervalMinutes) || 60);
   const [savingAutoScan, setSavingAutoScan] = useState(false);
   const [everyPage, setEveryPage] = useState(settingsLast?.visionReadsEveryPage ?? true);
+  const [forReaders, setForReaders] = useState(Boolean(settingsLast?.visionForReaders));
   const [savingEveryPage, setSavingEveryPage] = useState(false);
   const [providers, setProviders] = useState(() => lastAnswer("/api/v1/providers")?.providers ?? []);
   const [providerError, setProviderError] = useState("");
@@ -3486,8 +3921,24 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       setAutoScan(result?.autoScanEnabled ?? true);
       setAutoScanInterval(Number(result?.autoScanIntervalMinutes) || 60);
       setEveryPage(result?.visionReadsEveryPage ?? true);
+      setForReaders(Boolean(result?.visionForReaders));
     } catch {
       /* settings fall back to defaults */
+    }
+  }
+  async function toggleForReaders(next) {
+    setSavingEveryPage(true);
+    setForReaders(next);
+    try {
+      const result = await apiRequest("/api/v1/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visionForReaders: next }),
+      });
+      setForReaders(Boolean(result?.visionForReaders));
+    } catch {
+      setForReaders(!next);
+    } finally {
+      setSavingEveryPage(false);
     }
   }
   async function toggleEveryPage(next) {
@@ -3559,7 +4010,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       setSavingAutoScan(false);
     }
   }
-  useEffect(() => { loadProviders(); loadServices(); loadAppSettings(); }, []);
+  // The library's settings are the admin's; a reader's page asks for none of them.
+  useEffect(() => { if (admin) { loadProviders(); loadServices(); loadAppSettings(); } }, [admin]);
   const roots = catalog?.roots || [];
   // A scan started here, from the rail or folders page, or in the background.
   const scanning = scanState === "scanning" || Boolean(catalog?.activeScan);
@@ -3567,8 +4019,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   // always open; on a phone, the list is a page of its own and each section
   // opens over it, as iPhone Settings does.
   const phone = usePhoneWidth();
-  const current = section || (phone ? "" : "health");
-  const open = SETTINGS_SECTIONS.find((item) => item.id === current);
+  const current = section || (phone ? "" : admin ? "health" : "profile");
+  const open = sections.find((item) => item.id === current);
   const needAttention = Number(catalog?.stats?.needAttention ?? 0);
   const modals = <>
     {editingProvider ? <ProviderSettingsModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSaved={async () => { await loadProviders(); setEditingProvider(null); }} /> : null}
@@ -3576,7 +4028,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   </>;
   if (!open) {
     return <><PageHeader title="Settings" />
-      <SettingsIndex onOpen={onSectionChange} counts={{ health: needAttention }} />
+      <SettingsIndex onOpen={onSectionChange} counts={{ health: needAttention }} sections={sections} />
       {modals}
     </>;
   }
@@ -3588,7 +4040,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       {/* The column runs the panel's full height, for its rule; the list in
           it stays in view as a long section scrolls. */}
       {phone ? null : <nav className="settings-nav" aria-label="Settings sections"><div>
-        {SETTINGS_SECTIONS.map(({ id, label }) => <button type="button" key={id}
+        {sections.map(({ id, label }) => <button type="button" key={id}
           className={id === current ? "active" : ""} aria-current={id === current ? "page" : undefined}
           onClick={() => onSectionChange(id)}>
           <span>{label}</span>{id === "health" && needAttention ? <b>{needAttention}</b> : null}
@@ -3599,6 +4051,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
           {phone ? null : <h2>{open.label}</h2>}
           <p>{open.detail}</p>
         </header>
+        {current === "profile" ? <YourProfileSettings authStatus={authStatus} onSignOut={onSignOut} /> : null}
+        {current === "profiles" ? <ProfilesSettings /> : null}
         {current === "health" ? <MetadataView {...health} /> : null}
         {current === "library" ? catalogPending(catalog, backendStatus)
           ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." />
@@ -3648,15 +4102,17 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
           </SettingsCard>
           {/* Claude and ChatGPT are filed here, not under Metadata sources:
               they contribute nothing to what a comic is, only to how a hard
-              page is read. */}
-          <SettingsCard title="Help with hard pages" className="metadata-source-settings">
+              page is read. They spend the admin's key, so they are the admin's. */}
+          {admin ? <><SettingsCard title="Help with hard pages" className="metadata-source-settings">
             <p className="settings-card-lead">Optional. With an API key, one of these is asked about the pages you read in panel view &mdash; each page once, sent as an image &mdash; and the page itself corrects the answer&rsquo;s edges. Nothing is sent while they are off.</p>
             {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+            <Toggle checked={forReaders} onChange={savingEveryPage ? () => {} : toggleForReaders} title="Readers' pages too"
+              description="On, pages other profiles open are asked about as well, on your key. Off, they read what Flipparr found itself and every page you have already had read or fixed." />
             <Toggle checked={everyPage} onChange={savingEveryPage ? () => {} : toggleEveryPage} title="Ask about every page" description="On, the model reads every page you open in panel view and its answer replaces what Flipparr found itself, which can be wrong while sure. Off, it is asked only about the pages Flipparr could not read. About half a cent a page with Sonnet." />
             <p className="settings-card-note">Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds itself and refuses boxes that cross the art.</p>
           </SettingsCard>
-          <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>
+          <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></> : null}
         </> : null}
         {current === "metadata" ? <>
           <SettingsCard title="Sources with an account" className="metadata-source-settings">
@@ -4395,6 +4851,7 @@ function ComicDrawerCreators({ creators }) {
 function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRead, readingVersion = 0,
   coverBusy = false, coverError = "", onSelectSeriesCover, onUploadSeriesCover,
   backdropBusy = false, backdropError = "", onSaveBackdrop, onSetDirection, onRate, onRateIssue, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0 }) {
+  const admin = isAdmin(useViewer());
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   const editionsOn = useCollectedEditions();
@@ -4538,9 +4995,10 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     ["overview", "Overview"],
     ["issues", `Issues (${series.issues?.length ?? 0})`],
     ...(editionsOn ? [["editions", `Volumes (${series.editions?.length ?? 0})`]] : []),
-    ["files", `Files (${series.fileDetails?.length ?? 0})`],
-    ...(editionsOn ? [["family", "Collection"]] : []),
-    ["advanced", "Advanced"],
+    // Files, Collection and Advanced are where a run is repaired: the admin's.
+    ...(admin ? [["files", `Files (${series.fileDetails?.length ?? 0})`]] : []),
+    ...(editionsOn && admin ? [["family", "Collection"]] : []),
+    ...(admin ? [["advanced", "Advanced"]] : []),
   ];
   const alternateTitles = (series.aliases || []).filter((item) => identityKey(item.name) !== identityKey(series.title));
   // A new tab's content slides in from the side it lies on, so moving right
@@ -4559,7 +5017,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       onBack={edit !== null ? () => setEdit(edit ? "" : null) : parentCollection ? onBack : undefined}
       stacked={edit !== null}
       closeLabel="Close series details">
-      {edit === null ? <>
+      {edit === null && admin ? <>
         <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${isFollowing ? " active" : ""}`}
           onClick={() => (isFollowing ? onUnfollow(series) : onRequest())}
           disabled={requestBusy || unfollowBusy} aria-pressed={isFollowing}
@@ -4576,7 +5034,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
       <span className="comic-drawer-scrim" aria-hidden="true" />
       {parentCollection ? <button type="button" className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}
       <div className="comic-drawer-identity">
-        <div className="comic-drawer-cover">{onChangeSeriesCover ? <button type="button" className="drawer-cover-button" onClick={() => onChangeSeriesCover(series)} aria-label={`Change the cover for ${series.title}`}><SeriesCover series={series} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <SeriesCover series={series} />}</div>
+        <div className="comic-drawer-cover">{onChangeSeriesCover && admin ? <button type="button" className="drawer-cover-button" onClick={() => onChangeSeriesCover(series)} aria-label={`Change the cover for ${series.title}`}><SeriesCover series={series} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <SeriesCover series={series} />}</div>
         <div className="comic-drawer-copy">
           <div className="comic-drawer-titles">
             <h2 id="series-drawer-title">{series.title}</h2>
@@ -4584,7 +5042,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
           </div>
           <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} /><StarRating rating={runRating(series)} title={series.title} onRate={(value) => onRate?.(series, value)} />{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
           <Ownership series={series} compact />
-          {isFollowing && wantedIssueCount ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
+          {isFollowing && wantedIssueCount && admin ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
         </div>
       </div>
     </header>
@@ -4621,7 +5079,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
         {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
       </> : null}
-      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={onEditIssue} onRead={onRead} onRate={onRateIssue} readingFiles={readingFiles} medium={series.medium} /> : null}
+      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} readingFiles={readingFiles} medium={series.medium} /> : null}
       {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
       {tab === "files" ? <FileInventory files={series.fileDetails} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
       {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
@@ -4785,6 +5243,7 @@ function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
 }
 
 function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructure, onOpenSeries, onOpenContents, onRequest, onViewRequests, requestBusy, onEditIssue, onUnfollow, unfollowBusy = false }) {
+  const viewer = useViewer();
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   useSwipeToDismiss(dialogRef, requestClose);
@@ -4857,7 +5316,7 @@ function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructu
         {tab === "volumes" ? <div className="collection-volume-list">{volumes.length ? volumes.map((volume) => { const title = volume.subtitle ? `${volume.title}: ${volume.subtitle}` : volume.title; const needsContents = volume.coverageStatus !== "verified"; const canReviewContents = needsContents && volume.linkedFile; return <button className={needsContents ? "unplaced" : "placed"} onClick={() => canReviewContents ? onOpenContents(volume.linkedFile) : onOpenSeries(volume.run)} key={`${volume.run.id}-${volume.logicalVolumeKey || volume.id}`}><span className="collection-volume-cover"><CoverArt id={`collection-volume-${volume.id}`} title={title} cover={volume.cover} decorative placeholderSize={17} /></span><span><strong>{title}</strong><small>{volume.run.title} · {editionKindLabel(volume.editionKind)}{volume.volume ? ` · Vol. ${volume.volume}` : ""}{volume.copyCount > 1 ? ` · ${volume.copyCount} files` : ""}</small>{needsContents ? <b>{volume.coverageStatus === "partial" ? `${volume.contentsIssueCount || 0} issues confirmed · more may be included` : "Issue contents not confirmed"}</b> : <b>{volume.contentsIssueCount || 0} issues confirmed</b>}</span><ArrowRight size={16} /></button>; }) : <div className="drawer-empty"><Books size={27} /><strong>No volumes cataloged</strong></div>}</div> : null}
         {tab === "files" ? <div className="collection-volume-list">{files.map((file) => <button onClick={() => onOpenSeries(file.run)} key={file.id}><HardDrive size={20} weight="duotone" /><span><strong>{file.filename}</strong><small>{file.run.title} · {file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)}</small></span><ArrowRight size={16} /></button>)}</div> : null}
       </div>
-      {tab === "overview" ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}
+      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}
     </aside>
   </div>;
 }
@@ -5020,6 +5479,8 @@ function ReaderSettingsDrawer({
 }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
+  // Correcting and re-scanning a page's panels changes them for everyone.
+  const admin = isAdmin(useViewer());
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
     <aside className={`series-drawer reader-settings-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true"
       aria-labelledby="reader-settings-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -5042,7 +5503,7 @@ function ReaderSettingsDrawer({
           <Toggle checked={panelScrim} onChange={(value) => onPanelScrim(value)} title="Dim around the panel" />
           <Toggle checked={panelStartWhole} onChange={(value) => onPanelStartWhole(value)} title="Start each page on the whole page" />
           <Toggle checked={panelReveal} onChange={(value) => onPanelReveal(value)} title="End each page on the whole page" />
-          {count ? <div className="advanced-tools reader-settings-tools">
+          {count && admin ? <div className="advanced-tools reader-settings-tools">
             <section className="advanced-card">
               <div><strong>Manually fix panels</strong><p>Draw, move, resize or reorder this page&rsquo;s panels by hand.</p></div>
               <button type="button" onClick={onFixPanels}><PencilSimple size={16} /> Fix panels</button>
@@ -5375,7 +5836,20 @@ function ReaderView({
   const [panelScrim, setPanelScrim] = useState(() => loadReaderPrefs().panelScrim);
   const [panelStartWhole, setPanelStartWhole] = useState(() => loadReaderPrefs().panelStartWhole);
   const [panelReveal, setPanelReveal] = useState(() => loadReaderPrefs().panelReveal);
-  useEffect(() => { saveReaderPrefs({ panelMode, panelScrim, panelStartWhole, panelReveal }); }, [panelMode, panelScrim, panelStartWhole, panelReveal]);
+  const prefsSaved = useRef(false);
+  useEffect(() => {
+    saveReaderPrefs({ panelMode, panelScrim, panelStartWhole, panelReveal });
+    // And to the profile, a moment after the last change: not on opening,
+    // which changes nothing.
+    if (!prefsSaved.current) { prefsSaved.current = true; return undefined; }
+    const timer = window.setTimeout(() => {
+      apiRequest("/api/v1/me/prefs", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ panelMode, panelScrim, panelStartWhole, panelReveal }),
+      }).catch(() => {});
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [panelMode, panelScrim, panelStartWhole, panelReveal]);
   // The whole-page steps asked for, before and after a page's panels.
   const stepPrefs = { start: panelStartWhole, end: panelReveal };
   const stepPrefsRef = useRef(stepPrefs);
@@ -6439,12 +6913,12 @@ function LoginView({ onSignedIn }) {
     setBusy(true);
     setError("");
     try {
-      await apiRequest("/api/v1/auth/login", {
+      const result = await apiRequest("/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
-      onSignedIn();
+      onSignedIn(result);
     } catch (err) {
       setError(err.message || "Could not sign in");
     } finally {
@@ -6642,16 +7116,16 @@ export function App() {
   const [reviewFocus, setReviewFocus] = useState(null);
   const [requestFocus, setRequestFocus] = useState(null);
   const [dismissedNotifications, setDismissedNotifications] = useState(
-    () => readDismissed(typeof window === "undefined" ? null : window.localStorage));
+    () => readDismissed(typeof window === "undefined" ? null : profileStorage()));
   // Where this client had got to last time it looked. Set on first run so a
   // browser that has never seen the app does not open onto every comic ever
   // imported; from then on it only moves when an arrival is acknowledged.
   const [seenUntil] = useState(() => {
     if (typeof window === "undefined") return null;
-    const stored = readSeenUntil(window.localStorage);
+    const stored = readSeenUntil(profileStorage());
     if (stored) return stored;
     const now = new Date().toISOString();
-    writeSeenUntil(window.localStorage, now);
+    writeSeenUntil(profileStorage(), now);
     return now;
   });
   const [catalog, setCatalog] = useState(null);
@@ -6745,7 +7219,7 @@ export function App() {
   function dismissNotification(item) {
     setDismissedNotifications((current) => {
       const next = current.includes(item.id) ? current : [...current, item.id];
-      writeDismissed(window.localStorage, next);
+      writeDismissed(profileStorage(), next);
       return next;
     });
   }
@@ -6758,7 +7232,7 @@ export function App() {
     const pruned = pruneDismissed(catalog, dismissedNotifications);
     if (pruned.length === dismissedNotifications.length) return;
     setDismissedNotifications(pruned);
-    writeDismissed(window.localStorage, pruned);
+    writeDismissed(profileStorage(), pruned);
   }, [catalog, dismissedNotifications]);
 
   function navigate(id, sectionId) {
@@ -6818,7 +7292,15 @@ export function App() {
   async function loadAuthStatus() {
     try {
       const status = await apiRequest("/api/v1/auth/status");
+      // A different profile from the one this page was drawn for: start
+      // again as that profile, so its storage and nothing else is read.
+      const viewerId = status?.viewer?.id ?? null;
+      if (viewerId && viewerId !== storageProfile() && storable()) {
+        enterProfile(viewerId);
+        return status;
+      }
       setAuthStatus(status);
+      if (viewerId) syncReaderPrefs();
       return status;
     } catch {
       // Treat an unreachable status endpoint as "no gate", so a backend problem
@@ -6827,17 +7309,17 @@ export function App() {
       return null;
     }
   }
-  async function signOut() {
+  async function signOut({ forgetDevice = false } = {}) {
     try {
       await apiRequest("/api/v1/auth/logout", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ forgetDevice }),
       });
     } catch {
-      // Even if the call fails the session may already be gone; re-checking
-      // below decides what the user actually sees.
+      // Even if the call fails the session may already be gone; the fresh
+      // page decides what the user actually sees -- the picker on a shared
+      // device, the sign-in form elsewhere.
     }
-    setCatalog(null);
-    await loadAuthStatus();
+    enterProfile(null);
   }
   async function loadCatalog() {
     try {
@@ -7855,8 +8337,12 @@ export function App() {
   const finished = Boolean(readFileId) && finishedFileId === readFileId;
   const navActive = active === "import" ? "settings" : active;
   useEffect(() => { loadAuthStatus(); }, []);
+  // A shared device with more than one profile asks who is reading.
+  if (authStatus?.profileRequired) {
+    return <WhoIsReadingView signInAvailable={authStatus.method === "forms"} />;
+  }
   if (authStatus && authStatus.method === "forms" && !authStatus.authenticated) {
-    return <LoginView onSignedIn={async () => { await loadAuthStatus(); await loadCatalog(); }} />;
+    return <LoginView onSignedIn={(result) => enterProfile(result?.viewer?.id ?? null)} />;
   }
   // Setup takes the whole screen: there is nothing useful in the nav until a
   // library folder exists. "Set up later" defers for this session only rather
@@ -7872,5 +8358,5 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); }} /> : null}{finished ? <FinishDrawer key={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{selectedSeries ? <SeriesDrawer key={selectedSeries.id} readingVersion={readingVersion} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider>;
+  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "library" ? <LibraryView onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{SEARCH_VIEWS.has(active) ? <DiscoverView key={active} mode={active} query={viewQuery} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} /> : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); }} /> : null}{finished ? <FinishDrawer key={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{selectedSeries ? <SeriesDrawer key={selectedSeries.id} readingVersion={readingVersion} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onRequest={() => createAcquisitionRequest(selectedSeries)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider>;
 }

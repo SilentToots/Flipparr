@@ -7,6 +7,7 @@
 // backwards in one gesture and forwards in another. Here it is one decision,
 // made once, with a test for every combination.
 
+import { profileStorage } from "./profiles.js";
 export const READING_DIRECTIONS = { ltr: "ltr", rtl: "rtl" };
 
 /** Right to left for manga, left to right for everything else; a run may say otherwise. */
@@ -339,7 +340,7 @@ export function phoneScreen() {
  * and off elsewhere -- Guided View's own default -- and the first save
  * keeps whichever it was.
  */
-export function loadReaderPrefs(storage = globalThis.localStorage, phone = phoneScreen()) {
+export function loadReaderPrefs(storage = profileStorage(), phone = phoneScreen()) {
   let raw = null;
   try { raw = storage?.getItem(READER_PREFS_KEY) ?? null; } catch { raw = null; }
   let saved = {};
@@ -353,7 +354,7 @@ export function loadReaderPrefs(storage = globalThis.localStorage, phone = phone
   };
 }
 
-export function saveReaderPrefs(prefs, storage = globalThis.localStorage) {
+export function saveReaderPrefs(prefs, storage = profileStorage()) {
   try {
     storage?.setItem(READER_PREFS_KEY, JSON.stringify({
       panelMode: Boolean(prefs.panelMode), panelScrim: prefs.panelScrim !== false,

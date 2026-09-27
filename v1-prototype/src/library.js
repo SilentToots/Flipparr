@@ -7,6 +7,7 @@
 // run map the grid already fetches for its cover overlays; the other half is
 // the catalog's own `addedAt`, the day a run's newest comic arrived.
 
+import { profileStorage } from "./profiles.js";
 import { byRating } from "./ratings.js";
 
 export const SORT_OPTIONS = [
@@ -77,7 +78,7 @@ const SORT_IDS = new Set(SORT_OPTIONS.map((option) => option.value));
  * that throws all come back as the defaults rather than a grid that will not
  * render.
  */
-export function loadLibraryPrefs(storage = globalThis.localStorage) {
+export function loadLibraryPrefs(storage = profileStorage()) {
   let raw = null;
   try { raw = storage?.getItem(PREFS_KEY) ?? null; } catch { raw = null; }
   let saved = {};
@@ -93,7 +94,7 @@ export function loadLibraryPrefs(storage = globalThis.localStorage) {
 }
 
 /** Remember the grid. Failing to -- quota, a private window -- costs nothing but the memory. */
-export function saveLibraryPrefs(prefs, storage = globalThis.localStorage) {
+export function saveLibraryPrefs(prefs, storage = profileStorage()) {
   try {
     storage?.setItem(PREFS_KEY, JSON.stringify({
       sort: prefs.sort, view: prefs.view, scope: prefs.scope, followingOnly: Boolean(prefs.followingOnly),
