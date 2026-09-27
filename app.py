@@ -668,6 +668,7 @@ def viewer_for(user: dict[str, Any] | None) -> Viewer | None:
     return Viewer(
         id=int(user["id"]), name=str(user["name"]), role=str(user["role"]), colour=user.get("colour"),
         can_request=bool(user.get("canRequest")), auto_approve=bool(user.get("autoApprove")),
+        avatar=user.get("avatar"),
     )
 
 
@@ -736,7 +737,7 @@ def public_profile(user: dict[str, Any]) -> dict[str, Any]:
     """A profile as the picker shows it: no sign-in name, nothing secret."""
     return {
         "id": user["id"], "name": user["name"], "colour": user["colour"], "role": user["role"],
-        "hasPin": user["hasPin"],
+        "hasPin": user["hasPin"], "avatar": user.get("avatar"),
         # The admin is never one tap away: without a PIN, their password.
         "needsPassword": user["role"] == "admin" and not user["hasPin"],
     }
@@ -871,6 +872,70 @@ def own_prefs_patch(store: "CatalogStore", user_id: int, payload: Any) -> dict[s
         raise ValueError("Reader settings are on or off")
     prefs = {key: value for key, value in store.user_prefs(user_id).items() if key in READER_PREF_KEYS}
     return store.set_user_prefs(user_id, {**prefs, **payload})
+
+
+# ---- Profile pictures ---------------------------------------------------------
+#
+# A profile's picture is a square JPEG the app writes beside the catalog, from
+# a photo someone uploads or from a page of a comic in the library -- a cover,
+# usually, which is the comic reader's version of a Plex profile photo. The
+# row records where it came from; the file is what is served.
+
+AVATAR_SIDE = 320
+
+
+def profile_avatar_dir() -> Path:
+    return catalog_database_path().parent / "avatars"
+
+
+def profile_avatar_path(user_id: int) -> Path:
+    return profile_avatar_dir() / f"{int(user_id)}.jpg"
+
+
+def square_avatar(image_bytes: bytes, *, top_bias: float = 0.5) -> bytes:
+    """The largest square in an image, `top_bias` of the way down any slack, at AVATAR_SIDE.
+
+    A cover's faces are usually in its upper half and its title across the
+    top, so a library page is cut a third of the way down; a photo, centred.
+    """
+    from PIL import Image, ImageOps
+
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+    width, height = image.size
+    side = min(width, height)
+    left = (width - side) // 2
+    top = int((height - side) * min(1.0, max(0.0, top_bias)))
+    square = image.crop((left, top, left + side, top + side)).resize((AVATAR_SIDE, AVATAR_SIDE), Image.LANCZOS)
+    buffer = io.BytesIO()
+    square.save(buffer, format="JPEG", quality=86)
+    return buffer.getvalue()
+
+
+def save_profile_avatar(user_id: int, jpeg: bytes, source: str) -> dict[str, Any]:
+    folder = profile_avatar_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    temporary = folder / f".{int(user_id)}-{threading.get_ident()}.tmp"
+    temporary.write_bytes(jpeg)
+    os.replace(temporary, profile_avatar_path(user_id))
+    return _profiles_store().set_user_avatar(user_id, source)
+
+
+def profile_avatar_from_upload(user_id: int, raw: bytes) -> dict[str, Any]:
+    if not raw or len(raw) > COVER_SOURCE_MAX_BYTES:
+        raise ValueError("A picture must be between 1 byte and 50 MB")
+    return save_profile_avatar(user_id, square_avatar(normalize_image_to_jpeg(raw)), "upload")
+
+
+def profile_avatar_from_library(user_id: int, file_id: int, page: int = 0) -> dict[str, Any]:
+    """A page of a comic in the library -- its cover by default -- as a profile's picture."""
+    image = render_file_page(int(file_id), int(page))
+    return save_profile_avatar(user_id, square_avatar(image, top_bias=0.3), f"library:{int(file_id)}:{int(page)}")
+
+
+def clear_profile_avatar(user_id: int) -> dict[str, Any]:
+    profile_avatar_path(user_id).unlink(missing_ok=True)
+    return _profiles_store().set_user_avatar(user_id, None)
 
 
 def reader_catalog(payload: dict[str, Any]) -> dict[str, Any]:
@@ -12564,6 +12629,25 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/profiles":
             self.send_json({"profiles": profile_choices(_profiles_store())})
             return
+        avatar_get = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)
+        if avatar_get:
+            user = _profiles_store().user(int(avatar_get.group(1)))
+            path = profile_avatar_path(int(avatar_get.group(1)))
+            if user is None or user["disabled"] or not user["avatarSource"] or not path.is_file():
+                self.send_json({"error": "No picture"}, 404)
+                return
+            body = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            # The URL carries the picture's version, so it can be kept.
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if parsed_url.path == "/api/v1/me/activity":
+            self.send_json(_profiles_store().reading_activity(self._viewer_id()))
+            return
         if parsed_url.path == "/api/v1/me":
             store = _profiles_store()
             self.send_json({"profile": store.user(self._viewer_id()),
@@ -12851,8 +12935,41 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.handle_page(parsed_url)
 
+    def _may_change_profile(self, user_id: int) -> bool:
+        """A profile changes its own picture; the admin changes anyone's."""
+        viewer = self._viewer()
+        return viewer.id == user_id or viewer.is_admin
+
     def _route_post(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        avatar_upload = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar/upload", parsed_url.path)
+        if avatar_upload:
+            user_id = int(avatar_upload.group(1))
+            if not self._may_change_profile(user_id):
+                self.send_json({"error": "Your profile can't do that", "reason": "admin_only"}, 403)
+                return
+            if _profiles_store().user(user_id) is None:
+                self.send_json({"error": "That profile does not exist"}, 404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self.send_json({"error": "Invalid Content-Length"}, 400)
+                return
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            if content_type not in {"image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"}:
+                self.send_json({"error": "Upload a JPEG, PNG, WebP, GIF, or HEIC image"}, 415)
+                return
+            if length <= 0 or length > COVER_SOURCE_MAX_BYTES:
+                self.send_json({"error": "A picture must be no larger than 50 MB"}, 413)
+                return
+            try:
+                updated = profile_avatar_from_upload(user_id, self.rfile.read(length))
+            except (ValueError, OSError) as exc:
+                self.send_json({"error": str(exc) or "That picture could not be read"}, 422)
+                return
+            self.send_json(updated)
+            return
         cover_upload_match = re.fullmatch(r"/api/v1/files/(\d+)/cover/upload", parsed_url.path)
         if cover_upload_match:
             self.handle_cover_upload(int(cover_upload_match.group(1)))
@@ -12907,6 +13024,29 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get("forgetDevice"):
                 self._set_cookie(_DEVICE_COOKIE, "", 0)
             self.send_session_cookie("", expire=True)
+            return
+        avatar_set = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)
+        if avatar_set:
+            user_id = int(avatar_set.group(1))
+            if not self._may_change_profile(user_id):
+                self.send_json({"error": "Your profile can't do that", "reason": "admin_only"}, 403)
+                return
+            try:
+                file_id = int(payload.get("fileId"))
+                page = int(payload.get("page") or 0)
+                if _profiles_store().user(user_id) is None:
+                    raise LookupError("That profile does not exist")
+                updated = profile_avatar_from_library(user_id, file_id, page)
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": str(exc) or "Choose a comic from the library"}, 400)
+                return
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (zipfile.BadZipFile, KeyError, OSError) as exc:
+                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                return
+            self.send_json(updated)
             return
         if parsed_url.path == "/api/v1/profiles/switch":
             config = load_auth_config()
@@ -13723,6 +13863,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        avatar_clear = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)
+        if avatar_clear:
+            user_id = int(avatar_clear.group(1))
+            if not self._may_change_profile(user_id):
+                self.send_json({"error": "Your profile can't do that", "reason": "admin_only"}, 403)
+                return
+            try:
+                updated = clear_profile_avatar(user_id)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(updated)
+            return
         users_match = re.fullmatch(r"/api/v1/users/(\d+)", parsed_url.path)
         if users_match:
             user_id = int(users_match.group(1))
@@ -13731,6 +13884,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 _profiles_store().delete_user(user_id)
+                profile_avatar_path(user_id).unlink(missing_ok=True)
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return

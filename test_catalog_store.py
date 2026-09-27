@@ -4176,13 +4176,40 @@ class ReaderProfileTests(LibraryFixture):
             ], "every place, exactly as it was, and the admin's")
             self.assertEqual(ratings, [(ADMIN_USER_ID, issue, 5)])
             self.assertEqual(runs, [(ADMIN_USER_ID, run, 3)])
-            self.assertEqual(version, 49)
+            self.assertEqual(version, catalog_store.SCHEMA_VERSION)
             self.assertEqual(migrated.user(ADMIN_USER_ID)["role"], "admin")
             self.assertEqual(migrated.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 4)
             # And once is once: a second start changes nothing.
             again = CatalogStore(path)
             self.assertEqual(len(again.recent_reading(user_id=ADMIN_USER_ID)), 2)
             self.assertEqual(again.catalog()["series"][0]["yourRating"], 3)
+
+    def test_a_profile_picture_and_reading_activity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            second = self._file_id(store, "Example 002.cbz")
+            sam = self._reader(store)
+            self.assertIsNone(store.user(sam)["avatar"])
+            pictured = store.set_user_avatar(sam, "upload")
+            self.assertTrue(pictured["avatar"].startswith(f"/api/v1/profiles/{sam}/avatar?v="))
+            self.assertIsNone(store.set_user_avatar(sam, None)["avatar"])
+            store.set_reading_progress(first, 23, 24, "sig", finished=True, user_id=sam)
+            store.set_reading_progress(second, 4, 20, "sig", user_id=sam)
+            store.set_reading_progress(second, 9, 20, "sig", user_id=ADMIN_USER_ID)
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            store.set_rating("issue", issue, 5, user_id=sam)
+            activity = store.reading_activity(sam)
+            self.assertEqual({key: activity["stats"][key] for key in ("issuesRead", "inProgress", "runs", "pagesRead", "rated")},
+                             {"issuesRead": 1, "inProgress": 1, "runs": 1, "pagesRead": 24 + 5, "rated": 1},
+                             "a finished comic counts whole, a started one to its page; the admin's reading is not Sam's")
+            self.assertEqual([item["fileId"] for item in activity["history"]], [str(second), str(first)], "newest first")
+            # A library from before pictures (49) gains the columns.
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("ALTER TABLE users DROP COLUMN avatar_updated_at")
+                connection.execute("ALTER TABLE users DROP COLUMN avatar_source")
+                connection.execute("UPDATE schema_info SET version=49")
+            self.assertIsNone(CatalogStore(store.database_path).user(sam)["avatar"])
 
     def test_each_reader_has_their_own_place_and_their_own_ratings(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -15,6 +15,8 @@ Classes, from most to least open:
   shell and its assets.
 - ``household``: a shared device (sign-in off, a device the admin signed in
   on, or the local network when that is allowed) -- the profile picker.
+- ``picture``: a shared device or any profile -- a profile's picture, which
+  the picker shows before anyone is signed in and the header shows after.
 - ``signed_in``: any profile, about itself -- its settings, signing out.
 - ``reader``: any profile -- reading the library.
 - ``admin``: the admin only. The default.
@@ -29,10 +31,11 @@ from dataclasses import dataclass
 
 PUBLIC = "public"
 HOUSEHOLD = "household"
+PICTURE = "picture"
 SIGNED_IN = "signed_in"
 READER = "reader"
 ADMIN = "admin"
-ACCESS_CLASSES = (PUBLIC, HOUSEHOLD, SIGNED_IN, READER, ADMIN)
+ACCESS_CLASSES = (PUBLIC, HOUSEHOLD, PICTURE, SIGNED_IN, READER, ADMIN)
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,7 @@ class Viewer:
     colour: str | None = None
     can_request: bool = False
     auto_approve: bool = False
+    avatar: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -53,7 +57,7 @@ class Viewer:
     def public(self) -> dict[str, object]:
         return {
             "id": self.id, "name": self.name, "role": self.role, "colour": self.colour,
-            "canRequest": self.can_request, "autoApprove": self.auto_approve,
+            "canRequest": self.can_request, "autoApprove": self.auto_approve, "avatar": self.avatar,
         }
 
 
@@ -69,9 +73,14 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # The picker on a shared device.
     (frozenset({"GET"}), r"/api/v1/profiles", HOUSEHOLD),
     (frozenset({"POST"}), r"/api/v1/profiles/switch", HOUSEHOLD),
-    # A profile about itself.
+    (frozenset({"GET"}), r"/api/v1/profiles/(\d+)/avatar", PICTURE),
+    # A profile about itself. Pictures are set by the profile or the admin;
+    # the handler checks which.
     (frozenset({"GET", "PATCH"}), r"/api/v1/me", SIGNED_IN),
     (frozenset({"PATCH"}), r"/api/v1/me/prefs", SIGNED_IN),
+    (frozenset({"GET"}), r"/api/v1/me/activity", SIGNED_IN),
+    (frozenset({"POST", "DELETE"}), r"/api/v1/profiles/(\d+)/avatar", SIGNED_IN),
+    (frozenset({"POST"}), r"/api/v1/profiles/(\d+)/avatar/upload", SIGNED_IN),
     # Reading the library. Covers are served by path, but only a path inside a
     # library folder (`_cover_source_path`), which a page read already exposes.
     (frozenset({"GET"}), r"/api/v1/catalog", READER),
@@ -117,6 +126,8 @@ def allows(access: str, *, viewer: Viewer | None, household: bool) -> bool:
         return True
     if access == HOUSEHOLD:
         return household
+    if access == PICTURE:
+        return household or viewer is not None
     if viewer is None:
         return False
     if access in (SIGNED_IN, READER):

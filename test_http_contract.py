@@ -1540,6 +1540,11 @@ NOT_ADMIN = {
     ("GET", "/api/v1/me"): "signed_in",
     ("PATCH", "/api/v1/me"): "signed_in",
     ("PATCH", "/api/v1/me/prefs"): "signed_in",
+    ("GET", "/api/v1/me/activity"): "signed_in",
+    ("GET", "/api/v1/profiles/1/avatar"): "picture",
+    ("POST", "/api/v1/profiles/1/avatar"): "signed_in",
+    ("DELETE", "/api/v1/profiles/1/avatar"): "signed_in",
+    ("POST", "/api/v1/profiles/1/avatar/upload"): "signed_in",
     ("GET", "/api/v1/catalog"): "reader",
     ("GET", "/api/v1/art-swatch"): "reader",
     ("GET", "/api/file-cover"): "reader",
@@ -1733,3 +1738,42 @@ class ReaderProfileHttpTests(unittest.TestCase):
                               "application/json", headers={"Cookie": f"flipparr_session={cookies['flipparr_session']}"})
         self.assertEqual(refused.status, 403)
         saving.assert_not_called()
+
+    def test_a_profile_has_a_picture_from_a_photo_or_the_library_and_sets_only_its_own(self):
+        sam = self._household_with_a_reader()
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        admin_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        header = lambda cookies: {"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items()), "Content-Type": "image/png"}
+        uploaded = request("POST", self.base + f"/api/v1/profiles/{sam}/avatar/upload", _png_bytes(40), headers=header(sam_cookies))
+        self.assertEqual(uploaded.status, 200, uploaded.body)
+        avatar = uploaded.json()["avatar"]
+        self.assertTrue(avatar.startswith(f"/api/v1/profiles/{sam}/avatar?v="))
+        picture = self.call("GET", avatar)
+        self.assertEqual((picture.status, picture.headers["Content-Type"]), (200, "image/jpeg"),
+                         "the picker shows it before anyone is signed in")
+        from PIL import Image
+        self.assertEqual(Image.open(io.BytesIO(picture.body)).size, (app.AVATAR_SIDE, app.AVATAR_SIDE), "square")
+        self.assertEqual(self.call("GET", "/api/v1/profiles", cookies=sam_cookies).status, 200)
+        listed = self.call("GET", "/api/v1/profiles").json()["profiles"]
+        self.assertEqual(listed[1]["avatar"], avatar)
+        # Sam cannot change the admin's picture; the admin can change Sam's.
+        refused = request("POST", self.base + "/api/v1/profiles/1/avatar/upload", _png_bytes(8), headers=header(sam_cookies))
+        self.assertEqual(refused.status, 403)
+        with patch("app.render_file_page", return_value=_png_bytes(60)) as render:
+            chosen = self.call("POST", f"/api/v1/profiles/{sam}/avatar", {"fileId": 7, "page": 0}, cookies=admin_cookies)
+        self.assertEqual(chosen.status, 200, chosen.body)
+        render.assert_called_once_with(7, 0)
+        self.assertEqual(chosen.json()["avatarSource"], "library:7:0")
+        self.assertNotEqual(chosen.json()["avatar"], avatar, "a new picture, a new address")
+        cleared = self.call("DELETE", f"/api/v1/profiles/{sam}/avatar", cookies=sam_cookies)
+        self.assertEqual((cleared.status, cleared.json()["avatar"]), (200, None))
+        self.assertEqual(self.call("GET", avatar).status, 404)
+
+    def test_a_profile_page_counts_what_its_profile_has_read(self):
+        sam = self._household_with_a_reader()
+        cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        activity = self.call("GET", "/api/v1/me/activity", cookies=cookies).json()
+        self.assertEqual(activity["history"], [])
+        self.assertEqual({key: activity["stats"][key] for key in ("issuesRead", "inProgress", "runs", "pagesRead", "rated")},
+                         {"issuesRead": 0, "inProgress": 0, "runs": 0, "pagesRead": 0, "rated": 0})
+

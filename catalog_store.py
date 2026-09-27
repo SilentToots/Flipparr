@@ -12,6 +12,7 @@ import math
 import re
 import sqlite3
 import threading
+import urllib.parse
 import unicodedata
 from catalog_core_v2.language import detect_language, language_name, normalize_language
 from dataclasses import asdict
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 50
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1273,7 +1274,9 @@ class CatalogStore:
                     disabled INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    last_seen_at TEXT
+                    last_seen_at TEXT,
+                    avatar_source TEXT,
+                    avatar_updated_at TEXT
                 );
                 /* A reader's own settings that should follow them to any
                    device -- how panel view steps, for one -- as a small JSON
@@ -1700,6 +1703,13 @@ class CatalogStore:
                 "CREATE INDEX IF NOT EXISTS reading_progress_by_reader ON reading_progress(user_id, updated_at DESC)"
             )
             connection.execute("CREATE INDEX IF NOT EXISTS reading_progress_file ON reading_progress(file_id)")
+            # 50: a profile's picture -- a photo, or a cover from the library.
+            # The image is a file the app writes; the row says where it came
+            # from and when, which is what makes its URL change with it.
+            user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+            for column in ("avatar_source", "avatar_updated_at"):
+                if column not in user_columns:
+                    connection.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
 
     @staticmethod
     def _key_personal_tables_by_reader(connection: sqlite3.Connection) -> None:
@@ -3701,7 +3711,7 @@ class CatalogStore:
 
     _USER_PUBLIC = (
         "id, name, login_name, role, colour, can_request, auto_approve, show_on_picker, "
-        "session_version, disabled, created_at, updated_at, last_seen_at, "
+        "session_version, disabled, created_at, updated_at, last_seen_at, avatar_source, avatar_updated_at, "
         "password_hash IS NOT NULL AS has_password, pin_hash IS NOT NULL AS has_pin"
     )
 
@@ -3717,6 +3727,13 @@ class CatalogStore:
             "disabled": bool(row["disabled"]), "hasPassword": bool(row["has_password"]),
             "hasPin": bool(row["has_pin"]), "createdAt": row["created_at"],
             "updatedAt": row["updated_at"], "lastSeenAt": row["last_seen_at"],
+            # The picture's address changes whenever the picture does, so a
+            # browser that kept the old one asks again.
+            "avatar": (
+                f"/api/v1/profiles/{int(row['id'])}/avatar?v={urllib.parse.quote(str(row['avatar_updated_at']))}"
+                if row["avatar_source"] else None
+            ),
+            "avatarSource": row["avatar_source"],
         }
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -3882,6 +3899,53 @@ class CatalogStore:
         if row is None:
             raise LookupError("That profile does not exist")
         return int(row["session_version"])
+
+    def set_user_avatar(self, user_id: int, source: str | None) -> dict[str, Any]:
+        """Record where a profile's picture came from (`upload`, `library:<file>:<page>`), or that it has none."""
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE users SET avatar_source=?, avatar_updated_at=?, updated_at=? WHERE id=?",
+                (source, _utc_now() if source else None, _utc_now(), int(user_id)),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("That profile does not exist")
+        return self.user(user_id)
+
+    def reading_activity(self, user_id: int, *, history_limit: int = 24) -> dict[str, Any]:
+        """What a profile has read: the numbers for its page, and its history, newest first.
+
+        Pages read counts a finished comic whole and a started one up to the
+        page it is on -- the place is all that is kept, not a log of turns.
+        """
+        year = _utc_now()[:4]
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS started,
+                          SUM(CASE WHEN reading_progress.finished_at IS NOT NULL THEN 1 ELSE 0 END) AS finished,
+                          SUM(CASE WHEN reading_progress.finished_at IS NOT NULL
+                                   THEN reading_progress.page_count ELSE reading_progress.page + 1 END) AS pages,
+                          SUM(CASE WHEN substr(reading_progress.finished_at, 1, 4)=? THEN 1 ELSE 0 END) AS this_year,
+                          COUNT(DISTINCT file_identities.series_run_id) AS runs
+                   FROM reading_progress
+                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
+                   LEFT JOIN file_identities ON file_identities.file_id=files.id
+                   WHERE reading_progress.user_id=?""",
+                (year, int(user_id)),
+            ).fetchone()
+            rated = connection.execute(
+                "SELECT (SELECT COUNT(*) FROM issue_ratings WHERE user_id=?) + (SELECT COUNT(*) FROM series_run_ratings WHERE user_id=?)",
+                (int(user_id), int(user_id)),
+            ).fetchone()[0]
+        started = int(row["started"] or 0)
+        finished = int(row["finished"] or 0)
+        return {
+            "stats": {
+                "issuesRead": finished, "inProgress": started - finished, "runs": int(row["runs"] or 0),
+                "pagesRead": int(row["pages"] or 0), "finishedThisYear": int(row["this_year"] or 0),
+                "rated": int(rated or 0), "year": int(year),
+            },
+            "history": self.recent_reading(history_limit, user_id=user_id),
+        }
 
     def touch_user(self, user_id: int) -> None:
         with self._write_lock, self._connect() as connection:
