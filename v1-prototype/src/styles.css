@@ -866,6 +866,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .segmented-tab { position: relative; z-index: 1; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-6); min-height: 36px; padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; cursor: pointer; transition: color var(--motion-duration-fast) ease; }
 .segmented-tab.active { color: var(--text); }
 .segmented-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.segmented-tab:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 /* The head of the Wanted list: how much is missing, and the search for it. */
 .request-list-bar { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-10); margin-bottom: var(--space-12); }
 .request-list-bar > span { color: var(--muted); font-size: var(--text-sm); }
@@ -3722,15 +3723,30 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-row > span:not(.profile-avatar) { display: grid; gap: var(--space-2); flex: 1; min-width: 0; }
 .profile-row small { color: var(--muted); font-size: var(--text-sm); }
 @media (hover: hover) { .profile-row:hover { background: var(--surface-hover); } }
-.profile-colours { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+/* The eight colours on one line at any width: a column each, the gap
+   narrowing on a phone before a swatch would. */
+.profile-colours { display: grid; grid-template-columns: repeat(8, minmax(0, var(--control-height-sm))); gap: var(--space-8); }
+@media (max-width: 640px) { .profile-colours { gap: var(--space-4); } }
 .profile-colour {
-  display: grid; place-items: center; width: var(--control-height-sm); height: var(--control-height-sm);
+  display: grid; place-items: center; width: 100%; aspect-ratio: 1; height: auto; padding: 0;
   border: 2px solid transparent; border-radius: var(--radius-pill); color: var(--color-neutral-0); cursor: pointer;
 }
 .profile-colour.chosen { border-color: var(--color-neutral-0); }
 .profile-form { display: grid; gap: var(--space-16); }
+/* What switching to a profile asks for: the choice, what it means, and the one field it needs. */
+.switch-lock { display: grid; gap: var(--space-12); }
+.switch-lock .settings-card-note { margin: 0; }
 .profile-form-identity { display: flex; align-items: center; gap: var(--space-16); font-size: var(--text-lg); }
-.profile-editor form { display: grid; gap: var(--space-16); margin-top: var(--space-16); }
+/* The admin's editor for a profile: Settings' cards on the modal's raised
+   surface, so a step down (the phone Settings card) rather than up. */
+.profile-editor-cards { display: grid; gap: var(--space-12); }
+.profile-editor > .profile-editor-cards { margin-top: var(--space-16); }
+.profile-editor .settings-card { padding: var(--space-20); background: var(--surface); }
+.profile-editor .settings-card > header { margin-bottom: var(--space-12); }
+.profile-editor .settings-card > header h3 { margin: 0; font-size: var(--text-md); }
+.profile-editor .settings-card .settings-card-lead, .profile-editor .settings-card .settings-card-note { margin: 0; }
+.profile-editor .toggle-row { min-height: 52px; padding: var(--space-4) 0; }
+.profile-editor .provider-modal-actions { margin-top: var(--space-4); }
 .sidebar-profile {
   display: flex; align-items: center; gap: var(--space-8); width: 100%; padding: var(--space-6) var(--space-8);
   border: 0; border-radius: var(--radius-8); background: transparent; color: var(--text); font-size: var(--text-sm); text-align: left; cursor: pointer;

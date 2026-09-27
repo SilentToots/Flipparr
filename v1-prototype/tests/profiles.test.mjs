@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   setStorageProfile, profileKey, profileStorage, migrateLegacyKeys, can, isAdmin,
-  initials, pinInput, profileColour, VIEWER_CACHE_KEY,
+  initials, pinInput, profileColour, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS,
 } from "../src/profiles.js";
 
 function memoryStorage(initial = {}) {
@@ -67,4 +67,30 @@ test("the PIN pad takes digits, up to six, and backspace", () => {
   assert.equal(pin, "123456");
   assert.equal(pinInput(pin, "Backspace"), "12345");
   assert.equal(pinInput("", "Backspace"), "");
+});
+
+test("a profile opens with a tap, a PIN or a password, and the admin never with a tap", () => {
+  assert.equal(isLocked({ lock: "open" }), false);
+  assert.equal(isLocked({ lock: "pin" }), true);
+  assert.equal(isLocked({ lock: "password" }), true);
+  assert.equal(isLocked(null), false);
+  assert.equal(LOCK_LABELS.open, undefined, "an open profile says nothing about it");
+  const disabled = (profile, options) => lockChoices(profile, options).filter((c) => c.disabled).map((c) => c.id);
+  assert.deepEqual(disabled({ id: 2, role: "reader" }), []);
+  assert.deepEqual(disabled({ id: 1, role: "admin" }), ["open", "password"], "no password to ask for until Security has one");
+  assert.deepEqual(disabled({ id: 1, role: "admin" }, { adminPassword: true }), ["open"]);
+});
+
+test("choosing a lock sends what it needs, and nothing it cannot use", () => {
+  const sam = { id: 2, role: "reader", hasPin: false, hasPassword: false };
+  assert.equal(lockPatch(sam, "pin"), null, "a PIN lock needs a PIN");
+  assert.equal(lockPatch(sam, "pin", { pin: "12" }), null, "four to six digits");
+  assert.deepEqual(lockPatch(sam, "pin", { pin: "1357" }), { switchLock: "pin", pin: "1357" });
+  assert.deepEqual(lockPatch({ ...sam, hasPin: true }, "pin"), { switchLock: "pin" }, "keeps the PIN it has");
+  assert.deepEqual(lockPatch({ ...sam, hasPin: true }, "open"), { switchLock: "open", pin: null }, "an unused PIN goes");
+  assert.equal(lockPatch(sam, "password", { password: "short" }), null);
+  assert.deepEqual(lockPatch(sam, "password", { password: "long enough" }), { switchLock: "password", password: "long enough" });
+  assert.deepEqual(lockPatch({ ...sam, hasPassword: true }, "password"), { switchLock: "password" }, "keeps the password it has");
+  assert.deepEqual(lockPatch({ id: 1, role: "admin", hasPin: true }, "password", { password: "ignored!!" }),
+    { switchLock: "password", pin: null }, "the admin's password is Security's");
 });

@@ -1642,7 +1642,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         status = self.call("GET", "/api/v1/auth/status").json()
         self.assertEqual((status["profileRequired"], status["authenticated"], status["household"]), (True, False, True))
         profiles = self.call("GET", "/api/v1/profiles").json()["profiles"]
-        self.assertEqual([(p["name"], p["hasPin"]) for p in profiles], [("Admin", True), ("Sam", False)])
+        self.assertEqual([(p["name"], p["lock"]) for p in profiles], [("Admin", "pin"), ("Sam", "open")])
         self.assertNotIn("loginName", profiles[0], "the picker shows no sign-in names")
         # Sam taps their own profile: no PIN, in.
         switched = self.call("POST", "/api/v1/profiles/switch", {"userId": sam})
@@ -1663,6 +1663,41 @@ class ReaderProfileHttpTests(unittest.TestCase):
         admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"})
         self.assertEqual(admin.status, 200)
         self.assertEqual(self.call("GET", "/api/v1/settings", cookies=admin.cookies).status, 200)
+
+    def test_each_profile_chooses_to_open_with_a_tap_a_pin_or_a_password(self):
+        sam = self._household_with_a_reader()
+        def lock_of(user_id):
+            return {p["id"]: p["lock"] for p in self.call("GET", "/api/v1/profiles").json()["profiles"]}[user_id]
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        # A password to open with needs no sign-in name: it is asked only on the picker.
+        chose = self.call("PATCH", "/api/v1/me", {"switchLock": "password", "password": "sams password"}, cookies=sam_cookies)
+        self.assertEqual((chose.status, chose.json()["lock"], chose.json()["loginName"]), (200, "password", None), chose.body)
+        self.assertEqual(lock_of(sam), "password")
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).status, 403)
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "pin": "1234"}).status, 403)
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "password": "sams password"}).status, 200)
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "password": "sams password"}).cookies
+        # A PIN, chosen with the PIN it opens with; a lock without its secret is refused.
+        self.assertEqual(self.call("PATCH", "/api/v1/me", {"switchLock": "pin"}, cookies=sam_cookies).status, 400)
+        pin = self.call("PATCH", "/api/v1/me", {"switchLock": "pin", "pin": "1357"}, cookies=sam_cookies)
+        self.assertEqual((pin.status, pin.json()["lock"]), (200, "pin"))
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "password": "sams password"}).status, 403)
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "pin": "1357"}).status, 200)
+        # Open again, keeping both secrets: a tap.
+        opened = self.call("PATCH", "/api/v1/me", {"switchLock": "open"}, cookies=sam_cookies)
+        self.assertEqual((opened.status, opened.json()["lock"], opened.json()["hasPin"]), (200, "open", True))
+        self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).status, 200)
+        # The admin is never one tap away while there are readers.
+        admin_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        refused = self.call("PATCH", "/api/v1/me", {"switchLock": "open"}, cookies=admin_cookies)
+        self.assertEqual(refused.status, 400)
+        self.assertEqual(self.call("PATCH", "/api/v1/me", {"switchLock": "password"}, cookies=admin_cookies).status, 400,
+                         "no password to open with until one is set in Security")
+        self.assertEqual(self.call("PATCH", "/api/v1/me", {"pin": None}, cookies=admin_cookies).status, 400)
+        self.assertEqual(lock_of(1), "pin")
+        # The admin sets a reader's lock too.
+        by_admin = self.call("PATCH", f"/api/v1/users/{sam}", {"switchLock": "pin"}, cookies=admin_cookies)
+        self.assertEqual((by_admin.status, by_admin.json()["lock"]), (200, "pin"))
 
     def test_each_profile_reads_and_rates_on_its_own(self):
         sam = self._household_with_a_reader()

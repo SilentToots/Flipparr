@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -33,6 +33,8 @@ PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
 # the library's.
 ADMIN_USER_ID = 1
 USER_ROLES = ("admin", "reader")
+# What a profile asks for when someone switches to it on a shared device.
+SWITCH_LOCKS = ("open", "pin", "password")
 # A profile's colour on the picker and in the nav: the design system's own
 # accent names, never a free value, so a colour is always one the UI can draw.
 PROFILE_COLOURS = ("violet", "blue", "teal", "green", "amber", "orange", "red", "pink")
@@ -1276,7 +1278,8 @@ class CatalogStore:
                     updated_at TEXT NOT NULL,
                     last_seen_at TEXT,
                     avatar_source TEXT,
-                    avatar_updated_at TEXT
+                    avatar_updated_at TEXT,
+                    switch_lock TEXT NOT NULL DEFAULT 'open' CHECK(switch_lock IN ('open', 'pin', 'password'))
                 );
                 /* A reader's own settings that should follow them to any
                    device -- how panel view steps, for one -- as a small JSON
@@ -1710,6 +1713,20 @@ class CatalogStore:
             for column in ("avatar_source", "avatar_updated_at"):
                 if column not in user_columns:
                     connection.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
+            # 51: what a profile asks for when someone switches to it -- nothing,
+            # its PIN or its password -- chosen by the profile, not implied by
+            # which secrets it happens to have. Existing profiles keep what
+            # they asked for before: a PIN if they had one; the admin, without
+            # one, their password.
+            if "switch_lock" not in user_columns:
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN switch_lock TEXT NOT NULL DEFAULT 'open' "
+                    "CHECK(switch_lock IN ('open', 'pin', 'password'))"
+                )
+                connection.execute(
+                    "UPDATE users SET switch_lock = CASE WHEN pin_hash IS NOT NULL THEN 'pin' "
+                    "WHEN role = 'admin' THEN 'password' ELSE 'open' END"
+                )
 
     @staticmethod
     def _key_personal_tables_by_reader(connection: sqlite3.Connection) -> None:
@@ -3711,7 +3728,7 @@ class CatalogStore:
 
     _USER_PUBLIC = (
         "id, name, login_name, role, colour, can_request, auto_approve, show_on_picker, "
-        "session_version, disabled, created_at, updated_at, last_seen_at, avatar_source, avatar_updated_at, "
+        "session_version, disabled, created_at, updated_at, last_seen_at, avatar_source, avatar_updated_at, switch_lock, "
         "password_hash IS NOT NULL AS has_password, pin_hash IS NOT NULL AS has_pin"
     )
 
@@ -3734,6 +3751,7 @@ class CatalogStore:
                 if row["avatar_source"] else None
             ),
             "avatarSource": row["avatar_source"],
+            "switchLock": row["switch_lock"],
         }
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -3788,6 +3806,7 @@ class CatalogStore:
         self, name: str, *, role: str = "reader", login_name: str | None = None,
         password_hash: str | None = None, pin_hash: str | None = None, colour: str | None = None,
         can_request: bool = True, auto_approve: bool = False, show_on_picker: bool = True,
+        switch_lock: str = "open",
     ) -> dict[str, Any]:
         """A new profile.
 
@@ -3799,6 +3818,8 @@ class CatalogStore:
             raise ValueError("A profile is an admin or a reader")
         if colour is not None and colour not in PROFILE_COLOURS:
             raise ValueError("Choose one of the profile colours")
+        if switch_lock not in SWITCH_LOCKS:
+            raise ValueError("A profile opens with nothing, a PIN or a password")
         name = self._profile_name(name)
         login = self._login_name(login_name)
         now = _utc_now()
@@ -3806,10 +3827,10 @@ class CatalogStore:
             try:
                 cursor = connection.execute(
                     """INSERT INTO users(name, login_name, role, colour, password_hash, pin_hash,
-                                         can_request, auto_approve, show_on_picker, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         can_request, auto_approve, show_on_picker, switch_lock, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (name, login, role, colour, password_hash, pin_hash, int(bool(can_request)),
-                     int(bool(auto_approve)), int(bool(show_on_picker)), now, now),
+                     int(bool(auto_approve)), int(bool(show_on_picker)), switch_lock, now, now),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("Another profile already signs in with that name") from exc
@@ -3820,6 +3841,7 @@ class CatalogStore:
         "name": "name", "loginName": "login_name", "role": "role", "colour": "colour",
         "passwordHash": "password_hash", "pinHash": "pin_hash", "canRequest": "can_request",
         "autoApprove": "auto_approve", "showOnPicker": "show_on_picker", "disabled": "disabled",
+        "switchLock": "switch_lock",
     }
     # What ends a profile's sign-ins everywhere when it changes: a new
     # password, a changed role, being switched off. A PIN is not a sign-in.
@@ -3841,6 +3863,8 @@ class CatalogStore:
                 raise ValueError("A profile is an admin or a reader")
             elif column == "colour" and value is not None and value not in PROFILE_COLOURS:
                 raise ValueError("Choose one of the profile colours")
+            elif column == "switch_lock" and value not in SWITCH_LOCKS:
+                raise ValueError("A profile opens with nothing, a PIN or a password")
             elif column in ("can_request", "auto_approve", "show_on_picker", "disabled"):
                 value = int(bool(value))
             values[column] = value

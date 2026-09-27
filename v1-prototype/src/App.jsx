@@ -65,7 +65,7 @@ import {
 } from "./design-icons.jsx";
 import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
 import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
-import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, PROFILE_COLOURS, VIEWER_CACHE_KEY } from "./profiles.js";
+import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, PROFILE_COLOURS, VIEWER_CACHE_KEY, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import {
   HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
@@ -733,7 +733,7 @@ function GlassSegmented({ label, items, value, onChange, className = "" }) {
     {items.map((item) => <button type="button" role="radio" aria-checked={value === item.id}
       className={`segmented-tab${item.label ? "" : " segmented-tab--icon"}${value === item.id ? " active" : ""}`}
       aria-label={item.label ? undefined : item.title} title={item.label ? undefined : item.title}
-      onClick={() => onChange(item.id)} key={item.id}>{item.icon}{item.label}</button>)}
+      disabled={item.disabled} onClick={() => onChange(item.id)} key={item.id}>{item.icon}{item.label}</button>)}
   </div>;
 }
 
@@ -3247,7 +3247,7 @@ function MetadataComparison({ comparison }) {
 // them, grouped as iOS Settings groups its rows -- its icon and group.
 const SETTINGS_SECTIONS = [
   { id: "profile", label: "Your profile", icon: UserCircle, group: "you",
-    detail: "Your name, colour and PIN, and who is reading on this device." },
+    detail: "Your name and colour, what switching to you asks for, and this device." },
   { id: "health", label: "Library health", icon: Heartbeat, group: "library",
     detail: "Damaged files and matches waiting for you to confirm or fix." },
   { id: "library", label: "Library folders", icon: FolderOpen, group: "library",
@@ -3598,7 +3598,7 @@ function ProfileMenu({ onClose }) {
       {others.map((profile) => <button type="button" className="profile-menu-item" key={profile.id} onClick={go(() => actions.onSwitchTo(profile))}>
         <ProfileAvatar profile={profile} />
         <span>{profile.name}</span>
-        {profile.hasPin || profile.needsPassword ? <LockSimple size={14} aria-label="Asks for a PIN or password" /> : null}
+        {isLocked(profile) ? <LockSimple size={14} aria-label={profile.lock === "pin" ? "Asks for a PIN" : "Asks for a password"} /> : null}
       </button>)}
     </> : null}
     {isAdmin(viewer) ? <button type="button" className="profile-menu-item" onClick={go(actions.onAdd)}>
@@ -3625,7 +3625,7 @@ function AddProfileSheet({ onClose, onAdded }) {
   const [ownPin, setOwnPin] = useState("");
   useEffect(() => {
     Promise.all([apiRequest("/api/v1/me"), apiRequest("/api/v1/auth")])
-      .then(([me, auth]) => setGuarded(Boolean(me?.profile?.hasPin || auth?.configured)))
+      .then(([me]) => setGuarded(isLocked(me?.profile)))
       .catch(() => setGuarded(true));
   }, []);
   async function submit(event) {
@@ -3820,7 +3820,7 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
   function choose(profile) {
     // Choosing who is already reading is choosing to carry on.
     if (profile.id === current) { onClose?.(); return; }
-    if (profile.hasPin || profile.needsPassword) {
+    if (isLocked(profile)) {
       setAsking(profile);
       setSecret("");
       setError("");
@@ -3836,14 +3836,14 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
       <h1>{asking ? asking.name : "Who’s reading?"}</h1>
       {asking ? <form className="profile-picker-secret" onSubmit={(event) => {
         event.preventDefault();
-        enter(asking, asking.hasPin ? { pin: secret } : { password: secret });
+        enter(asking, asking.lock === "pin" ? { pin: secret } : { password: secret });
       }}>
         <ProfileAvatar profile={asking} size="lg" />
-        <label className="form-field"><span>{asking.hasPin ? "PIN" : "Password"}</span>
-          <input type="password" autoFocus value={secret} name={asking.hasPin ? "pin" : "password"}
-            inputMode={asking.hasPin ? "numeric" : undefined}
-            autoComplete={asking.hasPin ? "off" : "current-password"}
-            onChange={(event) => setSecret(asking.hasPin ? event.target.value.replace(/\D/g, "").slice(0, 6) : event.target.value)} />
+        <label className="form-field"><span>{asking.lock === "pin" ? "PIN" : "Password"}</span>
+          <input type="password" autoFocus value={secret} name={asking.lock === "pin" ? "pin" : "password"}
+            inputMode={asking.lock === "pin" ? "numeric" : undefined}
+            autoComplete={asking.lock === "pin" ? "off" : "current-password"}
+            onChange={(event) => setSecret(asking.lock === "pin" ? event.target.value.replace(/\D/g, "").slice(0, 6) : event.target.value)} />
         </label>
         {error ? <p className="login-error" role="alert">{error}</p> : null}
         <div className="profile-picker-actions">
@@ -3860,7 +3860,7 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
               <ProfileAvatar profile={profile} size="lg" />
               <span>{profile.name}</span>
               {profile.id === current ? <small>Reading now</small>
-                : profile.hasPin || profile.needsPassword ? <small><LockSimple size={12} /> Locked</small> : null}
+                : isLocked(profile) ? <small><LockSimple size={12} /> Locked</small> : null}
             </button>
           </li>)}
           {canAdd && profiles ? <li>
@@ -3908,7 +3908,7 @@ function ProfilesSettings({ catalog }) {
   // Reloaded when a profile is added from anywhere -- the header's menu, the picker.
   useEffect(() => { load(); }, [header?.profile?.version]);
   const owner = users?.find((user) => user.id === 1);
-  const guarded = Boolean(owner?.hasPin || security?.configured);
+  const guarded = isLocked(owner);
   return <>
     <SettingsCard title="Profiles" action={<button type="button" className="secondary-button" onClick={() => header?.profile?.onAdd()} disabled={!guarded}><Plus size={18} /> Add profile</button>}>
       <p className="settings-card-lead">Readers can read and rate; the library, downloads and settings stay yours.</p>
@@ -3921,7 +3921,7 @@ function ProfilesSettings({ catalog }) {
           <span><strong>{user.name}</strong><small>{[
             user.role === "admin" ? "Admin" : "Reader",
             user.disabled ? "Off" : "",
-            user.hasPin ? "PIN" : "",
+            LOCK_LABELS[user.lock] ?? "",
             user.loginName ? `Signs in as ${user.loginName}` : "",
           ].filter(Boolean).join(" · ")}</small></span>
           <CaretRight size={16} aria-hidden="true" />
@@ -3931,22 +3931,54 @@ function ProfilesSettings({ catalog }) {
     <SettingsCard title="Shared devices">
       <p className="settings-card-lead">A device you sign in on with your password asks &ldquo;Who&rsquo;s reading?&rdquo; from then on, like a Plex Home. A reader who signs in with their own password on their own phone gets only their profile.</p>
     </SettingsCard>
-    {editing ? <ProfileEditorModal user={editing} catalog={catalog} onClose={() => setEditing(null)}
+    {editing ? <ProfileEditorModal user={editing} catalog={catalog} adminPassword={Boolean(security?.configured)} onClose={() => setEditing(null)}
       onPictureChanged={async (updated) => { setEditing(updated); await load(); }}
       onSaved={async () => { setEditing(null); await load(); }} /> : null}
   </>;
 }
 
-function ProfileEditorModal({ user, catalog, onClose, onSaved, onPictureChanged }) {
+// What switching to a profile asks for, as the profile chooses: a tap, its
+// PIN or its password (the admin's is the one in Security). Your profile and
+// the admin's editor both draw it; the form around it saves.
+function SwitchLockFields({ profile, self = false, adminPassword, lock, onLock, pin, onPin, password, onPassword }) {
+  const owner = profile?.id === 1;
+  const choices = lockChoices(profile, { adminPassword });
+  const reasons = choices.filter((choice) => choice.disabled && choice.reason).map((choice) => choice.reason);
+  const whom = self ? "you" : profile?.name || "them";
+  const detail = {
+    open: `Anyone at a shared device can switch to ${whom} with a tap.`,
+    pin: `Switching to ${whom} asks for a PIN.`,
+    password: owner ? `Switching to ${whom} asks for the password in Security.` : `Switching to ${whom} asks for ${self ? "your" : "their"} password.`,
+  }[lock];
+  return <div className="switch-lock">
+    <GlassSegmented label="When switching, ask for" items={choices} value={lock} onChange={onLock} />
+    <p className="settings-card-note">{[detail, ...reasons].join(" ")}</p>
+    {lock === "pin" ? <label className="form-field"><span>{profile?.hasPin ? "New PIN" : "PIN"}</span>
+      <input type="password" inputMode="numeric" autoComplete="off" value={pin}
+        onChange={(event) => onPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+        placeholder={profile?.hasPin ? "Leave blank to keep it" : "Four to six digits"} />
+    </label> : null}
+    {lock === "password" && !owner && !profile?.hasPassword ? <label className="form-field"><span>Password</span>
+      <input type="password" autoComplete="new-password" value={password} onChange={(event) => onPassword(event.target.value)}
+        placeholder="At least 8 characters" />
+    </label> : null}
+  </div>;
+}
+
+function ProfileEditorModal({ user, catalog, adminPassword, onClose, onSaved, onPictureChanged }) {
   const dialogRef = useDialog(onClose);
   const creating = !user.id;
   const owner = user.id === 1;
   const [name, setName] = useState(user.name || "");
   const [colour, setColour] = useState(user.colour || "blue");
+  const [lock, setLock] = useState(user.lock || "open");
   const [pin, setPin] = useState("");
   const [loginName, setLoginName] = useState(user.loginName || "");
   const [password, setPassword] = useState("");
   const [showOnPicker, setShowOnPicker] = useState(user.showOnPicker ?? true);
+  const lockEdit = creating ? {} : lockPatch(user, lock, { pin, password });
+  // The lock's own password field stands in for the sign-in one while there is none.
+  const lockAsksPassword = !creating && !owner && lock === "password" && !user.hasPassword;
   const [enabled, setEnabled] = useState(!user.disabled);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -3957,9 +3989,9 @@ function ProfileEditorModal({ user, catalog, onClose, onSaved, onPictureChanged 
     event.preventDefault();
     setBusy("save");
     setError("");
-    const payload = { name, colour, showOnPicker };
+    const payload = { name, colour, showOnPicker, ...lockEdit };
     if (!owner) payload.disabled = !enabled;
-    if (pin) payload.pin = pin;
+    if (creating && pin) payload.pin = pin;
     if (!owner && (loginName || user.loginName) && loginName !== (user.loginName || "")) payload.loginName = loginName || null;
     if (!owner && password) payload.password = password;
     try {
@@ -3975,7 +4007,6 @@ function ProfileEditorModal({ user, catalog, onClose, onSaved, onPictureChanged 
     setBusy(kind);
     setError("");
     try {
-      if (kind === "pin") await call(`/api/v1/users/${user.id}`, "PATCH", { pin: null });
       if (kind === "signout") await call(`/api/v1/users/${user.id}/sign-out`, "POST", {});
       if (kind === "remove") await call(`/api/v1/users/${user.id}`, "DELETE");
       await onSaved();
@@ -3984,60 +4015,78 @@ function ProfileEditorModal({ user, catalog, onClose, onSaved, onPictureChanged 
       setBusy("");
     }
   }
+  // Grouped as Settings groups a section: a card for each thing the admin
+  // decides about the profile, and the profile's actions at the foot.
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal profile-editor" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="profile-editor-title" onMouseDown={(event) => event.stopPropagation()}>
     <DialogCloseButton onClose={onClose} label="Close profile" />
     <span className="eyebrow">{creating ? "New profile" : owner ? "Admin" : "Reader"}</span>
     <h2 id="profile-editor-title">{creating ? "Add a profile" : user.name}</h2>
-    {creating ? null : <ProfilePictureEditor profile={user} catalog={catalog} onChanged={(updated) => onPictureChanged?.(updated)} />}
-    <form onSubmit={save}>
-      <label className="form-field"><span>Name</span>
-        <input value={name} maxLength={40} autoFocus={creating} onChange={(event) => setName(event.target.value)} placeholder="Their name" />
-      </label>
-      <div className="form-field"><span>Colour</span><ColourChoice value={colour} onChange={setColour} /></div>
-      <label className="form-field"><span>{user.hasPin ? "New PIN" : "PIN"}</span>
-        <input type="password" inputMode="numeric" autoComplete="off" value={pin}
-          onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
-          placeholder={user.hasPin ? "Four to six digits, to replace it" : "Optional, four to six digits"} />
-      </label>
-      {owner ? <p className="settings-card-note">Your sign-in name and password are in Security.</p> : <>
-        <label className="form-field"><span>Sign-in name</span>
-          <input value={loginName} autoCapitalize="none" autoCorrect="off" spellCheck={false}
-            onChange={(event) => setLoginName(event.target.value.trim())} placeholder="Optional, for their own devices" />
-        </label>
-        <label className="form-field"><span>{user.hasPassword ? "New password" : "Password"}</span>
-          <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)}
-            placeholder={user.hasPassword ? "At least 8 characters, to replace it" : "Optional, at least 8 characters"} />
-        </label>
-      </>}
-      <Toggle checked={showOnPicker} onChange={setShowOnPicker} title="Show on shared devices"
-        description="Listed when a shared device asks who is reading." />
-      {owner || creating ? null : <Toggle checked={enabled} onChange={setEnabled} title="Profile on"
-        description="Off, this profile cannot be opened or signed in to. Its history is kept." />}
-      {error ? <p className="workbench-error" role="alert">{error}</p> : null}
-      <div className="provider-modal-actions">
-        {!creating ? <>
-          {user.hasPin ? <button type="button" className="secondary-button" onClick={() => act("pin")} disabled={Boolean(busy)}>Remove PIN</button> : null}
-          <button type="button" className="secondary-button" onClick={() => act("signout")} disabled={Boolean(busy)}>Sign out everywhere</button>
-        </> : null}
-        <span />
-        {!creating && !owner ? <button type="button" className="danger-button" onClick={() => act("remove")} disabled={Boolean(busy)}>Remove</button> : null}
-        <button className="primary-button" disabled={Boolean(busy) || !name.trim()}>
-          {busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : creating ? "Add profile" : "Save"}
-        </button>
-      </div>
-    </form>
+    <div className="profile-editor-cards">
+      {/* Outside the form: the cover picker's search must not submit it. */}
+      {creating ? null : <SettingsCard title="Picture">
+        <ProfilePictureEditor profile={user} catalog={catalog} onChanged={(updated) => onPictureChanged?.(updated)} />
+      </SettingsCard>}
+      <form className="profile-editor-cards" onSubmit={save}>
+        <SettingsCard title="Profile">
+          <div className="profile-form">
+            <label className="form-field"><span>Name</span>
+              <input value={name} maxLength={40} autoFocus={creating} onChange={(event) => setName(event.target.value)} placeholder="Their name" />
+            </label>
+            <div className="form-field"><span>Colour</span><ColourChoice value={colour} onChange={setColour} /></div>
+          </div>
+        </SettingsCard>
+        {creating ? null : <SettingsCard title="When switching">
+          <SwitchLockFields profile={user} adminPassword={adminPassword} lock={lock} onLock={setLock}
+            pin={pin} onPin={setPin} password={password} onPassword={setPassword} />
+        </SettingsCard>}
+        <SettingsCard title={owner ? "Sign-in" : "Their own sign-in"}>
+          {owner ? <p className="settings-card-note">Your sign-in name and password are in Security.</p> : <div className="profile-form">
+            <p className="settings-card-lead">A name and password let them sign in on their own phone, without a shared device.</p>
+            <label className="form-field"><span>Sign-in name</span>
+              <input value={loginName} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                onChange={(event) => setLoginName(event.target.value.trim())} placeholder="Optional" />
+            </label>
+            {lockAsksPassword ? <p className="settings-card-note">They sign in with the password set under When switching.</p>
+              : <label className="form-field"><span>{user.hasPassword ? "New password" : "Password"}</span>
+                <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)}
+                  placeholder={user.hasPassword ? "Leave blank to keep it" : "At least 8 characters"} />
+              </label>}
+          </div>}
+        </SettingsCard>
+        <SettingsCard title="Access">
+          <Toggle checked={showOnPicker} onChange={setShowOnPicker} title="Show on shared devices"
+            description="Listed when a shared device asks who is reading." />
+          {owner || creating ? null : <Toggle checked={enabled} onChange={setEnabled} title="Profile on"
+            description="Off, this profile cannot be opened or signed in to. Its history is kept." />}
+          {creating ? null : <div className="settings-card-actions">
+            <button type="button" className="secondary-button" onClick={() => act("signout")} disabled={Boolean(busy)}>Sign out everywhere</button>
+          </div>}
+        </SettingsCard>
+        {error ? <p className="workbench-error" role="alert">{error}</p> : null}
+        <div className="provider-modal-actions">
+          {!creating && !owner ? <button type="button" className="danger-button" onClick={() => act("remove")} disabled={Boolean(busy)}>Remove</button> : null}
+          <span />
+          <button className="primary-button" disabled={Boolean(busy) || !name.trim() || !lockEdit}>
+            {busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : creating ? "Add profile" : "Save"}
+          </button>
+        </div>
+      </form>
+    </div>
   </section></div>;
 }
 
-// A profile about itself: name, colour, PIN; a reader's own sign-in; and who
-// is reading on this device.
+// A profile about itself: name, colour, what switching to it asks for; a
+// reader's own sign-in; and who is reading on this device.
 function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }) {
   const viewer = useViewer();
   const header = useContext(HeaderContext);
   const [profile, setProfile] = useState(() => lastAnswer("/api/v1/me")?.profile ?? null);
   const [name, setName] = useState(profile?.name ?? viewer?.name ?? "");
   const [colour, setColour] = useState(profile?.colour ?? viewer?.colour ?? "violet");
+  const [lock, setLock] = useState(profile?.lock ?? "open");
   const [pin, setPin] = useState("");
+  const [lockPassword, setLockPassword] = useState("");
+  const [adminPassword, setAdminPassword] = useState(false);
   const [loginName, setLoginName] = useState(profile?.loginName ?? "");
   const [password, setPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -4050,8 +4099,11 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
       setProfile(data.profile);
       setName(data.profile?.name ?? "");
       setColour(data.profile?.colour ?? "violet");
+      setLock(data.profile?.lock ?? "open");
       setLoginName(data.profile?.loginName ?? "");
     }).catch(() => {});
+    // Whether the admin has a password in Security to be asked for.
+    if (admin) apiRequest("/api/v1/auth").then((auth) => setAdminPassword(Boolean(auth?.configured))).catch(() => {});
   }, []);
   async function patch(body, done) {
     setBusy(done);
@@ -4060,10 +4112,12 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
     try {
       const updated = await apiRequest("/api/v1/me", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       setProfile(updated);
+      setLock(updated.lock ?? "open");
       setPin("");
+      setLockPassword("");
       setPassword("");
       setCurrentPassword("");
-      setMessage("Saved");
+      setMessage(done);
       onViewerChanged?.();
     } catch (failure) {
       setError({ card: done, text: failure.message });
@@ -4073,9 +4127,13 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
   }
   function saveProfile(event) {
     event.preventDefault();
-    const body = { name, colour };
-    if (pin) body.pin = pin;
-    patch(body, "profile");
+    patch({ name, colour }, "profile");
+  }
+  const lockEdit = profile && (lock !== profile.lock || pin || lockPassword)
+    ? lockPatch(profile, lock, { pin, password: lockPassword }) : null;
+  function saveLock(event) {
+    event.preventDefault();
+    if (lockEdit) patch(lockEdit, "lock");
   }
   function saveSignIn(event) {
     event.preventDefault();
@@ -4092,20 +4150,27 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
       <form className="profile-form" onSubmit={saveProfile}>
         <label className="form-field"><span>Name</span><input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label>
         <div className="form-field"><span>Colour</span><ColourChoice value={colour} onChange={setColour} /></div>
-        <label className="form-field"><span>{profile?.hasPin ? "New PIN" : "PIN"}</span>
-          <input type="password" inputMode="numeric" autoComplete="off" value={pin}
-            onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
-            placeholder={admin ? "Four to six digits, asked on shared devices" : "Optional, four to six digits"} />
-        </label>
         {error.card === "profile" ? <p className="workbench-error" role="alert">{error.text}</p> : null}
         <div className="settings-card-actions">
           <button className="primary-button" disabled={Boolean(busy) || !name.trim()} aria-busy={busy === "profile"}>
             {busy === "profile" ? <LoadingSpinner size={18} /> : null} Save
           </button>
-          {profile?.hasPin ? <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => patch({ pin: null }, "profile")}>Remove PIN</button> : null}
-          {message ? <small>{message}</small> : null}
+          {message === "profile" && !busy ? <small role="status">Saved</small> : null}
         </div>
       </form>
+    </SettingsCard>
+    <SettingsCard title="Switching to you">
+      {profile ? <form className="profile-form" onSubmit={saveLock}>
+        <SwitchLockFields profile={profile} self adminPassword={adminPassword} lock={lock} onLock={setLock}
+          pin={pin} onPin={setPin} password={lockPassword} onPassword={setLockPassword} />
+        {error.card === "lock" ? <p className="workbench-error" role="alert">{error.text}</p> : null}
+        <div className="settings-card-actions">
+          <button className="primary-button" disabled={Boolean(busy) || !lockEdit} aria-busy={busy === "lock"}>
+            {busy === "lock" ? <LoadingSpinner size={18} /> : null} Save
+          </button>
+          {message === "lock" && !busy ? <small role="status">Saved</small> : null}
+        </div>
+      </form> : <LoadingSpinner size={18} />}
     </SettingsCard>
     {admin ? null : <SettingsCard title="Your own sign-in">
       <form className="profile-form" onSubmit={saveSignIn}>
@@ -8588,7 +8653,7 @@ export function App() {
   async function switchToProfile(profile) {
     // A profile that asks for something asks on the picker; one that does
     // not opens at once.
-    if (profile.hasPin || profile.needsPassword) { setPicker({ ask: profile }); return; }
+    if (isLocked(profile)) { setPicker({ ask: profile }); return; }
     try {
       const result = await apiRequest("/api/v1/profiles/switch", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: profile.id }),

@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from access_policy import ADMIN, HOUSEHOLD, Viewer, allows, route_access
-from catalog_store import ADMIN_USER_ID, CatalogStore, _issue_release_state, normalized_person
+from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogStore, _issue_release_state, normalized_person
 import page_panels as panel_finder
 from catalog_core_v2.language import (
     LANGUAGE_NAMES,
@@ -704,10 +704,35 @@ def resolve_session_token(
     return viewer_for(admin), True
 
 
+def _has_password(user: dict[str, Any], config: dict[str, Any]) -> bool:
+    """The admin's password is in the sign-in config; everyone else's in their profile."""
+    return bool(config.get("passwordHash")) if user["id"] == ADMIN_USER_ID else bool(user["hasPassword"])
+
+
+def profile_lock(user: dict[str, Any], config: dict[str, Any]) -> str:
+    """What switching to a profile asks for: "open", "pin" or "password".
+
+    The profile's choice, when it still has the secret it chose. An admin is
+    never open while it has either: anyone can tap a profile on a shared
+    device, and the admin's opens the library's settings and every reader.
+    """
+    available = {"pin": bool(user["hasPin"]), "password": _has_password(user, config)}
+    chosen = user.get("switchLock") or "open"
+    if chosen == "open" and user["role"] != "admin":
+        return "open"
+    if available.get(chosen):
+        return chosen
+    for lock in ("pin", "password"):
+        if available[lock]:
+            return lock
+    return "open"
+
+
 def admin_is_guarded(config: dict[str, Any], store: "CatalogStore") -> bool:
     """Whether the admin profile needs something only the admin knows. Readers
     are refused until it does: on a shared device anyone can tap a profile."""
-    return bool(config.get("passwordHash")) or bool(store.user_secrets(ADMIN_USER_ID)["pinHash"])
+    admin = store.user(ADMIN_USER_ID)
+    return admin is not None and profile_lock(admin, config) != "open"
 
 
 def _valid_pin(pin: Any) -> str:
@@ -733,18 +758,22 @@ class Throttled(Exception):
 READER_PREF_KEYS = frozenset({"panelMode", "panelScrim", "panelStartWhole", "panelReveal"})
 
 
-def public_profile(user: dict[str, Any]) -> dict[str, Any]:
-    """A profile as the picker shows it: no sign-in name, nothing secret."""
+def public_profile(user: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """A profile as the picker shows it: no sign-in name, nothing secret --
+    only whether it opens with a tap, a PIN or a password."""
     return {
         "id": user["id"], "name": user["name"], "colour": user["colour"], "role": user["role"],
-        "hasPin": user["hasPin"], "avatar": user.get("avatar"),
-        # The admin is never one tap away: without a PIN, their password.
-        "needsPassword": user["role"] == "admin" and not user["hasPin"],
+        "avatar": user.get("avatar"), "lock": profile_lock(user, config),
     }
 
 
-def profile_choices(store: "CatalogStore") -> list[dict[str, Any]]:
-    return [public_profile(user) for user in store.list_users() if not user["disabled"] and user["showOnPicker"]]
+def profile_record(user: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any] | None:
+    """A profile as its owner and the admin see it, with what switching to it asks for."""
+    return None if user is None else {**user, "lock": profile_lock(user, config)}
+
+
+def profile_choices(store: "CatalogStore", config: dict[str, Any]) -> list[dict[str, Any]]:
+    return [public_profile(user, config) for user in store.list_users() if not user["disabled"] and user["showOnPicker"]]
 
 
 def _checked(key: str, generation: str, secret: Any, hashed: str, *, max_delay: int) -> bool:
@@ -758,22 +787,21 @@ def _checked(key: str, generation: str, secret: Any, hashed: str, *, max_delay: 
 
 def check_profile_switch(store: "CatalogStore", config: dict[str, Any], user_id: int,
                          pin: Any = None, password: Any = None) -> dict[str, Any]:
-    """The profile to switch to, once it has been shown what it asks for.
-
-    A PIN when the profile has one; for an admin without a PIN, the admin's
-    password; nothing for a reader with neither.
+    """The profile to switch to, once it has been shown what it asks for:
+    nothing, its PIN or its password, as the profile chose (`profile_lock`).
     """
     user = store.user(user_id)
     if user is None or user["disabled"]:
         raise LookupError("That profile is not available")
+    lock = profile_lock(user, config)
     secrets_ = store.user_secrets(user_id)
-    if secrets_["pinHash"]:
+    if lock == "pin":
         if not _checked(f"pin:{user_id}", secrets_["pinHash"], pin, secrets_["pinHash"], max_delay=_PIN_MAX_DELAY_SECONDS):
             raise PermissionError("That PIN is not right")
-    elif user["role"] == "admin":
+    elif lock == "password":
         hashed = config.get("passwordHash") if user_id == ADMIN_USER_ID else secrets_["passwordHash"]
         key = "account" if user_id == ADMIN_USER_ID else f"user:{user_id}"
-        if hashed and not _checked(key, hashed, password, hashed, max_delay=_LOGIN_MAX_DELAY_SECONDS):
+        if not _checked(key, hashed, password, hashed, max_delay=_LOGIN_MAX_DELAY_SECONDS):
             raise PermissionError("That password is not right")
     return user
 
@@ -819,9 +847,6 @@ def _profile_changes(store: "CatalogStore", config: dict[str, Any], target: dict
             else:
                 if not isinstance(password, str) or len(password) < 8:
                     raise ValueError("Password must be at least 8 characters")
-                login = changes.get("loginName", target["loginName"])
-                if not login:
-                    raise ValueError("Choose a sign-in name to go with the password")
                 if not by_admin and target["hasPassword"]:
                     current = store.user_secrets(target["id"])["passwordHash"]
                     if not verify_password(str(payload.get("currentPassword") or ""), current or ""):
@@ -831,13 +856,38 @@ def _profile_changes(store: "CatalogStore", config: dict[str, Any], target: dict
         for key in ("role", "canRequest", "autoApprove", "showOnPicker", "disabled"):
             if key in payload:
                 changes[key] = payload[key]
+    # What switching to the profile asks for, checked against the secrets it
+    # will have after this edit.
+    after = {
+        **target, "role": changes.get("role", target["role"]),
+        "hasPin": bool(changes["pinHash"]) if "pinHash" in changes else target["hasPin"],
+        "hasPassword": bool(changes["passwordHash"]) if "passwordHash" in changes else target["hasPassword"],
+    }
+    if "switchLock" in payload:
+        lock = payload["switchLock"]
+        if lock not in SWITCH_LOCKS:
+            raise ValueError("A profile opens with a tap, a PIN or a password")
+        if lock == "open" and after["role"] == "admin":
+            raise ValueError("The admin opens with a PIN or a password")
+        if lock == "pin" and not after["hasPin"]:
+            raise ValueError("Choose a PIN to open with")
+        if lock == "password" and not _has_password(after, config):
+            raise ValueError("Set your password in Security first" if is_admin_profile else "Choose a password to open with")
+        changes["switchLock"] = lock
+    elif "pinHash" in changes and changes["pinHash"] and not target["hasPin"] and target["switchLock"] == "open":
+        # A first PIN, with nothing said about the lock, is a PIN to ask for.
+        changes["switchLock"] = "pin"
+    after["switchLock"] = changes.get("switchLock", target["switchLock"])
+    # A reader whose chosen secret goes asks for the other one it has, or
+    # nothing, rather than keep a choice it can no longer be asked for.
+    lock_now = profile_lock(after, config)
+    if after["role"] != "admin" and lock_now != after["switchLock"]:
+        changes["switchLock"] = lock_now
     # An admin with neither a PIN nor a password is anyone's, once readers exist.
-    stays_admin = changes.get("role", target["role"]) == "admin"
-    if stays_admin and "pinHash" in changes and changes["pinHash"] is None and store.reader_count():
-        still = (config.get("passwordHash") if is_admin_profile
-                 else changes.get("passwordHash", store.user_secrets(target["id"])["passwordHash"]))
-        if not still:
-            raise ValueError("While there are readers, an admin keeps a PIN or a password")
+    if after["role"] == "admin" and lock_now == "open" and store.reader_count() and (
+        target["role"] != "admin" or profile_lock(target, config) != "open"
+    ):
+        raise ValueError("While there are readers, an admin keeps a PIN or a password")
     return changes
 
 
@@ -853,15 +903,21 @@ def create_profile(store: "CatalogStore", config: dict[str, Any], payload: dict[
     if password not in (None, ""):
         if not isinstance(password, str) or len(password) < 8:
             raise ValueError("Password must be at least 8 characters")
-        if not str(login or "").strip():
-            raise ValueError("Choose a sign-in name to go with the password")
         password_hash = hash_password(password)
     pin = payload.get("pin")
+    lock = payload.get("switchLock") or ("pin" if pin not in (None, "") else "open")
+    if lock not in SWITCH_LOCKS:
+        raise ValueError("A profile opens with a tap, a PIN or a password")
+    if lock == "pin" and pin in (None, ""):
+        raise ValueError("Choose a PIN to open with")
+    if lock == "password" and not password_hash:
+        raise ValueError("Choose a password to open with")
     return store.create_user(
         payload.get("name"), role=str(payload.get("role") or "reader"), login_name=login,
         password_hash=password_hash, pin_hash=None if pin in (None, "") else hash_password(_valid_pin(pin)),
         colour=payload.get("colour"), can_request=bool(payload.get("canRequest", True)),
         auto_approve=bool(payload.get("autoApprove", False)), show_on_picker=bool(payload.get("showOnPicker", True)),
+        switch_lock=lock,
     )
 
 
@@ -12617,7 +12673,7 @@ class Handler(BaseHTTPRequestHandler):
             # Reachable unauthenticated: the app needs to know whether to show a
             # login form. Deliberately does not reveal the username.
             config = load_auth_config()
-            profile_required = self.viewer is None and self._household and len(profile_choices(_profiles_store())) > 1
+            profile_required = self.viewer is None and self._household and len(profile_choices(_profiles_store(), load_auth_config())) > 1
             self.send_json({
                 "method": config["method"],
                 "authenticated": self.viewer is not None,
@@ -12627,7 +12683,7 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
         if parsed_url.path == "/api/v1/profiles":
-            self.send_json({"profiles": profile_choices(_profiles_store())})
+            self.send_json({"profiles": profile_choices(_profiles_store(), load_auth_config())})
             return
         avatar_get = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)
         if avatar_get:
@@ -12650,11 +12706,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/me":
             store = _profiles_store()
-            self.send_json({"profile": store.user(self._viewer_id()),
+            self.send_json({"profile": profile_record(store.user(self._viewer_id()), load_auth_config()),
                             "prefs": store.user_prefs(self._viewer_id())})
             return
         if parsed_url.path == "/api/v1/users":
-            self.send_json({"users": _profiles_store().list_users()})
+            config = load_auth_config()
+            self.send_json({"users": [profile_record(user, config) for user in _profiles_store().list_users()]})
             return
         if parsed_url.path == "/api/v1/auth":
             self.send_json(public_auth_config())
@@ -13085,7 +13142,7 @@ class Handler(BaseHTTPRequestHandler):
                 store.bump_session_version(ADMIN_USER_ID)
                 if self._viewer_id() == ADMIN_USER_ID:
                     self._sign_in_as(store.user(ADMIN_USER_ID), config, device=config["method"] == "forms")
-            self.send_json(created, 201)
+            self.send_json(profile_record(created, config), 201)
             return
         users_sign_out = re.fullmatch(r"/api/v1/users/(\d+)/sign-out", parsed_url.path)
         if users_sign_out:
@@ -13805,7 +13862,7 @@ class Handler(BaseHTTPRequestHandler):
                 # reader -- a sign-in name and password. Roles and permissions
                 # are the admin's to give.
                 payload = {key: value for key, value in (payload or {}).items()
-                           if key in ("name", "colour", "pin", "loginName", "password", "currentPassword")}
+                           if key in ("name", "colour", "pin", "loginName", "password", "currentPassword", "switchLock")}
             try:
                 changes = _profile_changes(store, config, target, payload or {}, by_admin=not me)
                 updated = store.update_user(target_id, **changes)
@@ -13819,7 +13876,7 @@ class Handler(BaseHTTPRequestHandler):
                 # A new password ends every sign-in this profile had -- except
                 # the one making the change, which is issued afresh.
                 self._sign_in_as(updated, config, device=False)
-            self.send_json(updated)
+            self.send_json(profile_record(updated, config))
             return
         page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
         if page_panels_match:

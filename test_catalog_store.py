@@ -4211,6 +4211,24 @@ class ReaderProfileTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=49")
             self.assertIsNone(CatalogStore(store.database_path).user(sam)["avatar"])
 
+    def test_profiles_from_before_the_lock_choice_keep_asking_what_they_asked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            locked = store.create_user("Pat", pin_hash="hashed pin")
+            open_ = store.create_user("Sam", password_hash="hashed password")
+            self.assertEqual((locked["switchLock"], open_["switchLock"]), ("open", "open"), "the store keeps what it is told")
+            with self.assertRaises(ValueError):
+                store.update_user(locked["id"], switchLock="fingerprint")
+            # A library from before the choice (50): a PIN was asked for when a
+            # profile had one, and the admin's password when it had none.
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("ALTER TABLE users DROP COLUMN switch_lock")
+                connection.execute("UPDATE schema_info SET version=50")
+            reopened = CatalogStore(store.database_path)
+            self.assertEqual({user["name"]: user["switchLock"] for user in reopened.list_users()},
+                             {"Admin": "password", "Pat": "pin", "Sam": "open"})
+            self.assertEqual(reopened.update_user(open_["id"], switchLock="password")["switchLock"], "password")
+
     def test_each_reader_has_their_own_place_and_their_own_ratings(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

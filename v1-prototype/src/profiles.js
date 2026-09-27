@@ -111,6 +111,56 @@ export function initials(name) {
   return letters.join("").toUpperCase();
 }
 
+// ---- What switching to a profile asks for -------------------------------------
+//
+// Each profile chooses: a tap, its PIN or its password. The server says which
+// (`lock`); the admin is never a tap while it has a PIN or a password.
+
+export const LOCK_LABELS = { pin: "PIN", password: "Password" };
+
+export function isLocked(profile) {
+  return profile?.lock === "pin" || profile?.lock === "password";
+}
+
+/** The choices a profile's lock control offers, and why one is unavailable. */
+export function lockChoices(profile, { adminPassword = false } = {}) {
+  const admin = profile?.role === "admin";
+  const owner = profile?.id === 1;
+  return [
+    { id: "open", label: "Open", disabled: admin, reason: admin ? "The admin always asks for something." : "" },
+    { id: "pin", label: "PIN", disabled: false, reason: "" },
+    {
+      id: "password", label: "Password", disabled: owner && !adminPassword,
+      reason: owner && !adminPassword ? "Set a password in Security first." : "",
+    },
+  ];
+}
+
+/**
+ * The edit that makes a profile ask for `lock`, or null while it is missing
+ * what that needs: a PIN it does not have yet, or a password (the admin's
+ * lives in Security, so is never sent from here). A PIN the profile no longer
+ * asks for is not kept.
+ */
+export function lockPatch(profile, lock, { pin = "", password = "" } = {}) {
+  const body = { switchLock: lock };
+  if (lock === "pin") {
+    if (pin) {
+      if (!/^\d{4,6}$/.test(pin)) return null;
+      body.pin = pin;
+    } else if (!profile?.hasPin) {
+      return null;
+    }
+  } else if (profile?.hasPin) {
+    body.pin = null;
+  }
+  if (lock === "password" && profile?.id !== 1 && !profile?.hasPassword) {
+    if (password.length < 8) return null;
+    body.password = password;
+  }
+  return body;
+}
+
 /** A PIN as the pad builds it: digits only, at most six. */
 export function pinInput(current, key) {
   if (key === "Backspace") return current.slice(0, -1);
