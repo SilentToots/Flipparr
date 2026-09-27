@@ -8,7 +8,7 @@ from pathlib import Path
 from app import ParsedFile, _metron_reprint_coverage
 from catalog_core_v2.provider_evidence import native_issue_evidence
 import catalog_store
-from catalog_store import CatalogStore, _parse_timestamp, _utc_now
+from catalog_store import ADMIN_USER_ID, CatalogStore, _parse_timestamp, _utc_now
 
 
 class CatalogStoreTests(unittest.TestCase):
@@ -3877,33 +3877,33 @@ class ReadingProgressTests(LibraryFixture):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
             first = self._file_id(store, "Example 001.cbz")
-            self.assertIsNone(store.reading_progress(first))
-            kept = store.set_reading_progress(first, 4, 24, "sig-a")
+            self.assertIsNone(store.reading_progress(first, user_id=ADMIN_USER_ID))
+            kept = store.set_reading_progress(first, 4, 24, "sig-a", user_id=ADMIN_USER_ID)
             self.assertEqual((kept["page"], kept["pageCount"]), (4, 24))
             self.assertIsNone(kept["finishedAt"])
-            self.assertEqual(store.reading_progress(first)["page"], 4)
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 4)
             # Turning another page overwrites rather than accumulating rows.
-            store.set_reading_progress(first, 5, 24, "sig-a")
-            self.assertEqual(store.reading_progress(first)["page"], 5)
-            self.assertEqual(len(store.recent_reading()), 1)
+            store.set_reading_progress(first, 5, 24, "sig-a", user_id=ADMIN_USER_ID)
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 5)
+            self.assertEqual(len(store.recent_reading(user_id=ADMIN_USER_ID)), 1)
             # The panel on the page rides along, and is the first unless said.
-            self.assertEqual(store.reading_progress(first)["panel"], 0)
-            self.assertEqual(store.set_reading_progress(first, 5, 24, "sig-a", panel=3)["panel"], 3)
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["panel"], 0)
+            self.assertEqual(store.set_reading_progress(first, 5, 24, "sig-a", panel=3, user_id=ADMIN_USER_ID)["panel"], 3)
             with self.assertRaises(ValueError):
-                store.set_reading_progress(first, 5, 24, "sig-a", panel=-1)
+                store.set_reading_progress(first, 5, 24, "sig-a", panel=-1, user_id=ADMIN_USER_ID)
 
-            finished = store.set_reading_progress(first, 23, 24, "sig-a", finished=True)
+            finished = store.set_reading_progress(first, 23, 24, "sig-a", finished=True, user_id=ADMIN_USER_ID)
             self.assertIsNotNone(finished["finishedAt"])
             # Opening it again puts it back in progress.
-            self.assertIsNone(store.set_reading_progress(first, 2, 24, "sig-a")["finishedAt"])
+            self.assertIsNone(store.set_reading_progress(first, 2, 24, "sig-a", user_id=ADMIN_USER_ID)["finishedAt"])
 
             with self.assertRaises(ValueError):
-                store.set_reading_progress(first, 24, 24, "sig-a")
+                store.set_reading_progress(first, 24, 24, "sig-a", user_id=ADMIN_USER_ID)
             with self.assertRaises(ValueError):
-                store.set_reading_progress(first, -1, 24, "sig-a")
+                store.set_reading_progress(first, -1, 24, "sig-a", user_id=ADMIN_USER_ID)
 
-            store.clear_reading_progress(first)
-            self.assertIsNone(store.reading_progress(first))
+            store.clear_reading_progress(first, user_id=ADMIN_USER_ID)
+            self.assertIsNone(store.reading_progress(first, user_id=ADMIN_USER_ID))
 
     def test_what_was_read_lately_comes_back_newest_first_with_its_run(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -3911,28 +3911,28 @@ class ReadingProgressTests(LibraryFixture):
             run = str(self._run_id(store))
             first = self._file_id(store, "Example 001.cbz")
             second = self._file_id(store, "Example 002.cbz")
-            store.set_reading_progress(first, 3, 24, "sig-a")
-            store.set_reading_progress(second, 1, 24, "sig-b")
-            recent = store.recent_reading()
+            store.set_reading_progress(first, 3, 24, "sig-a", user_id=ADMIN_USER_ID)
+            store.set_reading_progress(second, 1, 24, "sig-b", user_id=ADMIN_USER_ID)
+            recent = store.recent_reading(user_id=ADMIN_USER_ID)
             self.assertEqual([item["filename"] for item in recent],
                              ["Example 002.cbz", "Example 001.cbz"])
             self.assertEqual({item["seriesRunId"] for item in recent}, {run},
                              "each one says which run it belongs to")
             self.assertEqual(recent[0]["seriesTitle"], "Example")
             self.assertEqual(recent[0]["issueNumber"], "2", "and which issue of it")
-            self.assertEqual(store.recent_reading(1)[0]["filename"], "Example 002.cbz")
+            self.assertEqual(store.recent_reading(1, user_id=ADMIN_USER_ID)[0]["filename"], "Example 002.cbz")
 
     def test_a_comic_that_left_the_library_is_not_offered_to_continue(self):
         """Half-read and gone is not something to carry on with."""
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
             first = self._file_id(store, "Example 001.cbz")
-            store.set_reading_progress(first, 3, 24, "sig-a")
+            store.set_reading_progress(first, 3, 24, "sig-a", user_id=ADMIN_USER_ID)
             with sqlite3.connect(store.database_path) as connection:
                 connection.execute("UPDATE files SET present=0 WHERE id=?", (first,))
-            self.assertEqual(store.recent_reading(), [])
+            self.assertEqual(store.recent_reading(user_id=ADMIN_USER_ID), [])
             # Still remembered, so putting the file back resumes it.
-            self.assertEqual(store.reading_progress(first)["page"], 3)
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 3)
 
     def test_an_issue_knows_its_file_even_when_no_cover_can_be_drawn(self):
         """The file id and the cover are claimed from the same query, and it
@@ -4003,14 +4003,14 @@ class ReadingProgressTests(LibraryFixture):
             self.assertIsNone(series["issueRating"], "nothing rated says nothing")
 
             issues = series["issues"]
-            store.set_rating("issue", int(issues[0]["id"]), 4)
-            store.set_rating("issue", int(issues[1]["id"]), 5)
+            store.set_rating("issue", int(issues[0]["id"]), 4, user_id=ADMIN_USER_ID)
+            store.set_rating("issue", int(issues[1]["id"]), 5, user_id=ADMIN_USER_ID)
             series = store.catalog()["series"][0]
             self.assertIsNone(series["yourRating"], "the run itself is still unrated")
             self.assertEqual(series["issueRating"], {"average": 4.5, "count": 2})
             self.assertEqual(store.catalog()["series"][0]["issues"][0]["yourRating"], 4)
 
-            store.set_rating("series", run, 3)
+            store.set_rating("series", run, 3, user_id=ADMIN_USER_ID)
             series = store.catalog()["series"][0]
             self.assertEqual(series["yourRating"], 3, "and its own rating is its own")
             self.assertEqual(series["issueRating"]["average"], 4.5)
@@ -4019,9 +4019,9 @@ class ReadingProgressTests(LibraryFixture):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
             issue = int(store.catalog()["series"][0]["issues"][0]["id"])
-            store.set_rating("issue", issue, 4)
+            store.set_rating("issue", issue, 4, user_id=ADMIN_USER_ID)
             # Pressing the star you already gave means "actually, no".
-            self.assertIsNone(store.set_rating("issue", issue, None)["yourRating"])
+            self.assertIsNone(store.set_rating("issue", issue, None, user_id=ADMIN_USER_ID)["yourRating"])
             self.assertIsNone(store.catalog()["series"][0]["issues"][0]["yourRating"])
             self.assertIsNone(store.catalog()["series"][0]["issueRating"])
 
@@ -4031,19 +4031,19 @@ class ReadingProgressTests(LibraryFixture):
             issue = int(store.catalog()["series"][0]["issues"][0]["id"])
             for bad in (0, 6, -1, "three", 3.5, True):
                 with self.assertRaises(ValueError, msg=f"{bad!r} was accepted"):
-                    store.set_rating("issue", issue, bad)
+                    store.set_rating("issue", issue, bad, user_id=ADMIN_USER_ID)
             with self.assertRaises(ValueError):
-                store.set_rating("publisher", issue, 3)
+                store.set_rating("publisher", issue, 3, user_id=ADMIN_USER_ID)
             with self.assertRaises(LookupError):
-                store.set_rating("issue", 999999, 3)
+                store.set_rating("issue", 999999, 3, user_id=ADMIN_USER_ID)
             with self.assertRaises(LookupError):
-                store.set_rating("series", 999999, 3)
+                store.set_rating("series", 999999, 3, user_id=ADMIN_USER_ID)
 
     def test_deleting_an_issue_takes_its_rating_with_it(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
             issue = int(store.catalog()["series"][0]["issues"][0]["id"])
-            store.set_rating("issue", issue, 5)
+            store.set_rating("issue", issue, 5, user_id=ADMIN_USER_ID)
             with sqlite3.connect(store.database_path) as connection:
                 connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("DELETE FROM issues WHERE id=?", (issue,))
@@ -4089,14 +4089,14 @@ class ReadingProgressTests(LibraryFixture):
             run = self._run_id(store)
             first = self._file_id(store, "Example 001.cbz")
             second = self._file_id(store, "Example 002.cbz")
-            self.assertEqual(store.reading_progress_for_run(run), {})
+            self.assertEqual(store.reading_progress_for_run(run, user_id=ADMIN_USER_ID), {})
 
             # The signature the reader stores is the file's mtime and size in
             # hex; the scan recorded both, so a match can be decided in SQL.
             signature = self._scanned_signature(store, first)
-            store.set_reading_progress(first, 3, 24, signature)
-            store.set_reading_progress(second, 1, 24, "stale-signature")
-            progress = store.reading_progress_for_run(run)
+            store.set_reading_progress(first, 3, 24, signature, user_id=ADMIN_USER_ID)
+            store.set_reading_progress(second, 1, 24, "stale-signature", user_id=ADMIN_USER_ID)
+            progress = store.reading_progress_for_run(run, user_id=ADMIN_USER_ID)
 
             self.assertEqual(progress[str(first)]["page"], 3)
             self.assertFalse(progress[str(first)]["stale"])
@@ -4104,7 +4104,7 @@ class ReadingProgressTests(LibraryFixture):
                             "a comic replaced since it was read says so")
             self.assertNotIn(str(self._file_id(store, "Example 003.cbz")), progress,
                              "a comic never opened has no entry")
-            self.assertEqual(store.reading_progress_for_run(run + 1000), {})
+            self.assertEqual(store.reading_progress_for_run(run + 1000, user_id=ADMIN_USER_ID), {})
 
     def _scanned_signature(self, store, file_id):
         with sqlite3.connect(store.database_path) as connection:
@@ -4116,11 +4116,159 @@ class ReadingProgressTests(LibraryFixture):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
             first = self._file_id(store, "Example 001.cbz")
-            store.set_reading_progress(first, 3, 24, "sig-a")
+            store.set_reading_progress(first, 3, 24, "sig-a", user_id=ADMIN_USER_ID)
             with sqlite3.connect(store.database_path) as connection:
                 connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("DELETE FROM files WHERE id=?", (first,))
-            self.assertIsNone(store.reading_progress(first), "no row pointing at nothing")
+            self.assertIsNone(store.reading_progress(first, user_id=ADMIN_USER_ID), "no row pointing at nothing")
+
+
+class ReaderProfileTests(LibraryFixture):
+    """Several people reading one library (schema 49): each has their own place
+    and their own ratings; the library, and the admin, are shared by all."""
+
+    def _reader(self, store, name="Sam", **kwargs):
+        if not store.user_secrets(ADMIN_USER_ID)["pinHash"]:
+            store.update_user(ADMIN_USER_ID, pinHash="scrypt$pin")
+        return store.create_user(name, **kwargs)["id"]
+
+    def test_a_library_from_before_profiles_is_the_admins_and_a_copy_is_kept_first(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            second = self._file_id(store, "Example 002.cbz")
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            run = self._run_id(store)
+            path = store.database_path
+            # The library as schema 48 left it: personal tables keyed by what
+            # was read, no profiles at all.
+            with sqlite3.connect(path) as connection:
+                connection.executescript(f"""
+                    DROP TABLE reading_progress; DROP TABLE issue_ratings; DROP TABLE series_run_ratings;
+                    DROP TABLE user_prefs; DROP TABLE users;
+                    CREATE TABLE reading_progress (
+                        file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                        page INTEGER NOT NULL, panel INTEGER NOT NULL DEFAULT 0, page_count INTEGER NOT NULL,
+                        file_signature TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+                        updated_at TEXT NOT NULL);
+                    CREATE INDEX reading_progress_recent ON reading_progress(updated_at DESC);
+                    CREATE TABLE issue_ratings (issue_id INTEGER PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
+                        rating INTEGER NOT NULL, updated_at TEXT NOT NULL);
+                    CREATE TABLE series_run_ratings (series_run_id INTEGER PRIMARY KEY REFERENCES series_runs(id) ON DELETE CASCADE,
+                        rating INTEGER NOT NULL, updated_at TEXT NOT NULL);
+                    INSERT INTO reading_progress VALUES ({first}, 4, 2, 24, 'sig-a', 't0', NULL, 't1');
+                    INSERT INTO reading_progress VALUES ({second}, 23, 0, 24, 'sig-b', 't0', 't2', 't2');
+                    INSERT INTO issue_ratings VALUES ({issue}, 5, 't3');
+                    INSERT INTO series_run_ratings VALUES ({run}, 3, 't4');
+                    UPDATE schema_info SET version=48;
+                """)
+            migrated = CatalogStore(path)
+            self.assertTrue(path.with_name(f"{path.name}.pre-v49").is_file(), "the library as it was, kept first")
+            with sqlite3.connect(path) as connection:
+                rows = connection.execute(
+                    "SELECT user_id, file_id, page, panel, page_count, file_signature, finished_at, updated_at "
+                    "FROM reading_progress ORDER BY file_id"
+                ).fetchall()
+                ratings = connection.execute("SELECT user_id, issue_id, rating FROM issue_ratings").fetchall()
+                runs = connection.execute("SELECT user_id, series_run_id, rating FROM series_run_ratings").fetchall()
+                version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
+            self.assertEqual(rows, [
+                (ADMIN_USER_ID, first, 4, 2, 24, "sig-a", None, "t1"),
+                (ADMIN_USER_ID, second, 23, 0, 24, "sig-b", "t2", "t2"),
+            ], "every place, exactly as it was, and the admin's")
+            self.assertEqual(ratings, [(ADMIN_USER_ID, issue, 5)])
+            self.assertEqual(runs, [(ADMIN_USER_ID, run, 3)])
+            self.assertEqual(version, 49)
+            self.assertEqual(migrated.user(ADMIN_USER_ID)["role"], "admin")
+            self.assertEqual(migrated.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 4)
+            # And once is once: a second start changes nothing.
+            again = CatalogStore(path)
+            self.assertEqual(len(again.recent_reading(user_id=ADMIN_USER_ID)), 2)
+            self.assertEqual(again.catalog()["series"][0]["yourRating"], 3)
+
+    def test_each_reader_has_their_own_place_and_their_own_ratings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            sam = self._reader(store)
+            store.set_reading_progress(first, 10, 24, "sig", user_id=ADMIN_USER_ID)
+            store.set_reading_progress(first, 2, 24, "sig", user_id=sam)
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 10)
+            self.assertEqual(store.reading_progress(first, user_id=sam)["page"], 2, "the same comic, two places")
+            store.set_rating("issue", issue, 2, user_id=sam)
+            self.assertIsNone(store.catalog(rater_id=ADMIN_USER_ID)["series"][0]["issues"][0]["yourRating"])
+            self.assertEqual(store.catalog(rater_id=sam)["series"][0]["issues"][0]["yourRating"], 2)
+            self.assertIsNone(store.catalog(rater_id=None)["series"][0]["issueRating"], "asked for nobody's, gets none")
+            store.clear_reading_progress(first, user_id=sam)
+            self.assertIsNotNone(store.reading_progress(first, user_id=ADMIN_USER_ID), "clearing mine leaves yours")
+            # A reader removed takes only what was theirs.
+            store.set_reading_progress(first, 3, 24, "sig", user_id=sam)
+            store.set_user_prefs(sam, {"panelMode": True})
+            store.delete_user(sam)
+            self.assertIsNone(store.user(sam))
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 10)
+            with sqlite3.connect(store.database_path) as connection:
+                left = connection.execute("SELECT COUNT(*) FROM reading_progress WHERE user_id=?", (sam,)).fetchone()[0]
+                prefs = connection.execute("SELECT COUNT(*) FROM user_prefs WHERE user_id=?", (sam,)).fetchone()[0]
+            self.assertEqual((left, prefs), (0, 0))
+
+    def test_the_library_always_has_a_guarded_admin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            admin = store.user(ADMIN_USER_ID)
+            self.assertEqual((admin["name"], admin["role"], admin["hasPin"], admin["hasPassword"]), ("Admin", "admin", False, False))
+            with self.assertRaises(ValueError, msg="an open admin profile on a shared device is no admin"):
+                store.create_user("Sam")
+            sam = self._reader(store)
+            with self.assertRaises(ValueError):
+                store.update_user(ADMIN_USER_ID, role="reader")
+            with self.assertRaises(ValueError):
+                store.update_user(ADMIN_USER_ID, disabled=True)
+            with self.assertRaises(ValueError):
+                store.delete_user(ADMIN_USER_ID)
+            with self.assertRaises(ValueError, msg="readers exist, so the admin keeps a PIN or a password"):
+                store.update_user(ADMIN_USER_ID, pinHash=None)
+            # A second admin makes the first one's demotion possible.
+            store.update_user(sam, role="admin")
+            store.update_user(ADMIN_USER_ID, role="reader")
+            self.assertEqual(store.user(ADMIN_USER_ID)["role"], "reader")
+
+    def test_a_new_password_or_a_lost_role_ends_every_sign_in_a_pin_does_not(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            sam = self._reader(store, login_name="sam")
+            version = store.user(sam)["sessionVersion"]
+            store.update_user(sam, pinHash="scrypt$1234")
+            self.assertEqual(store.user(sam)["sessionVersion"], version, "a PIN is not a sign-in")
+            store.update_user(sam, passwordHash="scrypt$new")
+            self.assertEqual(store.user(sam)["sessionVersion"], version + 1)
+            store.update_user(sam, disabled=True)
+            self.assertEqual(store.user(sam)["sessionVersion"], version + 2)
+            self.assertEqual(store.bump_session_version(sam), version + 3)
+            self.assertEqual(store.user_by_login("SAM")["id"], sam, "sign-in names ignore case")
+            self.assertEqual(store.user_secrets(sam)["passwordHash"], "scrypt$new")
+            self.assertNotIn("passwordHash", store.user(sam), "hashes never leave with a profile")
+
+    def test_profile_names_colours_and_sign_in_names_are_checked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            self._reader(store, "Sam", login_name="sam")
+            with self.assertRaises(ValueError):
+                self._reader(store, "Also Sam", login_name="Sam")
+            with self.assertRaises(ValueError):
+                self._reader(store, "   ")
+            with self.assertRaises(ValueError):
+                self._reader(store, "Kid", colour="chartreuse")
+            with self.assertRaises(ValueError):
+                self._reader(store, "Kid", login_name="two words")
+            kid = self._reader(store, "  Little   Reader ", colour="teal")
+            self.assertEqual(store.user(kid)["name"], "Little Reader")
+            with self.assertRaises(ValueError):
+                store.update_user(kid, favourite="blue")
+            with self.assertRaises(ValueError):
+                store.set_user_prefs(kid, {"blob": "x" * 9000})
+            self.assertEqual(store.set_user_prefs(kid, {"panelMode": True}), {"panelMode": True})
 
 
 class IssueFileCountTests(LibraryFixture):

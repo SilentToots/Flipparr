@@ -402,7 +402,7 @@ class FilenameParserTests(unittest.TestCase):
             "app._series_enrichment_provider_order",
             return_value=[("metron", {"token": "saved"}), ("comic_vine", {"apiKey": "saved"}), ("gcd", {})],
         ):
-            result = catalog_api_payload()
+            result = catalog_api_payload(viewer_id=1)
 
         enrichment = result["enrichment"]
         self.assertFalse(enrichment["allProvidersCooling"])
@@ -1473,7 +1473,7 @@ class FilenameParserTests(unittest.TestCase):
         with patch("app.catalog_store", return_value=store), patch(
             "app._series_enrichment_provider_order", return_value=[]
         ), patch("app.collected_editions_enabled", return_value=True):
-            payload = catalog_api_payload()
+            payload = catalog_api_payload(viewer_id=1)
         self.assertTrue(payload["collectedEditionsEnabled"])
 
     def test_prowlarr_connection_uses_api_key_header(self):
@@ -2743,7 +2743,7 @@ class FilenameParserTests(unittest.TestCase):
             def issue_file_counts_by_run(self):
                 return {"9": 2, "12": 1}
 
-            def reading_progress_by_run(self):
+            def reading_progress_by_run(self, *, user_id):
                 return {"9": {
                     "1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
                           "finishedAt": "2026-09-19T00:00:00+00:00", "updatedAt": "2026-09-19T00:00:00+00:00"},
@@ -2755,7 +2755,7 @@ class FilenameParserTests(unittest.TestCase):
                 }}
 
         with patch("app.catalog_store", return_value=Store()):
-            runs = reading_by_run()["runs"]
+            runs = reading_by_run(user_id=1)["runs"]
         self.assertEqual(runs["9"]["fileId"], "2", "even though #1 was read more recently")
         self.assertEqual(runs["9"]["state"], "continue")
         self.assertEqual((runs["9"]["page"], runs["9"]["pageCount"]), (5, 24))
@@ -2768,13 +2768,13 @@ class FilenameParserTests(unittest.TestCase):
             def issue_file_counts_by_run(self):
                 return {"9": owned}
 
-            def reading_progress_by_run(self):
+            def reading_progress_by_run(self, *, user_id):
                 return {"9": {"1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
                                     "finishedAt": "2026-09-19T00:00:00+00:00",
                                     "updatedAt": "2026-09-19T00:00:00+00:00"}}}
 
         with patch("app.catalog_store", return_value=Store()):
-            return reading_by_run()["runs"]["9"]
+            return reading_by_run(user_id=1)["runs"]["9"]
 
     def test_a_run_read_to_the_end_reports_itself_finished_to_the_grid(self):
         run = self._finished_first_issue(owned=1)
@@ -2795,7 +2795,7 @@ class FilenameParserTests(unittest.TestCase):
             def issue_file_counts_by_run(self):
                 return {"9": 3}
 
-            def reading_progress_by_run(self):
+            def reading_progress_by_run(self, *, user_id):
                 return {"9": {
                     "1": {"page": 23, "pageCount": 24, "issueNumber": "1", "stale": False,
                           "finishedAt": "2026-09-19T00:00:00+00:00", "updatedAt": "2026-09-20T10:00:00+00:00"},
@@ -2804,7 +2804,7 @@ class FilenameParserTests(unittest.TestCase):
                 }}
 
         with patch("app.catalog_store", return_value=Store()):
-            run = reading_by_run()["runs"]["9"]
+            run = reading_by_run(user_id=1)["runs"]["9"]
         self.assertEqual(run["lastReadAt"], "2026-09-20T10:00:00+00:00")
         self.assertEqual(run["fileId"], "2", "but the place offered is still the part-read comic")
 
@@ -2815,7 +2815,7 @@ class FilenameParserTests(unittest.TestCase):
         from app import continue_reading
 
         class Store:
-            def recent_reading(self, limit):
+            def recent_reading(self, limit, *, user_id):
                 return [{
                     "fileId": "1", "filename": "#1", "issueNumber": "1",
                     "seriesRunId": "9", "seriesTitle": "Example", "medium": "comic",
@@ -2831,7 +2831,7 @@ class FilenameParserTests(unittest.TestCase):
                 }
 
         with patch("app.catalog_store", return_value=Store()):
-            items = continue_reading()["items"]
+            items = continue_reading(user_id=1)["items"]
         self.assertEqual([item["fileId"] for item in items], ["2"])
         self.assertEqual(items[0]["resume"], "next")
         self.assertEqual(items[0]["issueNumber"], "2", "and it can say which issue it is")

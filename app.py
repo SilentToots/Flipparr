@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from catalog_store import CatalogStore, _issue_release_state, normalized_person
+from catalog_store import ADMIN_USER_ID, CatalogStore, _issue_release_state, normalized_person
 import page_panels as panel_finder
 from catalog_core_v2.language import (
     LANGUAGE_NAMES,
@@ -9564,7 +9564,7 @@ def reading_target(
     return answer("finished", comics[0])
 
 
-def series_reading(series_run_id: int) -> dict[str, Any]:
+def series_reading(series_run_id: int, *, user_id: int) -> dict[str, Any]:
     """A run's comics, what is readable, and where each was left.
 
     `readable` is sniffed here rather than stored: opening a drawer is a
@@ -9574,7 +9574,7 @@ def series_reading(series_run_id: int) -> dict[str, Any]:
     """
     store = catalog_store()
     files = store.run_reading_files(series_run_id)
-    progress = store.reading_progress_for_run(series_run_id)
+    progress = store.reading_progress_for_run(series_run_id, user_id=user_id)
 
     def described(item: dict[str, Any]) -> dict[str, Any]:
         record = progress.get(str(item["id"])) or {}
@@ -9597,7 +9597,7 @@ def series_reading(series_run_id: int) -> dict[str, Any]:
     }
 
 
-def reading_by_run() -> dict[str, Any]:
+def reading_by_run(*, user_id: int) -> dict[str, Any]:
     """Where each run in the library was left, for the Comics grid.
 
     Only runs with a reading history appear. A card for a run nobody has
@@ -9608,7 +9608,7 @@ def reading_by_run() -> dict[str, Any]:
     store = catalog_store()
     owned = store.issue_file_counts_by_run()
     runs = {}
-    for run_id, progress in store.reading_progress_by_run().items():
+    for run_id, progress in store.reading_progress_by_run(user_id=user_id).items():
         live = {
             file_id: record for file_id, record in progress.items() if not record["stale"]
         }
@@ -9639,14 +9639,14 @@ def reading_by_run() -> dict[str, Any]:
     return {"runs": runs}
 
 
-def continue_reading(limit: int = 12) -> dict[str, Any]:
+def continue_reading(limit: int = 12, *, user_id: int) -> dict[str, Any]:
     """What to carry on with: what is part-read, then what comes next.
 
     Each run appears once. A part-read comic is the run's entry; a run whose
     last read comic is finished offers the next issue instead.
     """
     store = catalog_store()
-    recent = store.recent_reading(limit * 3)
+    recent = store.recent_reading(limit * 3, user_id=user_id)
     progress_by_file = {item["fileId"]: item for item in recent}
     items: list[dict[str, Any]] = []
     seen_runs: set[str] = set()
@@ -10184,14 +10184,14 @@ def forget_page_panels(file_id: int, index: int) -> dict[str, Any]:
     return file_page_panels(file_id, index)
 
 
-def file_reading_progress(file_id: int) -> dict[str, Any]:
+def file_reading_progress(file_id: int, *, user_id: int) -> dict[str, Any]:
     """Where a comic was left, and whether that place still exists.
 
     The page is kept with the file's signature, so a file replaced since it
     was read starts again rather than opening at a page it may not have.
     """
     path = catalog_store().library_file_path(file_id)
-    record = catalog_store().reading_progress(file_id)
+    record = catalog_store().reading_progress(file_id, user_id=user_id)
     try:
         signature = _file_signature(path)
     except OSError:
@@ -10205,7 +10205,7 @@ def file_reading_progress(file_id: int) -> dict[str, Any]:
     }
 
 
-def set_file_reading_progress(file_id: int, page: int, panel: int = 0) -> dict[str, Any]:
+def set_file_reading_progress(file_id: int, page: int, panel: int = 0, *, user_id: int) -> dict[str, Any]:
     """Remember the page, and the panel on it. The count and the signature are the server's to know."""
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
@@ -10219,6 +10219,7 @@ def set_file_reading_progress(file_id: int, page: int, panel: int = 0) -> dict[s
         raise ValueError("That panel is not on the page")
     return catalog_store().set_reading_progress(
         file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1, panel=panel,
+        user_id=user_id,
     )
 
 
@@ -11907,10 +11908,13 @@ chooseButton.addEventListener('click', async () => {
 </body></html>"""
 
 
-def catalog_api_payload() -> dict[str, Any]:
-    """Add provider availability to the public catalog without exposing credentials."""
+def catalog_api_payload(*, viewer_id: int) -> dict[str, Any]:
+    """Add provider availability to the public catalog without exposing credentials.
+
+    Ratings in it are the viewer's own.
+    """
     store = catalog_store()
-    payload = store.catalog(preferred_language())
+    payload = store.catalog(preferred_language(), rater_id=viewer_id)
     enrichment = payload.get("enrichment") or {}
     provider_ids = [provider_id for provider_id, _values in _series_enrichment_provider_order()]
     cooldown_ids = {
@@ -12052,6 +12056,10 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def _viewer_id(self) -> int:
+        """The profile this request speaks for."""
+        return ADMIN_USER_ID
+
     def _dispatch(self, route: Callable[[], None]) -> None:
         """Turn an unhandled failure into a JSON 500 rather than a dead socket.
 
@@ -12134,7 +12142,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(public_auth_config())
             return
         if parsed_url.path == "/api/v1/catalog":
-            self.send_json(catalog_api_payload())
+            self.send_json(catalog_api_payload(viewer_id=self._viewer_id()))
             return
         if parsed_url.path == "/api/v1/settings":
             self.send_json(load_app_settings())
@@ -12305,15 +12313,15 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if parsed_url.path == "/api/v1/reading":
-            self.send_json(continue_reading())
+            self.send_json(continue_reading(user_id=self._viewer_id()))
             return
         if parsed_url.path == "/api/v1/reading/runs":
-            self.send_json(reading_by_run())
+            self.send_json(reading_by_run(user_id=self._viewer_id()))
             return
         series_reading_match = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
         if series_reading_match:
             try:
-                payload = series_reading(int(series_reading_match.group(1)))
+                payload = series_reading(int(series_reading_match.group(1)), user_id=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
@@ -12322,7 +12330,7 @@ class Handler(BaseHTTPRequestHandler):
         file_progress_match = re.fullmatch(r"/api/v1/files/(\d+)/progress", parsed_url.path)
         if file_progress_match:
             try:
-                payload = file_reading_progress(int(file_progress_match.group(1)))
+                payload = file_reading_progress(int(file_progress_match.group(1)), user_id=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
@@ -12920,7 +12928,9 @@ class Handler(BaseHTTPRequestHandler):
         if rating_post:
             kind = "issue" if rating_post.group(1) == "issues" else "series"
             try:
-                result = catalog_store().set_rating(kind, int(rating_post.group(2)), payload.get("rating"))
+                result = catalog_store().set_rating(
+                    kind, int(rating_post.group(2)), payload.get("rating"), user_id=self._viewer_id(),
+                )
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
@@ -12935,15 +12945,15 @@ class Handler(BaseHTTPRequestHandler):
             page = payload.get("page")
             try:
                 if page is None:
-                    catalog_store().clear_reading_progress(file_id)
-                    result = file_reading_progress(file_id)
+                    catalog_store().clear_reading_progress(file_id, user_id=self._viewer_id())
+                    result = file_reading_progress(file_id, user_id=self._viewer_id())
                 else:
                     if not isinstance(page, int) or isinstance(page, bool):
                         raise ValueError("A page is a whole number")
                     panel = payload.get("panel", 0)
                     if not isinstance(panel, int) or isinstance(panel, bool):
                         raise ValueError("A panel is a whole number")
-                    result = set_file_reading_progress(file_id, page, panel)
+                    result = set_file_reading_progress(file_id, page, panel, user_id=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return

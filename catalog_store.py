@@ -19,10 +19,78 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
+
+# Reader profiles (schema 49). One library, several people reading it, the way
+# a Plex Home shares one server: the admin, who has always existed and is the
+# only profile a single-person install ever sees, and readers the admin adds.
+# What a person reads, where they left it and what they thought of it is
+# theirs; everything else -- the files, the catalog, what is downloaded -- is
+# the library's.
+ADMIN_USER_ID = 1
+USER_ROLES = ("admin", "reader")
+# A profile's colour on the picker and in the nav: the design system's own
+# accent names, never a free value, so a colour is always one the UI can draw.
+PROFILE_COLOURS = ("violet", "blue", "teal", "green", "amber", "orange", "red", "pink")
+PROFILE_NAME_MAX = 40
+USER_PREFS_MAX_BYTES = 8192
+
+# The tables whose rows belong to a reader, in their per-reader shape. They are
+# created from here rather than in the migration's script so that a library
+# made before profiles is rebuilt into this shape (`_key_personal_tables_by_reader`)
+# and a new one simply starts in it; both end with the same columns.
+PERSONAL_TABLES: tuple[tuple[str, str, str], ...] = (
+    (
+        "reading_progress",
+        # Where you are in a comic (schema 40), per reader since 49. Keyed by
+        # file, because a file is the thing you read; an issue may have
+        # several. The file's signature is kept with the page: this app
+        # replaces files, and page 40 of a 24-page replacement is a blank
+        # screen, so a page from a file that has changed is not offered back.
+        """CREATE TABLE IF NOT EXISTS {name} (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            page INTEGER NOT NULL,
+            panel INTEGER NOT NULL DEFAULT 0,
+            page_count INTEGER NOT NULL,
+            file_signature TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, file_id)
+        )""",
+        "file_id, page, panel, page_count, file_signature, started_at, finished_at, updated_at",
+    ),
+    (
+        "issue_ratings",
+        # A reader's own rating, and nobody else's. No provider Flipparr talks
+        # to carries a quality score -- Comic Vine has none, Metron's is an age
+        # rating, GCD is bibliographic -- so this is the only rating there is,
+        # and it never arrives from a scan or a sync. Whole stars, one to five.
+        """CREATE TABLE IF NOT EXISTS {name} (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+            rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, issue_id)
+        )""",
+        "issue_id, rating, updated_at",
+    ),
+    (
+        "series_run_ratings",
+        """CREATE TABLE IF NOT EXISTS {name} (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            series_run_id INTEGER NOT NULL REFERENCES series_runs(id) ON DELETE CASCADE,
+            rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, series_run_id)
+        )""",
+        "series_run_id, rating, updated_at",
+    ),
+)
 
 
 def _panels_cover(panels_json: str) -> float:
@@ -673,7 +741,32 @@ class CatalogStore:
         with self._connect() as owned:
             yield owned
 
+    def _keep_a_copy_before(self, version: int) -> Path | None:
+        """A copy of the library as it was, before a migration that rewrites rows.
+
+        v1 has no backup of its own, and schema 49 rebuilds the tables that
+        hold everyone's reading history. The copy is taken once, beside the
+        database, through SQLite's backup API (safe with WAL), and is the way
+        back if the rebuild is ever doubted.
+        """
+        if not self.database_path.is_file():
+            return None
+        copy = self.database_path.with_name(f"{self.database_path.name}.pre-v{version}")
+        if copy.exists():
+            return None
+        with self._connect() as connection:
+            try:
+                row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
+            except sqlite3.OperationalError:
+                return None
+            if row is None or int(row["version"]) >= version:
+                return None
+            with contextlib.closing(sqlite3.connect(copy)) as target:
+                connection.backup(target)
+        return copy
+
     def _migrate(self) -> None:
+        self._keep_a_copy_before(49)
         with self._connect() as connection:
             connection.executescript(
                 """
@@ -1158,37 +1251,36 @@ class CatalogStore:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (file_id, page_member)
                 );
-                -- Where you are in a comic (schema 40). Keyed by file, because
-                -- a file is the thing you read; an issue may have several. The
-                -- file's signature is kept with the page: this app replaces
-                -- files, and page 40 of a 24-page replacement is a blank
-                -- screen, so a page from a file that has changed is not
-                -- offered back.
-                CREATE TABLE IF NOT EXISTS reading_progress (
-                    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-                    page INTEGER NOT NULL,
-                    panel INTEGER NOT NULL DEFAULT 0,
-                    page_count INTEGER NOT NULL,
-                    file_signature TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT,
-                    updated_at TEXT NOT NULL
+                /* The people reading this library (schema 49). Profile 1 is
+                   the admin and always exists; a household with one person
+                   never sees another. A name to sign in with is optional --
+                   a profile picked on a shared device needs none -- and so
+                   are the password and the PIN, both scrypt hashes written by
+                   the app. `session_version` is what revokes a profile's
+                   sign-ins: a cookie carries the version it was issued at. */
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    login_name TEXT UNIQUE COLLATE NOCASE,
+                    role TEXT NOT NULL DEFAULT 'reader' CHECK(role IN ('admin', 'reader')),
+                    colour TEXT,
+                    password_hash TEXT,
+                    pin_hash TEXT,
+                    can_request INTEGER NOT NULL DEFAULT 1,
+                    auto_approve INTEGER NOT NULL DEFAULT 0,
+                    show_on_picker INTEGER NOT NULL DEFAULT 1,
+                    session_version INTEGER NOT NULL DEFAULT 0,
+                    disabled INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_seen_at TEXT
                 );
-                CREATE INDEX IF NOT EXISTS reading_progress_recent
-                    ON reading_progress(updated_at DESC);
-                /* Your own rating, and nobody else's. No provider Flipparr
-                   talks to carries a quality score -- Comic Vine has none,
-                   Metron's is an age rating, GCD is bibliographic -- so this
-                   is the only rating there is, and it never arrives from a
-                   scan or a sync. Whole stars, one through five. */
-                CREATE TABLE IF NOT EXISTS issue_ratings (
-                    issue_id INTEGER PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
-                    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS series_run_ratings (
-                    series_run_id INTEGER PRIMARY KEY REFERENCES series_runs(id) ON DELETE CASCADE,
-                    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                /* A reader's own settings that should follow them to any
+                   device -- how panel view steps, for one -- as a small JSON
+                   object the app validates key by key. */
+                CREATE TABLE IF NOT EXISTS user_prefs (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    prefs_json TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
@@ -1509,6 +1601,17 @@ class CatalogStore:
                      AND acquisition_requests.coverage='run'""",
                 (monitor_next, monitor_now),
             )
+            # The admin exists in every library, from the first start; the
+            # personal tables are made in their per-reader shape (a library
+            # older than 49 already has them, and is rebuilt below).
+            now = _utc_now()
+            connection.execute(
+                """INSERT OR IGNORE INTO users(id, name, role, created_at, updated_at)
+                   VALUES (?, 'Admin', 'admin', ?, ?)""",
+                (ADMIN_USER_ID, now, now),
+            )
+            for name, create, _columns in PERSONAL_TABLES:
+                connection.execute(create.format(name=name))
             row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
             stored_version = int(row["version"]) if row else None
             if row is None:
@@ -1587,6 +1690,52 @@ class CatalogStore:
             progress_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reading_progress)")}
             if "panel" not in progress_columns:
                 connection.execute("ALTER TABLE reading_progress ADD COLUMN panel INTEGER NOT NULL DEFAULT 0")
+            # 49: reading history and ratings belong to a reader. Everything
+            # recorded before profiles existed was the admin's, and stays so.
+            self._key_personal_tables_by_reader(connection)
+            # Indexes on the reader's column come after the rebuild: made in
+            # the script above, they would name a column an older library's
+            # table did not have yet, and the library would not open.
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS reading_progress_by_reader ON reading_progress(user_id, updated_at DESC)"
+            )
+            connection.execute("CREATE INDEX IF NOT EXISTS reading_progress_file ON reading_progress(file_id)")
+
+    @staticmethod
+    def _key_personal_tables_by_reader(connection: sqlite3.Connection) -> None:
+        """Rebuild a pre-profiles personal table with a reader in its key, every row the admin's.
+
+        SQLite cannot change a primary key in place, so each table is copied
+        into its new shape and swapped in, inside a savepoint: the row count is
+        compared before the old table goes, and on any difference nothing is
+        changed and the library refuses to open rather than lose a place or a
+        rating. A table already keyed by reader is left alone, so this runs
+        once and is a no-op on every later start.
+        """
+        for name, create, columns in PERSONAL_TABLES:
+            existing = {row["name"] for row in connection.execute(f"PRAGMA table_info({name})")}
+            if "user_id" in existing:
+                continue
+            rebuilt = f"{name}_by_reader"
+            connection.execute("SAVEPOINT personal_by_reader")
+            try:
+                connection.execute(f"DROP TABLE IF EXISTS {rebuilt}")
+                connection.execute(create.format(name=rebuilt))
+                connection.execute(
+                    f"INSERT INTO {rebuilt}(user_id, {columns}) SELECT ?, {columns} FROM {name}",
+                    (ADMIN_USER_ID,),
+                )
+                before = connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+                after = connection.execute(f"SELECT COUNT(*) FROM {rebuilt}").fetchone()[0]
+                if before != after:
+                    raise RuntimeError(f"{name}: {before} rows before and {after} after keying by reader")
+                connection.execute(f"DROP TABLE {name}")
+                connection.execute(f"ALTER TABLE {rebuilt} RENAME TO {name}")
+            except Exception:
+                connection.execute("ROLLBACK TO personal_by_reader")
+                connection.execute("RELEASE personal_by_reader")
+                raise
+            connection.execute("RELEASE personal_by_reader")
 
     @staticmethod
     def _forget_misread_scene_releases(connection: sqlite3.Connection) -> int:
@@ -3213,11 +3362,11 @@ class CatalogStore:
                 (series_run_id, int(file_id), member, source, file_signature, _utc_now()),
             )
 
-    def reading_progress(self, file_id: int) -> dict[str, Any] | None:
-        """Where this comic was left, if it is still the comic it was."""
+    def reading_progress(self, file_id: int, *, user_id: int) -> dict[str, Any] | None:
+        """Where this reader left this comic, if it is still the comic it was."""
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM reading_progress WHERE file_id=?", (int(file_id),)
+                "SELECT * FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
             ).fetchone()
         if row is None:
             return None
@@ -3230,7 +3379,7 @@ class CatalogStore:
 
     def set_reading_progress(
         self, file_id: int, page: int, page_count: int, file_signature: str,
-        finished: bool = False, panel: int = 0,
+        finished: bool = False, panel: int = 0, *, user_id: int,
     ) -> dict[str, Any]:
         """Remember the page (and the panel on it), and when a comic was finished.
 
@@ -3248,23 +3397,26 @@ class CatalogStore:
         with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO reading_progress(
-                       file_id, page, panel, page_count, file_signature, started_at, finished_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(file_id) DO UPDATE SET
+                       user_id, file_id, page, panel, page_count, file_signature, started_at, finished_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, file_id) DO UPDATE SET
                        page=excluded.page, panel=excluded.panel, page_count=excluded.page_count,
                        file_signature=excluded.file_signature,
                        -- Going back into a comic you finished makes it unfinished again.
                        finished_at=excluded.finished_at,
                        updated_at=excluded.updated_at""",
-                (int(file_id), int(page), int(panel), int(page_count), file_signature, now, finished_at, now),
+                (int(user_id), int(file_id), int(page), int(panel), int(page_count), file_signature,
+                 now, finished_at, now),
             )
-        return self.reading_progress(file_id)
+        return self.reading_progress(file_id, user_id=user_id)
 
-    def clear_reading_progress(self, file_id: int) -> None:
+    def clear_reading_progress(self, file_id: int, *, user_id: int) -> None:
         with self._write_lock, self._connect() as connection:
-            connection.execute("DELETE FROM reading_progress WHERE file_id=?", (int(file_id),))
+            connection.execute(
+                "DELETE FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
+            )
 
-    def recent_reading(self, limit: int = 24) -> list[dict[str, Any]]:
+    def recent_reading(self, limit: int = 24, *, user_id: int) -> list[dict[str, Any]]:
         """What was read lately, newest first, with what it belongs to.
 
         Only comics the library still holds: a file that has gone is not
@@ -3280,9 +3432,10 @@ class CatalogStore:
                    JOIN files ON files.id=reading_progress.file_id AND files.present=1
                    LEFT JOIN file_identities ON file_identities.file_id=files.id
                    LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
+                   WHERE reading_progress.user_id=?
                    ORDER BY reading_progress.updated_at DESC
                    LIMIT ?""",
-                (int(limit),),
+                (int(user_id), int(limit)),
             ).fetchall()
         return [
             {
@@ -3354,7 +3507,7 @@ class CatalogStore:
             "issues": issues, "volumes": volumes,
         }
 
-    def reading_progress_for_run(self, series_run_id: int) -> dict[str, dict[str, Any]]:
+    def reading_progress_for_run(self, series_run_id: int, *, user_id: int) -> dict[str, dict[str, Any]]:
         """Where every comic in one run was left, keyed by file id.
 
         Staleness is decided in SQL rather than by opening the files: the
@@ -3374,8 +3527,8 @@ class CatalogStore:
                    FROM reading_progress
                    JOIN files ON files.id=reading_progress.file_id AND files.present=1
                    JOIN file_identities ON file_identities.file_id=files.id
-                   WHERE file_identities.series_run_id=?""",
-                (series_run_id,),
+                   WHERE file_identities.series_run_id=? AND reading_progress.user_id=?""",
+                (series_run_id, int(user_id)),
             ).fetchall()
         return {
             str(row["file_id"]): {
@@ -3386,7 +3539,7 @@ class CatalogStore:
             for row in rows
         }
 
-    def reading_progress_by_run(self) -> dict[str, dict[str, dict[str, Any]]]:
+    def reading_progress_by_run(self, *, user_id: int) -> dict[str, dict[str, dict[str, Any]]]:
         """Every run that has been read in, and where each of its comics sits.
 
         One query for the whole library, because the Comics grid asks about
@@ -3405,7 +3558,8 @@ class CatalogStore:
                    FROM reading_progress
                    JOIN files ON files.id=reading_progress.file_id AND files.present=1
                    JOIN file_identities ON file_identities.file_id=files.id
-                   WHERE file_identities.series_run_id IS NOT NULL"""
+                   WHERE file_identities.series_run_id IS NOT NULL AND reading_progress.user_id=?""",
+                (int(user_id),),
             ).fetchall()
         by_run: dict[str, dict[str, dict[str, Any]]] = {}
         for row in rows:
@@ -3539,7 +3693,238 @@ class CatalogStore:
             ).fetchall()
         return {str(row["run_id"]): int(row["files"]) for row in rows}
 
-    def set_rating(self, kind: str, target_id: int, rating: int | None) -> dict[str, Any]:
+    # ---- Reader profiles -------------------------------------------------
+    #
+    # The store keeps who exists and what they may do; the app hashes secrets,
+    # signs cookies and decides who is asking. Hashes never leave the store
+    # except through `user_secrets`, which the app calls only to verify one.
+
+    _USER_PUBLIC = (
+        "id, name, login_name, role, colour, can_request, auto_approve, show_on_picker, "
+        "session_version, disabled, created_at, updated_at, last_seen_at, "
+        "password_hash IS NOT NULL AS has_password, pin_hash IS NOT NULL AS has_pin"
+    )
+
+    @staticmethod
+    def _user_record(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]), "name": row["name"], "loginName": row["login_name"],
+            "role": row["role"], "colour": row["colour"],
+            "canRequest": bool(row["can_request"]), "autoApprove": bool(row["auto_approve"]),
+            "showOnPicker": bool(row["show_on_picker"]), "sessionVersion": int(row["session_version"]),
+            "disabled": bool(row["disabled"]), "hasPassword": bool(row["has_password"]),
+            "hasPin": bool(row["has_pin"]), "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"], "lastSeenAt": row["last_seen_at"],
+        }
+
+    def list_users(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(f"SELECT {self._USER_PUBLIC} FROM users ORDER BY id").fetchall()
+        return [self._user_record(row) for row in rows]
+
+    def user(self, user_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(f"SELECT {self._USER_PUBLIC} FROM users WHERE id=?", (int(user_id),)).fetchone()
+        return self._user_record(row)
+
+    def user_by_login(self, login_name: str) -> dict[str, Any] | None:
+        """The profile that signs in with this name, ignoring case."""
+        if not login_name:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT {self._USER_PUBLIC} FROM users WHERE login_name=? COLLATE NOCASE", (login_name.strip(),),
+            ).fetchone()
+        return self._user_record(row)
+
+    def user_secrets(self, user_id: int) -> dict[str, str | None]:
+        """A profile's password and PIN hashes, for the app to verify against. Never sent anywhere."""
+        with self._connect() as connection:
+            row = connection.execute("SELECT password_hash, pin_hash FROM users WHERE id=?", (int(user_id),)).fetchone()
+        if row is None:
+            raise LookupError("That profile does not exist")
+        return {"passwordHash": row["password_hash"], "pinHash": row["pin_hash"]}
+
+    @staticmethod
+    def _profile_name(value: Any) -> str:
+        name = " ".join(str(value or "").split())
+        if not name:
+            raise ValueError("A profile needs a name")
+        if len(name) > PROFILE_NAME_MAX:
+            raise ValueError(f"A profile's name is at most {PROFILE_NAME_MAX} characters")
+        return name
+
+    @staticmethod
+    def _login_name(value: Any) -> str | None:
+        if value is None:
+            return None
+        name = str(value).strip()
+        if not name:
+            return None
+        if len(name) > PROFILE_NAME_MAX or any(char.isspace() for char in name):
+            raise ValueError("A sign-in name is one word, at most 40 characters")
+        return name
+
+    def create_user(
+        self, name: str, *, role: str = "reader", login_name: str | None = None,
+        password_hash: str | None = None, pin_hash: str | None = None, colour: str | None = None,
+        can_request: bool = True, auto_approve: bool = False, show_on_picker: bool = True,
+    ) -> dict[str, Any]:
+        """A new profile. Readers only once the admin can't be picked by anyone.
+
+        On a shared device anyone can tap a profile, so a household with
+        readers but an open admin profile has no admin at all: the admin must
+        have a PIN or a password before the first reader is made.
+        """
+        if role not in USER_ROLES:
+            raise ValueError("A profile is an admin or a reader")
+        if colour is not None and colour not in PROFILE_COLOURS:
+            raise ValueError("Choose one of the profile colours")
+        name = self._profile_name(name)
+        login = self._login_name(login_name)
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            if role == "reader":
+                admin = connection.execute(
+                    "SELECT 1 FROM users WHERE role='admin' AND disabled=0 AND (password_hash IS NOT NULL OR pin_hash IS NOT NULL)"
+                ).fetchone()
+                if admin is None:
+                    raise ValueError("Give your own profile a PIN or a password before adding readers")
+            try:
+                cursor = connection.execute(
+                    """INSERT INTO users(name, login_name, role, colour, password_hash, pin_hash,
+                                         can_request, auto_approve, show_on_picker, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (name, login, role, colour, password_hash, pin_hash, int(bool(can_request)),
+                     int(bool(auto_approve)), int(bool(show_on_picker)), now, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Another profile already signs in with that name") from exc
+            user_id = int(cursor.lastrowid)
+        return self.user(user_id)
+
+    _USER_FIELDS = {
+        "name": "name", "loginName": "login_name", "role": "role", "colour": "colour",
+        "passwordHash": "password_hash", "pinHash": "pin_hash", "canRequest": "can_request",
+        "autoApprove": "auto_approve", "showOnPicker": "show_on_picker", "disabled": "disabled",
+    }
+    # What ends a profile's sign-ins everywhere when it changes: a new
+    # password, a changed role, being switched off. A PIN is not a sign-in.
+    _USER_REVOKING = {"password_hash", "role", "disabled"}
+
+    def update_user(self, user_id: int, **changes: Any) -> dict[str, Any]:
+        """Change a profile. Keys are the public names (`name`, `passwordHash`, ...)."""
+        unknown = set(changes) - set(self._USER_FIELDS)
+        if unknown:
+            raise ValueError(f"Unknown profile fields: {', '.join(sorted(unknown))}")
+        values: dict[str, Any] = {}
+        for key, value in changes.items():
+            column = self._USER_FIELDS[key]
+            if column == "name":
+                value = self._profile_name(value)
+            elif column == "login_name":
+                value = self._login_name(value)
+            elif column == "role" and value not in USER_ROLES:
+                raise ValueError("A profile is an admin or a reader")
+            elif column == "colour" and value is not None and value not in PROFILE_COLOURS:
+                raise ValueError("Choose one of the profile colours")
+            elif column in ("can_request", "auto_approve", "show_on_picker", "disabled"):
+                value = int(bool(value))
+            values[column] = value
+        with self._write_lock, self._connect() as connection:
+            current = connection.execute("SELECT * FROM users WHERE id=?", (int(user_id),)).fetchone()
+            if current is None:
+                raise LookupError("That profile does not exist")
+            losing_admin = current["role"] == "admin" and not current["disabled"] and (
+                values.get("role", "admin") != "admin" or values.get("disabled", 0)
+            )
+            if losing_admin and self._enabled_admins(connection) <= 1:
+                raise ValueError("The library needs an admin: this is the last one")
+            # An admin left with neither a password nor a PIN is an admin
+            # anyone at a shared device can become.
+            stays_admin = values.get("role", current["role"]) == "admin"
+            unguarded = values.get("password_hash", current["password_hash"]) is None \
+                and values.get("pin_hash", current["pin_hash"]) is None
+            if stays_admin and unguarded and ("password_hash" in values or "pin_hash" in values) \
+                    and self._readers(connection):
+                raise ValueError("While there are readers, the admin keeps a PIN or a password")
+            if not values:
+                return self.user(user_id)
+            revoke = any(
+                column in values and values[column] != current[column] for column in self._USER_REVOKING
+            )
+            assignments = ", ".join(f"{column}=?" for column in values)
+            params = [*values.values(), _utc_now()]
+            if revoke:
+                assignments += ", session_version=session_version+1"
+            try:
+                connection.execute(
+                    f"UPDATE users SET {assignments}, updated_at=? WHERE id=?", (*params, int(user_id)),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Another profile already signs in with that name") from exc
+        return self.user(user_id)
+
+    @staticmethod
+    def _enabled_admins(connection: sqlite3.Connection) -> int:
+        return int(connection.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND disabled=0").fetchone()[0])
+
+    @staticmethod
+    def _readers(connection: sqlite3.Connection) -> int:
+        return int(connection.execute("SELECT COUNT(*) FROM users WHERE role='reader'").fetchone()[0])
+
+    def delete_user(self, user_id: int) -> None:
+        """Remove a profile and everything that was only theirs: history, ratings, settings."""
+        with self._write_lock, self._connect() as connection:
+            current = connection.execute("SELECT role, disabled FROM users WHERE id=?", (int(user_id),)).fetchone()
+            if current is None:
+                raise LookupError("That profile does not exist")
+            if current["role"] == "admin" and not current["disabled"] and self._enabled_admins(connection) <= 1:
+                raise ValueError("The library needs an admin: this is the last one")
+            connection.execute("DELETE FROM users WHERE id=?", (int(user_id),))
+
+    def bump_session_version(self, user_id: int) -> int:
+        """End every sign-in this profile has, everywhere. Returns the new version."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE users SET session_version=session_version+1, updated_at=? WHERE id=?",
+                (_utc_now(), int(user_id)),
+            )
+            row = connection.execute("SELECT session_version FROM users WHERE id=?", (int(user_id),)).fetchone()
+        if row is None:
+            raise LookupError("That profile does not exist")
+        return int(row["session_version"])
+
+    def touch_user(self, user_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute("UPDATE users SET last_seen_at=? WHERE id=?", (_utc_now(), int(user_id)))
+
+    def user_prefs(self, user_id: int) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT prefs_json FROM user_prefs WHERE user_id=?", (int(user_id),)).fetchone()
+        prefs = _load_json(row["prefs_json"], {}) if row else {}
+        return prefs if isinstance(prefs, dict) else {}
+
+    def set_user_prefs(self, user_id: int, prefs: dict[str, Any]) -> dict[str, Any]:
+        """Replace a profile's settings. The app decides which keys exist; the store bounds the size."""
+        if not isinstance(prefs, dict):
+            raise ValueError("Settings are a set of named values")
+        text = json.dumps(prefs, separators=(",", ":"), sort_keys=True)
+        if len(text.encode()) > USER_PREFS_MAX_BYTES:
+            raise ValueError("Those settings are too large to keep")
+        with self._write_lock, self._connect() as connection:
+            if connection.execute("SELECT 1 FROM users WHERE id=?", (int(user_id),)).fetchone() is None:
+                raise LookupError("That profile does not exist")
+            connection.execute(
+                """INSERT INTO user_prefs(user_id, prefs_json, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET prefs_json=excluded.prefs_json, updated_at=excluded.updated_at""",
+                (int(user_id), text, _utc_now()),
+            )
+        return self.user_prefs(user_id)
+
+    def set_rating(self, kind: str, target_id: int, rating: int | None, *, user_id: int) -> dict[str, Any]:
         """Rate an issue or a run, or take the rating back.
 
         `None` clears it, which is how a star control undoes itself: pressing
@@ -3560,13 +3945,13 @@ class CatalogStore:
             if exists is None:
                 raise LookupError("That is not in the catalog")
             if rating is None:
-                connection.execute(f"DELETE FROM {table} WHERE {column}=?", (target_id,))
+                connection.execute(f"DELETE FROM {table} WHERE user_id=? AND {column}=?", (int(user_id), target_id))
             else:
                 connection.execute(
-                    f"""INSERT INTO {table}({column}, rating, updated_at) VALUES (?, ?, ?)
-                        ON CONFLICT({column}) DO UPDATE SET
+                    f"""INSERT INTO {table}(user_id, {column}, rating, updated_at) VALUES (?, ?, ?, ?)
+                        ON CONFLICT(user_id, {column}) DO UPDATE SET
                             rating=excluded.rating, updated_at=excluded.updated_at""",
-                    (target_id, rating, _utc_now()),
+                    (int(user_id), target_id, rating, _utc_now()),
                 )
         return {"id": str(target_id), "yourRating": rating}
 
@@ -7961,7 +8346,7 @@ class CatalogStore:
                 (file_path, code, fingerprint, _utc_now()),
             )
 
-    def catalog(self, preferred_language: str | None = None) -> dict[str, Any]:
+    def catalog(self, preferred_language: str | None = None, *, rater_id: int | None = ADMIN_USER_ID) -> dict[str, Any]:
         self.reconcile_acquisition_jobs()
         with self._connect() as connection:
             roots = [dict(row) for row in connection.execute("SELECT * FROM library_roots ORDER BY id")]
@@ -8143,14 +8528,22 @@ class CatalogStore:
             # wrong download is visible at a glance rather than only to someone
             # who already knows to open the file. Deliberately unfiltered by
             # language: seeing the French cover is how the mistake is spotted.
+            # The ratings are the asking reader's. The internal callers
+            # (acquisition snapshots, merges) answer admin-only routes and get
+            # the admin's, which is what they always showed; `rater_id=None`
+            # asks for none at all.
             issue_ratings = {
                 int(row["issue_id"]): int(row["rating"])
-                for row in connection.execute("SELECT issue_id, rating FROM issue_ratings")
-            }
+                for row in connection.execute(
+                    "SELECT issue_id, rating FROM issue_ratings WHERE user_id=?", (rater_id,),
+                )
+            } if rater_id is not None else {}
             run_ratings = {
                 int(row["series_run_id"]): int(row["rating"])
-                for row in connection.execute("SELECT series_run_id, rating FROM series_run_ratings")
-            }
+                for row in connection.execute(
+                    "SELECT series_run_id, rating FROM series_run_ratings WHERE user_id=?", (rater_id,),
+                )
+            } if rater_id is not None else {}
             issue_file_covers: dict[int, str] = {}
             # The file behind an issue, so something can be read from it. Two
             # copies of one issue are possible -- a scan and a reprint -- and
