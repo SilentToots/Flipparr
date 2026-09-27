@@ -1610,6 +1610,21 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(made.status, 201, made.body)
         return made.json()["id"]
 
+    def test_the_adder_stays_in_and_devices_that_were_the_admin_by_default_do_not(self):
+        # A single-profile device is the admin, and now holds a real sign-in.
+        early = self.call("GET", "/api/v1/catalog")
+        self.assertEqual(early.status, 200)
+        self.assertIn("flipparr_session", early.cookies)
+        other_device = {"flipparr_session": early.cookies["flipparr_session"]}
+        adder = self.call("PATCH", "/api/v1/me", {"pin": "2468"}, cookies=other_device)
+        made = self.call("POST", "/api/v1/users", {"name": "Sam"}, cookies=other_device)
+        self.assertEqual((adder.status, made.status), (200, 201))
+        self.assertIn("flipparr_session", made.cookies, "the adder is signed in afresh")
+        self.assertEqual(self.call("GET", "/api/v1/settings", cookies={"flipparr_session": made.cookies["flipparr_session"]}).status, 200)
+        stale = self.call("GET", "/api/v1/settings", cookies=other_device)
+        self.assertEqual((stale.status, stale.json()["reason"]), (401, "profile_required"),
+                         "a cookie from the one-profile days no longer opens the admin")
+
     def test_a_reader_cannot_be_added_while_the_admin_is_one_tap_away(self):
         refused = self.call("POST", "/api/v1/users", {"name": "Sam"})
         self.assertEqual(refused.status, 400)
@@ -1675,8 +1690,10 @@ class ReaderProfileHttpTests(unittest.TestCase):
         made = self.call("POST", "/api/v1/users", {"name": "Sam", "loginName": "sam", "password": "sams password"},
                          cookies=admin.cookies)
         self.assertEqual(made.status, 201, made.body)
+        # Adding the first reader re-issues the admin's own sign-in.
+        admin_cookies = {**admin.cookies, **made.cookies}
         self.assertEqual(self.call("POST", "/api/v1/users", {"name": "Imposter", "loginName": "OWNER"},
-                                   cookies=admin.cookies).status, 400, "nobody else signs in as the admin")
+                                   cookies=admin_cookies).status, 400, "nobody else signs in as the admin")
         sam = self.call("POST", "/api/v1/auth/login", {"username": "SAM", "password": "sams password"})
         self.assertEqual(sam.status, 200)
         self.assertNotIn("flipparr_device", sam.cookies, "a reader's own phone is not a shared device")
@@ -1693,7 +1710,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam.cookies).status, 401, "the old sign-in ended")
         self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=changed.cookies).status, 200, "but not the changer's")
         # The admin can end a reader's sign-ins everywhere.
-        self.call("POST", f"/api/v1/users/{made.json()['id']}/sign-out", cookies=admin.cookies)
+        self.call("POST", f"/api/v1/users/{made.json()['id']}/sign-out", cookies=admin_cookies)
         self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=changed.cookies).status, 401)
 
     def test_a_cookie_from_before_profiles_is_the_admins_and_is_upgraded(self):

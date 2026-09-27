@@ -12426,6 +12426,14 @@ class Handler(BaseHTTPRequestHandler):
             enabled = [user for user in store.list_users() if not user["disabled"]]
             if len(enabled) == 1:
                 viewer = viewer_for(enabled[0])
+                # The device gets a real sign-in now, so it keeps its profile
+                # when a second one is added -- rather than falling to the
+                # picker mid-page. Adding the first reader ends every admin
+                # sign-in but the adder's (`POST /api/v1/users`), so a device
+                # that was the admin only because nobody else existed is not
+                # left an admin.
+                if self.path.startswith("/api/"):
+                    self._sign_in_as(enabled[0], config, device=False)
         self.viewer = viewer
         self._household = household
 
@@ -12921,11 +12929,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"status": "switched", "viewer": viewer_for(user).public()})
             return
         if parsed_url.path == "/api/v1/users":
+            store = _profiles_store()
+            config = load_auth_config()
+            first_reader = store.reader_count() == 0
             try:
-                created = create_profile(_profiles_store(), load_auth_config(), payload)
+                created = create_profile(store, config, payload)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
+            if first_reader and created["role"] == "reader":
+                # Until now every shared device was the admin by default, and
+                # may hold the admin's cookie from then. From here the admin
+                # is the admin's alone: those sign-ins end, the adder's is
+                # issued afresh.
+                store.bump_session_version(ADMIN_USER_ID)
+                if self._viewer_id() == ADMIN_USER_ID:
+                    self._sign_in_as(store.user(ADMIN_USER_ID), config, device=config["method"] == "forms")
             self.send_json(created, 201)
             return
         users_sign_out = re.fullmatch(r"/api/v1/users/(\d+)/sign-out", parsed_url.path)
