@@ -102,6 +102,16 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # (PATCH, DELETE) stays the admin's.
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages/(\d+)/panels", READER),
     (frozenset({"POST"}), r"/api/v1/(issues|series)/(\d+)/rating", READER),
+    # Finding something to ask for. Discover's searches and previews spend
+    # the admin's provider quota, which one shared, paced queue already
+    # bounds; adding a run or pulling issues stays the admin's, and a reader
+    # asks for them instead.
+    (frozenset({"GET"}), r"/api/v1/discover", READER),
+    (frozenset({"GET"}), r"/api/v1/discover/(run|issue|releases)", READER),
+    # Asking, and seeing what became of it. Approving and declining are the
+    # admin's (unlisted); cancelling is the asker's, which the handler checks.
+    (frozenset({"GET", "POST"}), r"/api/v1/member-requests", READER),
+    (frozenset({"POST"}), r"/api/v1/member-requests/(\d+)/cancel", READER),
 )
 
 _COMPILED = tuple((methods, re.compile(pattern), access) for methods, pattern, access in ROUTE_ACCESS)

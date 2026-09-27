@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 51
+SCHEMA_VERSION = 52
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -35,6 +35,12 @@ ADMIN_USER_ID = 1
 USER_ROLES = ("admin", "reader")
 # What a profile asks for when someone switches to it on a shared device.
 SWITCH_LOCKS = ("open", "pin", "password")
+# What a reader can ask the admin for: a run or collection in the library to
+# be followed, a run found in Discover to be added and followed, or chosen
+# issues of a Discover run. Each becomes, on approval, exactly the call the
+# admin's own button makes.
+MEMBER_REQUEST_KINDS = ("run", "collection", "discover_run", "discover_issues")
+MEMBER_REQUEST_STATES = ("pending", "approved", "declined", "cancelled", "failed")
 # A profile's colour on the picker and in the nav: the design system's own
 # accent names, never a free value, so a colour is always one the UI can draw.
 PROFILE_COLOURS = ("violet", "blue", "teal", "green", "amber", "orange", "red", "pink")
@@ -1289,6 +1295,35 @@ class CatalogStore:
                     prefs_json TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL
                 );
+                /* A reader's request, waiting for the admin (schema 52). Pending
+                   is inert: no acquisition request, no monitoring, no job and
+                   no provider import exist until the admin approves, which
+                   makes the same call the admin's own button would and records
+                   what it became. `params_json` is that call's arguments;
+                   `detail_json` what the queue shows (title, year, cover,
+                   issue numbers). `target_key` names what is asked for, so
+                   one person asking twice is one request. */
+                CREATE TABLE IF NOT EXISTS member_requests (
+                    id INTEGER PRIMARY KEY,
+                    requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL CHECK(kind IN ('run', 'collection', 'discover_run', 'discover_issues')),
+                    target_key TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    params_json TEXT NOT NULL DEFAULT '{}',
+                    detail_json TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'approved', 'declined', 'cancelled', 'failed')),
+                    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    decided_at TEXT,
+                    decline_reason TEXT,
+                    failure TEXT,
+                    acquisition_request_id INTEGER REFERENCES acquisition_requests(id) ON DELETE SET NULL,
+                    series_run_id INTEGER REFERENCES series_runs(id) ON DELETE SET NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS member_requests_by_status ON member_requests(status, created_at);
+                CREATE INDEX IF NOT EXISTS member_requests_by_requester ON member_requests(requested_by, created_at DESC);
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -3947,6 +3982,148 @@ class CatalogStore:
             if cursor.rowcount == 0:
                 raise LookupError("That profile does not exist")
         return self.user(user_id)
+
+    # ---- Readers' requests -------------------------------------------------
+    #
+    # The store keeps who asked for what and what became of it; the app
+    # validates a request, and on approval makes the call and reports back.
+
+    @staticmethod
+    def _member_request_record(row: sqlite3.Row) -> dict[str, Any]:
+        state = row["status"]
+        # Approved and then fulfilled: what was asked for is here.
+        if state == "approved" and row["acquisition_status"] == "fulfilled":
+            state = "available"
+        return {
+            "id": int(row["id"]), "kind": row["kind"], "title": row["title"], "status": row["status"],
+            "state": state, "targetKey": row["target_key"],
+            "params": json.loads(row["params_json"] or "{}"), "detail": json.loads(row["detail_json"] or "{}"),
+            "requestedBy": {
+                "id": int(row["requested_by"]), "name": row["requester_name"], "colour": row["requester_colour"],
+                "avatar": (
+                    f"/api/v1/profiles/{int(row['requested_by'])}/avatar?v="
+                    f"{urllib.parse.quote(str(row['requester_avatar_at']))}" if row["requester_avatar"] else None
+                ),
+            },
+            "decidedBy": int(row["decided_by"]) if row["decided_by"] is not None else None,
+            "decidedAt": row["decided_at"], "declineReason": row["decline_reason"], "failure": row["failure"],
+            "acquisitionRequestId": row["acquisition_request_id"], "seriesRunId": row["series_run_id"],
+            "createdAt": row["created_at"], "updatedAt": row["updated_at"],
+        }
+
+    _MEMBER_REQUEST_SELECT = """
+        SELECT member_requests.*, users.name AS requester_name, users.colour AS requester_colour,
+               users.avatar_source AS requester_avatar, users.avatar_updated_at AS requester_avatar_at,
+               acquisition_requests.status AS acquisition_status
+        FROM member_requests
+        JOIN users ON users.id = member_requests.requested_by
+        LEFT JOIN acquisition_requests ON acquisition_requests.id = member_requests.acquisition_request_id
+    """
+
+    def create_member_request(
+        self, user_id: int, kind: str, target_key: str, title: str,
+        params: dict[str, Any], detail: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """A reader's request, pending. Asking again for what they already
+        wait on returns that request rather than a second one. Returns the
+        request and whether it is new."""
+        if kind not in MEMBER_REQUEST_KINDS:
+            raise ValueError("Unknown kind of request")
+        title = " ".join(str(title or "").split())[:200]
+        if not title or not target_key:
+            raise ValueError("A request needs something to ask for")
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            existing = connection.execute(
+                "SELECT id FROM member_requests WHERE requested_by=? AND target_key=? AND status='pending'",
+                (int(user_id), target_key),
+            ).fetchone()
+            if existing:
+                request_id, created = int(existing["id"]), False
+            else:
+                cursor = connection.execute(
+                    """INSERT INTO member_requests(requested_by, kind, target_key, title, params_json,
+                                                   detail_json, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (int(user_id), kind, target_key, title, json.dumps(params, sort_keys=True),
+                     json.dumps(detail or {}, sort_keys=True), now, now),
+                )
+                request_id, created = int(cursor.lastrowid), True
+        return self.member_request(request_id), created
+
+    def member_request(self, request_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                f"{self._MEMBER_REQUEST_SELECT} WHERE member_requests.id=?", (int(request_id),)
+            ).fetchone()
+        return self._member_request_record(row) if row else None
+
+    def member_requests(
+        self, *, user_id: int | None = None, statuses: Sequence[str] | None = None, limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Newest first: one reader's, or everyone's for the admin."""
+        clauses, params = [], []
+        if user_id is not None:
+            clauses.append("member_requests.requested_by=?")
+            params.append(int(user_id))
+        if statuses:
+            clauses.append(f"member_requests.status IN ({', '.join('?' for _ in statuses)})")
+            params.extend(statuses)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"{self._MEMBER_REQUEST_SELECT} {where} ORDER BY member_requests.id DESC LIMIT ?",
+                (*params, int(limit)),
+            ).fetchall()
+        return [self._member_request_record(row) for row in rows]
+
+    def pending_member_request_count(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM member_requests WHERE status='pending'").fetchone()[0])
+
+    def claim_member_request(self, request_id: int, decided_by: int, status: str,
+                             reason: str | None = None) -> dict[str, Any]:
+        """Decide a pending request: approved, declined, or (by the one who
+        asked) cancelled. Only a waiting request can be decided -- pending,
+        or failed, which can be approved again once whatever broke is fixed
+        -- and only once: two taps of Approve, or Approve racing Cancel,
+        leave one winner, and the other is told it was already decided."""
+        if status not in ("approved", "declined", "cancelled"):
+            raise ValueError("A request is approved, declined or cancelled")
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE member_requests SET status=?, decided_by=?, decided_at=?, decline_reason=?,
+                          failure=NULL, updated_at=?
+                   WHERE id=? AND status IN ('pending', 'failed')""",
+                (status, int(decided_by), now, (str(reason).strip()[:300] or None) if reason else None, now,
+                 int(request_id)),
+            )
+            if cursor.rowcount == 0:
+                exists = connection.execute("SELECT status FROM member_requests WHERE id=?", (int(request_id),)).fetchone()
+                if exists is None:
+                    raise LookupError("That request does not exist")
+                raise ValueError(f"That request was already {exists['status']}")
+        return self.member_request(request_id)
+
+    def record_member_request_outcome(
+        self, request_id: int, *, acquisition_request_id: int | None = None,
+        series_run_id: int | None = None, failure: str | None = None,
+    ) -> dict[str, Any]:
+        """What an approved request became -- or why it could not be done."""
+        with self._write_lock, self._connect() as connection:
+            if failure:
+                connection.execute(
+                    "UPDATE member_requests SET status='failed', failure=?, updated_at=? WHERE id=?",
+                    (str(failure)[:500], _utc_now(), int(request_id)),
+                )
+            else:
+                connection.execute(
+                    """UPDATE member_requests SET acquisition_request_id=?, series_run_id=?, updated_at=?
+                       WHERE id=?""",
+                    (acquisition_request_id, series_run_id, _utc_now(), int(request_id)),
+                )
+        return self.member_request(request_id)
 
     def reading_activity(self, user_id: int, *, history_limit: int = 24) -> dict[str, Any]:
         """What a profile has read: the numbers for its page, and its history, newest first.

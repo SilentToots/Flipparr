@@ -1562,6 +1562,13 @@ NOT_ADMIN = {
     ("GET", "/api/v1/files/1/pages/1"): "reader",
     ("GET", "/api/v1/files/1/pages/1/panels"): "reader",
     ("POST", "/api/v1/issues/1/rating"): "reader",
+    ("GET", "/api/v1/discover"): "reader",
+    ("GET", "/api/v1/discover/run"): "reader",
+    ("GET", "/api/v1/discover/issue"): "reader",
+    ("GET", "/api/v1/discover/releases"): "reader",
+    ("GET", "/api/v1/member-requests"): "reader",
+    ("POST", "/api/v1/member-requests"): "reader",
+    ("POST", "/api/v1/member-requests/1/cancel"): "reader",
 }
 
 
@@ -1698,6 +1705,78 @@ class ReaderProfileHttpTests(unittest.TestCase):
         # The admin sets a reader's lock too.
         by_admin = self.call("PATCH", f"/api/v1/users/{sam}", {"switchLock": "pin"}, cookies=admin_cookies)
         self.assertEqual((by_admin.status, by_admin.json()["lock"]), (200, "pin"))
+
+    def _library_of_one_run(self):
+        """A library with one run of three issues, in the database the server uses."""
+        from catalog_store import CatalogStore
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        root.mkdir(exist_ok=True)
+        parsed = []
+        for number in ("1", "2", "3"):
+            (root / f"Example 00{number}.cbz").write_bytes(b"comic")
+            parsed.append(app.ParsedFile(str(root / f"Example 00{number}.cbz"), f"Example 00{number}.cbz", ".cbz",
+                                         "Example", issue=number))
+        store = CatalogStore(Path(os.environ["COMICARR_DATABASE"]))
+        store.perform_scan(store.begin_scan(str(root), True), lambda *_: parsed, lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {},
+            "file_health": {"status": "ok"},
+            "recommendation": {"title": "Example", "issue": p.issue, "record_type": "single_issue",
+                               "publisher": "Example Press", "source": "Test"},
+        })
+        return store, int(store.catalog()["series"][0]["id"])
+
+    def test_a_readers_request_waits_for_the_admin_and_approving_is_the_admins_own_call(self):
+        store, run = self._library_of_one_run()
+        sam = self._household_with_a_reader()
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        admin_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        asked = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=sam_cookies)
+        self.assertEqual((asked.status, asked.json()["status"], asked.json()["title"]), (201, "pending", "Example"), asked.body)
+        again = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=sam_cookies)
+        self.assertEqual((again.status, again.json()["id"]), (200, asked.json()["id"]), "asking twice is one request")
+        # Pending is inert.
+        self.assertEqual(store.catalog()["requests"], [])
+        self.assertNotEqual(store.catalog()["series"][0]["monitoringStatus"], "monitored")
+        # The reader sees their own request and none of the admin's queue.
+        catalog = self.call("GET", "/api/v1/catalog", cookies=sam_cookies).json()
+        self.assertEqual([r["title"] for r in catalog["memberRequests"]], ["Example"])
+        self.assertEqual(catalog["stats"].get("pendingRequests", 0), 0)
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=admin_cookies).json()["stats"]["pendingRequests"], 1)
+        # Deciding is the admin's.
+        refused = self.call("POST", f"/api/v1/member-requests/{asked.json()['id']}/approve", cookies=sam_cookies)
+        self.assertEqual((refused.status, refused.json()["reason"]), (403, "admin_only"))
+        approved = self.call("POST", f"/api/v1/member-requests/{asked.json()['id']}/approve", cookies=admin_cookies)
+        self.assertEqual(approved.status, 200, approved.body)
+        self.assertEqual((approved.json()["status"], approved.json()["seriesRunId"]), ("approved", run))
+        self.assertEqual(store.catalog()["series"][0]["monitoringStatus"], "monitored", "the admin's own Follow")
+        self.assertEqual([str(r["id"]) for r in store.catalog()["requests"]], [str(approved.json()["acquisitionRequestId"])])
+        self.assertEqual(self.call("POST", f"/api/v1/member-requests/{asked.json()['id']}/approve",
+                                   cookies=admin_cookies).status, 409, "decided once")
+        already = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=sam_cookies)
+        self.assertEqual(already.json()["status"], "already")
+        # Declined with a reason; cancelled by the asker, and only by them.
+        found = {"kind": "discover_run", "provider": "metron", "providerSeriesId": "4242", "title": "Found",
+                 "cover": "javascript:alert(1)"}
+        declined = self.call("POST", "/api/v1/member-requests", found, cookies=sam_cookies).json()
+        self.assertIsNone(declined["detail"]["cover"], "only a provider's https picture")
+        answer = self.call("POST", f"/api/v1/member-requests/{declined['id']}/decline", {"reason": "Not now"},
+                           cookies=admin_cookies).json()
+        self.assertEqual((answer["status"], answer["declineReason"]), ("declined", "Not now"))
+        issues = {**found, "kind": "discover_issues", "numbers": ["2", "1"]}
+        waiting = self.call("POST", "/api/v1/member-requests", issues, cookies=sam_cookies).json()
+        self.assertEqual(waiting["targetKey"], "discover:metron:4242#1,2")
+        self.assertEqual(self.call("POST", f"/api/v1/member-requests/{waiting['id']}/cancel", cookies=admin_cookies).status,
+                         404, "not the admin's to cancel")
+        self.assertEqual(self.call("POST", f"/api/v1/member-requests/{waiting['id']}/cancel",
+                                   cookies=sam_cookies).json()["status"], "cancelled")
+        # Requests turned off; and a trusted reader's go straight through.
+        self.call("PATCH", f"/api/v1/users/{sam}", {"canRequest": False}, cookies=admin_cookies)
+        self.assertEqual(self.call("POST", "/api/v1/member-requests", found, cookies=sam_cookies).status, 403)
+        store.stop_series_monitoring(run)
+        self.call("PATCH", f"/api/v1/users/{sam}", {"canRequest": True, "autoApprove": True}, cookies=admin_cookies)
+        trusted = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        straight = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=trusted).json()
+        self.assertEqual((straight["status"], straight["decidedBy"]), ("approved", sam))
 
     def test_each_profile_reads_and_rates_on_its_own(self):
         sam = self._household_with_a_reader()

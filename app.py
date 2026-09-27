@@ -1004,7 +1004,141 @@ def reader_catalog(payload: dict[str, Any]) -> dict[str, Any]:
     payload["activeScan"] = None
     payload["lastScan"] = None
     payload["enrichment"] = {}
+    # The admin's queue in numbers is the admin's too.
+    stats = payload.get("stats") or {}
+    for key in ("needAttention", "damaged", "openRequests", "wantedIssues", "queuedJobs",
+                "upcomingIssues", "unknownReleaseIssues", "pendingRequests"):
+        if key in stats:
+            stats[key] = 0
     return payload
+
+
+# ---- Readers' requests ----------------------------------------------------------
+#
+# A reader asks; the admin decides. A pending request is only a row -- nothing
+# is imported, followed, searched or downloaded -- and approving it makes the
+# very call the admin's own button makes (following a run, adding one from
+# Discover, pulling issues), so the acquisition pipeline has one way in.
+# Seerr's model, sized for a household.
+
+class AlreadyHandled(Exception):
+    """What was asked for is already on its way: nothing to request."""
+
+
+def _request_text(value: Any, limit: int = 200) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _cover_url(value: Any) -> str | None:
+    """A Discover cover, only as a provider's https image address."""
+    text = str(value or "").strip()
+    return text[:500] if text.startswith("https://") else None
+
+
+def member_request_spec(payload: Any, catalog: dict[str, Any]) -> tuple[str, str, str, dict[str, Any], dict[str, Any]]:
+    """What a reader is asking for, checked: kind, target key, title, the
+    arguments approval will use, and what the queue shows."""
+    if not isinstance(payload, dict):
+        raise ValueError("Say what to request")
+    kind = str(payload.get("kind") or "")
+    if kind == "run":
+        run_id = str(payload.get("seriesId") or "")
+        series = next((item for item in catalog.get("series") or [] if str(item.get("id")) == run_id), None)
+        if series is None:
+            raise LookupError("That run is not in the library")
+        if series.get("monitoringStatus") == "monitored":
+            raise AlreadyHandled(f"{series.get('title')} is already followed")
+        return kind, f"run:{run_id}", str(series.get("title") or "Untitled run"), {"seriesId": int(run_id)}, {
+            "year": series.get("year"), "publisher": series.get("publisher"),
+            "cover": series.get("cover"),
+        }
+    if kind == "collection":
+        family_id = str(payload.get("collectionId") or "")
+        family = next((item for item in catalog.get("families") or [] if str(item.get("id")) == family_id), None)
+        if family is None:
+            raise LookupError("That collection is not in the library")
+        if family.get("monitoringStatus") == "monitored":
+            raise AlreadyHandled(f"{family.get('name')} is already followed")
+        return kind, f"collection:{family_id}", str(family.get("name") or "Untitled collection"), {
+            "collectionId": int(family_id)}, {"publisher": family.get("publisher")}
+    if kind in ("discover_run", "discover_issues"):
+        provider = str(payload.get("provider") or "").strip().lower()
+        provider_series_id = str(payload.get("providerSeriesId") or "").strip()
+        if provider not in ("metron", "comic_vine", "gcd") or not re.fullmatch(r"\d+", provider_series_id):
+            raise ValueError("Choose a run from Discover")
+        title = _request_text(payload.get("title")) or "Untitled run"
+        detail = {"year": payload.get("year") if isinstance(payload.get("year"), int) else None,
+                  "publisher": _request_text(payload.get("publisher"), 80) or None, "cover": _cover_url(payload.get("cover")),
+                  "provider": provider}
+        params: dict[str, Any] = {"provider": provider, "providerSeriesId": provider_series_id,
+                                  "query": _request_text(payload.get("query")) or title}
+        if kind == "discover_run":
+            return kind, f"discover:{provider}:{provider_series_id}", title, params, detail
+        released = payload.get("released") is True
+        numbers = [] if released else list(dict.fromkeys(
+            _request_text(number, 12) for number in (payload.get("numbers") or []) if _request_text(number, 12)
+        ))[:200]
+        if not released and not numbers:
+            raise ValueError("Choose at least one issue")
+        params.update({"numbers": numbers, "released": released})
+        detail["numbers"] = numbers
+        key = "released" if released else ",".join(sorted(numbers))
+        return kind, f"discover:{provider}:{provider_series_id}#{key}", title, params, detail
+    raise ValueError("Unknown kind of request")
+
+
+def _carry_out_member_request(request: dict[str, Any]) -> tuple[int | None, int | None]:
+    """Approval: the admin's own call for what was asked. Returns the
+    acquisition request and run it became."""
+    params = request["params"]
+    kind = request["kind"]
+    if kind == "run":
+        made = catalog_store().create_acquisition_request("series", int(params["seriesId"]), None, True)
+        _start_automatic_release_grabs(made)
+        return int(made["id"]), int(params["seriesId"])
+    if kind == "collection":
+        made = catalog_store().create_acquisition_request("collection", int(params["collectionId"]), None, None)
+        _start_automatic_release_grabs(made)
+        return int(made["id"]), None
+    if kind == "discover_run":
+        result = request_discovered_series(params["provider"], params["query"], params["providerSeriesId"], "either")
+    else:
+        result = pull_discovered_issues(
+            params["provider"], params["providerSeriesId"], params.get("numbers") or None,
+            released=bool(params.get("released")), query=params["query"],
+        )
+    made = result.get("request") or {}
+    run = result.get("series") or {}
+    return (int(made["id"]) if made.get("id") else None), (int(run["id"]) if run.get("id") else None)
+
+
+def approve_member_request(request_id: int, decided_by: int) -> dict[str, Any]:
+    """Approve and carry out. Claimed first, so a second tap cannot run it
+    twice; a failure is recorded on the request, which can be approved again."""
+    store = catalog_store()
+    request = store.claim_member_request(request_id, decided_by, "approved")
+    try:
+        acquisition_request_id, run_id = _carry_out_member_request(request)
+    except Exception as exc:  # noqa: BLE001 -- recorded for the admin, who can retry
+        log_event("member_request_failed", level="warning", request_id=request_id, error=str(exc))
+        return store.record_member_request_outcome(request_id, failure=str(exc) or type(exc).__name__)
+    log_event("member_request_approved", level="info", request_id=request_id, kind=request["kind"],
+              requested_by=request["requestedBy"]["id"], decided_by=decided_by)
+    return store.record_member_request_outcome(
+        request_id, acquisition_request_id=acquisition_request_id, series_run_id=run_id)
+
+
+def ask_member_request(viewer: Viewer, payload: Any) -> tuple[dict[str, Any], bool]:
+    """A reader's request, waiting -- or, for a reader the admin trusts
+    (auto-approve) and for the admin, carried out at once, still recorded."""
+    if not viewer.is_admin and not viewer.can_request:
+        raise PermissionError("Requests are turned off for this profile")
+    store = catalog_store()
+    kind, key, title, params, detail = member_request_spec(payload, store.catalog())
+    request, created = store.create_member_request(viewer.id, kind, key, title, params, detail)
+    if created and (viewer.is_admin or viewer.auto_approve):
+        request = approve_member_request(request["id"], viewer.id)
+    return request, created
 
 
 # Failed sign-ins slow further attempts down rather than locking the account.
@@ -12717,8 +12851,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(public_auth_config())
             return
         if parsed_url.path == "/api/v1/catalog":
+            admin = self._viewer().is_admin
             payload = catalog_api_payload(viewer_id=self._viewer_id())
-            self.send_json(payload if self._viewer().is_admin else reader_catalog(payload))
+            payload = payload if admin else reader_catalog(payload)
+            # Readers' requests: everyone's for the admin, a reader's own for them.
+            store = catalog_store()
+            payload["memberRequests"] = store.member_requests(user_id=None if admin else self._viewer_id(), limit=100)
+            if admin:
+                payload.setdefault("stats", {})["pendingRequests"] = store.pending_member_request_count()
+            self.send_json(payload)
+            return
+        if parsed_url.path == "/api/v1/member-requests":
+            admin = self._viewer().is_admin
+            self.send_json({"requests": catalog_store().member_requests(user_id=None if admin else self._viewer_id())})
             return
         if parsed_url.path == "/api/v1/settings":
             self.send_json(load_app_settings())
@@ -13143,6 +13288,54 @@ class Handler(BaseHTTPRequestHandler):
                 if self._viewer_id() == ADMIN_USER_ID:
                     self._sign_in_as(store.user(ADMIN_USER_ID), config, device=config["method"] == "forms")
             self.send_json(profile_record(created, config), 201)
+            return
+        if parsed_url.path == "/api/v1/member-requests":
+            try:
+                request, created = ask_member_request(self._viewer(), payload)
+            except AlreadyHandled as exc:
+                self.send_json({"status": "already", "message": str(exc)})
+                return
+            except PermissionError as exc:
+                self.send_json({"error": str(exc)}, 403)
+                return
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(request, 201 if created else 200)
+            return
+        # One pattern each, so the route census sees three routes and their
+        # three access classes rather than one.
+        member_request_action = next((
+            (int(match.group(1)), action) for action, match in (
+                ("cancel", re.fullmatch(r"/api/v1/member-requests/(\d+)/cancel", parsed_url.path)),
+                ("approve", re.fullmatch(r"/api/v1/member-requests/(\d+)/approve", parsed_url.path)),
+                ("decline", re.fullmatch(r"/api/v1/member-requests/(\d+)/decline", parsed_url.path)),
+            ) if match
+        ), None)
+        if member_request_action:
+            request_id, action = member_request_action
+            store = catalog_store()
+            existing = store.member_request(request_id)
+            # Cancelling is the asker's; approving and declining the admin's,
+            # which the route's access class already enforces.
+            if existing is None or (action == "cancel" and existing["requestedBy"]["id"] != self._viewer_id()):
+                self.send_json({"error": "That request does not exist"}, 404)
+                return
+            try:
+                if action == "approve":
+                    result = approve_member_request(request_id, self._viewer_id())
+                else:
+                    result = store.claim_member_request(
+                        request_id, self._viewer_id(), "cancelled" if action == "cancel" else "declined",
+                        (payload or {}).get("reason") if action == "decline" else None,
+                    )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 409)
+                return
+            self.send_json(result)
             return
         users_sign_out = re.fullmatch(r"/api/v1/users/(\d+)/sign-out", parsed_url.path)
         if users_sign_out:

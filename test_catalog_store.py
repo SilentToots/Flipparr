@@ -4211,6 +4211,58 @@ class ReaderProfileTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=49")
             self.assertIsNone(CatalogStore(store.database_path).user(sam)["avatar"])
 
+    def test_a_readers_request_waits_and_is_decided_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            sam = self._reader(store)
+            run = store.catalog()["series"][0]["id"]
+            with sqlite3.connect(store.database_path) as connection:
+                before = [connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                          for table in ("acquisition_requests", "acquisition_jobs")]
+                monitored = connection.execute("SELECT monitoring_status FROM series_runs WHERE id=?", (run,)).fetchone()[0]
+            asked, new = store.create_member_request(sam, "run", f"run:{run}", "Example", {"seriesId": run},
+                                                     {"year": 2024})
+            self.assertTrue(new)
+            self.assertEqual((asked["status"], asked["state"], asked["requestedBy"]["name"], asked["detail"]),
+                             ("pending", "pending", "Sam", {"year": 2024}))
+            again, new = store.create_member_request(sam, "run", f"run:{run}", "Example", {"seriesId": run})
+            self.assertEqual((again["id"], new), (asked["id"], False), "asking twice is one request")
+            with sqlite3.connect(store.database_path) as connection:
+                after = [connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                         for table in ("acquisition_requests", "acquisition_jobs")]
+                still = connection.execute("SELECT monitoring_status FROM series_runs WHERE id=?", (run,)).fetchone()[0]
+            self.assertEqual((after, still), (before, monitored), "pending is inert: nothing to acquire, nothing followed")
+            self.assertEqual(store.pending_member_request_count(), 1)
+            # Decided once: Approve racing Cancel leaves one winner.
+            approved = store.claim_member_request(asked["id"], ADMIN_USER_ID, "approved")
+            self.assertEqual((approved["status"], approved["decidedBy"]), ("approved", ADMIN_USER_ID))
+            with self.assertRaisesRegex(ValueError, "already approved"):
+                store.claim_member_request(asked["id"], sam, "cancelled")
+            # A failed approval can be approved again.
+            failed = store.record_member_request_outcome(asked["id"], failure="Metron is down")
+            self.assertEqual((failed["status"], failed["failure"]), ("failed", "Metron is down"))
+            retried = store.claim_member_request(asked["id"], ADMIN_USER_ID, "approved")
+            self.assertEqual((retried["status"], retried["failure"]), ("approved", None))
+            # Approved, then fulfilled: available.
+            request = store.create_acquisition_request("series", int(run), "either", True)
+            store.record_member_request_outcome(asked["id"], acquisition_request_id=int(request["id"]), series_run_id=int(run))
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("UPDATE acquisition_requests SET status='fulfilled' WHERE id=?", (int(request["id"]),))
+            self.assertEqual(store.member_request(asked["id"])["state"], "available")
+            # Declined, with a reason; each reader sees their own; a removed reader's go with them.
+            other, _ = store.create_member_request(sam, "discover_run", "metron:77", "Other", {"providerSeriesId": "77"})
+            declined = store.claim_member_request(other["id"], ADMIN_USER_ID, "declined", "  Not for this house  ")
+            self.assertEqual((declined["status"], declined["declineReason"]), ("declined", "Not for this house"))
+            pat = self._reader(store, "Pat")
+            store.create_member_request(pat, "run", f"run:{run}", "Example", {"seriesId": run})
+            self.assertEqual([r["requestedBy"]["name"] for r in store.member_requests(user_id=pat)], ["Pat"])
+            self.assertEqual(len(store.member_requests()), 3)
+            self.assertEqual([r["title"] for r in store.member_requests(statuses=["pending"])], ["Example"])
+            store.delete_user(sam)
+            self.assertEqual([r["requestedBy"]["name"] for r in store.member_requests()], ["Pat"])
+            with self.assertRaises(ValueError):
+                store.create_member_request(pat, "everything", "x", "All of it", {})
+
     def test_a_new_profile_is_given_a_colour_nobody_else_has(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

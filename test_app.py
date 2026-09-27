@@ -7541,6 +7541,41 @@ class RelaunchIsAnotherComicTests(unittest.TestCase):
 
 
 
+class MemberRequestApprovalTests(unittest.TestCase):
+    """Approving a reader's request is the admin's own call for it."""
+
+    def _store(self, kind, params):
+        store = Mock()
+        request = {"id": 7, "kind": kind, "params": params, "requestedBy": {"id": 2}}
+        store.claim_member_request.return_value = request
+        store.record_member_request_outcome.side_effect = lambda request_id, **outcome: {"id": request_id, **outcome}
+        return store
+
+    def test_a_discover_request_approved_is_discovers_own_add_and_pull(self):
+        store = self._store("discover_run", {"provider": "metron", "providerSeriesId": "42", "query": "Found"})
+        with patch.object(app, "catalog_store", return_value=store), \
+                patch.object(app, "request_discovered_series",
+                             return_value={"request": {"id": 11}, "series": {"id": 5}}) as add:
+            outcome = app.approve_member_request(7, 1)
+        add.assert_called_once_with("metron", "Found", "42", "either")
+        self.assertEqual((outcome["acquisition_request_id"], outcome["series_run_id"]), (11, 5))
+        store = self._store("discover_issues", {"provider": "metron", "providerSeriesId": "42", "query": "Found",
+                                                "numbers": ["1", "2"], "released": False})
+        with patch.object(app, "catalog_store", return_value=store), \
+                patch.object(app, "pull_discovered_issues",
+                             return_value={"request": {"id": 12}, "series": {"id": 5}}) as pull:
+            app.approve_member_request(7, 1)
+        pull.assert_called_once_with("metron", "42", ["1", "2"], released=False, query="Found")
+
+    def test_an_approval_that_fails_is_kept_to_try_again(self):
+        store = self._store("discover_run", {"provider": "metron", "providerSeriesId": "42", "query": "Found"})
+        with patch.object(app, "catalog_store", return_value=store), \
+                patch.object(app, "request_discovered_series", side_effect=RuntimeError("Metron is down")):
+            outcome = app.approve_member_request(7, 1)
+        self.assertEqual(outcome["failure"], "Metron is down")
+        store.claim_member_request.assert_called_once_with(7, 1, "approved")
+
+
 class ProfileTokenTests(unittest.TestCase):
     """The cookies that say which profile a request speaks for."""
 
