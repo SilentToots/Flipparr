@@ -221,7 +221,17 @@ everything, placed from the button, flipped above it when there is more room
 there) with a check on the chosen option. It joins the dialog stack, so
 Escape closes the menu and not the dialog under it; arrow keys, Home, End and
 type-ahead move through it, and choosing or Escape returns focus to the
-button. The notifications menu is the same glass.
+button.
+
+The bell (2026-09-27) opens a panel of the same glass on a larger screen,
+placed from the bell's own position and kept 16px inside the window; on a
+phone it is the standard sheet at the screen's full height. It has two halves:
+"Needs you" (worked out from the library; a row is dismissed, and comes back
+if the thing changes) and the news (kept per profile on the server, so every
+device agrees; cleared by the row or Clear all). A row opens what it is about;
+clearing is its own control. News carries a cover when it has one and the
+time in a phone's words ("5m", "Yesterday"), and a row new since the bell
+was last opened has a violet dot. Titles wrap; nothing is truncated.
 
 Settings chosen from a few (grid or list, runs or collections) are
 `GlassSegmented`: SegmentedTabs' track and sliding glass thumb, as radios.

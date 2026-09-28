@@ -1238,8 +1238,147 @@ def approve_member_request(request_id: int, decided_by: int) -> dict[str, Any]:
         return store.record_member_request_outcome(request_id, failure=str(exc) or type(exc).__name__)
     log_event("member_request_approved", level="info", request_id=request_id, kind=request["kind"],
               requested_by=request["requestedBy"]["id"], decided_by=decided_by)
-    return store.record_member_request_outcome(
+    outcome = store.record_member_request_outcome(
         request_id, acquisition_request_id=acquisition_request_id, series_run_id=run_id)
+    notify_request_decided(outcome)
+    return outcome
+
+
+# ---- Notifications ---------------------------------------------------------------
+#
+# The bell has two halves. What needs someone -- a download that failed, a
+# source that rejected its login, series needing a match, requests waiting --
+# is worked out from the library as it stands (the client's
+# `notifications.js`), so it goes away when it is dealt with. What happened --
+# comics arriving, a request decided -- is news, kept here per profile
+# (`notifications`, schema 56) so it is the same on every device that profile
+# signs in on, and can be read and cleared.
+#
+# Arrivals are swept from the downloads' own import times rather than raised
+# at each place a comic can be imported (a single issue, a pack's members, a
+# manual import, a retry): every path writes `imported_at`, so reading those
+# past a high-water mark misses none. The sweep runs when a bell is read. It
+# stops a few seconds short of now, so an import whose transaction commits a
+# moment after a later one's is not stepped over.
+
+_NOTIFICATION_SWEEP_LOCK = threading.Lock()
+_NOTIFICATION_SWEEP_LAG = dt.timedelta(seconds=5)
+
+
+def sweep_arrivals(now: dt.datetime | None = None) -> int:
+    """Turn comics imported since the last sweep into notifications: the
+    admins hear of every one, a reader of those carrying out their request.
+    Several issues of one run merge into one line while it is unread.
+    Returns how many issues were announced."""
+    store = catalog_store()
+    until = ((now or dt.datetime.now(dt.timezone.utc)) - _NOTIFICATION_SWEEP_LAG).isoformat()
+    with _NOTIFICATION_SWEEP_LOCK:
+        after = store.notification_mark("arrivals")
+        if after is None:
+            # A library from before notifications were kept starts from now,
+            # rather than announcing every comic it ever imported.
+            store.set_notification_mark("arrivals", until)
+            return 0
+        if until <= after:
+            return 0
+        arrivals = store.arrivals_between(after, until)
+        admins = [user["id"] for user in store.list_users() if user["role"] == "admin" and not user["disabled"]]
+        readers = store.readers_waiting_on([arrival["requestId"] for arrival in arrivals])
+        ratings = store.run_age_ratings() if readers else {}
+        users = {user["id"]: viewer_for(user) for user in store.list_users()} if readers else {}
+        for arrival in arrivals:
+            item = {"key": str(arrival["issueId"]), "issueId": arrival["issueId"], "number": arrival["number"],
+                    "title": arrival["issueTitle"], "fileId": arrival["fileId"]}
+            payload = {"runId": arrival["runId"], "runTitle": arrival["runTitle"],
+                       "startYear": arrival["startYear"], "requestId": arrival["requestId"], "items": [item]}
+            audience = set(admins) | {
+                user_id for user_id in readers.get(arrival["requestId"], set())
+                if viewer_may_see_run(users.get(user_id), ratings.get(arrival["runId"]))
+            }
+            for user_id in sorted(audience):
+                store.record_notification(user_id, "arrived", f"arrived:run:{arrival['runId']}", payload,
+                                          at=arrival["at"], merge=True)
+        store.set_notification_mark("arrivals", until)
+    return len(arrivals)
+
+
+def notify_request_decided(request: dict[str, Any]) -> None:
+    """Tell a reader their request was approved or declined -- not when they
+    approved it themselves (auto-approve), which they saw happen."""
+    requester = int((request.get("requestedBy") or {}).get("id") or 0)
+    if request.get("status") not in ("approved", "declined") or not requester \
+            or request.get("decidedBy") == requester:
+        return
+    catalog_store().record_notification(requester, "request_decided", f"request:{request['id']}", {
+        "requestId": request["id"], "kind": request.get("kind"), "title": request.get("title"),
+        "status": request["status"], "reason": request.get("declineReason"),
+        "cover": (request.get("detail") or {}).get("cover"),
+    }, at=request.get("decidedAt"))
+
+
+def _issue_numbers(numbers: list[str]) -> str:
+    """"#3", "#3 and #4", "#3, #4 and 2 more"."""
+    shown = [f"#{number}" for number in numbers[:3]]
+    more = len(numbers) - len(shown)
+    if more > 0:
+        return f"{', '.join(shown)} and {more} more"
+    return shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
+
+
+def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | None:
+    """One bell line as the client shows it, or None for one this profile may
+    no longer see (a run now above its rating limit)."""
+    payload = row["payload"]
+    base = {"id": row["id"], "at": row["updatedAt"], "read": bool(row["readAt"]), "kind": row["kind"]}
+    if row["kind"] == "arrived":
+        items = [item for item in payload.get("items") or [] if isinstance(item, dict)]
+        if not items:
+            return None
+        run = str(payload.get("runTitle") or "A run")
+        latest = items[-1]
+        if len(items) == 1:
+            title = f"{run} #{latest.get('number')}"
+            detail = str(latest.get("title") or "") or "Added to your library"
+        else:
+            title = f"{run}: {len(items)} new issues"
+            detail = _issue_numbers(sorted((str(item.get("number")) for item in items), key=_issue_sort_key))
+        return {**base, "title": title, "detail": detail,
+                "runId": payload.get("runId"),
+                "cover": f"/api/v1/files/{int(latest['fileId'])}/cover/image" if latest.get("fileId") else None,
+                "target": {"view": "series", "seriesId": str(payload.get("runId"))}}
+    if row["kind"] == "request_decided":
+        approved = payload.get("status") == "approved"
+        follow = payload.get("kind") in ("run", "collection", "discover_run")
+        title = str(payload.get("title") or "Your request")
+        return {**base,
+                "title": f"{title} was approved" if approved else f"{title} was declined",
+                "detail": ("You'll get its new issues as they come out" if follow else "It will arrive once it's downloaded")
+                if approved else (str(payload.get("reason") or "") or "No reason given"),
+                "tone": "done" if approved else "warning",
+                "cover": payload.get("cover"),
+                "target": {"view": "requests", "focus": {"requestId": payload.get("requestId")}}}
+    return None
+
+
+def notifications_for(viewer: Viewer) -> dict[str, Any]:
+    """A profile's news, newest first, and what it has dismissed of the rest."""
+    try:
+        sweep_arrivals()
+    except Exception as exc:  # noqa: BLE001 -- the bell still shows what it has
+        log_event("notification_sweep_failed", level="warning", error=str(exc)[:200])
+    store = catalog_store()
+    rows = store.notifications_for(viewer.id)
+    ratings = store.run_age_ratings() if viewer.max_rating else {}
+    items = []
+    for row in rows:
+        view = notification_view(row, viewer)
+        if view is None:
+            continue
+        if view.get("runId") is not None and not viewer_may_see_run(viewer, ratings.get(int(view["runId"]))):
+            continue
+        items.append(view)
+    return {"items": items, "unread": sum(not item["read"] for item in items),
+            "dismissed": store.notification_dismissals(viewer.id)}
 
 
 # ---- What a request is ---------------------------------------------------------
@@ -13550,6 +13689,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if parsed_url.path == "/api/v1/notifications":
+            self.send_json(notifications_for(self._viewer()))
+            return
         if parsed_url.path == "/api/v1/me/activity":
             self.send_json(self._only_visible_runs(_profiles_store().reading_activity(self._viewer_id())))
             return
@@ -14074,10 +14216,35 @@ class Handler(BaseHTTPRequestHandler):
                         request_id, self._viewer_id(), "cancelled" if action == "cancel" else "declined",
                         (payload or {}).get("reason") if action == "decline" else None,
                     )
+                    notify_request_decided(result)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 409)
                 return
             self.send_json(result)
+            return
+        # A profile's own bell: read, cleared, and what it dismissed of the
+        # things needing attention. Each profile reaches only its own rows.
+        if parsed_url.path in ("/api/v1/notifications/read", "/api/v1/notifications/clear"):
+            body = payload if isinstance(payload, dict) else {}
+            ids = None if body.get("all") else body.get("ids")
+            if ids is not None and (not isinstance(ids, list) or not all(isinstance(value, int) for value in ids)):
+                self.send_json({"error": "Say which notifications, or all"}, 400)
+                return
+            store = catalog_store()
+            if parsed_url.path.endswith("/read"):
+                store.mark_notifications_read(self._viewer_id(), ids)
+            else:
+                store.clear_notifications(self._viewer_id(), ids)
+            self.send_json(notifications_for(self._viewer()))
+            return
+        if parsed_url.path == "/api/v1/notifications/dismissed":
+            body = payload if isinstance(payload, dict) else {}
+            add, remove = body.get("add") or [], body.get("remove") or []
+            if not all(isinstance(value, list) and all(isinstance(key, str) for key in value) for value in (add, remove)):
+                self.send_json({"error": "Dismissals are lists of keys"}, 400)
+                return
+            dismissed = catalog_store().change_notification_dismissals(self._viewer_id(), add[:500], remove[:500])
+            self.send_json({"dismissed": dismissed})
             return
         if parsed_url.path == "/api/v1/devices/forget":
             # Every shared device, and every profile opened on one, is

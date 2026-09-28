@@ -80,53 +80,40 @@ export function adminQueue(requests) {
 }
 
 /**
- * What requests announce in the bell. For the admin, one line while anything
- * is waiting (keyed on the newest, so a new request is news again after a
- * dismissal). For a reader, each decision since this device started looking.
+ * What readers' requests need of the admin, for the bell: one line while
+ * anything is waiting (keyed on the newest, so a new request is news again
+ * after a dismissal), and one for each approval that could not be carried
+ * out. A reader hears how their requests went from the server's own record
+ * (`/api/v1/notifications`), which follows them to every device.
  */
-export function requestNotifications(requests, { admin = false, since = null } = {}) {
+export function requestNotifications(requests, { admin = false } = {}) {
+  if (!admin) return [];
   const all = requests || [];
-  if (admin) {
-    const waiting = all.filter((request) => request.status === "pending");
-    if (!waiting.length) return [];
-    const newest = waiting.reduce((a, b) => (Number(b.id) > Number(a.id) ? b : a));
-    const who = [...new Set(waiting.map((request) => request.requestedBy?.name).filter(Boolean))];
-    return [{
-      id: `requests-waiting:${newest.id}`,
-      kind: "request",
-      severity: "warning",
-      title: waiting.length === 1
-        ? `${newest.requestedBy?.name || "A reader"} asked ${isFollow(newest) ? "to follow" : "for"} ${newest.title}`
-        : `${waiting.length} requests waiting`,
-      detail: waiting.length === 1 ? (isFollow(newest) ? "New issues as they come out" : requestScope(newest))
-        : who.length === 1 ? `From ${who[0]}` : `From ${who.slice(0, -1).join(", ")} and ${who.at(-1)}`,
-      view: "requests",
-      focus: { tab: "asks" },
-    }];
-  }
-  const cutoff = since || "";
-  return all.flatMap((request) => {
-    const state = request.state;
-    if (!["approved", "available", "declined"].includes(state)) return [];
-    const at = state === "available" ? request.updatedAt : request.decidedAt;
-    if (!at || String(at) <= cutoff) return [];
-    return [{
-      id: `request:${request.id}:${state}`,
-      // News, not work: nothing here waits on the reader.
-      news: true,
-      kind: state === "available" ? "acquired" : "request",
-      severity: state === "declined" ? "warning" : "info",
-      // A follow approved is a promise about the future, not one download.
-      title: state === "available" ? `${request.title} is in your library`
-        : state === "approved" ? (isFollow(request) ? `You'll get ${request.title}'s new issues` : `${request.title} was approved`)
-        : `${request.title} was declined`,
-      detail: state === "declined" ? (request.declineReason || "No reason given")
-        : state === "approved" ? (isFollow(request) ? "Followed · each issue arrives as it comes out" : "It will arrive once it's downloaded")
-        : requestScope(request),
-      view: "requests",
-      focus: { requestId: request.id },
-    }];
-  });
+  const waiting = all.filter((request) => request.status === "pending");
+  const failed = all.filter((request) => request.status === "failed").map((request) => ({
+    id: `request-failed:${request.id}:${request.updatedAt || ""}`,
+    kind: "request",
+    severity: "error",
+    title: `Couldn't do ${request.requestedBy?.name || "a reader"}'s request for ${request.title}`,
+    detail: request.failure || "Approve it again once the problem is fixed",
+    view: "requests",
+    focus: { tab: "asks", requestId: request.id },
+  }));
+  if (!waiting.length) return failed;
+  const newest = waiting.reduce((a, b) => (Number(b.id) > Number(a.id) ? b : a));
+  const who = [...new Set(waiting.map((request) => request.requestedBy?.name).filter(Boolean))];
+  return [...failed, {
+    id: `requests-waiting:${newest.id}`,
+    kind: "request",
+    severity: "warning",
+    title: waiting.length === 1
+      ? `${newest.requestedBy?.name || "A reader"} asked ${isFollow(newest) ? "to follow" : "for"} ${newest.title}`
+      : `${waiting.length} requests waiting`,
+    detail: waiting.length === 1 ? (isFollow(newest) ? "New issues as they come out" : requestScope(newest))
+      : who.length === 1 ? `From ${who[0]}` : `From ${who.slice(0, -1).join(", ")} and ${who.at(-1)}`,
+    view: "requests",
+    focus: { tab: "asks" },
+  }];
 }
 
 // ---- Deciding by swipe --------------------------------------------------------

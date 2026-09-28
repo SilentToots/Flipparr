@@ -14,6 +14,7 @@ existing test touched the transport layer at all.
 import gzip
 import contextlib
 import io
+import datetime as dt
 import json
 import os
 import subprocess
@@ -1572,6 +1573,10 @@ NOT_ADMIN = {
     ("GET", "/api/v1/member-requests"): "reader",
     ("POST", "/api/v1/member-requests"): "reader",
     ("POST", "/api/v1/member-requests/1/cancel"): "reader",
+    ("GET", "/api/v1/notifications"): "reader",
+    ("POST", "/api/v1/notifications/read"): "reader",
+    ("POST", "/api/v1/notifications/clear"): "reader",
+    ("POST", "/api/v1/notifications/dismissed"): "reader",
 }
 
 
@@ -1780,6 +1785,68 @@ class ReaderProfileHttpTests(unittest.TestCase):
         trusted = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
         straight = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=trusted).json()
         self.assertEqual((straight["status"], straight["decidedBy"]), ("approved", sam))
+
+    def test_each_profile_hears_what_arrived_for_it_and_how_its_requests_went(self):
+        store, run = self._library_of_one_run()
+        sam = self._household_with_a_reader()
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        admin_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        bell = lambda cookies: self.call("GET", "/api/v1/notifications", cookies=cookies).json()
+        self.assertEqual(bell(sam_cookies)["items"], [], "a new library announces nothing it already had")
+        asked = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=sam_cookies).json()
+        approved = self.call("POST", f"/api/v1/member-requests/{asked['id']}/approve", cookies=admin_cookies).json()
+        found = {"kind": "discover_run", "provider": "metron", "providerSeriesId": "4242", "title": "Found"}
+        other = self.call("POST", "/api/v1/member-requests", found, cookies=sam_cookies).json()
+        self.call("POST", f"/api/v1/member-requests/{other['id']}/decline", {"reason": "Not now"}, cookies=admin_cookies)
+        # Two issues of the run Sam asked for arrive, one from a pack.
+        long_ago = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        with sqlite3.connect(os.environ["COMICARR_DATABASE"]) as connection:
+            jobs = []
+            for number in ("4", "5"):
+                issue = connection.execute(
+                    "INSERT INTO issues(series_run_id, issue_number, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    (run, number, long_ago, long_ago)).lastrowid
+                jobs.append((connection.execute(
+                    """INSERT INTO acquisition_jobs(request_id, issue_id, status, created_at, updated_at)
+                       VALUES (?, ?, 'fulfilled', ?, ?)""",
+                    (approved["acquisitionRequestId"], issue, long_ago, long_ago)).lastrowid, issue))
+            download = connection.execute(
+                """INSERT INTO acquisition_downloads(job_id, sab_nzo_id, release_title, status, created_at,
+                                                     updated_at, imported_at)
+                   VALUES (?, 'nzo-1', 'Example 004-005', 'imported', ?, ?, ?)""",
+                (jobs[0][0], long_ago, long_ago, long_ago)).lastrowid
+            connection.execute(
+                """INSERT INTO acquisition_download_imports(download_id, job_id, issue_id, destination, imported_at)
+                   VALUES (?, ?, ?, '/comics/Example 005.cbz', ?)""", (download, jobs[1][0], jobs[1][1], long_ago))
+        store.set_notification_mark("arrivals", "2000-01-01T00:00:00+00:00")
+        mine = bell(sam_cookies)
+        self.assertEqual([item["title"] for item in mine["items"]],
+                         ["Found was declined", "Example was approved", "Example: 2 new issues"],
+                         "newest first, and the issues arrived a minute ago")
+        self.assertEqual((mine["items"][2]["detail"], mine["items"][2]["target"]),
+                         ("#4 and #5", {"view": "series", "seriesId": str(run)}))
+        self.assertEqual(mine["items"][0]["detail"], "Not now")
+        self.assertEqual(mine["unread"], 3)
+        admins = bell(admin_cookies)
+        self.assertEqual([item["title"] for item in admins["items"]], ["Example: 2 new issues"],
+                         "the admin hears of arrivals, not of their own decisions")
+        self.assertEqual(bell(sam_cookies)["unread"], 3, "sweeping again announces nothing twice")
+        # Read and cleared are each profile's own.
+        self.call("POST", "/api/v1/notifications/clear", {"ids": [admins["items"][0]["id"]]}, cookies=sam_cookies)
+        self.assertEqual(len(bell(admin_cookies)["items"]), 1, "Sam cannot clear the admin's")
+        read = self.call("POST", "/api/v1/notifications/read", {"all": True}, cookies=sam_cookies).json()
+        self.assertEqual((read["unread"], len(read["items"])), (0, 3))
+        cleared = self.call("POST", "/api/v1/notifications/clear", {"ids": [mine["items"][0]["id"]]}, cookies=sam_cookies)
+        self.assertEqual([item["title"] for item in cleared.json()["items"]], ["Example was approved", "Example: 2 new issues"])
+        self.assertEqual(self.call("POST", "/api/v1/notifications/clear", {"all": True}, cookies=sam_cookies).json()["items"], [])
+        self.assertEqual(self.call("POST", "/api/v1/notifications/read", {"ids": "all"}, cookies=sam_cookies).status, 400)
+        # What was dismissed of the things needing attention follows the profile.
+        dismissed = self.call("POST", "/api/v1/notifications/dismissed", {"add": ["job:9", "metadata-match:1:0"]},
+                              cookies=admin_cookies).json()["dismissed"]
+        self.assertEqual(dismissed, ["job:9", "metadata-match:1:0"])
+        self.call("POST", "/api/v1/notifications/dismissed", {"remove": ["job:9"]}, cookies=admin_cookies)
+        self.assertEqual(bell(admin_cookies)["dismissed"], ["metadata-match:1:0"])
+        self.assertEqual(bell(sam_cookies)["dismissed"], [])
 
     def test_a_profile_with_a_rating_limit_sees_only_what_is_within_it(self):
         store, run = self._library_of_one_run()

@@ -913,6 +913,30 @@ class CatalogStoreTests(unittest.TestCase):
             )
             self.assertEqual(store.download_import_counts(), {download_id: 2})
 
+    def test_a_profiles_notifications_merge_while_unread_and_are_kept_within_bounds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            with store._connect() as connection:
+                connection.execute("INSERT INTO users(id, name, role, created_at, updated_at) VALUES (2, 'Sam', 'reader', '', '')")
+            first = store.record_notification(1, "arrived", "arrived:run:7", {"runTitle": "Chew", "items": [{"key": "4"}]},
+                                              at="2026-09-27T10:00:00+00:00", merge=True)
+            again = store.record_notification(1, "arrived", "arrived:run:7", {"runTitle": "Chew", "items": [{"key": "5"}, {"key": "4"}]},
+                                              at="2026-09-27T11:00:00+00:00", merge=True)
+            self.assertEqual(first, again, "one line while it is unread")
+            [row] = store.notifications_for(1)
+            self.assertEqual(([item["key"] for item in row["payload"]["items"]], row["updatedAt"]),
+                             (["4", "5"], "2026-09-27T11:00:00+00:00"))
+            store.mark_notifications_read(1)
+            later = store.record_notification(1, "arrived", "arrived:run:7", {"items": [{"key": "6"}]}, merge=True)
+            self.assertNotEqual(later, first, "once read, news is a new line")
+            self.assertEqual(store.clear_notifications(1, [first]), 1)
+            self.assertEqual([row["id"] for row in store.notifications_for(1)], [later])
+            self.assertEqual(store.mark_notifications_read(1, []), 0, "no ids is nothing, not everything")
+            for number in range(store.NOTIFICATIONS_KEEP_ROWS + 5):
+                store.record_notification(2, "request_decided", f"request:{number}", {})
+            self.assertEqual(len(store.notifications_for(2, limit=1000)), store.NOTIFICATIONS_KEEP_ROWS)
+            self.assertEqual(len(store.notifications_for(1)), 1, "another profile's bell is its own")
+
     def test_collected_edition_year_does_not_create_a_second_run(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -1,18 +1,25 @@
 import { requestNotifications } from "./member-requests.js";
-
-// Everything waiting on the reader, in one list, each knowing where it goes.
-//
-// The bell used to show `catalog.inbox` alone, so a download that failed --
-// the one state that stops until a person acts -- appeared on Pull List and
-// nowhere else. A reader watching the bell would never learn about it.
-//
-// Every entry carries a destination, because a notification that cannot be
-// acted on is just an alarm: `view` is the screen and `focus` is the thing on
-// it, which is what the app's navigate/focus plumbing already takes.
-
 import { jobHasFailed } from "./nav-counts.js";
-import { arrivalAt } from "./pull-list.js";
 
+// The bell has two halves.
+//
+// What needs someone -- a download that failed, a source that rejected its
+// login, series needing a match, a file that needs attention, readers'
+// requests waiting -- is worked out here, from the library as it stands, so it
+// goes away by itself when it is dealt with. Each carries a destination,
+// because a notification that cannot be acted on is just an alarm: `view` is
+// the screen and `focus` the thing on it. Dismissing one is kept on the
+// server with the profile (`/api/v1/notifications/dismissed`), so it stays
+// dismissed on every device.
+//
+// What happened -- comics arriving, a request decided -- is news. The server
+// keeps it per profile (`/api/v1/notifications`), read and cleared there, so
+// it is the same wherever the profile signs in. Before 2026-09-27 both halves
+// were built here with their state in the browser: a new device started
+// over, and arrivals piled up because the "seen since" mark never moved.
+
+// Where the browser kept dismissals and the arrivals mark before the server
+// did. Read once to move a profile's dismissals up, then removed.
 export const DISMISSED_KEY = "flipparr.notifications.dismissed";
 export const SEEN_UNTIL_KEY = "flipparr.notifications.seenUntil";
 
@@ -30,6 +37,8 @@ function requestJobNotifications(requests, kind) {
       // replacement lives under Wanted only until it is fulfilled.
       view: "requests",
       focus: { kind, requestId: request.id, jobId: job.id },
+      // Trying again is the usual answer, and the bell can do it in place.
+      retryJobId: job.id,
     })));
 }
 
@@ -43,55 +52,6 @@ function inboxNotifications(inbox) {
     view: "metadata",
     focus: { id: item.id },
   }));
-}
-
-// Comics arriving. The bell reported only bad news, so the one thing a
-// downloader most wants to be told -- your comics are here -- was the one
-// thing it never said.
-//
-// At both levels, because a batch and a single arrival are different events:
-// adding a run brings thirty issues at once and wants one line about the run,
-// while a followed run picking up its next issue wants to name that issue. The
-// only test needed to tell them apart is whether more than one arrived.
-//
-// `since` is a high-water mark, not a filter on age: without it, shipping this
-// would announce every issue ever imported, all at once. A client that has
-// never stored one is starting from now and announces nothing historical.
-function acquisitionNotifications(catalog, since) {
-  if (!since) return [];
-  return (catalog?.requests || []).flatMap((request) => {
-    // Unlike a failure, an arrival is not work waiting on anyone, so
-    // unfollowing the run afterwards does not make it untrue. The times come
-    // from `arrivalAt` -- the moment the file landed -- precisely so that
-    // unfollowing, which rewrites every job, cannot look like fresh arrivals.
-    const arrived = (request.jobs || []).filter((job) => (arrivalAt(job) || "") > since);
-    if (!arrived.length) return [];
-    const at = arrived.map(arrivalAt).sort().at(-1);
-    const runTitle = request.title || arrived[0].seriesTitle || "A run";
-    if (arrived.length === 1) {
-      const job = arrived[0];
-      return [{
-        id: `acquired:job:${job.id}:${arrivalAt(job)}`,
-        kind: "acquired",
-        severity: "info",
-        title: `${runTitle} #${job.issueNumber} added`,
-        detail: job.issueTitle || "Downloaded and added to your library",
-        view: "requests",
-        focus: { kind: "series", requestId: request.id, jobId: job.id },
-      }];
-    }
-    return [{
-      // Keyed on the moment as well as the run, so a run added to again later
-      // announces that too rather than being deduped against an old dismissal.
-      id: `acquired:run:${request.id}:${at}`,
-      kind: "acquired",
-      severity: "info",
-      title: `${runTitle} — ${arrived.length} issues added`,
-      detail: request.publisher || "Downloaded and added to your library",
-      view: "requests",
-      focus: { kind: "series", requestId: request.id },
-    }];
-  });
 }
 
 export const METADATA_PROVIDER_LABELS = {
@@ -142,62 +102,65 @@ function enrichmentNotifications(enrichment) {
 }
 
 // Failures first: a stopped download, a source that stopped, and a damaged
-// file are all blocking; an uncertain match is a judgement call that can wait,
-// and news that something arrived needs nothing at all.
-// A reader's request waiting on the admin is work for the admin; a decision
-// is news for the reader.
-const RANK = { download: 0, request: 1, source: 2, file: 3, metadata: 4, acquired: 5 };
+// file are all blocking; an uncertain match is a judgement call that can wait.
+// A reader's request waiting on the admin is work for the admin.
+const RANK = { download: 0, request: 1, source: 2, file: 3, metadata: 4 };
 
-export function buildNotifications(catalog, dismissed = [], seenUntil = null, { admin = true } = {}) {
+/**
+ * What needs someone, most urgent first, without what they dismissed. The
+ * admin's alone: a reader's bell is news about what they asked for, none of
+ * it work.
+ */
+export function needsAttention(catalog, dismissed = [], { admin = true } = {}) {
+  if (!admin) return [];
   const hidden = new Set(dismissed);
   return [
-    ...requestNotifications(catalog?.memberRequests, { admin, since: seenUntil }),
+    ...requestNotifications(catalog?.memberRequests, { admin: true }),
     ...requestJobNotifications(catalog?.requests, "series"),
     ...requestJobNotifications(catalog?.replacementRequests, "replacement"),
     ...enrichmentNotifications(catalog?.enrichment),
     ...inboxNotifications(catalog?.inbox),
-    ...acquisitionNotifications(catalog, seenUntil),
   ]
     .filter((item) => !hidden.has(item.id))
     .sort((a, b) => RANK[a.kind] - RANK[b.kind]);
 }
 
-// A dismissal outlives the thing it dismissed unless it is pruned, and the ids
-// are reused when a job is retried -- so a stale entry would silence a real
-// future failure.
-export function pruneDismissed(catalog, dismissed = []) {
-  const live = new Set(buildNotifications(catalog, [], null).map((item) => item.id));
-  // An acquisition announcement stops being generated as soon as the watermark
-  // moves past it, so pruning against the live set would forget its dismissal
-  // and let it return. Those ids are kept until their run is gone.
-  // An arrival announcement stops being generated as soon as the watermark
-  // moves past it, so pruning against the live set alone would forget its
-  // dismissal and let it come back. They are kept while the run still exists.
-  // A reader's decision announcements are the same: kept while they last.
-  return dismissed.filter((id) => live.has(id) || id.startsWith("acquired:") || id.startsWith("request:"));
+/**
+ * Dismissals whose notification is gone. They are forgotten, because the ids
+ * are reused -- a retried job fails under the same id -- and a stale one
+ * would silence a real future failure.
+ */
+export function staleDismissals(catalog, dismissed = []) {
+  const live = new Set(needsAttention(catalog, []).map((item) => item.id));
+  return dismissed.filter((id) => !live.has(id));
 }
 
-export function readSeenUntil(storage) {
-  try {
-    return storage?.getItem(SEEN_UNTIL_KEY) || null;
-  } catch {
-    return null;
-  }
+/** How many things the bell's badge counts: work waiting, and news not yet seen. */
+export function bellCount(attention, activity) {
+  return (attention?.length || 0) + Number(activity?.unread || 0);
 }
 
-export function writeSeenUntil(storage, value) {
-  try {
-    storage?.setItem(SEEN_UNTIL_KEY, value);
-  } catch {
-    /* the watermark is lost; the bell still works */
-  }
+/** "Just now", "5m", "3h", "Yesterday", "4d", then the date. */
+export function timeAgo(iso, now = new Date()) {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  const minutes = Math.floor((now.getTime() - then.getTime()) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d`;
+  return then.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(days > 300 ? { year: "numeric" } : {}) });
 }
 
-export function readDismissed(storage) {
+/** The dismissals this browser kept before the server did, to move them up once. */
+export function readLegacyDismissed(storage) {
   try {
     const raw = storage?.getItem(DISMISSED_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string" && !id.startsWith("acquired:") && !id.startsWith("request:")) : [];
   } catch {
     // Private windows and blocked site data throw on access rather than
     // returning null, and a bell is not worth a blank screen.
@@ -205,10 +168,12 @@ export function readDismissed(storage) {
   }
 }
 
-export function writeDismissed(storage, ids) {
+/** Forget what the browser kept, once the server has it. */
+export function forgetLegacyState(storage) {
   try {
-    storage?.setItem(DISMISSED_KEY, JSON.stringify(ids));
+    storage?.removeItem(DISMISSED_KEY);
+    storage?.removeItem(SEEN_UNTIL_KEY);
   } catch {
-    /* same as above: the dismissal is lost, the app is not */
+    /* nothing to forget, or nowhere to forget it from */
   }
 }

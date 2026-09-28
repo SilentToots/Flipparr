@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 56
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1329,6 +1329,38 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS member_requests_by_status ON member_requests(status, created_at);
                 CREATE INDEX IF NOT EXISTS member_requests_by_requester ON member_requests(requested_by, created_at DESC);
+                /* What a profile has been told (schema 56), so the bell is the
+                   same on every device it signs in on. One row is one line in
+                   the bell: comics arriving (several issues of one run merge
+                   into one row while it is unread) or a request decided.
+                   `payload_json` is what happened; the wording is the app's,
+                   made when the bell is read. Read and cleared are the
+                   profile's own. What needs someone's attention is not here:
+                   it is worked out from the library as it stands, so it goes
+                   away when it is dealt with; only its dismissals are kept. */
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    group_key TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    read_at TEXT,
+                    cleared_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS notifications_by_user ON notifications(user_id, cleared_at, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS notification_dismissals (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    key TEXT NOT NULL,
+                    dismissed_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, key)
+                );
+                /* How far the arrivals sweep has read: one high-water mark. */
+                CREATE TABLE IF NOT EXISTS notification_marks (
+                    name TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -4170,6 +4202,189 @@ class CatalogStore:
                     raise LookupError("That request does not exist")
                 raise ValueError(f"That request was already {exists['status']}")
         return self.member_request(request_id)
+
+    # ---- Notifications (schema 56) -------------------------------------------
+
+    # Cleared rows are kept a while (a Clear all is not a delete the moment it
+    # is tapped) and nothing is kept for ever: a profile's bell is a few
+    # hundred rows at most.
+    NOTIFICATIONS_KEEP_CLEARED_DAYS = 30
+    NOTIFICATIONS_KEEP_DAYS = 90
+    NOTIFICATIONS_KEEP_ROWS = 200
+
+    def notification_mark(self, name: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT value FROM notification_marks WHERE name=?", (name,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def set_notification_mark(self, name: str, value: str) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO notification_marks(name, value) VALUES (?, ?)
+                   ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
+                (name, str(value)),
+            )
+
+    def arrivals_between(self, after: str, until: str) -> list[dict[str, Any]]:
+        """Every issue a download delivered after one moment and up to
+        another, oldest first: the download's own issue, and each further
+        issue a pack delivered."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """WITH arrived(job_id, imported_at) AS (
+                       SELECT job_id, imported_at FROM acquisition_downloads
+                        WHERE status='imported' AND imported_at > ? AND imported_at <= ?
+                       UNION
+                       SELECT job_id, imported_at FROM acquisition_download_imports
+                        WHERE imported_at > ? AND imported_at <= ?
+                   )
+                   SELECT arrived.imported_at, acquisition_jobs.id AS job_id, acquisition_jobs.request_id,
+                          issues.id AS issue_id, issues.issue_number, issues.title AS issue_title,
+                          series_runs.id AS series_run_id, series_runs.canonical_title, series_runs.start_year,
+                          (SELECT MAX(file_id) FROM file_issue_links WHERE issue_id=issues.id) AS file_id
+                     FROM arrived
+                     JOIN acquisition_jobs ON acquisition_jobs.id = arrived.job_id
+                     JOIN issues ON issues.id = acquisition_jobs.issue_id
+                     JOIN series_runs ON series_runs.id = issues.series_run_id
+                    ORDER BY arrived.imported_at, acquisition_jobs.id""",
+                (after, until, after, until),
+            ).fetchall()
+        return [{
+            "at": row["imported_at"], "jobId": int(row["job_id"]), "requestId": int(row["request_id"]),
+            "issueId": int(row["issue_id"]), "number": str(row["issue_number"]), "issueTitle": row["issue_title"],
+            "runId": int(row["series_run_id"]), "runTitle": str(row["canonical_title"]),
+            "startYear": row["start_year"], "fileId": int(row["file_id"]) if row["file_id"] is not None else None,
+        } for row in rows]
+
+    def readers_waiting_on(self, acquisition_request_ids: Sequence[int]) -> dict[int, set[int]]:
+        """For each acquisition request, the readers whose approved request
+        it carries out -- the ones to tell when its comics arrive."""
+        ids = sorted({int(value) for value in acquisition_request_ids})
+        if not ids:
+            return {}
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT member_requests.acquisition_request_id, member_requests.requested_by
+                      FROM member_requests JOIN users ON users.id = member_requests.requested_by
+                     WHERE member_requests.status='approved' AND users.disabled=0
+                       AND member_requests.acquisition_request_id IN ({', '.join('?' for _ in ids)})""",
+                ids,
+            ).fetchall()
+        audience: dict[int, set[int]] = {}
+        for row in rows:
+            audience.setdefault(int(row["acquisition_request_id"]), set()).add(int(row["requested_by"]))
+        return audience
+
+    def record_notification(
+        self, user_id: int, kind: str, group_key: str, payload: dict[str, Any], *,
+        at: str | None = None, merge: bool = False,
+    ) -> int:
+        """Tell a profile something. With `merge`, a row about the same thing
+        that is still unread takes the news instead of a second row: its
+        `items` gain the new ones (once each, by `key`) and it moves to the
+        top. Returns the row's id."""
+        at = at or _utc_now()
+        with self._write_lock, self._connect() as connection:
+            existing = connection.execute(
+                """SELECT id, payload_json, updated_at FROM notifications
+                    WHERE user_id=? AND group_key=? AND read_at IS NULL AND cleared_at IS NULL
+                    ORDER BY id DESC LIMIT 1""",
+                (int(user_id), group_key),
+            ).fetchone() if merge else None
+            if existing:
+                merged = {**_load_json(existing["payload_json"], {}), **payload}
+                items = list(_load_json(existing["payload_json"], {}).get("items") or [])
+                seen = {item.get("key") for item in items}
+                items += [item for item in payload.get("items") or [] if item.get("key") not in seen]
+                merged["items"] = items
+                connection.execute(
+                    "UPDATE notifications SET payload_json=?, updated_at=? WHERE id=?",
+                    (json.dumps(merged, sort_keys=True), max(str(existing["updated_at"]), at), int(existing["id"])),
+                )
+                notification_id = int(existing["id"])
+            else:
+                notification_id = int(connection.execute(
+                    """INSERT INTO notifications(user_id, kind, group_key, payload_json, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (int(user_id), kind, group_key, json.dumps(payload, sort_keys=True), at, at),
+                ).lastrowid)
+            self._prune_notifications(connection, int(user_id))
+        return notification_id
+
+    def _prune_notifications(self, connection: sqlite3.Connection, user_id: int) -> None:
+        now = dt.datetime.now(dt.timezone.utc)
+        cleared_before = (now - dt.timedelta(days=self.NOTIFICATIONS_KEEP_CLEARED_DAYS)).isoformat()
+        older_than = (now - dt.timedelta(days=self.NOTIFICATIONS_KEEP_DAYS)).isoformat()
+        connection.execute(
+            "DELETE FROM notifications WHERE user_id=? AND (cleared_at < ? OR updated_at < ?)",
+            (user_id, cleared_before, older_than),
+        )
+        connection.execute(
+            """DELETE FROM notifications WHERE user_id=? AND id NOT IN (
+                   SELECT id FROM notifications WHERE user_id=? ORDER BY updated_at DESC, id DESC LIMIT ?)""",
+            (user_id, user_id, self.NOTIFICATIONS_KEEP_ROWS),
+        )
+
+    def notifications_for(self, user_id: int, limit: int = 100) -> list[dict[str, Any]]:
+        """A profile's bell, newest first, without what it cleared."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM notifications WHERE user_id=? AND cleared_at IS NULL
+                    ORDER BY updated_at DESC, id DESC LIMIT ?""",
+                (int(user_id), int(limit)),
+            ).fetchall()
+        return [{
+            "id": int(row["id"]), "kind": row["kind"], "groupKey": row["group_key"],
+            "payload": _load_json(row["payload_json"], {}), "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"], "readAt": row["read_at"],
+        } for row in rows]
+
+    def _own_notifications(self, user_id: int, ids: Sequence[int] | None, *, clear: bool) -> int:
+        """Mark a profile's rows read, or clear them: these, or all of them.
+        Cleared is read too, so nothing counts it as new again."""
+        now = _utc_now()
+        column = "cleared_at" if clear else "read_at"
+        sets, params = ("cleared_at=?, read_at=COALESCE(read_at, ?)", [now, now]) if clear else ("read_at=?", [now])
+        sql = f"UPDATE notifications SET {sets} WHERE user_id=? AND {column} IS NULL"
+        params.append(int(user_id))
+        if ids is not None:
+            ids = [int(value) for value in ids]
+            if not ids:
+                return 0
+            sql += f" AND id IN ({', '.join('?' for _ in ids)})"
+            params += ids
+        with self._write_lock, self._connect() as connection:
+            return connection.execute(sql, params).rowcount
+
+    def mark_notifications_read(self, user_id: int, ids: Sequence[int] | None = None) -> int:
+        return self._own_notifications(user_id, ids, clear=False)
+
+    def clear_notifications(self, user_id: int, ids: Sequence[int] | None = None) -> int:
+        return self._own_notifications(user_id, ids, clear=True)
+
+    def notification_dismissals(self, user_id: int) -> list[str]:
+        with self._connect() as connection:
+            return [str(row["key"]) for row in connection.execute(
+                "SELECT key FROM notification_dismissals WHERE user_id=? ORDER BY dismissed_at", (int(user_id),))]
+
+    def change_notification_dismissals(
+        self, user_id: int, add: Sequence[str] = (), remove: Sequence[str] = (),
+    ) -> list[str]:
+        """Dismiss things that need attention, or forget dismissals of things
+        that are gone (their keys are reused, and a stale dismissal would
+        hide a real future failure)."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.executemany(
+                """INSERT INTO notification_dismissals(user_id, key, dismissed_at) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id, key) DO NOTHING""",
+                [(int(user_id), str(key)[:200], now) for key in add if str(key or "").strip()],
+            )
+            connection.executemany(
+                "DELETE FROM notification_dismissals WHERE user_id=? AND key=?",
+                [(int(user_id), str(key)) for key in remove],
+            )
+        return self.notification_dismissals(user_id)
 
     def add_member_request_detail(self, request_id: int, facts: dict[str, Any]) -> dict[str, Any] | None:
         """Merge what was learned about a request after it was made -- its

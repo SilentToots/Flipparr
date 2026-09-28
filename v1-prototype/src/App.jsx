@@ -51,8 +51,7 @@ import { jobsNeedingAttention } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
 import {
-  buildNotifications, pruneDismissed, readDismissed, writeDismissed,
-  readSeenUntil, writeSeenUntil,
+  needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, bellCount, timeAgo,
 } from "./notifications.js";
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState } from "./tab-bar.js";
@@ -258,7 +257,7 @@ const HeaderContext = createContext(null);
 function HeaderBell() {
   const header = useContext(HeaderContext);
   if (!header) return null;
-  return <NotificationsBell notifications={header.notifications} onOpen={header.onOpenNotification} onDismiss={header.onDismissNotification} />;
+  return <NotificationsBell bell={header.bell} />;
 }
 
 const DIALOG_FOCUSABLE =
@@ -1095,75 +1094,144 @@ function GlassSelectMenu({ options, value, label, anchor, onChoose, onClose, onD
   </div>, document.body);
 }
 
-// The app's first popover. It borrows useDialog for Escape and the focus
-// trap, and adds the outside-click that a menu needs and a modal gets from
-// its backdrop. It must be mounted and unmounted rather than hidden: the
-// hook's effect runs once, on mount.
-const NOTIFICATION_KINDS = { download: "Download", request: "Request", source: "Metadata source", file: "Comic file", metadata: "Metadata", acquired: "Added" };
+// The bell (rebuilt 2026-09-27). Two halves: what needs you, worked out from
+// the library as it stands (notifications.js), which goes away when it is dealt
+// with; and what happened, kept per profile on the server, which is read and
+// cleared there and so is the same on every device. On a phone it opens as a
+// sheet from the bottom the height of the screen -- iOS presents a popover
+// that way at compact width -- and elsewhere as a panel under the bell, placed
+// from the bell's own position so it stays inside the window whatever sits
+// beside the bell.
+const NOTIFICATION_KINDS = { download: "Download", request: "Request", source: "Metadata source", file: "Comic file", metadata: "Metadata" };
 
-function NotificationsMenu({ items, onClose, onOpen, onDismiss }) {
-  const dialogRef = useDialog(onClose);
-  useEffect(() => {
-    function handlePointerDown(event) {
-      const node = dialogRef.current;
-      // The button that opened the menu toggles it itself; closing here too
-      // would reopen it on the same click.
-      if (!node || node.contains(event.target) || event.target.closest?.(".appbar-notifications")) return;
-      onClose();
-    }
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [onClose]);
-  const blocking = items.filter((item) => item.severity === "error").length;
-  const actionable = items.filter((item) => item.kind !== "acquired" && !item.news).length;
-  // A reader's bell is news about what they asked for, none of it work.
-  const heading = actionable ? "Needs attention" : items.length && items.every((item) => item.news) ? "Your requests" : "Recently added";
-  const shown = items.slice(0, 5);
-  return <div className="notifications-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-labelledby="notifications-title">
-    <header><strong id="notifications-title">{heading}</strong>{items.length ? <b>{items.length}</b> : null}</header>
-    {blocking ? <p className="notifications-summary">
-      <WarningCircle size={15} weight="fill" className="severity-error" />
-      {blocking} {blocking === 1 ? "item is" : "items are"} blocked until you act
-    </p> : null}
-    {shown.length ? <div className="notifications-list">{shown.map((item) =>
-      // The row opens the thing; dismiss is its own control rather than a
-      // gesture on the row, so acting on a notification and clearing one are
-      // never the same click.
-      <div className="notifications-item" key={item.id}>
-        <button type="button" className="notifications-open" onClick={() => { onClose(); onOpen(item); }}>
-          {item.kind === "acquired" || (item.news && item.severity === "info")
-            ? <CheckCircle size={17} weight="fill" className="severity-done" />
-            : <WarningCircle size={17} weight={item.severity === "error" ? "fill" : "regular"} className={item.severity === "error" ? "severity-error" : "severity-warning"} />}
-          <span><strong>{item.title}</strong><small>{NOTIFICATION_KINDS[item.kind]} · {item.detail}</small></span>
-        </button>
-        <button type="button" className="notifications-dismiss" onClick={() => onDismiss(item)} aria-label={`Dismiss: ${item.title}`} title="Dismiss">
-          <X size={14} />
-        </button>
-      </div>)}
-    </div> : <p className="notifications-empty"><CheckCircle size={19} weight="fill" /> Nothing needs attention.</p>}
-  </div>;
+function NotificationRow({ item, news, fresh, onOpen, onDismiss, onRetry }) {
+  const [busy, setBusy] = useState(false);
+  const warning = news ? item.tone === "warning" : item.severity !== "error";
+  const icon = news && item.cover
+    ? <img className="notification-cover" src={item.cover} alt="" loading="lazy" />
+    : <span className={`notification-icon ${news && !warning ? "severity-done" : warning ? "severity-warning" : "severity-error"}`}>
+      {news && !warning ? <CheckCircle size={20} weight="fill" /> : <WarningCircle size={20} weight={warning ? "regular" : "fill"} />}
+    </span>;
+  async function retry() {
+    setBusy(true);
+    try { await onRetry(item); } finally { setBusy(false); }
+  }
+  // The row opens the thing; clearing is its own control, so acting on a
+  // notification and getting rid of it are never the same tap.
+  return <li className={`notification-row${fresh ? " notification-row--new" : ""}`}>
+    <button type="button" className="notification-open" onClick={() => onOpen(item)}>
+      {icon}
+      <span className="notification-text">
+        <strong>{item.title}</strong>
+        <small>{news ? item.detail : `${NOTIFICATION_KINDS[item.kind] || "Needs you"} · ${item.detail}`}</small>
+        {news ? <time dateTime={item.at}>{fresh ? <span className="sr-only">New, </span> : null}{timeAgo(item.at)}</time> : null}
+      </span>
+    </button>
+    <span className="notification-actions">
+      {item.retryJobId ? <button type="button" className="secondary-button notification-retry" onClick={retry} disabled={busy} aria-busy={busy}>
+        {busy ? <LoadingSpinner size={14} /> : <ArrowCounterClockwise size={14} />} Retry
+      </button> : null}
+      <button type="button" className="notification-dismiss" onClick={() => onDismiss(item)}
+        aria-label={`${news ? "Clear" : "Dismiss"}: ${item.title}`} title={news ? "Clear" : "Dismiss"}>
+        <X size={16} />
+      </button>
+    </span>
+  </li>;
 }
 
-// The bell and its menu. The app bar carries it on a desktop and the Comics
-// header on a phone -- one control in two places, so one component.
-function NotificationsBell({ notifications, onOpen, onDismiss }) {
+function NotificationCenter({ bell, anchorRef, onClose }) {
+  const phone = usePhoneWidth();
+  const dialogRef = useDialog(onClose);
+  const [place, setPlace] = useState(null);
+  // What was new when the bell opened stays marked while it is open, and the
+  // server is told it has been seen, so the badge does not count it again.
+  const [freshIds] = useState(() => new Set((bell.activity.items || []).filter((item) => !item.read).map((item) => item.id)));
+  useEffect(() => { if (freshIds.size) bell.onSeen(); }, []);
+  useLayoutEffect(() => {
+    if (phone) return undefined;
+    function measure() {
+      const button = anchorRef.current?.getBoundingClientRect();
+      if (!button) return;
+      const margin = 16;
+      const width = Math.min(400, window.innerWidth - margin * 2);
+      const top = button.bottom + 8;
+      setPlace({
+        top, width, maxHeight: window.innerHeight - top - margin,
+        // Its right edge under the bell's, pulled in from either side of the window.
+        left: Math.max(margin, Math.min(button.right - width, window.innerWidth - margin - width)),
+      });
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [phone]);
+  useEffect(() => {
+    if (phone) return undefined;
+    function outside(event) {
+      if (dialogRef.current?.contains(event.target) || anchorRef.current?.contains(event.target)) return;
+      onClose();
+    }
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [phone, onClose]);
+  const attention = bell.attention || [];
+  const activity = bell.activity.items || [];
+  const fresh = activity.filter((item) => freshIds.has(item.id));
+  const earlier = activity.filter((item) => !freshIds.has(item.id));
+  const empty = !attention.length && !activity.length;
+  const open = (item) => { onClose(); bell.onOpen(item); };
+  const rows = (items, news) => <ul className="notification-list">{items.map((item) => <NotificationRow key={item.id} item={item} news={news}
+    fresh={news && freshIds.has(item.id)} onOpen={open}
+    onDismiss={news ? bell.onClear : bell.onDismiss} onRetry={bell.onRetry} />)}</ul>;
+  const body = <div className="notifications-body">
+    {bell.error ? <p className="workbench-error" role="alert">{bell.error}</p> : null}
+    {attention.length ? <section aria-labelledby="notifications-attention">
+      <h3 id="notifications-attention">Needs you</h3>{rows(attention, false)}
+    </section> : null}
+    {fresh.length ? <section aria-labelledby="notifications-new"><h3 id="notifications-new">New</h3>{rows(fresh, true)}</section> : null}
+    {earlier.length ? <section aria-labelledby="notifications-earlier">
+      <h3 id="notifications-earlier">{fresh.length || attention.length ? "Earlier" : "Recent"}</h3>{rows(earlier, true)}
+    </section> : null}
+    {empty ? <p className="notifications-empty"><CheckCircle size={22} weight="fill" /> You're all caught up</p> : null}
+  </div>;
+  const head = <header className="notifications-head">
+    <h2 id="notifications-title">Notifications</h2>
+    {empty ? null : <button type="button" className="notifications-clear" onClick={bell.onClearAll}>Clear all</button>}
+    {phone ? <button type="button" className="glass-button glass-button--icon library-sheet-close" onClick={onClose} aria-label="Close"><X size={20} /></button> : null}
+  </header>;
+  if (phone) {
+    return createPortal(<div className="modal-backdrop notifications-sheet-backdrop" onMouseDown={onClose}>
+      <section className="modal notifications-sheet" role="dialog" aria-modal="true" aria-labelledby="notifications-title"
+        ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
+        <SheetGrabber onClose={onClose} />
+        {head}{body}
+      </section>
+    </div>, document.body);
+  }
+  return createPortal(<section className="notifications-popover glass-menu" role="dialog" aria-modal="false" aria-labelledby="notifications-title"
+    ref={dialogRef} style={place ? { ...place } : { visibility: "hidden", top: 0, left: 0 }}>
+    {head}{body}
+  </section>, document.body);
+}
+
+// The bell. The app bar carries it on a desktop and every page's header on a
+// phone -- one control in several places, so one component.
+function NotificationsBell({ bell }) {
   const [open, setOpen] = useState(false);
-  const items = notifications || [];
+  const buttonRef = useRef(null);
+  const count = bellCount(bell.attention, bell.activity);
+  const close = useCallback(() => setOpen(false), []);
   return <div className="appbar-notifications">
     <button
-      type="button" className={`glass-button glass-button--icon appbar-bell${items.length ? " unread" : ""}${open ? " active" : ""}`}
-      onClick={() => setOpen((value) => !value)}
-      aria-label={items.length ? `Notifications: ${items.length}` : "Notifications"}
-      aria-expanded={open}
+      type="button" ref={buttonRef}
+      className={`glass-button glass-button--icon appbar-bell${count ? " unread" : ""}${open ? " active" : ""}`}
+      onClick={() => { if (!open) bell.onRefresh(); setOpen((value) => !value); }}
+      aria-label={count ? `Notifications: ${count}` : "Notifications"}
+      aria-expanded={open} aria-haspopup="dialog"
     >
       <NotificationsIcon />
     </button>
-    {open ? <NotificationsMenu
-      items={items}
-      onClose={() => setOpen(false)}
-      onOpen={onOpen}
-      onDismiss={onDismiss}
-    /> : null}
+    {open ? <NotificationCenter bell={bell} anchorRef={buttonRef} onClose={close} /> : null}
   </div>;
 }
 
@@ -8180,19 +8248,10 @@ export function App() {
   const toastTimers = useRef([]);
   const [reviewFocus, setReviewFocus] = useState(null);
   const [requestFocus, setRequestFocus] = useState(null);
-  const [dismissedNotifications, setDismissedNotifications] = useState(
-    () => readDismissed(typeof window === "undefined" ? null : profileStorage()));
-  // Where this client had got to last time it looked. Set on first run so a
-  // browser that has never seen the app does not open onto every comic ever
-  // imported; from then on it only moves when an arrival is acknowledged.
-  const [seenUntil] = useState(() => {
-    if (typeof window === "undefined") return null;
-    const stored = readSeenUntil(profileStorage());
-    if (stored) return stored;
-    const now = new Date().toISOString();
-    writeSeenUntil(profileStorage(), now);
-    return now;
-  });
+  // The bell's news, kept per profile on the server, with what the profile
+  // has dismissed of the things needing attention (notifications.js).
+  const [bellNews, setBellNews] = useState(() => lastAnswer("/api/v1/notifications") || { items: [], unread: 0, dismissed: [] });
+  const [bellError, setBellError] = useState("");
   const [catalog, setCatalog] = useState(null);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
@@ -8285,25 +8344,99 @@ export function App() {
     reviewProblem(item.focus);
   }
 
-  function dismissNotification(item) {
-    setDismissedNotifications((current) => {
-      const next = current.includes(item.id) ? current : [...current, item.id];
-      writeDismissed(profileStorage(), next);
-      return next;
-    });
+  // News opens what it is about: the run that comics arrived in, or the
+  // request that was decided.
+  function openNews(target) {
+    if (target?.view === "series") {
+      const series = (catalog?.series || []).find((item) => String(item.id) === String(target.seriesId));
+      navigate("library");
+      if (series) openSeries(series);
+      return;
+    }
+    if (target?.view === "requests") {
+      setRequestFocus({ ...target.focus });
+      navigate("requests");
+    }
+  }
+
+  const refreshBell = useCallback(async () => {
+    try {
+      setBellNews(await apiRequest("/api/v1/notifications"));
+      setBellError("");
+    } catch (error) {
+      if (error.status !== 401) setBellError("Notifications could not be loaded. They will be tried again.");
+    }
+  }, []);
+  async function sendBell(path, body) {
+    try {
+      const result = await apiRequest(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (result.items) setBellNews(result);
+      else setBellNews((current) => ({ ...current, ...result }));
+      setBellError("");
+    } catch (error) {
+      setBellError(error.message);
+      refreshBell();
+    }
+  }
+  function changeDismissals({ add = [], remove = [] }) {
+    // At once on screen; the server's answer settles it.
+    setBellNews((current) => ({
+      ...current,
+      dismissed: [...new Set([...(current.dismissed || []).filter((key) => !remove.includes(key)), ...add])],
+    }));
+    return sendBell("/api/v1/notifications/dismissed", { add, remove });
   }
 
   const viewerIsAdmin = isAdmin(authStatus?.viewer);
-  const notifications = useMemo(
-    () => buildNotifications(catalog, dismissedNotifications, seenUntil, { admin: viewerIsAdmin }),
-    [catalog, dismissedNotifications, seenUntil, viewerIsAdmin]);
+  const attention = useMemo(
+    () => needsAttention(catalog, bellNews.dismissed || [], { admin: viewerIsAdmin }),
+    [catalog, bellNews.dismissed, viewerIsAdmin]);
+  // The news is asked for whenever the library is: an import that brought
+  // comics changes both.
+  useEffect(() => { if (catalog && authStatus?.viewer) refreshBell(); }, [catalog, authStatus?.viewer?.id]);
+  // A dismissal whose notification is gone is forgotten: a retried job fails
+  // again under the same id, and must be able to say so.
   useEffect(() => {
-    if (!catalog || !dismissedNotifications.length) return;
-    const pruned = pruneDismissed(catalog, dismissedNotifications);
-    if (pruned.length === dismissedNotifications.length) return;
-    setDismissedNotifications(pruned);
-    writeDismissed(profileStorage(), pruned);
-  }, [catalog, dismissedNotifications]);
+    if (!catalog || !viewerIsAdmin || !bellNews.dismissed?.length) return;
+    const stale = staleDismissals(catalog, bellNews.dismissed);
+    if (stale.length) changeDismissals({ remove: stale });
+  }, [catalog, bellNews.dismissed, viewerIsAdmin]);
+  // Dismissals this browser kept before the server did move up once.
+  useEffect(() => {
+    if (!authStatus?.viewer) return;
+    const legacy = readLegacyDismissed(profileStorage());
+    if (legacy.length) changeDismissals({ add: legacy });
+    forgetLegacyState(profileStorage());
+  }, [authStatus?.viewer?.id]);
+
+  const bell = {
+    attention, activity: bellNews, error: bellError,
+    onRefresh: refreshBell,
+    onOpen: (item) => (item.target ? openNews(item.target) : openNotification(item)),
+    onDismiss: (item) => changeDismissals({ add: [item.id] }),
+    onSeen: () => sendBell("/api/v1/notifications/read", { all: true }),
+    onClear: (item) => {
+      setBellNews((current) => ({ ...current, items: current.items.filter((row) => row.id !== item.id) }));
+      return sendBell("/api/v1/notifications/clear", { ids: [item.id] });
+    },
+    onClearAll: () => {
+      const shown = attention.map((item) => item.id);
+      setBellNews((current) => ({ ...current, items: [], unread: 0 }));
+      sendBell("/api/v1/notifications/clear", { all: true });
+      if (shown.length) changeDismissals({ add: shown });
+    },
+    onRetry: async (item) => {
+      try {
+        const result = await apiRequest(`/api/v1/acquisition-jobs/${item.retryJobId}/retry`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        showToast(result.detail || "Trying again");
+        await loadCatalog();
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    },
+  };
 
   function navigate(id, sectionId) {
     setActive(id); setSelectedSeries(null); setSelectedCollection(null); setSeriesParentCollection(null);
@@ -9494,7 +9627,7 @@ export function App() {
     }
   }
   const header = {
-    notifications, onOpenNotification: openNotification, onDismissNotification: dismissNotification,
+    bell,
     query: SEARCH_VIEWS.has(active) ? viewQuery : "", onSearch: openSearch, onClearSearch: () => openSearch(""),
     profile: {
       household: Boolean(authStatus?.household), method: authStatus?.method, version: profilesVersion,

@@ -109,6 +109,10 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # (PATCH, DELETE) stays the admin's.
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages/(\d+)/panels", READER),
     (frozenset({"POST"}), r"/api/v1/(issues|series)/(\d+)/rating", READER),
+    # A profile's own bell: its news, read and cleared, and what it dismissed.
+    # The handlers only ever touch the asking profile's rows.
+    (frozenset({"GET"}), r"/api/v1/notifications", READER),
+    (frozenset({"POST"}), r"/api/v1/notifications/(read|clear|dismissed)", READER),
     # Finding something to ask for. Discover's searches and previews spend
     # the admin's provider quota, which one shared, paced queue already
     # bounds; adding a run or pulling issues stays the admin's, and a reader

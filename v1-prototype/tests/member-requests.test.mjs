@@ -53,7 +53,7 @@ test("the admin's queue puts what waits first, oldest first", () => {
   assert.deepEqual(decided.map((r) => r.id), [2]);
 });
 
-test("the admin hears that requests wait; a reader hears what was decided since they last looked", () => {
+test("the admin hears that requests wait, and which could not be done", () => {
   const requests = [
     { id: 5, status: "pending", state: "pending", title: "Saga", kind: "run", requestedBy: { name: "Sam" } },
     { id: 6, status: "pending", state: "pending", title: "Paper Girls", kind: "run", requestedBy: { name: "Pat" } },
@@ -67,22 +67,14 @@ test("the admin hears that requests wait; a reader hears what was decided since 
   assert.equal(one.detail, "New issues as they come out");
   const [pull] = requestNotifications([{ ...requests[0], kind: "discover_issues", detail: { numbers: ["3"] } }], { admin: true });
   assert.deepEqual([pull.title, pull.detail], ["Sam asked for Saga", "Issue 3"]);
-  const since = "2026-09-27T00:00:00Z";
-  const decided = [
-    { id: 1, state: "declined", title: "Old", decidedAt: "2026-09-20T00:00:00Z" },
-    { id: 2, state: "declined", title: "Saga", decidedAt: "2026-09-27T09:00:00Z", declineReason: "Too scary" },
-    { id: 3, state: "available", title: "Bone", decidedAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-27T11:00:00Z", kind: "run" },
-    { id: 4, state: "pending", title: "Waiting", decidedAt: null },
-  ];
-  const reader = requestNotifications(decided, { since });
-  assert.deepEqual(reader.map((item) => item.title), ["Saga was declined", "Bone is in your library"]);
-  assert.equal(reader[0].detail, "Too scary");
-  assert.equal(reader[1].kind, "acquired");
-  assert.ok(reader.every((item) => item.news), "nothing here waits on the reader");
-  const [approved] = requestNotifications([{ id: 9, state: "approved", title: "X", decidedAt: "2026-09-28T00:00:00Z" }], { since });
-  assert.deepEqual([approved.kind, approved.severity], ["request", "info"], "approved is not yet added");
-  const [followed] = requestNotifications([{ id: 10, kind: "run", state: "approved", title: "Saga", decidedAt: "2026-09-28T00:00:00Z" }], { since });
-  assert.equal(followed.title, "You'll get Saga's new issues");
+  assert.deepEqual(requestNotifications(requests, {}), [], "a reader hears from the server, not from here");
+  const [failed, still] = requestNotifications([
+    { id: 7, status: "failed", title: "Hush", requestedBy: { name: "Sam" }, failure: "Metron is down", updatedAt: "t1" },
+    requests[0],
+  ], { admin: true });
+  assert.deepEqual([failed.title, failed.detail, failed.severity], ["Couldn't do Sam's request for Hush", "Metron is down", "error"]);
+  assert.equal(failed.id, "request-failed:7:t1", "failing again is news again");
+  assert.equal(still.title, "Sam asked to follow Saga");
 });
 
 test("a swipe decides only when it is meant to", async () => {

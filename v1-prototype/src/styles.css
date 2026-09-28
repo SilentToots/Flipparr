@@ -2165,7 +2165,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 
 @media (max-width: 640px) {
   .library-view-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--violet-text); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
-  .page-header .notifications-menu { width: calc(100vw - var(--page-inset) * 2); }
 
   /* Discover's results, two to a row. One card per row made a phone a list of
      posters: a 350px cover, then a scroll to see whether the next result was
@@ -3044,28 +3043,53 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   0% { box-shadow: 0 0 0 0 var(--bell-unread-pulse); }
   70%, 100% { box-shadow: 0 0 0 8px transparent; }
 }
-.notifications-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: var(--space-6); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
-.notifications-menu header { min-height: 34px; padding: 0 var(--space-8); display: flex; align-items: center; gap: var(--space-8); }
-.notifications-menu header strong { flex: 1; color: var(--text); font-size: var(--text-sm); }
-.notifications-menu header b { min-width: 20px; height: 20px; padding: 0 var(--space-6); border-radius: var(--radius-pill); background: var(--violet-soft); color: var(--red-text); font-size: var(--text-xs); display: grid; place-items: center; }
-.notifications-summary { margin: 0 0 var(--space-4); padding: var(--space-8) var(--space-8); border-radius: var(--radius-8); background: var(--red-soft); color: var(--red-text); font-size: var(--text-xs); display: flex; align-items: center; gap: var(--space-8); }
-.notifications-summary svg { flex: none; }
-.notifications-list { display: grid; gap: var(--space-2); max-height: 320px; overflow-y: auto; }
-/* Open and dismiss are separate targets, so clearing a notification is
-   never a near-miss on opening it. */
-.notifications-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: var(--radius-4); }
-.notifications-item:hover { background: var(--status-muted-bg); }
-.notifications-open { min-height: 52px; width: 100%; padding: var(--space-8); border: 0; border-radius: var(--radius-4); background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-8); align-items: center; text-align: left; cursor: pointer; }
-.notifications-open > span { min-width: 0; display: grid; gap: var(--space-2); }
-.notifications-dismiss { flex: none; width: 26px; height: 26px; margin-right: var(--space-6); display: grid; place-items: center; border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-weak); cursor: pointer; }
-.notifications-dismiss:hover { background: var(--surface-hover); color: var(--text); }
-.notifications-open strong { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
-.notifications-open small { color: var(--muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.notifications-open .severity-error { color: var(--red); }
-.notifications-open .severity-warning { color: var(--amber); }
-.notifications-open .severity-done { color: var(--green); }
-.notifications-empty { margin: 0; padding: var(--space-14) var(--space-8) var(--space-16); color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-8); }
+/* --- The bell (2026-09-27) -------------------------------------------------------
+   One list in two presentations: a panel under the bell on a larger screen,
+   placed from the bell's own position (NotificationCenter), and on a phone
+   the app's sheet from the bottom, the height of the screen. "Needs you"
+   first, then news, newest first; a new row carries a dot until the bell is
+   next opened. Rows never truncate: a title wraps. */
+.notifications-popover { position: fixed; z-index: 60; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line-strong); box-shadow: 0 18px 44px var(--scrim); }
+.notifications-popover.glass-menu {
+  border-radius: var(--radius-16); background: var(--glass-menu-bg);
+  transform-origin: top right; animation: glass-menu-in var(--motion-duration-standard) var(--motion-ease-spring);
+}
+.notifications-head { min-height: 48px; padding: var(--space-8) var(--space-12) var(--space-4) var(--space-16); display: flex; align-items: center; gap: var(--space-8); }
+.notifications-head h2 { flex: 1; margin: 0; color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.notifications-clear { min-height: var(--control-height-sm); padding: 0 var(--space-8); border: 0; border-radius: var(--radius-8); background: transparent; color: var(--violet-text); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer; }
+@media (hover: hover) { .notifications-clear:hover { background: var(--surface-hover); } }
+.notifications-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-8) var(--space-8); }
+.notifications-body section + section { margin-top: var(--space-8); }
+.notifications-body h3 { margin: 0; padding: var(--space-8) var(--space-8) var(--space-4); color: var(--muted-strong); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
+.notification-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); }
+.notification-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: var(--radius-12); }
+@media (hover: hover) { .notification-row:hover { background: var(--surface-hover); } }
+.notification-row--new::before { content: ""; position: absolute; top: 50%; left: var(--space-2); width: var(--space-6); height: var(--space-6); translate: 0 -50%; border-radius: 50%; background: var(--violet-text); }
+.notification-open { min-height: 56px; width: 100%; padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12); border: 0; border-radius: var(--radius-12); background: transparent; display: grid; grid-template-columns: var(--space-40) minmax(0, 1fr); gap: var(--space-12); align-items: center; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.notification-cover { width: var(--space-40); aspect-ratio: var(--cover-ratio); border-radius: var(--radius-4); object-fit: cover; background: var(--surface-soft); }
+.notification-icon { width: var(--space-40); height: var(--space-40); display: grid; place-items: center; border-radius: 50%; background: var(--surface-soft); }
+.notification-icon.severity-error { color: var(--red); background: var(--red-soft); }
+.notification-icon.severity-warning { color: var(--amber); background: var(--amber-soft); }
+.notification-icon.severity-done { color: var(--green); background: var(--green-soft); }
+.notification-text { min-width: 0; display: grid; gap: var(--space-2); }
+.notification-text strong { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-snug); overflow-wrap: anywhere; }
+.notification-text small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-snug); overflow-wrap: anywhere; }
+.notification-text time { color: var(--muted-weak); font-size: var(--text-xs); }
+.notification-actions { display: flex; align-items: center; gap: var(--space-4); padding-right: var(--space-4); }
+.notification-retry { min-height: var(--control-height-sm); padding: 0 var(--space-10); font-size: var(--text-xs); }
+.notification-dismiss { width: var(--space-32); height: var(--space-32); display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--muted-weak); cursor: pointer; }
+@media (hover: hover) { .notification-dismiss:hover { background: var(--surface-hover); color: var(--text); } }
+.notifications-empty { margin: 0; padding: var(--space-24) var(--space-16) var(--space-28); color: var(--muted); font-size: var(--text-sm); display: flex; flex-direction: column; align-items: center; gap: var(--space-8); }
 .notifications-empty svg { color: var(--green); }
+@media (max-width: 640px) {
+  /* The sheet's full height: the page shows above it only as far as iOS
+     leaves a sheet's top edge. */
+  .notifications-sheet { height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom)); display: grid; grid-template-rows: auto minmax(0, 1fr); padding: var(--space-16) 0 0; }
+  .notifications-sheet .notifications-head { padding: var(--space-8) var(--space-8) var(--space-8) var(--space-20); }
+  .notifications-sheet .notifications-body { padding: 0 var(--space-8) calc(var(--space-16) + env(safe-area-inset-bottom)); }
+  /* A finger needs the room a pointer does not. */
+  .notification-dismiss { width: var(--space-40); height: var(--space-40); }
+}
 
 /* A tablet's sidebar is the rail: icons over their labels, as YouTube's mini
    guide, without the counts or sign-out. */
@@ -3131,12 +3155,12 @@ button:disabled { cursor: default; }
 
 /* Pressed. */
 button:not(:disabled):active { scale: var(--button-press-scale); }
-.series-card:active, .series-row:active, .library-match:active, .discover-open:active, .notifications-open:active,
+.series-card:active, .series-row:active, .library-match:active, .discover-open:active, .notification-open:active,
 .drawer-cover-button:active, .family-summary:active { scale: var(--card-press-scale); }
 .drawer-tabs button:active, .segmented-tab:active, .nav-item:active { scale: none; }
 .primary-button:not(:disabled):active, .candidate-select:not(:disabled):active { background: var(--button-primary-bg-pressed); }
 .secondary-button:not(:disabled):active { background: var(--button-secondary-bg-pressed); }
-.ghost-button:not(:disabled):active, .request-row:active, .shelf-message > button:active, .advanced-card button:not(:disabled):active, .request-job-actions button:not(:disabled):active, .modal-close:active, .notifications-open:active, .view-toggle button:not(.active):active, .danger-button:not(:disabled):active, .advanced-card.danger button:not(:disabled):active, .request-job-actions button.request-job-delete:not(:disabled):active { background: var(--button-danger-bg-pressed); }
+.ghost-button:not(:disabled):active, .request-row:active, .shelf-message > button:active, .advanced-card button:not(:disabled):active, .request-job-actions button:not(:disabled):active, .modal-close:active, .notification-open:active, .view-toggle button:not(.active):active, .danger-button:not(:disabled):active, .advanced-card.danger button:not(:disabled):active, .request-job-actions button.request-job-delete:not(:disabled):active { background: var(--button-danger-bg-pressed); }
 .pull-button:not(:disabled):active { filter: brightness(.92); }
 .shelf-scroll button:not(:disabled):active { background: var(--color-neutral-400); }
 
@@ -3163,7 +3187,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
   .pull-card:has(.discover-open:hover) .discover-cover,
   .library-match:hover .discover-cover { border-color: var(--violet-border); }
   .family-link-chip:hover { filter: brightness(1.2); }
-  .notifications-open:hover { background: var(--button-ghost-bg-hover); }
+  .notification-open:hover { background: var(--button-ghost-bg-hover); }
   .candidate-select:not(:disabled):hover { background: var(--button-primary-bg-hover); }
   .shelf-scroll button:not(:disabled):hover { background: var(--color-neutral-300); }
   .shelf-message > button:hover { background: var(--button-ghost-bg-hover); }
@@ -3176,7 +3200,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 
 @media (prefers-reduced-motion: reduce) {
   button:active, .series-card:active, .series-row:active, .library-match:active, .discover-open:active,
-  .notifications-open:active, .drawer-cover-button:active, .family-summary:active { scale: none; }
+  .notification-open:active, .drawer-cover-button:active, .family-summary:active { scale: none; }
 }
 
 /* Raising only the fields to 16px on a phone left them larger than the
@@ -3264,12 +3288,8 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
 .glass-select-menu button.selected { font-weight: var(--weight-semibold); }
 @media (hover: hover) { .glass-select-menu button:hover { background: var(--glass-bg-hover); } }
 .glass-select-menu button:focus-visible { outline: 0; background: var(--glass-bg-hover); }
-.notifications-menu.glass-menu {
-  border-radius: var(--radius-16); background: var(--glass-menu-bg);
-  transform-origin: top right; animation: glass-menu-in var(--motion-duration-standard) var(--motion-ease-spring);
-}
 @media (max-width: 640px) { .glass-select { width: 100%; } }
-@media (prefers-reduced-motion: reduce) { .glass-menu.glass-select-menu, .notifications-menu.glass-menu { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .glass-menu.glass-select-menu, .notifications-popover.glass-menu { animation: none; } }
 /* A menu takes focus only to hold it; the ring belongs on its items. */
 .glass-menu:focus { outline: none; }
 /* A pop-up button keeps its own look inside containers that style every
