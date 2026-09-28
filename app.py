@@ -467,6 +467,10 @@ def _auth_defaults() -> dict[str, Any]:
         "username": "",
         "passwordHash": "",
         "sessionSecret": "",
+        # Moves on when the admin forgets every shared device: device cookies,
+        # and profile sessions opened from the picker, carry the epoch they
+        # were issued in and stop working when it changes.
+        "householdEpoch": 0,
     }
 
 
@@ -638,34 +642,77 @@ def session_token_valid(token: str, config: dict[str, Any]) -> bool:
 # admin signed in here". Both are domain-separated, so neither passes for the
 # other. A cookie from before profiles (`<username>:<expiry>:<signature>`) is
 # the admin's, until the admin's first revocation, and is upgraded on sight.
+#
+# A profile opened from the picker on a shared device is `v3.`: the same, plus
+# the household epoch it was opened in. Forgetting the shared devices moves
+# the epoch on, which ends those devices (`d2.<epoch>.`) and every profile
+# still open on them at once -- a lost tablet keeps nobody's sign-in. A
+# reader's own sign-in with their password (`v2.`) is not a shared device's
+# and is untouched. Device cookies from before the epoch (`d1.`) are good
+# until the first time it moves.
 
 
 def _signed(config: dict[str, Any], message: str) -> str:
     return hmac.new(config["sessionSecret"].encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def issue_profile_token(user: dict[str, Any], config: dict[str, Any], now: float | None = None) -> str:
+def _household_epoch(config: dict[str, Any]) -> int:
+    try:
+        return max(0, int(config.get("householdEpoch") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def issue_profile_token(
+    user: dict[str, Any], config: dict[str, Any], now: float | None = None, *, shared: bool = False,
+) -> str:
+    """A profile's session; `shared` when it was opened from a shared device's
+    picker, so forgetting the shared devices ends it too."""
     expires = int(now if now is not None else time.time()) + _SESSION_TTL_SECONDS
     user_id, version = int(user["id"]), int(user["sessionVersion"])
+    if shared:
+        epoch = _household_epoch(config)
+        signature = _signed(config, f"session|{user_id}|{version}|{epoch}|{expires}")
+        return f"v3.{user_id}.{version}.{epoch}.{expires}.{signature}"
     return f"v2.{user_id}.{version}.{expires}.{_signed(config, f'session|{user_id}|{version}|{expires}')}"
 
 
 def issue_device_token(config: dict[str, Any], now: float | None = None) -> str:
     expires = int(now if now is not None else time.time()) + _DEVICE_TTL_SECONDS
-    return f"d1.{expires}.{_signed(config, f'device|{expires}')}"
+    epoch = _household_epoch(config)
+    return f"d2.{epoch}.{expires}.{_signed(config, f'device|{epoch}|{expires}')}"
 
 
 def device_token_valid(token: str, config: dict[str, Any], now: float | None = None) -> bool:
     parts = str(token or "").split(".")
-    if len(parts) != 3 or parts[0] != "d1" or not config.get("sessionSecret"):
+    if not config.get("sessionSecret"):
         return False
-    _tag, expires, signature = parts
-    if not hmac.compare_digest(_signed(config, f"device|{expires}"), signature):
+    if len(parts) == 4 and parts[0] == "d2":
+        _tag, epoch, expires, signature = parts
+        if epoch != str(_household_epoch(config)) or not hmac.compare_digest(
+                _signed(config, f"device|{epoch}|{expires}"), signature):
+            return False
+    elif len(parts) == 3 and parts[0] == "d1" and _household_epoch(config) == 0:
+        _tag, expires, signature = parts
+        if not hmac.compare_digest(_signed(config, f"device|{expires}"), signature):
+            return False
+    else:
         return False
     try:
         return int(expires) >= int(now if now is not None else time.time())
     except ValueError:
         return False
+
+
+def forget_shared_devices() -> dict[str, Any]:
+    """End every shared device and every profile opened from one, by moving
+    the household epoch on. Returns the new sign-in config."""
+    current = load_auth_config()
+    current["householdEpoch"] = _household_epoch(current) + 1
+    if not current["sessionSecret"]:
+        current["sessionSecret"] = secrets.token_urlsafe(32)
+    _write_auth_config(current)
+    return current
 
 
 def viewer_for(user: dict[str, Any] | None) -> Viewer | None:
@@ -687,12 +734,18 @@ def resolve_session_token(
     token = str(token or "")
     if not config.get("sessionSecret") or not token:
         return None, False
-    if token.startswith("v2."):
+    if token.startswith(("v2.", "v3.")):
         parts = token.split(".")
-        if len(parts) != 5:
-            return None, False
-        _tag, user_id, version, expires, signature = parts
-        if not hmac.compare_digest(_signed(config, f"session|{user_id}|{version}|{expires}"), signature):
+        if parts[0] == "v3" and len(parts) == 6:
+            _tag, user_id, version, epoch, expires, signature = parts
+            if epoch != str(_household_epoch(config)) or not hmac.compare_digest(
+                    _signed(config, f"session|{user_id}|{version}|{epoch}|{expires}"), signature):
+                return None, False
+        elif parts[0] == "v2" and len(parts) == 5:
+            _tag, user_id, version, expires, signature = parts
+            if not hmac.compare_digest(_signed(config, f"session|{user_id}|{version}|{expires}"), signature):
+                return None, False
+        else:
             return None, False
         try:
             if int(expires) < int(now if now is not None else time.time()):
@@ -13278,12 +13331,12 @@ class Handler(BaseHTTPRequestHandler):
             viewer, legacy = resolve_session_token(session.value, config, store)
             if viewer is not None and legacy:
                 admin = store.user(ADMIN_USER_ID)
-                self._set_cookie(_SESSION_COOKIE, issue_profile_token(admin, config), _SESSION_TTL_SECONDS)
-                self._set_cookie(_DEVICE_COOKIE, issue_device_token(config), _DEVICE_TTL_SECONDS)
+                self._sign_in_as(admin, config, device=True)
         device = cookies.get(_DEVICE_COOKIE)
+        self._shared_device_cookie = bool(device is not None and device_token_valid(device.value, config))
         household = (
             config["method"] == "none"
-            or bool(device is not None and device_token_valid(device.value, config))
+            or self._shared_device_cookie
             or bool(config["localBypass"] and is_local_address(self._client_address()))
         )
         if viewer is None and household:
@@ -13297,7 +13350,7 @@ class Handler(BaseHTTPRequestHandler):
                 # that was the admin only because nobody else existed is not
                 # left an admin.
                 if self.path.startswith("/api/"):
-                    self._sign_in_as(enabled[0], config, device=False)
+                    self._sign_in_as(enabled[0], config, device=False, shared=True)
         self.viewer = viewer
         self._household = household
 
@@ -13318,11 +13371,15 @@ class Handler(BaseHTTPRequestHandler):
             cookie for cookie in self._pending_cookies if not cookie.startswith(f"{name}=")
         ] + ["; ".join(attributes)]
 
-    def _sign_in_as(self, user: dict[str, Any], config: dict[str, Any], *, device: bool) -> None:
+    def _sign_in_as(self, user: dict[str, Any], config: dict[str, Any], *, device: bool, shared: bool = False) -> None:
+        """Issue a profile's session, and with `device` make this a shared
+        device. `shared` is a profile opened from a shared device's picker:
+        forgetting the shared devices ends it."""
         if not config.get("sessionSecret"):
             # Sign-in off has never needed a secret; a profile cookie does.
             config = save_auth_config({})
-        self._set_cookie(_SESSION_COOKIE, issue_profile_token(user, config), _SESSION_TTL_SECONDS)
+        # Signing in makes a device shared, so the sign-in is the device's too.
+        self._set_cookie(_SESSION_COOKIE, issue_profile_token(user, config, shared=shared or device), _SESSION_TTL_SECONDS)
         if device:
             self._set_cookie(_DEVICE_COOKIE, issue_device_token(config), _DEVICE_TTL_SECONDS)
 
@@ -13383,6 +13440,7 @@ class Handler(BaseHTTPRequestHandler):
         # survives from one to the next.
         self.viewer = None
         self._household = False
+        self._shared_device_cookie = False
         self._pending_cookies = []
         started = time.monotonic()
         try:
@@ -13948,7 +14006,7 @@ class Handler(BaseHTTPRequestHandler):
             except PermissionError as exc:
                 self.send_json({"error": str(exc)}, 403)
                 return
-            self._sign_in_as(user, config, device=False)
+            self._sign_in_as(user, config, device=False, shared=True)
             self.send_json({"status": "switched", "viewer": viewer_for(user).public()})
             return
         if parsed_url.path == "/api/v1/users":
@@ -14020,6 +14078,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 409)
                 return
             self.send_json(result)
+            return
+        if parsed_url.path == "/api/v1/devices/forget":
+            # Every shared device, and every profile opened on one, is
+            # forgotten -- except this one: the admin doing it keeps their
+            # place, and this device stays shared if it was.
+            config = forget_shared_devices()
+            admin = _profiles_store().user(self._viewer_id())
+            self._sign_in_as(admin, config, device=self._shared_device_cookie, shared=self._shared_device_cookie)
+            self.send_json({"status": "forgotten"})
             return
         users_sign_out = re.fullmatch(r"/api/v1/users/(\d+)/sign-out", parsed_url.path)
         if users_sign_out:

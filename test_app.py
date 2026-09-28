@@ -7884,6 +7884,24 @@ class ProfileTokenTests(unittest.TestCase):
         self.assertFalse(app.device_token_valid(session, self.config, now=2000))
         self.assertFalse(app.device_token_valid(device, self.config, now=1000 + app._DEVICE_TTL_SECONDS + 1))
 
+    def test_a_new_household_epoch_ends_shared_devices_and_the_profiles_opened_on_them(self):
+        store, record = self._store()
+        device = app.issue_device_token(self.config, now=1000)
+        shared = app.issue_profile_token(record, self.config, now=1000, shared=True)
+        own = app.issue_profile_token(record, self.config, now=1000)
+        self.assertTrue(shared.startswith("v3.2.3.0."))
+        self.assertEqual(app.resolve_session_token(shared, self.config, store, now=2000)[0].id, 2)
+        moved = {**self.config, "householdEpoch": 1}
+        self.assertFalse(app.device_token_valid(device, moved, now=2000))
+        self.assertIsNone(app.resolve_session_token(shared, moved, store, now=2000)[0])
+        self.assertEqual(app.resolve_session_token(own, moved, store, now=2000)[0].id, 2, "a sign-in of one's own stays")
+        forged = shared.replace("v3.2.3.0.", "v3.2.3.1.")
+        self.assertIsNone(app.resolve_session_token(forged, moved, store, now=2000)[0], "the epoch is signed")
+        # A device cookie from before epochs counts until the first forgetting.
+        old = f"d1.5000.{app._signed(self.config, 'device|5000')}"
+        self.assertTrue(app.device_token_valid(old, self.config, now=2000))
+        self.assertFalse(app.device_token_valid(old, moved, now=2000))
+
     def test_a_pin_slows_down_after_a_few_wrong_guesses(self):
         app._LOGIN_THROTTLE.clear()
         self.addCleanup(app._LOGIN_THROTTLE.clear)

@@ -1897,12 +1897,37 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.call("POST", f"/api/v1/users/{made.json()['id']}/sign-out", cookies=admin_cookies)
         self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=changed.cookies).status, 401)
 
+    def test_forgetting_the_shared_devices_ends_them_and_every_profile_opened_on_them(self):
+        self.call("PATCH", "/api/v1/me", {"pin": "2468"})
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        login = {"username": "owner", "password": "the admin password"}
+        tablet = self.call("POST", "/api/v1/auth/login", login).cookies
+        sam_id = self.call("POST", "/api/v1/users", {"name": "Sam", "loginName": "sam", "password": "sams password"},
+                           cookies=tablet)
+        tablet = {**tablet, **sam_id.cookies}
+        sam_on_tablet = {**tablet, **self.call("POST", "/api/v1/profiles/switch", {"userId": sam_id.json()["id"]},
+                                               cookies=tablet).cookies}
+        sams_phone = self.call("POST", "/api/v1/auth/login", {"username": "sam", "password": "sams password"}).cookies
+        laptop = self.call("POST", "/api/v1/auth/login", login).cookies
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam_on_tablet).status, 200)
+        forgot = self.call("POST", "/api/v1/devices/forget", {}, cookies=laptop)
+        self.assertEqual(forgot.status, 200, forgot.body)
+        laptop = {**laptop, **forgot.cookies}
+        self.assertEqual(self.call("GET", "/api/v1/profiles", cookies=tablet).status, 401, "the tablet is forgotten")
+        self.assertEqual(self.call("GET", "/api/v1/settings", cookies=tablet).status, 401, "and the admin's sign-in on it")
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam_on_tablet).status, 401, "and Sam's")
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sams_phone).status, 200, "Sam's own phone is not shared")
+        self.assertEqual(self.call("GET", "/api/v1/settings", cookies=laptop).status, 200, "the forgetter keeps their place")
+        self.assertEqual(self.call("GET", "/api/v1/profiles", cookies=laptop).status, 200, "and their device stays shared")
+        refused = self.call("POST", "/api/v1/devices/forget", {}, cookies=sams_phone)
+        self.assertEqual(refused.status, 403, "the admin's to do")
+
     def test_a_cookie_from_before_profiles_is_the_admins_and_is_upgraded(self):
         app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
         legacy = {"flipparr_session": app.issue_session_token(app.load_auth_config())}
         first = self.call("GET", "/api/v1/catalog", cookies=legacy)
         self.assertEqual(first.status, 200)
-        self.assertTrue(first.cookies["flipparr_session"].startswith("v2.1."), "upgraded to a profile cookie")
+        self.assertTrue(first.cookies["flipparr_session"].startswith("v3.1."), "upgraded to a profile cookie")
         self.assertIn("flipparr_device", first.cookies)
         self.assertEqual(self.call("GET", "/api/v1/settings", cookies=first.cookies).status, 200)
         # Once the admin's sign-ins have been ended, the old kind no longer counts.

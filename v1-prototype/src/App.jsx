@@ -4,6 +4,7 @@ import { FlipparrMark } from "./brand.jsx";
 import {
   Users,
   UserCircle,
+  DeviceMobile,
   Hourglass,
   Backspace,
   ArrowsClockwise,
@@ -5211,8 +5212,46 @@ function SecuritySettings({ onChanged, onSignOut }) {
       {saved ? <small className="auth-saved">{saved}</small> : null}
     </div>
     </SettingsCard>
+    {on ? <SharedDevicesCard /> : null}
     <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your password is stored as a scrypt hash</strong><small>It is never returned by the API, and signing in sets an HttpOnly cookie rather than exposing a token to page scripts.</small></span></aside>
   </>;
+}
+
+/**
+ * Forgetting every shared device: for a tablet that is lost or given away.
+ * Each needs the admin's password again before it shows the picker, and
+ * every profile opened on one is signed out. This device, and a reader's
+ * sign-in on their own phone, are kept.
+ */
+function SharedDevicesCard() {
+  const [state, setState] = useState("idle");
+  const [error, setError] = useState("");
+  async function forget() {
+    setState("busy");
+    setError("");
+    try {
+      await apiRequest("/api/v1/devices/forget", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      setState("done");
+    } catch (err) {
+      setError(err.message);
+      setState("idle");
+    }
+  }
+  return <SettingsCard title="Shared devices">
+    <p className="settings-card-lead">A device you sign in on with your password becomes a shared one: it asks who is reading. If one is lost or given away, forget them all. Each will need your password again, and every profile open on one is signed out. This device stays as it is, and so do readers signed in on their own phones.</p>
+    <div className="settings-card-actions">
+      {state === "confirm"
+        ? <>
+          <button type="button" className="danger-button" onClick={forget}>Forget them</button>
+          <button type="button" className="secondary-button" onClick={() => setState("idle")}>Keep them</button>
+        </>
+        : <button type="button" className="secondary-button" onClick={() => setState("confirm")} disabled={state === "busy"} aria-busy={state === "busy"}>
+          {state === "busy" ? <LoadingSpinner size={17} /> : <DeviceMobile size={17} />} Forget other shared devices
+        </button>}
+      {state === "done" ? <small role="status">Forgotten. Other devices need your password again.</small> : null}
+    </div>
+    {error ? <p className="workbench-error" role="alert">{error}</p> : null}
+  </SettingsCard>;
 }
 
 function Toggle({ checked, onChange, title, description, disabled = false }) {
