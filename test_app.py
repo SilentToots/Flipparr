@@ -7771,6 +7771,21 @@ class RunRatingTests(unittest.TestCase):
             self.assertEqual(app.find_run_rating(7), ("teen_plus", "metron", "Teen (issue 1), Teen Plus (issue 24)"))
         vision.assert_not_called()
 
+    def test_a_long_runs_latest_issue_comes_from_its_last_page(self):
+        # As Metron answered for Batman (2016), 2026-09-27: 163 issues, 100 a page.
+        base = f"{app.METRON_API_BASE}/issue/"
+        first = {"count": 163, "next": f"{base}?page=2&series_id=93",
+                 "results": [{"id": n, "number": str(n), "cover_date": f"2016-{n:04d}"} for n in range(1, 101)]}
+        last = {"count": 163, "next": None,
+                "results": [{"id": n, "number": str(n), "cover_date": f"2020-{n:04d}"} for n in range(101, 164)]}
+        pages = {f"{base}?series_id=93": first, f"{base}?page=2&series_id=93": last}
+        issues = {f"{base}1/": {"number": "1", "rating": {"name": "Teen"}},
+                  f"{base}163/": {"number": "163", "rating": {"name": "Teen Plus"}}}
+        with patch.object(app, "fetch_provider_json", side_effect=lambda _p, url, _c: pages.get(url) or issues[url]) as fetch:
+            self.assertEqual(app._metron_run_readings("93", "t"), [("Teen", "1"), ("Teen Plus", "163")])
+        self.assertEqual(fetch.call_count, 4, "the first page, the last, and the two issues -- no pages between")
+        self.assertIsNone(app._metron_last_page_url({"count": 15, "next": None}, 15), "one page is all there is")
+
     def test_a_cover_is_read_only_when_asked_and_metron_says_nothing(self):
         store = self._store()
         unknown = patch.object(app, "_metron_run_readings", return_value=[("Unknown", "1")])

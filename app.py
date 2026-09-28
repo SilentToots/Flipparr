@@ -1291,11 +1291,22 @@ _RATINGS_THREAD: threading.Thread | None = None
 
 
 def _metron_run_readings(series_id: str, credential: str) -> list[tuple[str, str]]:
-    """Metron's rating of a run's first and latest issues: (rating, issue number)."""
+    """Metron's rating of a run's first and latest issues: (rating, issue number).
+
+    The issue list comes a page at a time. A long run's latest issue is on its
+    last page, so that page is asked for directly -- its number from `count`
+    and the first page's size, its address from the `next` link Metron gave --
+    rather than walking every page between.
+    """
     listing = fetch_provider_json(
-        "metron", f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode({"series_id": series_id}), credential)
+        "metron", f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode({"series_id": series_id}), credential) or {}
+    rows = [row for row in listing.get("results") or [] if isinstance(row, dict)]
+    last_page = _metron_last_page_url(listing, len(rows))
+    if last_page:
+        rows += [row for row in (fetch_provider_json("metron", last_page, credential) or {}).get("results") or []
+                 if isinstance(row, dict)]
     results = sorted(
-        (row for row in (listing or {}).get("results") or [] if isinstance(row, dict) and row.get("id")),
+        (row for row in rows if row.get("id")),
         key=lambda row: str(row.get("cover_date") or "9999"),
     )
     picks = [results[0], results[-1]] if len(results) > 1 else results
@@ -1304,6 +1315,24 @@ def _metron_run_readings(series_id: str, credential: str) -> list[tuple[str, str
         issue = fetch_provider_json("metron", f"{METRON_API_BASE}/issue/{int(row['id'])}/", credential) or {}
         readings.append((str((issue.get("rating") or {}).get("name") or ""), str(issue.get("number") or row.get("number") or "")))
     return readings
+
+
+def _metron_last_page_url(listing: dict[str, Any], page_size: int) -> str | None:
+    """The address of a list's last page, when there is more than one: the
+    `next` link with its page number moved on to the last."""
+    next_url = str(listing.get("next") or "")
+    try:
+        count = int(listing.get("count") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not next_url or page_size <= 0 or count <= page_size:
+        return None
+    parts = urllib.parse.urlsplit(next_url)
+    query = dict(urllib.parse.parse_qsl(parts.query))
+    if "page" not in query:
+        return None
+    query["page"] = str(-(-count // page_size))
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
 def metron_configured() -> bool:
