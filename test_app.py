@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import app
+from access_policy import Viewer
 from app import _run_end_evidence, SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, archive_page_members, automatic_backdrop_page, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
 
 
@@ -5997,6 +5998,28 @@ class ReleaseCalendarTests(unittest.TestCase):
         ])
         self.assertTrue(order[0]["following"])
 
+    def test_a_run_of_the_same_name_from_another_era_is_not_in_the_library(self):
+        """"Green Lantern" (2011) on disk said the 2023 run's #39 was in the
+        library, because a title alone was accepted whenever the year did
+        not match. A year either side is a cover-date-versus-release drift;
+        twelve years is another comic (the owner, 2026-09-28)."""
+        owned = [{"number": "39", "ownership": "direct"}]
+        library = [{"id": "10", "title": "Green Lantern", "year": "2011", "publisher": "DC",
+                    "monitoringStatus": "monitored", "issues": owned}]
+        item = self.ranked([self.row("Green Lantern", "39", year=2023)], series=library)[0]
+        self.assertEqual((item["inLibrary"], item["owned"], item["following"], item["runId"]),
+                         (False, False, False, None))
+        drift = self.ranked([self.row("Green Lantern", "39", year=2012)], series=library)[0]
+        self.assertEqual((drift["inLibrary"], drift["owned"], drift["runId"]), (True, True, "10"))
+        # A run the library never dated is still found by its name.
+        undated = self.ranked([self.row("Green Lantern", "39", year=2023)],
+                              series=[{**library[0], "year": None}])[0]
+        self.assertTrue(undated["inLibrary"])
+        # And a run linked at Metron is that run whatever its year says.
+        linked = self.ranked([self.row("Green Lantern", "39", series_id=555, year=2023)], series=[
+            {**library[0], "issueCatalog": {"provider": "metron", "providerSeriesId": "555"}}])[0]
+        self.assertEqual((linked["inLibrary"], linked["runId"]), (True, "10"))
+
     def library(self, issues, requests=(), title="Wolverine", year="2026",
                 monitoring="cataloged"):
         return types.SimpleNamespace(catalog=lambda: {
@@ -7841,6 +7864,20 @@ class StoryArcTests(unittest.TestCase):
                 stack.enter_context(item)
             with self.assertRaisesRegex(ValueError, "in your library or on the way"):
                 app.pull_story_arc("482")
+
+
+class NotificationViewTests(unittest.TestCase):
+    def test_an_arrival_shows_the_comics_own_first_page(self):
+        viewer = Viewer(id=1, name="Admin", role="admin")
+        row = {"id": 4, "kind": "arrived", "updatedAt": "2026-09-28T10:00:00+00:00", "readAt": None,
+               "payload": {"runId": 9, "runTitle": "Batman", "items": [{"key": "14", "number": "14", "title": "The Zoo", "fileId": 1847}]}}
+        view = app.notification_view(row, viewer)
+        # `/cover/image` is a cover someone uploaded, 404 for every ordinary comic.
+        self.assertEqual(view["cover"], "/api/v1/files/1847/pages/0")
+        self.assertEqual((view["title"], view["detail"]), ("Batman #14", "The Zoo"))
+        many = app.notification_view({**row, "payload": {**row["payload"], "items": [
+            {"key": str(n), "number": str(n), "fileId": None} for n in (2, 3, 4)]}}, viewer)
+        self.assertEqual((many["title"], many["detail"], many["cover"]), ("Batman: 3 new issues", "#2, #3 and #4", None))
 
 
 class DirectDownloadRecoveryTests(unittest.TestCase):

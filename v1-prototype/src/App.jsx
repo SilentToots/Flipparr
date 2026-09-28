@@ -6191,7 +6191,7 @@ function ReadRunOverlay({ run, reading, onRead }) {
   // issue is, "In progress" on a run that has been started. A bare count of
   // what was left said nothing on its own (the owner, 2026-09-28).
   return <>
-    {place?.state === "finished" ? <span className="series-card-mark done">Read</span>
+    {place?.state === "finished" ? <span className="series-card-mark done"><Check size={13} weight="bold" aria-hidden="true" /> Read</span>
       : place ? <span className="series-card-mark">In progress</span> : null}
     <button type="button" className="series-card-read" title={verb}
       onClick={() => onRead(started ? { id: place.fileId } : { runId: run.id })} aria-label={label}>

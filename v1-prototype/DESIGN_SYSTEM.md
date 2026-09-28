@@ -241,7 +241,9 @@ Comics' tools row is two of those on the left and a Sort + Following
 
 Liquid Glass is for the navigation layer only: page-header controls, the
 search field, the tab bars, the drawer tabs and a drawer's top bar. Never cards, rows or covers,
-and never glass on glass. `.glass-button` (a capsule, or a circle with
+and never glass on glass. One written exception: a run card's reading badge
+(`.series-card-mark`) is black glass over the cover, so it reads on any art
+without hiding it (the owner, 2026-09-28). `.glass-button` (a capsule, or a circle with
 `--icon`), `.glass-button--primary` (one per page), `.glass-field`,
 `.glass-capsule` (related controls in one pill: its segments are plain, never
 glass on glass, divided by a hairline; a segment that is on fills violet) and
@@ -395,10 +397,11 @@ Motion tokens:
   offered while an issue is part-read, so a place someone else left on your
   profile can be cleared -- and the admin's Edit. The run's own "..." in its group header marks
   the whole run, as does the Advanced tab. A run's card carries the same
-  words, centred over its cover as an issue's are: "In progress" on a run that
-  has been started, "Read" once every issue is, nothing before (a bare count of
-  what was left said nothing). The drawer's hero repeats it as a status badge,
-  with how many are read.
+  words, centred over its cover as an issue's are, as a black glass pill
+  (`--scrim-strong` over `--glass-blur`, white type, a step larger): "In
+  progress" on a run that has been started, "Read" with a check once every
+  issue is, nothing before (a bare count of what was left said nothing). The
+  drawer's hero repeats it as a status badge, with how many are read.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

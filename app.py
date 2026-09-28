@@ -1392,9 +1392,13 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
         else:
             title = f"{run}: {len(items)} new issues"
             detail = _issue_numbers(sorted((str(item.get("number")) for item in items), key=_issue_sort_key))
+        # The comic's own first page, as the profile's history shows it:
+        # `/cover/image` serves only a cover someone uploaded for the file
+        # and answered 404 for every ordinary comic, so the bell showed a
+        # broken picture on each line.
         return {**base, "title": title, "detail": detail,
                 "runId": payload.get("runId"),
-                "cover": f"/api/v1/files/{int(latest['fileId'])}/cover/image" if latest.get("fileId") else None,
+                "cover": f"/api/v1/files/{int(latest['fileId'])}/pages/0" if latest.get("fileId") else None,
                 "target": {"view": "series", "seriesId": str(payload.get("runId"))}}
     if row["kind"] == "request_decided":
         approved = payload.get("status") == "approved"
@@ -9723,6 +9727,7 @@ def _library_relevance() -> dict[str, dict[str, Any]]:
         run_id = str(item.get("id"))
         entry = {
             "runId": run_id,
+            "year": _provider_year(item.get("year")),
             "following": item.get("monitoringStatus") == "monitored",
             "publisher": item.get("publisher"),
             "owned": {
@@ -9735,7 +9740,44 @@ def _library_relevance() -> dict[str, dict[str, Any]]:
         title = normalized_title(item.get("title"))
         relevance.setdefault(title, entry)
         relevance[f"{title}|{item.get('year') or ''}"] = entry
+        # And by the provider's own id for the run, once it is linked there.
+        linked = item.get("issueCatalog") or {}
+        if linked.get("provider") and linked.get("providerSeriesId"):
+            relevance[f"{linked['provider']}:{linked['providerSeriesId']}"] = entry
     return relevance
+
+
+def _library_run_for(
+    relevance: dict[str, dict[str, Any]], title: str, year: Any,
+    provider: str | None = None, provider_run_id: Any = None,
+) -> dict[str, Any] | None:
+    """The library run a provider's run is, or None when it is a different one.
+
+    A run the library has linked at the provider is that run, whatever it is
+    called. Otherwise title and year: the same year, or a year either side
+    of it, because Metron's `year_began` is a cover-date year and a filename's
+    is usually the release year, and cover dates run ahead of the shelf. A
+    title alone matches only a library run with no year to disagree, since
+    "Green Lantern" (2011) and "Green Lantern" (2023) share a name and nothing
+    else, and calling the 2023 issues "In library" because the 2011 run is
+    put the wrong era on the shelf (the owner, 2026-09-28).
+    """
+    if provider and provider_run_id:
+        entry = relevance.get(f"{provider}:{provider_run_id}")
+        if entry:
+            return entry
+    key = normalized_title(title)
+    if not key:
+        return None
+    year = _provider_year(year)
+    if year is None:
+        return relevance.get(key)
+    for candidate in (year, year - 1, year + 1):
+        entry = relevance.get(f"{key}|{candidate}")
+        if entry:
+            return entry
+    entry = relevance.get(key)
+    return entry if entry and entry.get("year") is None else None
 
 
 def _rank_releases(
@@ -9753,8 +9795,8 @@ def _rank_releases(
     relevance = _library_relevance() if relevance is None else relevance
     ranked = []
     for entry in entries:
-        title = normalized_title(entry["seriesTitle"])
-        known = relevance.get(f"{title}|{entry.get('seriesYear') or ''}") or relevance.get(title)
+        known = _library_run_for(relevance, entry["seriesTitle"], entry.get("seriesYear"),
+                                 "metron", entry.get("providerSeriesId"))
         item = dict(entry)
         number = _issue_key(entry["number"])
         item["inLibrary"] = bool(known)
@@ -11876,7 +11918,7 @@ def _shape_run_preview(provider: str, run: dict[str, Any], errors: list[dict[str
     relevance = _library_relevance()
     title = str(run.get("title") or "").strip()
     year = run.get("year")
-    known = relevance.get(f"{normalized_title(title)}|{year or ''}") or relevance.get(normalized_title(title))
+    known = _library_run_for(relevance, title, year, provider, run.get("providerSeriesId"))
     issues = []
     for entry in run.get("entries") or []:
         number = str(entry.get("number") or "").strip()
@@ -12043,7 +12085,7 @@ def story_arc_detail(arc_id: str, may_see: "Callable[[int], bool] | None" = None
         year = series.get("year_began")
         run_id = by_metron.get(series_id)
         entry = by_run.get(str(run_id)) if run_id is not None else None
-        entry = entry or relevance.get(f"{normalized_title(title)}|{year or ''}")
+        entry = entry or _library_run_for(relevance, title, year, "metron", series_id)
         if entry and may_see is not None and str(entry.get("runId") or "").isdigit() and not may_see(int(entry["runId"])):
             entry = None
         key = _issue_key(row.get("number"))

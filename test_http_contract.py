@@ -1869,6 +1869,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
                          "newest first, and the issues arrived a minute ago")
         self.assertEqual((mine["items"][2]["detail"], mine["items"][2]["target"]),
                          ("#4 and #5", {"view": "series", "seriesId": str(run)}))
+        self.assertIsNone(mine["items"][2]["cover"], "no file is linked to these issues yet")
         self.assertEqual(mine["items"][0]["detail"], "Not now")
         self.assertEqual(mine["unread"], 3)
         admins = bell(admin_cookies)

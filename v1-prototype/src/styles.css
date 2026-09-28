@@ -1534,10 +1534,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* A run's card carries the issue badge's words, centred over the cover as an
    issue's is: "In progress" on a run that has been started, "Read" once every
    issue is; nothing before. */
-.series-card-mark { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); white-space: nowrap; padding: var(--space-6) var(--space-12); border-radius: var(--radius-pill); background: var(--violet); color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-none); box-shadow: 0 2px 8px var(--shadow-soft); pointer-events: none; }
-/* Solid, white type, a step larger than an issue's: a run's cover is bigger
-   and busier, and the soft tint was overlooked on it (the owner, 2026-09-28). */
-.series-card-mark.done { background: var(--badge-green-bg); }
+/* Black glass, white type, a step larger than an issue's: a run's cover is
+   bigger and busier, and a tint was overlooked on it (the owner, 2026-09-28).
+   "Read" is the same glass with a check in front. */
+.series-card-mark { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); white-space: nowrap; display: inline-flex; align-items: center; gap: var(--space-4); padding: var(--space-6) var(--space-12); border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-none); box-shadow: 0 2px 8px var(--shadow-soft); pointer-events: none; }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .series-card-mark { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+}
 
 @media (hover: hover) { .issue-tile:hover .issue-tile-read, .pull-card:has(.discover-open:hover) .issue-tile-read { opacity: 1; } }
 @media (hover: none) { .issue-tile-read { opacity: 1; } }
