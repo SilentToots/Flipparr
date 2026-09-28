@@ -3561,8 +3561,14 @@ def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
     series = str(context.get("seriesTitle") or "").strip()
     number = re.match(r"^\s*#?\s*0*(\d+)", str(context.get("issueNumber") or ""))
     queries = [str(query or "").strip()]
-    if series and number and queries[0].casefold() == series.casefold():
-        queries.insert(0, f"{series} #{number.group(1)}")
+    if series and queries[0].casefold() == series.casefold():
+        # Its search matches each word as a substring of the post's title, so
+        # the series is asked plain, with "World's" cut to "World" -- which
+        # the post's straight or curly apostrophe both contain.
+        plain = _plain_query_title(series, cut_at_apostrophe=True) or series
+        queries = [plain]
+        if number:
+            queries.insert(0, f"{plain} #{number.group(1)}")
     return [text for text in queries if text]
 
 
@@ -4344,11 +4350,15 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     return score, reasons
 
 
-def _plain_query_title(title: str) -> str:
-    """A title as a release spells it: apostrophes dropped ("World's" ->
-    "Worlds"), a hyphen inside a name kept ("Spider-Man"), every other mark a
-    space, one space between words."""
-    text = re.sub(r"['’]", "", str(title or ""))
+def _plain_query_title(title: str, *, cut_at_apostrophe: bool = False) -> str:
+    """A title as a search wants it: no punctuation. A release drops an
+    apostrophe ("World's" -> "Worlds", the way a scene name must), so that is
+    what an indexer is asked; a site that matches words as substrings is
+    asked for the stem alone ("World", which "World's" and "World’s" both
+    contain). A hyphen inside a name stays ("Spider-Man"); every other mark
+    is a space, one space between words."""
+    text = str(title or "")
+    text = re.sub(r"['’]\w*", "", text) if cut_at_apostrophe else re.sub(r"['’]", "", text)
     text = re.sub(r"[^\w\s-]", " ", text)
     text = re.sub(r"(?<!\w)-|-(?!\w)", " ", text)
     return re.sub(r"\s+", " ", text).strip()
@@ -4370,14 +4380,12 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     # A release is usually named without the article the catalog keeps:
     # "The Department of Truth 004" found nothing, "Department of Truth 004"
     # found the issue twice over. The catalog title is still tried first.
-    titles = [series]
     # A release writes a title without its punctuation: "Batman / Superman:
     # World's Finest" is posted as "Batman-Superman - Worlds Finest", and an
     # indexer given the slash, the colon and the apostrophe found none of it
-    # while the same words alone found it twice. Asked plain as well.
-    plain = _plain_query_title(series)
-    if plain and plain != series:
-        titles.append(plain)
+    # while the same words alone found it twice. An indexer matches words, so
+    # the marks never help; only the plain wording is asked (the owner, 2026-09-28).
+    titles = [_plain_query_title(series) or series]
     for title in list(titles):
         without_article = _without_leading_article(title)
         if without_article and without_article not in titles:
