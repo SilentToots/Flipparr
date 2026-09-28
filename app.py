@@ -4679,15 +4679,82 @@ def grab_direct_site_release(job_id: int, candidate_id: str) -> dict[str, Any]:
         title, release_key=post_url, source="direct_site",
     )
     store.update_acquisition_job(job_id, "grabbed", f"Downloading from DirectSite: {title}")
-    threading.Thread(
-        target=_fetch_direct_site_download, args=(int(download["id"]), int(job_id), post_url, title),
-        name=f"flipparr-direct_site-{job_id}", daemon=True,
-    ).start()
+    _start_direct_fetch(int(download["id"]), int(job_id), post_url, title)
     return {"status": "grabbed", "source": "direct_site", "release": {"title": title}, "download": download}
 
 
 class DirectSiteNotAFile(ValueError):
     """The post's link answered with a web page -- a file host's share page -- not a comic."""
+
+
+class DownloadStopped(Exception):
+    """A person stopped this download while it was being fetched."""
+
+
+# The downloads Flipparr fetches itself, by download id, each with the flag
+# that stops it. A row that says "downloading" with nothing here is orphaned
+# -- a restart took its thread -- and is started again, once.
+_DIRECT_FETCHES: dict[int, threading.Event] = {}
+_DIRECT_FETCHES_LOCK = threading.Lock()
+_DIRECT_FETCHES_RESTARTED: set[int] = set()
+
+
+def _start_direct_fetch(download_id: int, job_id: int, post_url: str, title: str) -> None:
+    stop = threading.Event()
+    with _DIRECT_FETCHES_LOCK:
+        _DIRECT_FETCHES[int(download_id)] = stop
+    threading.Thread(
+        target=_fetch_direct_site_download, args=(int(download_id), int(job_id), post_url, title),
+        name=f"flipparr-direct_site-{job_id}", daemon=True,
+    ).start()
+
+
+def recover_interrupted_direct_downloads() -> int:
+    """Start again every download Flipparr was fetching itself when it last
+    stopped. World's Finest #36 sat at 'Downloading from DirectSite' for good
+    after a restart: the thread was gone and the row said nothing else."""
+    started = 0
+    for row in catalog_store().direct_downloads_in_flight():
+        download_id = int(row["id"])
+        with _DIRECT_FETCHES_LOCK:
+            live = download_id in _DIRECT_FETCHES
+            if not live:
+                _DIRECT_FETCHES_RESTARTED.add(download_id)
+        if live or not row.get("release_key"):
+            continue
+        _start_direct_fetch(download_id, int(row["job_id"]), str(row["release_key"]), str(row["release_title"] or "DirectSite download"))
+        started += 1
+    return started
+
+
+def stop_acquisition_download(job_id: int) -> dict[str, Any]:
+    """Stop what is downloading for an issue, whoever is fetching it, and put
+    the issue back to wanting a release. The stopped release is set aside for
+    a day so the next automatic pass reaches for another."""
+    store = catalog_store()
+    download = store.acquisition_download_for_job(job_id)
+    if not download or download.get("status") in ("imported", "failed"):
+        raise ValueError("Nothing is downloading for this issue")
+    result = store.stop_acquisition_download(job_id)
+    if str(download.get("source") or "sabnzbd") == "sabnzbd":
+        try:
+            _sab_remove_job(download)
+        except Exception as exc:  # noqa: BLE001 -- SABnzbd keeping the files is not a reason to fail the stop
+            log_event("sab_stop_failed", level="info", job_id=job_id, error=str(exc)[:160])
+    else:
+        with _DIRECT_FETCHES_LOCK:
+            flag = _DIRECT_FETCHES.get(int(download["id"]))
+        if flag is not None:
+            flag.set()
+    try:
+        store.record_acquisition_release_failure(
+            job_id, str(download.get("release_key") or ""), str(download.get("release_title") or ""),
+            "Stopped by you", kind="lost",
+        )
+    except ValueError:
+        pass
+    log_event("download_stopped", job_id=job_id, release=str(download.get("release_title") or "")[:200])
+    return result
 
 
 def _looks_like_a_page(content_type: str, first_bytes: bytes) -> bool:
@@ -4706,6 +4773,8 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
     """
     store = catalog_store()
     folder = acquisition_staging_dir("direct_site") / str(job_id)
+    with _DIRECT_FETCHES_LOCK:
+        stop = _DIRECT_FETCHES.setdefault(int(download_id), threading.Event())
     try:
         store.update_acquisition_download(download_id, "downloading")
         link = direct_site_download_link(post_url)
@@ -4722,6 +4791,8 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             first = True
             with destination.open("xb") as handle:
                 while True:
+                    if stop.is_set():
+                        raise DownloadStopped()
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
@@ -4748,6 +4819,10 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
         store.update_download_progress(download_id, fetched, total or fetched)
         store.update_acquisition_download(download_id, "completed", sab_storage=str(folder))
         log_event("direct_site_download_complete", job_id=job_id, file=name, bytes=fetched)
+    except DownloadStopped:
+        # The row and the job were already put right by whoever stopped it.
+        shutil.rmtree(folder, ignore_errors=True)
+        return
     except Exception as exc:  # noqa: BLE001 -- every failure belongs on the row
         message = f"DirectSite download failed: {exc}"
         log_event("direct_site_download_failed", level="warning", job_id=job_id, error=str(exc)[:200])
@@ -4770,6 +4845,9 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
         except Exception as inner:  # noqa: BLE001
             log_exception("direct_site_failure_not_recorded", inner, level="warning")
         _resume_run_after_pack_failure(job_id, title)
+    finally:
+        with _DIRECT_FETCHES_LOCK:
+            _DIRECT_FETCHES.pop(int(download_id), None)
 
 
 def _download_filename(response: Any, fallback: str) -> str:
@@ -6507,6 +6585,17 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
         # to. Everything from the import onwards is shared with SABnzbd's path.
         status = str(download.get("status") or "")
         if status in {"queued", "downloading"}:
+            # Still going only if a thread is fetching it. One that is not --
+            # a restart took it -- is started again, once; if that fails, the
+            # fetch's own failure path says so on the row.
+            download_id = int(download.get("id") or 0)
+            with _DIRECT_FETCHES_LOCK:
+                orphaned = download_id and download_id not in _DIRECT_FETCHES and download_id not in _DIRECT_FETCHES_RESTARTED
+                if orphaned:
+                    _DIRECT_FETCHES_RESTARTED.add(download_id)
+            if orphaned and download.get("release_key"):
+                _start_direct_fetch(download_id, int(download.get("job_id") or 0), str(download["release_key"]),
+                                    str(download.get("release_title") or "DirectSite download"))
             return {"status": "downloading"}
         if status != "completed":
             return {"status": status or "unknown"}
@@ -14779,6 +14868,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        acquisition_stop = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/stop", parsed_url.path)
+        if acquisition_stop:
+            try:
+                self.send_json(stop_acquisition_download(int(acquisition_stop.group(1))))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            return
         acquisition_retry = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/retry", parsed_url.path)
         if acquisition_retry:
             retry_job_id = int(acquisition_retry.group(1))
@@ -15798,6 +15894,9 @@ def main() -> None:
     load_persisted_provider_cache()
     try:
         recovered = catalog_store().recover_interrupted_searches()
+        restarted = recover_interrupted_direct_downloads()
+        if restarted:
+            log_event("interrupted_direct_downloads_recovered", downloads=restarted)
         if recovered:
             log_event("interrupted_searches_recovered", jobs=recovered)
     except Exception as exc:

@@ -995,6 +995,39 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(len(kept), store.NOTIFICATION_DISMISSALS_KEEP)
             self.assertNotIn("inbox:0", kept, "the oldest go first")
 
+    def test_a_stopped_download_fails_as_stopped_and_the_issue_wants_a_release_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                run = int(connection.execute(
+                    "INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at) VALUES ('WF', 'wf', ?, ?)",
+                    (now, now)).lastrowid)
+                request = int(connection.execute(
+                    """INSERT INTO acquisition_requests(scope_type, series_run_id, status, coverage, acquisition_preference,
+                                                        created_at, updated_at) VALUES ('series', ?, 'open', 'run', 'either', ?, ?)""",
+                    (run, now, now)).lastrowid)
+                issue = int(connection.execute(
+                    "INSERT INTO issues(series_run_id, issue_number, created_at, updated_at) VALUES (?, '36', ?, ?)", (run, now, now)).lastrowid)
+                job = int(connection.execute(
+                    "INSERT INTO acquisition_jobs(request_id, issue_id, status, created_at, updated_at) VALUES (?, ?, 'grabbed', ?, ?)",
+                    (request, issue, now, now)).lastrowid)
+                connection.execute(
+                    """INSERT INTO acquisition_downloads(job_id, sab_nzo_id, source, release_title, release_key, status, created_at, updated_at)
+                       VALUES (?, 'direct_site:abc', 'direct_site', 'WF #36', 'https://comics.example/wf-36/', 'queued', ?, ?)""",
+                    (job, now, now))
+            self.assertEqual([row["id"] for row in store.direct_downloads_in_flight()], [1])
+            result = store.stop_acquisition_download(job)
+            self.assertEqual((result["status"], result["action"]), ("queued", "research"))
+            download = store.acquisition_download_for_job(job)
+            self.assertEqual((download["status"], download["error"], download["failure_stage"]), ("failed", "Stopped by you", "download"))
+            self.assertEqual(store.direct_downloads_in_flight(), [])
+            with store._connect() as connection:
+                row = connection.execute("SELECT status, queue_reason FROM acquisition_jobs WHERE id=?", (job,)).fetchone()
+            self.assertEqual((row["status"], row["queue_reason"]), ("queued", "Stopped; ready to search for another release"))
+            with self.assertRaises(ValueError):
+                store.stop_acquisition_download(job)
+
     def test_collected_edition_year_does_not_create_a_second_run(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

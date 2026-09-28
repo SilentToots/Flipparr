@@ -7286,6 +7286,49 @@ class CatalogStore:
             ).fetchone()
         return dict(row)
 
+    def direct_downloads_in_flight(self) -> list[dict[str, Any]]:
+        """Downloads Flipparr fetches itself that say they are still going.
+        Nothing outside the process knows about them, so after a restart the
+        rows are all that is left of them."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT id, job_id, source, status, release_key, release_title FROM acquisition_downloads
+                    WHERE source != 'sabnzbd' AND status IN ('queued', 'downloading') ORDER BY id"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def acquisition_download_for_job(self, job_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM acquisition_downloads WHERE job_id=?", (int(job_id),)).fetchone()
+        return dict(row) if row else None
+
+    def stop_acquisition_download(self, job_id: int) -> dict[str, Any]:
+        """A person stops a download: its row fails as stopped, and the issue
+        goes back to wanting a release -- another one, since this one is set
+        aside for a day by the caller."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            download = connection.execute(
+                "SELECT * FROM acquisition_downloads WHERE job_id=?", (int(job_id),)).fetchone()
+            if not download or download["status"] in ("imported", "failed"):
+                raise ValueError("Nothing is downloading for this issue")
+            connection.execute(
+                """UPDATE acquisition_downloads SET status='failed', error='Stopped by you', failure_stage='download',
+                          updated_at=? WHERE id=?""",
+                (now, int(download["id"])),
+            )
+            connection.execute(
+                """UPDATE acquisition_jobs SET status='queued', queue_reason=?, error=NULL, updated_at=?
+                    WHERE id=? AND status NOT IN ('fulfilled', 'cancelled')""",
+                ("Stopped; ready to search for another release", now, int(job_id)),
+            )
+            connection.execute(
+                "INSERT INTO acquisition_job_events(job_id, status, detail, created_at) VALUES (?, 'queued', ?, ?)",
+                (int(job_id), "Download stopped by you", now),
+            )
+        return {"id": str(job_id), "status": "queued", "action": "research",
+                "detail": "Stopped; ready to search for another release", "download": dict(download)}
+
     def recover_interrupted_searches(self) -> int:
         """Put back every search a restart cut short.
 

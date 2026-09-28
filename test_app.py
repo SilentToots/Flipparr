@@ -7843,6 +7843,68 @@ class StoryArcTests(unittest.TestCase):
                 app.pull_story_arc("482")
 
 
+class DirectDownloadRecoveryTests(unittest.TestCase):
+    """A download Flipparr fetches itself survives a restart and can be stopped."""
+
+    def setUp(self):
+        app._DIRECT_FETCHES.clear()
+        app._DIRECT_FETCHES_RESTARTED.clear()
+        self.addCleanup(app._DIRECT_FETCHES.clear)
+        self.addCleanup(app._DIRECT_FETCHES_RESTARTED.clear)
+
+    def test_a_restart_starts_the_fetch_again_from_the_row(self):
+        store = Mock()
+        store.direct_downloads_in_flight.return_value = [
+            {"id": 1438, "job_id": 1620, "source": "direct_site", "status": "queued",
+             "release_key": "https://comics.example/dc/wf-36/", "release_title": "World's Finest #36"},
+        ]
+        started = []
+        class Thread:
+            def __init__(self, target, args, **_):
+                started.append((target, args))
+            def start(self):
+                pass
+        with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread):
+            self.assertEqual(app.recover_interrupted_direct_downloads(), 1)
+            self.assertEqual(app.recover_interrupted_direct_downloads(), 0, "not twice while the thread is live")
+        self.assertEqual(started, [(app._fetch_direct_site_download, (1438, 1620, "https://comics.example/dc/wf-36/", "World's Finest #36"))])
+        # The reconciler starts an orphan again too, once.
+        app._DIRECT_FETCHES.clear()
+        app._DIRECT_FETCHES_RESTARTED.clear()
+        row = {"id": 1438, "job_id": 1620, "source": "direct_site", "status": "downloading",
+               "release_key": "https://comics.example/dc/wf-36/", "release_title": "World's Finest #36"}
+        with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread):
+            self.assertEqual(app.reconcile_acquisition_download(row)["status"], "downloading")
+            app.reconcile_acquisition_download(row)
+        self.assertEqual(len(started), 2, "the reconciler restarted it once, not on every pass")
+
+    def test_stopping_a_download_frees_the_issue_and_sets_the_release_aside(self):
+        store = Mock()
+        store.acquisition_download_for_job.return_value = {
+            "id": 1438, "job_id": 1620, "source": "direct_site", "status": "downloading",
+            "release_key": "https://comics.example/dc/wf-36/", "release_title": "World's Finest #36",
+        }
+        store.stop_acquisition_download.return_value = {"id": "1620", "status": "queued", "action": "research"}
+        flag = threading.Event()
+        app._DIRECT_FETCHES[1438] = flag
+        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job") as sab:
+            result = app.stop_acquisition_download(1620)
+        self.assertEqual(result["status"], "queued")
+        self.assertTrue(flag.is_set(), "the fetch thread is told")
+        sab.assert_not_called()
+        store.record_acquisition_release_failure.assert_called_once_with(
+            1620, "https://comics.example/dc/wf-36/", "World's Finest #36", "Stopped by you", kind="lost")
+        # A SABnzbd download is removed from SABnzbd instead.
+        store.acquisition_download_for_job.return_value = {"id": 9, "job_id": 7, "source": "sabnzbd", "status": "downloading",
+                                                           "release_key": "k", "release_title": "Saga 001"}
+        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job") as sab:
+            app.stop_acquisition_download(7)
+        sab.assert_called_once()
+        store.acquisition_download_for_job.return_value = None
+        with patch("app.catalog_store", return_value=store), self.assertRaises(ValueError):
+            app.stop_acquisition_download(8)
+
+
 class DirectSiteSingleFallbackTests(unittest.TestCase):
     """Usenet has nothing; DirectSite has the very issue, strongly. Taken --
     as a run's pack from there already is -- rather than left on a list."""
