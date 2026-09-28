@@ -4548,6 +4548,190 @@ class ReaderProfileTests(LibraryFixture):
             self.assertEqual(store.set_user_prefs(kid, {"panelMode": True}), {"panelMode": True})
 
 
+class ReadingListTests(LibraryFixture):
+    """Story arcs saved as reading lists: issues in an order of our own, across runs."""
+
+    def _two_runs(self, root):
+        """Batman #608 and #610, and Gotham Knights #1: an arc with a gap in it."""
+        files = [
+            ("Batman 608.cbz", "Batman", "608"), ("Batman 610.cbz", "Batman", "610"),
+            ("Batman - Gotham Knights 001.cbz", "Batman: Gotham Knights", "1"),
+        ]
+        parsed = []
+        for name, title, issue in files:
+            (root / name).write_bytes(b"comic")
+            parsed.append(ParsedFile(str(root / name), name, ".cbz", title, issue=issue))
+        by_path = {item.path: item for item in parsed}
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(store.begin_scan(str(root), True), lambda *_: list(parsed), lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {},
+            "file_health": {"status": "ok"},
+            "recommendation": {"title": by_path[p.path].title, "issue": p.issue, "record_type": "single_issue",
+                               "publisher": "DC", "source": "Test"},
+            "file_cover": None,
+        })
+        return store
+
+    def _ids(self, store):
+        """(run id, {number: issue id}, {number: file id}) by title."""
+        out = {}
+        with sqlite3.connect(store.database_path) as connection:
+            for run_id, title in connection.execute("SELECT id, canonical_title FROM series_runs"):
+                issues = dict(connection.execute("SELECT issue_number, id FROM issues WHERE series_run_id=?", (run_id,)))
+                files = dict(connection.execute(
+                    """SELECT issues.issue_number, files.id FROM files
+                       JOIN file_issue_links ON file_issue_links.file_id=files.id
+                       JOIN issues ON issues.id=file_issue_links.issue_id WHERE issues.series_run_id=?""", (run_id,)))
+                out[title] = (int(run_id), {str(k): int(v) for k, v in issues.items()}, {str(k): int(v) for k, v in files.items()})
+        return out
+
+    def _hush(self, store):
+        ids = self._ids(store)
+        batman, gotham = ids["Batman"], ids["Batman: Gotham Knights"]
+        return store.create_reading_list("Hush", description="Batman 2002", provider="metron", provider_arc_id="482", items=[
+            {"provider": "metron", "providerIssueId": "m608", "providerSeriesId": "s1", "seriesTitle": "Batman",
+             "seriesYear": 1940, "number": "608", "coverDate": "2002-12-01", "issueId": batman[1]["608"]},
+            {"provider": "metron", "providerIssueId": "m609", "providerSeriesId": "s1", "seriesTitle": "Batman",
+             "seriesYear": 1940, "number": "609", "coverDate": "2003-01-01"},
+            {"provider": "metron", "providerIssueId": "mgk1", "providerSeriesId": "s2", "seriesTitle": "Batman: Gotham Knights",
+             "seriesYear": 2000, "number": "1", "issueId": gotham[1]["1"]},
+            {"provider": "metron", "providerIssueId": "m610", "providerSeriesId": "s1", "seriesTitle": "Batman",
+             "seriesYear": 1940, "number": "610", "issueId": batman[1]["610"]},
+        ]), ids
+
+    def test_an_arc_keeps_its_issues_in_the_order_given_across_runs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, ids = self._hush(store)
+            self.assertEqual((arc["name"], arc["provider"], arc["providerArcId"], arc["source"]), ("Hush", "metron", "482", "metron"))
+            self.assertEqual([(i["seriesTitle"], i["number"], i["position"]) for i in arc["items"]],
+                             [("Batman", "608", 0), ("Batman", "609", 1), ("Batman: Gotham Knights", "1", 2), ("Batman", "610", 3)])
+            batman, gotham = ids["Batman"], ids["Batman: Gotham Knights"]
+            self.assertEqual([i["runId"] for i in arc["items"]], [str(batman[0]), None, str(gotham[0]), str(batman[0])])
+            self.assertEqual([i["fileId"] for i in arc["items"]],
+                             [str(batman[2]["608"]), None, str(gotham[2]["1"]), str(batman[2]["610"])])
+            self.assertEqual(arc["items"][2]["filename"], "Batman - Gotham Knights 001.cbz")
+            self.assertEqual(store.reading_list_by_provider("metron", "482"), int(arc["id"]))
+            self.assertIsNone(store.reading_list_by_provider("metron", "999"))
+            overview = store.reading_lists_overview()
+            self.assertEqual([(o["name"], len(o["items"])) for o in overview], [("Hush", 4)])
+            self.assertEqual([i["id"] for i in store.reading_list_files(int(arc["id"]))],
+                             [str(batman[2]["608"]), str(gotham[2]["1"]), str(batman[2]["610"])])
+            with self.assertRaises(ValueError):
+                store.create_reading_list("  ", items=[])
+            with self.assertRaises(ValueError):
+                store.create_reading_list("Nameless issue", items=[{"seriesTitle": "Batman", "number": ""}])
+
+    def test_reordering_places_every_issue_once_and_removal_is_soft(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, _ = self._hush(store)
+            list_id = int(arc["id"])
+            ids = [int(i["id"]) for i in arc["items"]]
+            store.reorder_reading_list(list_id, [ids[3], ids[0], ids[1], ids[2]])
+            self.assertEqual([i["number"] for i in store.reading_list(list_id)["items"]], ["610", "608", "609", "1"])
+            self.assertEqual([i["position"] for i in store.reading_list(list_id)["items"]], [0, 1, 2, 3])
+            for bad in ([ids[0]], ids + [ids[0]], [ids[0], ids[1], ids[2], 9999]):
+                with self.assertRaises(ValueError):
+                    store.reorder_reading_list(list_id, bad)
+            self.assertEqual(store.remove_reading_list_items(list_id, [ids[1]]), 1)
+            self.assertEqual([(i["number"], i["position"]) for i in store.reading_list(list_id)["items"]],
+                             [("610", 0), ("608", 1), ("1", 2)], "positions close up")
+            with sqlite3.connect(store.database_path) as connection:
+                self.assertIsNotNone(connection.execute(
+                    "SELECT removed_at FROM reading_list_items WHERE id=?", (ids[1],)).fetchone()[0], "kept, marked")
+            self.assertEqual(store.remove_reading_list_items(list_id, [ids[1]]), 0, "already gone")
+            store.delete_reading_list(list_id)
+            with self.assertRaises(LookupError):
+                store.reading_list(list_id)
+            with sqlite3.connect(store.database_path) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM reading_list_items").fetchone()[0], 0)
+
+    def test_a_refresh_keeps_our_order_adds_after_the_neighbour_and_leaves_the_removed_out(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, _ = self._hush(store)
+            list_id = int(arc["id"])
+            ids = [int(i["id"]) for i in arc["items"]]
+            store.reorder_reading_list(list_id, [ids[2], ids[0], ids[1], ids[3]])   # GK1, 608, 609, 610
+            store.remove_reading_list_items(list_id, [ids[1]])                         # 609 out
+            # Metron now lists 608, 609, 609.5 (new), GK1, 610, 611 (new), with 608 retitled.
+            entries = [
+                {"provider": "metron", "providerIssueId": "m608", "providerSeriesId": "s1", "seriesTitle": "Batman", "seriesYear": 1940, "number": "608", "coverDate": "2002-12-15"},
+                {"provider": "metron", "providerIssueId": "m609", "providerSeriesId": "s1", "seriesTitle": "Batman", "seriesYear": 1940, "number": "609"},
+                {"provider": "metron", "providerIssueId": "m6095", "providerSeriesId": "s1", "seriesTitle": "Batman", "seriesYear": 1940, "number": "609.5"},
+                {"provider": "metron", "providerIssueId": "mgk1", "providerSeriesId": "s2", "seriesTitle": "Batman: Gotham Knights", "seriesYear": 2000, "number": "1"},
+                {"provider": "metron", "providerIssueId": "m610", "providerSeriesId": "s1", "seriesTitle": "Batman", "seriesYear": 1940, "number": "610"},
+                {"provider": "metron", "providerIssueId": "m611", "providerSeriesId": "s1", "seriesTitle": "Batman", "seriesYear": 1940, "number": "611"},
+            ]
+            self.assertEqual(store.merge_reading_list_items(list_id, entries), {"added": 2, "updated": 4})
+            after = store.reading_list(list_id)
+            # 609.5 follows 608 (609, its nearer neighbour, is removed); 611 follows 610; GK1 stays first.
+            self.assertEqual([i["number"] for i in after["items"]], ["1", "608", "609.5", "610", "611"])
+            self.assertEqual(after["items"][1]["coverDate"], "2002-12-15", "details taken")
+            self.assertIsNotNone(after["refreshedAt"])
+            self.assertEqual(store.merge_reading_list_items(list_id, entries), {"added": 0, "updated": 6}, "again changes nothing")
+            self.assertEqual([i["number"] for i in store.reading_list(list_id)["items"]], ["1", "608", "609.5", "610", "611"])
+
+    def test_an_issue_that_goes_leaves_a_gap_not_a_dangling_item(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, ids = self._hush(store)
+            list_id = int(arc["id"])
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("DELETE FROM issues WHERE id=?", (ids["Batman: Gotham Knights"][1]["1"],))
+            items = store.reading_list(list_id)["items"]
+            self.assertEqual([(i["seriesTitle"], i["number"], i["issueId"], i["fileId"]) for i in items][2],
+                             ("Batman: Gotham Knights", "1", None, None))
+            store.set_reading_list_item_issues(list_id, {int(items[1]["id"]): ids["Batman"][1]["610"]})
+            self.assertEqual(store.reading_list(list_id)["items"][1]["issueId"], str(ids["Batman"][1]["610"]), "written back")
+            store.update_reading_list(list_id, name="Hush (complete)", cover="https://x/cover.jpg")
+            self.assertEqual((store.reading_list(list_id)["name"], store.reading_list(list_id)["cover"]), ("Hush (complete)", "https://x/cover.jpg"))
+            with self.assertRaises(ValueError):
+                store.update_reading_list(list_id, name=" ")
+            with self.assertRaises(LookupError):
+                store.update_reading_list(999, name="Nope")
+
+    def test_each_readers_place_in_an_arc_is_their_own_and_a_changed_file_is_stale(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, ids = self._hush(store)
+            list_id = arc["id"]
+            f608, f610 = ids["Batman"][2]["608"], ids["Batman"][2]["610"]
+            sam = store.create_user("Sam")["id"]
+            with sqlite3.connect(store.database_path) as connection:
+                mtime, size = connection.execute("SELECT mtime_ns, size_bytes FROM files WHERE id=?", (f608,)).fetchone()
+            store.set_reading_progress(f608, 3, 24, f"{mtime:x}-{size:x}", user_id=ADMIN_USER_ID)
+            store.set_reading_progress(f610, 1, 24, "old-sig", user_id=sam)
+            mine = store.reading_progress_by_list(user_id=ADMIN_USER_ID)
+            self.assertEqual(list(mine), [list_id])
+            self.assertEqual(mine[list_id][str(f608)]["page"], 3)
+            self.assertFalse(mine[list_id][str(f608)]["stale"])
+            self.assertEqual(mine[list_id][str(f608)]["issueNumber"], "608")
+            self.assertNotIn(str(f610), mine[list_id], "Sam's place is Sam's")
+            theirs = store.reading_progress_by_list(user_id=sam)
+            self.assertTrue(theirs[list_id][str(f610)]["stale"], "the file changed since")
+            self.assertEqual(store.reading_progress_by_list(user_id=store.create_user("Nobody")["id"]), {})
+            self.assertEqual(store.issue_ids_by_provider("metron", ["x"]), {})
+            self.assertEqual(sorted(store.issues_by_run([ids["Batman"][0]])[str(ids["Batman"][0])]),
+                             sorted([(ids["Batman"][1]["608"], "608"), (ids["Batman"][1]["610"], "610")]))
+
+    def test_a_library_from_before_story_arcs_gains_the_tables_on_opening(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("DROP TABLE reading_list_items")
+                connection.execute("DROP TABLE reading_lists")
+                connection.execute("UPDATE schema_info SET version=56")
+            reopened = CatalogStore(store.database_path)
+            with sqlite3.connect(store.database_path) as connection:
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 57)
+                names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
+            self.assertEqual(reopened.reading_lists_overview(), [])
+
+
 class IssueFileCountTests(LibraryFixture):
     """How many single issues a run owns, for the grid to know whether
     anything is left unread once the finished ones are counted."""

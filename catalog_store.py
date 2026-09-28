@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 56
+SCHEMA_VERSION = 57
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1361,6 +1361,54 @@ class CatalogStore:
                     name TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                /* A story arc saved to read in order across runs (schema 57):
+                   Absolute Power through Batman, Superman and its own
+                   miniseries as one sequence. Not `story_arcs`, which are a
+                   collection's run groups. Saved from Metron first; a CBL
+                   reading list or a hand-built arc has no provider of its
+                   own and its items may name only a local issue. Positions
+                   are the household's: a refresh from the provider never
+                   reorders them. An item keeps its title and number so it
+                   outlives its run, and `issue_id` is set again each time the
+                   arc is opened, so a run imported later heals the gap. */
+                CREATE TABLE IF NOT EXISTS reading_lists (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    cover TEXT,
+                    source TEXT NOT NULL DEFAULT 'metron' CHECK(source IN ('metron', 'manual', 'cbl')),
+                    provider TEXT,
+                    provider_arc_id TEXT,
+                    source_url TEXT,
+                    source_name TEXT,
+                    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    refreshed_at TEXT,
+                    UNIQUE(provider, provider_arc_id)
+                );
+                CREATE TABLE IF NOT EXISTS reading_list_items (
+                    id INTEGER PRIMARY KEY,
+                    reading_list_id INTEGER NOT NULL REFERENCES reading_lists(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT,
+                    provider_issue_id TEXT,
+                    provider_series_id TEXT,
+                    series_title TEXT NOT NULL,
+                    series_year INTEGER,
+                    issue_number TEXT NOT NULL,
+                    cover_date TEXT,
+                    cover TEXT,
+                    issue_type TEXT,
+                    issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+                    removed_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(reading_list_id, provider, provider_issue_id)
+                );
+                CREATE INDEX IF NOT EXISTS reading_list_items_list
+                    ON reading_list_items(reading_list_id, removed_at, position, id);
+                CREATE INDEX IF NOT EXISTS reading_list_items_issue ON reading_list_items(issue_id);
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -3714,6 +3762,349 @@ class CatalogStore:
                 "issueNumber": row["issue_number"],
                 "stale": row["file_signature"] != row["scanned_signature"],
             }
+        return by_run
+
+    # ----- Story arcs saved as reading lists (schema 57) -----
+
+    _READING_LIST_ITEM_KEYS = (
+        ("provider", "provider"), ("providerIssueId", "provider_issue_id"),
+        ("providerSeriesId", "provider_series_id"), ("seriesTitle", "series_title"),
+        ("seriesYear", "series_year"), ("number", "issue_number"), ("coverDate", "cover_date"),
+        ("cover", "cover"), ("issueType", "issue_type"), ("issueId", "issue_id"),
+    )
+
+    @staticmethod
+    def _reading_list_meta(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": str(row["id"]), "name": row["name"], "description": row["description"],
+            "cover": row["cover"], "source": row["source"], "provider": row["provider"],
+            "providerArcId": row["provider_arc_id"], "sourceUrl": row["source_url"],
+            "sourceName": row["source_name"],
+            "createdBy": int(row["created_by"]) if row["created_by"] is not None else None,
+            "createdAt": row["created_at"], "updatedAt": row["updated_at"], "refreshedAt": row["refreshed_at"],
+        }
+
+    @staticmethod
+    def _reading_list_item(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": str(row["id"]), "position": int(row["position"]), "provider": row["provider"],
+            "providerIssueId": row["provider_issue_id"], "providerSeriesId": row["provider_series_id"],
+            "seriesTitle": row["series_title"], "seriesYear": row["series_year"],
+            "number": row["issue_number"], "coverDate": row["cover_date"], "cover": row["cover"],
+            "issueType": row["issue_type"],
+            "issueId": str(row["issue_id"]) if row["issue_id"] is not None else None,
+            "runId": str(row["run_id"]) if row["run_id"] is not None else None,
+            "fileId": str(row["file_id"]) if row["file_id"] is not None else None,
+        }
+
+    def _insert_reading_list_items(
+        self, connection: sqlite3.Connection, list_id: int, items: list[dict[str, Any]], *, now: str,
+        start: int = 0,
+    ) -> None:
+        for offset, item in enumerate(items):
+            values = {column: item.get(key) for key, column in self._READING_LIST_ITEM_KEYS}
+            if not str(values["series_title"] or "").strip() or not str(values["issue_number"] or "").strip():
+                raise ValueError("Every issue of a story arc needs a series and a number")
+            values["series_year"] = int(values["series_year"]) if str(values["series_year"] or "").isdigit() else None
+            values["issue_id"] = int(values["issue_id"]) if values["issue_id"] is not None else None
+            connection.execute(
+                """INSERT INTO reading_list_items(reading_list_id, position, provider, provider_issue_id,
+                       provider_series_id, series_title, series_year, issue_number, cover_date, cover,
+                       issue_type, issue_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (int(list_id), start + offset, values["provider"],
+                 str(values["provider_issue_id"]) if values["provider_issue_id"] is not None else None,
+                 str(values["provider_series_id"]) if values["provider_series_id"] is not None else None,
+                 str(values["series_title"]).strip(), values["series_year"], str(values["issue_number"]).strip(),
+                 values["cover_date"], values["cover"], values["issue_type"], values["issue_id"], now, now),
+            )
+
+    @staticmethod
+    def _renumber_reading_list(connection: sqlite3.Connection, list_id: int, order: list[int] | None = None) -> None:
+        """Positions 0..n-1 over the live items, in `order` or in their current order."""
+        if order is None:
+            order = [int(row["id"]) for row in connection.execute(
+                """SELECT id FROM reading_list_items WHERE reading_list_id=? AND removed_at IS NULL
+                   ORDER BY position, id""", (int(list_id),))]
+        connection.executemany(
+            "UPDATE reading_list_items SET position=? WHERE id=? AND reading_list_id=?",
+            [(position, item_id, int(list_id)) for position, item_id in enumerate(order)],
+        )
+
+    def _require_reading_list(self, connection: sqlite3.Connection, list_id: int) -> sqlite3.Row:
+        row = connection.execute("SELECT * FROM reading_lists WHERE id=?", (int(list_id),)).fetchone()
+        if row is None:
+            raise LookupError("That story arc is not in the library")
+        return row
+
+    def create_reading_list(
+        self, name: str, *, description: str | None = None, cover: str | None = None,
+        source: str = "metron", provider: str | None = None, provider_arc_id: str | None = None,
+        source_url: str | None = None, source_name: str | None = None,
+        created_by: int | None = None, items: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Save an arc with its issues in the order given. Items are dicts with
+        `seriesTitle`, `number` and, when known, `provider`, `providerIssueId`,
+        `providerSeriesId`, `seriesYear`, `coverDate`, `cover`, `issueType`,
+        `issueId`."""
+        name = " ".join(str(name or "").split())
+        if not name:
+            raise ValueError("A story arc needs a name")
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO reading_lists(name, description, cover, source, provider, provider_arc_id,
+                       source_url, source_name, created_by, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, description, cover, source, provider,
+                 str(provider_arc_id) if provider_arc_id is not None else None, source_url, source_name,
+                 int(created_by) if created_by is not None else None, now, now),
+            )
+            list_id = int(cursor.lastrowid)
+            self._insert_reading_list_items(connection, list_id, list(items or []), now=now)
+        return self.reading_list(list_id)
+
+    def reading_list_by_provider(self, provider: str, provider_arc_id: str) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM reading_lists WHERE provider=? AND provider_arc_id=?",
+                (provider, str(provider_arc_id)),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
+    def reading_list_by_source_url(self, url: str) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT id FROM reading_lists WHERE source_url=?", (url,)).fetchone()
+        return int(row["id"]) if row else None
+
+    _READING_LIST_ITEMS_SQL = """
+        SELECT items.*, issues.series_run_id AS run_id,
+               (SELECT MIN(files.id) FROM file_issue_links
+                  JOIN files ON files.id=file_issue_links.file_id AND files.present=1
+                 WHERE file_issue_links.issue_id=items.issue_id) AS file_id
+          FROM reading_list_items AS items
+          LEFT JOIN issues ON issues.id=items.issue_id
+         WHERE items.removed_at IS NULL"""
+
+    def reading_list(self, list_id: int) -> dict[str, Any]:
+        """An arc and its live items in order, each with the local issue, run
+        and file it resolves to (the run's first present file for the issue)."""
+        with self._connect() as connection:
+            meta = self._reading_list_meta(self._require_reading_list(connection, list_id))
+            rows = connection.execute(
+                self._READING_LIST_ITEMS_SQL + " AND items.reading_list_id=? ORDER BY items.position, items.id",
+                (int(list_id),),
+            ).fetchall()
+            items = [self._reading_list_item(row) for row in rows]
+            file_ids = [int(item["fileId"]) for item in items if item["fileId"]]
+            files = {}
+            if file_ids:
+                marks = ",".join("?" * len(file_ids))
+                files = {
+                    int(row["id"]): row for row in connection.execute(
+                        f"SELECT id, path, filename FROM files WHERE id IN ({marks})", file_ids)
+                }
+        for item in items:
+            row = files.get(int(item["fileId"])) if item["fileId"] else None
+            item["filename"] = row["filename"] if row else None
+            item["path"] = row["path"] if row else None
+        return {**meta, "items": items}
+
+    def reading_lists_overview(self) -> list[dict[str, Any]]:
+        """Every arc with its items in brief (issue, run, file), for the grid."""
+        with self._connect() as connection:
+            lists = [self._reading_list_meta(row) for row in connection.execute(
+                "SELECT * FROM reading_lists ORDER BY created_at DESC, id DESC")]
+            rows = connection.execute(self._READING_LIST_ITEMS_SQL + " ORDER BY items.position, items.id").fetchall()
+        by_list: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            item = self._reading_list_item(row)
+            by_list.setdefault(str(row["reading_list_id"]), []).append({
+                key: item[key] for key in ("id", "seriesTitle", "seriesYear", "number", "issueId", "runId", "fileId")
+            })
+        for entry in lists:
+            entry["items"] = by_list.get(entry["id"], [])
+        return lists
+
+    def update_reading_list(
+        self, list_id: int, *, name: str | None = None, description: str | None = None,
+        cover: str | None = None, refreshed_at: str | None = None,
+    ) -> None:
+        changes = {"name": " ".join(str(name).split()) if name is not None else None,
+                   "description": description, "cover": cover, "refreshed_at": refreshed_at}
+        changes = {column: value for column, value in changes.items() if value is not None}
+        if changes.get("name") == "":
+            raise ValueError("A story arc needs a name")
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            changes["updated_at"] = _utc_now()
+            assignments = ", ".join(f"{column}=?" for column in changes)
+            connection.execute(f"UPDATE reading_lists SET {assignments} WHERE id=?", (*changes.values(), int(list_id)))
+
+    def set_reading_list_item_issues(self, list_id: int, issue_by_item: dict[int, int | None]) -> None:
+        """Write back what the items resolved to."""
+        if not issue_by_item:
+            return
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.executemany(
+                "UPDATE reading_list_items SET issue_id=?, updated_at=? WHERE id=? AND reading_list_id=?",
+                [(int(issue_id) if issue_id is not None else None, now, int(item_id), int(list_id))
+                 for item_id, issue_id in issue_by_item.items()],
+            )
+
+    def reorder_reading_list(self, list_id: int, item_ids: list[int]) -> None:
+        """The new order, which has to place every live item exactly once."""
+        wanted = [int(item_id) for item_id in item_ids]
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            live = {int(row["id"]) for row in connection.execute(
+                "SELECT id FROM reading_list_items WHERE reading_list_id=? AND removed_at IS NULL", (int(list_id),))}
+            if len(wanted) != len(set(wanted)) or set(wanted) != live:
+                raise ValueError("Every issue of the arc must be placed, once")
+            self._renumber_reading_list(connection, list_id, wanted)
+            connection.execute("UPDATE reading_lists SET updated_at=? WHERE id=?", (_utc_now(), int(list_id)))
+
+    def remove_reading_list_items(self, list_id: int, item_ids: list[int]) -> int:
+        """Take issues out of the arc. They are kept, marked removed, so a
+        refresh from the provider does not put them back."""
+        ids = [int(item_id) for item_id in item_ids]
+        if not ids:
+            return 0
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            marks = ",".join("?" * len(ids))
+            cursor = connection.execute(
+                f"""UPDATE reading_list_items SET removed_at=?, updated_at=?
+                     WHERE reading_list_id=? AND removed_at IS NULL AND id IN ({marks})""",
+                (now, now, int(list_id), *ids),
+            )
+            self._renumber_reading_list(connection, list_id)
+            connection.execute("UPDATE reading_lists SET updated_at=? WHERE id=?", (now, int(list_id)))
+            return cursor.rowcount
+
+    def merge_reading_list_items(self, list_id: int, entries: list[dict[str, Any]]) -> dict[str, int]:
+        """The provider's list again. An issue already here (removed or not)
+        takes the new details and keeps its place; a new one goes in after
+        the nearest issue before it in the provider's order that is in the
+        arc, or first. Nothing is reordered and nothing removed comes back."""
+        now = _utc_now()
+        added = updated = 0
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            known = {
+                (row["provider"], row["provider_issue_id"]): (int(row["id"]), row["removed_at"])
+                for row in connection.execute(
+                    """SELECT id, provider, provider_issue_id, removed_at FROM reading_list_items
+                       WHERE reading_list_id=? AND provider_issue_id IS NOT NULL""", (int(list_id),))
+            }
+            order = [int(row["id"]) for row in connection.execute(
+                """SELECT id FROM reading_list_items WHERE reading_list_id=? AND removed_at IS NULL
+                   ORDER BY position, id""", (int(list_id),))]
+            placed: list[tuple[str, str] | None] = []
+            for entry in entries:
+                key = (entry.get("provider"), str(entry.get("providerIssueId") or "") or None)
+                if key[1] is None:
+                    placed.append(None)
+                    continue
+                if key in known:
+                    item_id, _removed = known[key]
+                    connection.execute(
+                        """UPDATE reading_list_items SET provider_series_id=?, series_title=?, series_year=?,
+                               issue_number=?, cover_date=?, cover=?, issue_type=?, updated_at=?
+                           WHERE id=?""",
+                        (str(entry.get("providerSeriesId") or "") or None, str(entry.get("seriesTitle") or "").strip(),
+                         int(entry["seriesYear"]) if str(entry.get("seriesYear") or "").isdigit() else None,
+                         str(entry.get("number") or "").strip(), entry.get("coverDate"), entry.get("cover"),
+                         entry.get("issueType"), now, item_id),
+                    )
+                    updated += 1
+                    placed.append(key)
+                    continue
+                self._insert_reading_list_items(connection, list_id, [entry], now=now, start=len(order))
+                new_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+                known[key] = (new_id, None)
+                after = 0
+                for earlier in reversed(placed):
+                    if earlier is None:
+                        continue
+                    earlier_id, earlier_removed = known[earlier]
+                    if earlier_removed is None and earlier_id in order:
+                        after = order.index(earlier_id) + 1
+                        break
+                order.insert(after, new_id)
+                placed.append(key)
+                added += 1
+            self._renumber_reading_list(connection, list_id, order)
+            connection.execute("UPDATE reading_lists SET updated_at=?, refreshed_at=? WHERE id=?",
+                               (now, now, int(list_id)))
+        return {"added": added, "updated": updated}
+
+    def delete_reading_list(self, list_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            connection.execute("DELETE FROM reading_lists WHERE id=?", (int(list_id),))
+
+    def reading_list_files(self, list_id: int) -> list[dict[str, Any]]:
+        """The arc's comics that are here, in the arc's order."""
+        return [
+            {"itemId": item["id"], "id": item["fileId"], "path": item["path"], "filename": item["filename"],
+             "issueNumber": item["number"], "runId": item["runId"], "seriesTitle": item["seriesTitle"]}
+            for item in self.reading_list(list_id)["items"] if item["fileId"]
+        ]
+
+    def reading_progress_by_list(self, *, user_id: int) -> dict[str, dict[str, dict[str, Any]]]:
+        """Where each arc's comics were left, keyed by arc then file -- one
+        query for the grid, as `reading_progress_by_run` is."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT items.reading_list_id, items.issue_number, issues.series_run_id, reading_progress.*,
+                          printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
+                     FROM reading_list_items AS items
+                     JOIN issues ON issues.id=items.issue_id
+                     JOIN file_issue_links ON file_issue_links.issue_id=issues.id
+                     JOIN files ON files.id=file_issue_links.file_id AND files.present=1
+                     JOIN reading_progress ON reading_progress.file_id=files.id AND reading_progress.user_id=?
+                    WHERE items.removed_at IS NULL""",
+                (int(user_id),),
+            ).fetchall()
+        by_list: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in rows:
+            by_list.setdefault(str(row["reading_list_id"]), {})[str(row["file_id"])] = {
+                "page": int(row["page"]), "pageCount": int(row["page_count"]),
+                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
+                "issueNumber": row["issue_number"], "runId": str(row["series_run_id"]),
+                "stale": row["file_signature"] != row["scanned_signature"],
+            }
+        return by_list
+
+    def issue_ids_by_provider(self, provider: str, provider_ids: list[str]) -> dict[str, int]:
+        """Local issues already linked to these provider issue ids."""
+        ids = [str(value) for value in provider_ids if value]
+        if not ids:
+            return {}
+        with self._connect() as connection:
+            marks = ",".join("?" * len(ids))
+            return {
+                str(row["provider_id"]): int(row["issue_id"]) for row in connection.execute(
+                    f"SELECT provider_id, issue_id FROM issue_provider_ids WHERE provider=? AND provider_id IN ({marks})",
+                    (provider, *ids))
+            }
+
+    def issues_by_run(self, run_ids: list[int]) -> dict[str, list[tuple[int, str]]]:
+        """Each run's issues as (issue id, number)."""
+        ids = sorted({int(value) for value in run_ids if str(value).isdigit()})
+        if not ids:
+            return {}
+        with self._connect() as connection:
+            marks = ",".join("?" * len(ids))
+            rows = connection.execute(
+                f"SELECT id, series_run_id, issue_number FROM issues WHERE series_run_id IN ({marks}) ORDER BY id",
+                ids).fetchall()
+        by_run: dict[str, list[tuple[int, str]]] = {}
+        for row in rows:
+            by_run.setdefault(str(row["series_run_id"]), []).append((int(row["id"]), row["issue_number"]))
         return by_run
 
     def delete_page_panels(self, file_id: int, member: str) -> bool:
