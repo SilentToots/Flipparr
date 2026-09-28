@@ -461,6 +461,25 @@ class FilenameParserTests(unittest.TestCase):
                 {"title": title, "categories": [{"id": 7030}]},
                 {"seriesTitle": "Green Lantern", "issueNumber": "23.2", "publicationYear": 2013})
             self.assertGreaterEqual(score, 85, (title, reasons))
+        # A half issue: "½" in the catalog, "0.5" in a release, ".5" in a search box.
+        for spelling in ("½", "0.5", ".5", "1/2", "000.5"):
+            self.assertEqual(app._issue_key(spelling), "0.5", spelling)
+        half = "Ultimate Spider-man 0.5 (2002) (digital - Empire)"
+        self.assertTrue(app._release_issue_matches(half, "½"))
+        self.assertTrue(app._release_series_matches(half, "Ultimate Spider-Man", "½"))
+        self.assertFalse(app._release_issue_matches("Ultimate Spider-Man 054 - 071 (2004-2005) (digital-Empire)", "½"))
+        self.assertFalse(app._release_issue_matches("Ultimate Spider-Man 005 (2001)", "½"), "5 is not .5")
+        self.assertEqual(app._issue_key("023.2"), "23.2")
+        # Marvel's lettered tie-ins: "6AU" wanted, "006 AU" on the release -- and
+        # a plain #6 is not answered by it, nor it by a plain 006.
+        self.assertEqual(app._issue_key("006 AU"), app._issue_key("6AU"))
+        au = "Superior Spider-Man 006 AU (2013) (digital-TheGroup)"
+        self.assertTrue(app._release_issue_matches(au, "6AU"))
+        self.assertTrue(app._release_series_matches(au, "Superior Spider-Man", "6AU"))
+        self.assertTrue(app._release_issue_matches("part.05.Superior.Spider-Man.006.AU.2013.theProletariat-Novus", "6AU"))
+        self.assertFalse(app._release_issue_matches(au, "6"))
+        self.assertFalse(app._release_issue_matches("Superior Spider-Man 006 (2013) (digital-TheGroup)", "6AU"))
+        self.assertTrue(app._release_issue_matches("Lot 02 of 04 2026", "2"), "a count's 'of' is not a suffix")
         self.assertNotIn("key", first)
         self.assertNotIn("secret", str(result))
 
@@ -1978,6 +1997,16 @@ class FilenameParserTests(unittest.TestCase):
         # A dot before a year is still a separator.
         dotted = parse_filename(Path("Batman.001.2016.Digital.cbz"))
         self.assertEqual((dotted.title, dotted.issue, dotted.year), ("Batman", "1", 2016))
+        # A half issue, however it is written, is 0.5.
+        for name in ("Ultimate Spider-man 0.5 (2002) (digital - Empire).cbr", "Ultimate Spider-Man ½ (2002).cbz"):
+            parsed = parse_filename(Path(name))
+            self.assertEqual((parsed.issue, parsed.year), ("0.5", 2002), name)
+            self.assertEqual(app._issue_key(parsed.issue), app._issue_key("½"))
+        # A lettered tie-in keeps its letters; a plain number beside a word does not grow them.
+        au = parse_filename(Path("Superior Spider-Man 006 AU (2013) (digital-TheGroup).cbr"))
+        self.assertEqual((au.title, au.issue, au.year), ("Superior Spider-Man", "6AU", 2013))
+        self.assertEqual(parse_filename(Path("Superior Spider-Man 006 (2013) (digital-TheGroup).cbr")).issue, "6")
+        self.assertEqual(parse_filename(Path("Batman 100 (2020).cbz")).issue, "100")
 
     def test_omnibus_with_isbn(self):
         item = parse_filename(Path("Wolverine Omnibus Vol 1 978-1-302-95008-8.cbz"))
@@ -4794,6 +4823,18 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
         self.assertEqual(
             app._prowlarr_query_forms({"seriesTitle": "Green Lantern", "issueNumber": "23.1"}),
             ["Green Lantern 023.1", "Green Lantern 23.1", "Green Lantern"],
+        )
+
+    def test_a_lettered_issue_is_asked_for_with_its_letters_as_a_word(self):
+        self.assertEqual(
+            app._prowlarr_query_forms({"seriesTitle": "Superior Spider-Man", "issueNumber": "6AU"}),
+            ["Superior Spider-Man 006 AU", "Superior Spider-Man 6 AU", "Superior Spider-Man"],
+        )
+
+    def test_a_half_issue_is_asked_for_as_releases_write_it(self):
+        self.assertEqual(
+            app._prowlarr_query_forms({"seriesTitle": "Ultimate Spider-Man", "issueNumber": "½"}),
+            ["Ultimate Spider-Man 0.5", "Ultimate Spider-Man 1/2", "Ultimate Spider-Man"],
         )
 
     def test_a_run_with_no_issue_number_searches_the_series(self):

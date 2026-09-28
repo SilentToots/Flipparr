@@ -2088,12 +2088,15 @@ _YEAR_GROUP = r"\(\s*(?:19|20)\d{2}\s*\)"
 # to sit between the issue number and the year like any other tag.
 _COUNT_OF = r"of\s+\d{1,3}"
 _TAGS = rf"(?:(?:{_NON_YEAR_GROUP}|{_COUNT_OF})\s*){{0,4}}"
+# "006 AU (2013)" is Marvel's #6AU: two or three capitals right after the
+# number, and right before the year or a bracketed tag, belong to it.
+_ISSUE_SUFFIX = r"(?:[ .]?(?-i:[A-Z]{2,3})(?=\s*(?:[\(\[]|(?:19|20)\d{2}\b)))?"
 PADDED_ISSUE = re.compile(
-    rf"{_NOT_A_COUNT}\b(0{{1,3}}\d{{1,3}})\b(?=\s*{_TAGS}(?:{_YEAR_GROUP}|(?:19|20)\d{{2}}\b|$))",
+    rf"{_NOT_A_COUNT}\b(0{{1,3}}\d{{1,3}}{_ISSUE_SUFFIX})\b(?=\s*{_TAGS}(?:{_YEAR_GROUP}|(?:19|20)\d{{2}}\b|$))",
     re.I,
 )
 UNMARKED_ISSUE = re.compile(
-    rf"(?:^|\s){_NOT_A_COUNT}(\d{{1,3}}(?:\.\w+)?)\b(?=\s*{_TAGS}{_YEAR_GROUP})",
+    rf"(?:^|\s){_NOT_A_COUNT}(\d{{1,3}}(?:\.\w+)?{_ISSUE_SUFFIX})\b(?=\s*{_TAGS}{_YEAR_GROUP})",
     re.I,
 )
 
@@ -3032,7 +3035,7 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     number = str(issue_number or "").strip()
     if not number:
         return False
-    escaped = re.escape(number.lstrip("0") or "0")
+    pattern = _issue_number_pattern(number)
     # Numbers that belong to something other than this issue are taken out
     # first: "02 of 04" counts the run, and "Vol 04" is a collected volume.
     # Both read as issue four, so a wanted issue would have been answered
@@ -3050,14 +3053,17 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     # answered a job for #60, and DirectSite writes "#1 - 8" the same way -- in
     # both the wanted number is only there as the end of a range.
     cleaned = _ISSUE_RANGE.sub(" ", cleaned)
-    return bool(re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", cleaned, re.I))
+    return bool(re.search(rf"{pattern}{_NOT_GLUED_TO_A_TAG}", cleaned, re.I))
 
 
 # A number run into letters and more digits is a name, not an issue: the
 # release group "21A1" is not issue 21. A variant letter alone ("21a") still is.
 # Nor is a number with a decimal after it: "023.2" is issue 23.2, not 23 --
 # a fraction of one or two digits, that is; "068.2024" is issue 68 and a year.
-_NOT_GLUED_TO_A_TAG = r"(?!\d|[A-Za-z]\d|\.\d{1,2}(?!\d))"
+# Nor one with a short capitalised suffix: "006 AU" is Age of Ultron's #6AU,
+# not #6 (capitals only, whatever flags the caller passes: "02 of 04" stays
+# issue 2).
+_NOT_GLUED_TO_A_TAG = r"(?!\d|[A-Za-z]\d|\.\d{1,2}(?!\d)|[ .]?(?-i:[A-Z]{2,3})\b)"
 
 # "001-060", "#1-60", "1 - 60". Not "2009-2016", which is when the run ran.
 _ISSUE_RANGE = re.compile(r"(?<![\d.])#?\s*(\d{1,4})\s*[-–—]\s*#?\s*(\d{1,4})(?![\d.])")
@@ -3197,8 +3203,7 @@ def _release_series_lead_in(text: str, number: str) -> str | None:
     # number keeps its dot, or "023.2" could never be found as 23.2.
     text = strip_noise(text)
     text = strip_noise(_separators_to_spaces(text))
-    escaped = re.escape(number.lstrip("0") or "0")
-    found = re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", text, re.I)
+    found = re.search(rf"{_issue_number_pattern(number)}{_NOT_GLUED_TO_A_TAG}", text, re.I)
     if not found:
         return None
     lead = text[: found.start()]
@@ -4375,12 +4380,23 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
             forms.append(f"{title} {issue.zfill(3)}")
             if issue.lstrip("0") != issue.zfill(3):
                 forms.append(f"{title} {issue.lstrip('0') or '0'}")
+        elif _issue_key(issue) in ("0.5", "0.25", "0.75"):
+            # A half issue: releases write "0.5", older indexes "1/2"; the
+            # "½" the catalog keeps is a word no indexer has.
+            decimal = _issue_key(issue)
+            forms.append(f"{title} {decimal}")
+            forms.append(f"{title} {next(text for text, value in _VULGAR_FRACTIONS.items() if value == decimal and '/' in text)}")
         elif re.fullmatch(r"\d+\.\d+", issue):
             # "Green Lantern 023.1", as a release names DC's Villains Month
             # issues; the unpadded form is a different word to an indexer.
             whole, fraction = issue.split(".", 1)
             forms.append(f"{title} {whole.zfill(3)}.{fraction}")
             forms.append(f"{title} {whole.lstrip('0') or '0'}.{fraction}")
+        elif re.fullmatch(r"\d+[ .]?[A-Za-z]{1,3}", issue):
+            # "Superior Spider-Man 006 AU": the letters are their own word.
+            digits, letters = re.fullmatch(r"(\d+)[ .]?([A-Za-z]{1,3})", issue).groups()
+            forms.append(f"{title} {digits.zfill(3)} {letters.upper()}")
+            forms.append(f"{title} {digits.lstrip('0') or '0'} {letters.upper()}")
         elif issue:
             forms.append(f"{title} {issue}")
     forms.extend(titles)
@@ -4789,11 +4805,41 @@ def _safe_path_component(value: str, fallback: str = "Comic") -> str:
     return (cleaned or fallback)[:180].rstrip(" .")
 
 
+# Publishers' half issues: Metron writes "½", a release "0.5" or ".5", an
+# older index "1/2". One number, four spellings.
+_VULGAR_FRACTIONS = {"½": "0.5", "¼": "0.25", "¾": "0.75", "1/2": "0.5", "1/4": "0.25", "3/4": "0.75"}
+
+
 def _issue_key(value: Any) -> str:
-    text = str(value or "").strip().casefold().lstrip("#")
-    if text.isdigit():
-        return str(int(text))
+    """Compare issue numbers without arguing about how they are written:
+    "01", "001" and "1" are one comic, as are "½", "0.5" and ".5", and
+    "023.2" is 23.2. Providers, releases and files each spell them their
+    own way, and the shelf, the search and the import all line them up."""
+    text = str(value or "").strip().casefold().lstrip("#").strip()
+    text = _VULGAR_FRACTIONS.get(text, text)
+    if re.fullmatch(r"\.\d+", text):
+        text = "0" + text
+    # Marvel's lettered tie-ins: "6AU" in the catalog, "006 AU" on a release.
+    text = re.sub(r"^(\d+(?:\.\d+)?)[ .]?([a-z]{1,3})$", r"\1\2", text)
+    if re.fullmatch(r"\d+(?:\.\d+)?[a-z]{0,3}", text):
+        text = re.sub(r"^0+(?=\d)", "", text)
     return text
+
+
+def _issue_number_pattern(value: Any) -> str:
+    """A regex for this issue's number as a release or file might write it,
+    without the trailing tag check. "23" is also "#23" and "023"; a half is
+    "0.5", ".5", "½" or "1/2"."""
+    key = _issue_key(value)
+    if key in ("0.5", "0.25", "0.75"):
+        fraction = re.escape(key[1:])
+        glyph = next(glyph for glyph, decimal in _VULGAR_FRACTIONS.items() if decimal == key and len(glyph) == 1)
+        vulgar = next(text for text, decimal in _VULGAR_FRACTIONS.items() if decimal == key and "/" in text)
+        return rf"(?:(?:#|\b0*)0{fraction}|(?<![\d.]){fraction}|{glyph}|(?<!\d){re.escape(vulgar)}(?!\d))"
+    lettered = re.fullmatch(r"(\d+(?:\.\d+)?)([a-z]{1,3})", key)
+    if lettered:
+        return rf"(?:#|\b0*){re.escape(lettered.group(1))}[ .]?{re.escape(lettered.group(2))}"
+    return rf"(?:#|\b0*){re.escape(key)}"
 
 
 def _sha256_file(path: Path) -> str:
@@ -6985,7 +7031,12 @@ def _separators_to_spaces(text: str) -> str:
 
 def parse_filename(path: Path) -> ParsedFile:
     decoded_filename = urllib.parse.unquote(path.name)
-    raw = _separators_to_spaces(Path(decoded_filename).stem)
+    stem = Path(decoded_filename).stem
+    # "Ultimate Spider-Man ½" is issue 0.5, the number a release writes.
+    for glyph, decimal in _VULGAR_FRACTIONS.items():
+        if len(glyph) == 1:
+            stem = stem.replace(glyph, decimal)
+    raw = _separators_to_spaces(stem)
     raw = re.sub(r"\s+", " ", raw).strip()
 
     isbn_match = find_isbn(raw)
@@ -6998,7 +7049,10 @@ def parse_filename(path: Path) -> ParsedFile:
     if issue_match is None and volume_match is None:
         issue_match = UNMARKED_ISSUE.search(raw)
     issue = issue_match.group(1) if issue_match else None
-    if issue and re.fullmatch(r"\d+(?:\.\d+)?", issue):
+    if issue:
+        # "006 AU" is written 6AU, as the catalog has it.
+        issue = re.sub(r"^(\d+(?:\.\d+)?)[ .]([A-Za-z]{1,3})$", r"\1\2", issue)
+    if issue and re.fullmatch(r"\d+(?:\.\d+)?[A-Za-z]{0,3}", issue):
         # Leading zeros are padding: "023" is 23, "023.2" is 23.2.
         issue = re.sub(r"^0+(?=\d)", "", issue)
     # A scene name marks the issue "No 19", after the series' own volume, and
@@ -9517,15 +9571,6 @@ def fetch_release_calendar(start: dt.date, end: dt.date, token: str) -> list[dic
         url = str(payload.get("next") or "")
     return entries
 
-
-def _issue_key(number: Any) -> str:
-    """Compare issue numbers without arguing about leading zeros.
-
-    Providers write "1", "01" and "001" for the same comic, and the shelf has
-    to line a release up against the library's own record of it.
-    """
-    cleaned = str(number or "").strip()
-    return cleaned.lstrip("0") or cleaned
 
 
 def _library_relevance() -> dict[str, dict[str, Any]]:
