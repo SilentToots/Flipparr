@@ -394,8 +394,10 @@ Motion tokens:
   a tile. It holds Read / Continue, Mark as read or unread (this profile's
   own), and the admin's Edit. The run's own "..." in its group header marks
   the whole run, as does the Advanced tab. A run's card carries the same
-  words top-right: "In progress" on a run that has been started, "Read" once
-  every issue is, nothing before (a bare count of what was left said nothing).
+  words, centred over its cover as an issue's are: "In progress" on a run that
+  has been started, "Read" once every issue is, nothing before (a bare count of
+  what was left said nothing). The drawer's hero repeats it as a status badge,
+  with how many are read.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

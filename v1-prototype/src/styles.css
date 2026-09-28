@@ -1530,9 +1530,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 @media (hover: hover) { .issue-group-menu:hover { background: var(--surface-hover); color: var(--text); } }
 .action-menu button { min-height: 40px; }
 .issue-tile-mark.done { position: absolute; z-index: 2; right: 6px; bottom: 6px; width: var(--space-24); height: var(--space-24); border-radius: var(--radius-pill); background: var(--badge-green-bg); color: var(--color-neutral-0); display: grid; place-items: center; }
-/* A run's card carries the issue badge's words top-right: "In progress" on a
-   run that has been started, "Read" once every issue is; nothing before. */
-.series-card-mark { position: absolute; z-index: 2; top: var(--space-8); right: var(--space-8); padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--violet-soft); color: var(--violet-text); font-size: var(--text-xs); font-weight: var(--weight-semibold); line-height: var(--leading-none); box-shadow: 0 2px 8px var(--shadow-soft); pointer-events: none; }
+/* A run's card carries the issue badge's words, centred over the cover as an
+   issue's is: "In progress" on a run that has been started, "Read" once every
+   issue is; nothing before. */
+.series-card-mark { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); white-space: nowrap; padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); background: var(--violet-soft); color: var(--violet-text); font-size: var(--text-xs); font-weight: var(--weight-semibold); line-height: var(--leading-none); box-shadow: 0 2px 8px var(--shadow-soft); pointer-events: none; }
 .series-card-mark.done { background: var(--green-soft); color: var(--green-text); }
 
 @media (hover: hover) { .issue-tile:hover .issue-tile-read, .pull-card:has(.discover-open:hover) .issue-tile-read { opacity: 1; } }

@@ -6469,6 +6469,12 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   // Marking the whole run: read when any of it is not, unread once all of it is.
   const readableFiles = [...(reading?.issues || []), ...(reading?.volumes || [])].filter((file) => file.readable);
   const runAllRead = readableFiles.length > 0 && readableFiles.every((file) => file.finishedAt && !file.stale);
+  // The run's own status in the hero, in the issue badge's words: "Read", or
+  // "In progress" with how many are read, once any of it has been opened.
+  const runReadCount = readableFiles.filter((file) => file.finishedAt && !file.stale).length;
+  const runStarted = readableFiles.some((file) => file.pageCount && !file.stale);
+  const runReadingBadge = runAllRead ? { tone: "green", text: "Read" }
+    : runStarted ? { tone: "violet", text: `In progress · ${runReadCount} of ${readableFiles.length} read` } : null;
   const wantedIssueCount = Math.max(0, Number(series.releaseSummary?.releasedMissing ?? series.unowned ?? Math.max(0, (series.total || 0) - (series.owned || 0))));
   // Volumes and Collection belong to collected-edition support; the counts
   // live on the tabs, so the header does not repeat them.
@@ -6530,7 +6536,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
             <h2 id="series-drawer-title">{series.title}</h2>
             <p>{[series.publisher, series.year].filter(Boolean).join(" • ")}</p>
           </div>
-          <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{series.ageRating ? <StatusBadge tone={ratingTone(series.ageRating.replace("_", " "))}>Rated {RATING_LABELS[series.ageRating]}</StatusBadge> : null}<StarRating rating={runRating(series)} title={series.title} onRate={(value) => onRate?.(series, value)} />{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
+          <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{series.ageRating ? <StatusBadge tone={ratingTone(series.ageRating.replace("_", " "))}>Rated {RATING_LABELS[series.ageRating]}</StatusBadge> : null}{runReadingBadge ? <StatusBadge tone={runReadingBadge.tone}>{runReadingBadge.text}</StatusBadge> : null}<StarRating rating={runRating(series)} title={series.title} onRate={(value) => onRate?.(series, value)} />{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
           <Ownership series={series} compact />
           {isFollowing && wantedIssueCount && admin ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
         </div>
