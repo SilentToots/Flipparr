@@ -1254,16 +1254,22 @@ def _carry_out_member_request(request: dict[str, Any]) -> tuple[int | None, int 
         _start_automatic_release_grabs(made)
         return int(made["id"]), None
     if kind == "discover_arc":
-        result = pull_story_arc(params["arcId"])
-        first = result["pulled"][0]
+        # The arc is saved to read in order first -- that is what was asked
+        # for -- then what it is missing is pulled; nothing missing is fine.
+        requester = int((request.get("requestedBy") or {}).get("id") or ADMIN_USER_ID)
+        saved = save_story_arc(params["arcId"], user_id=requester, created_by=requester)
+        result = pull_story_arc(params["arcId"], allow_nothing=True)
+        first = result["pulled"][0] if result["pulled"] else {}
         made, run = first.get("request") or {}, first.get("series") or {}
         # One arc, several series, several pulls: the request's own column
         # holds the first, and the rest ride in its detail, so the reader
         # hears of every series' issues arriving.
         pulled_ids = [int(item["request"]["id"]) for item in result["pulled"]
                       if isinstance(item.get("request"), dict) and str(item["request"].get("id") or "").isdigit()]
+        facts: dict[str, Any] = {"readingListId": saved["id"]}
         if len(pulled_ids) > 1:
-            catalog_store().add_member_request_detail(request["id"], {"acquisitionRequestIds": pulled_ids})
+            facts["acquisitionRequestIds"] = pulled_ids
+        catalog_store().add_member_request_detail(request["id"], facts)
         return (int(made["id"]) if made.get("id") else None), (int(run["id"]) if run.get("id") else None)
     if kind == "discover_run":
         result = request_discovered_series(params["provider"], params["query"], params["providerSeriesId"], "either")
@@ -12045,12 +12051,12 @@ def discover_story_arcs(query: str) -> dict[str, Any]:
     return {"arcs": arcs[:8], "available": True}
 
 
-def _arc_issue_rows(arc_id: str, credential: str) -> list[dict[str, Any]]:
+def _arc_issue_rows(arc_id: str, credential: str, *, force: bool = False) -> list[dict[str, Any]]:
     """An arc's issues from Metron, every page, in reading order (by cover date)."""
     url = f"{METRON_API_BASE}/arc/{arc_id}/issue_list/"
     rows: list[dict[str, Any]] = []
     for _ in range(ARC_MAX_PAGES):
-        page = fetch_provider_json("metron", url, credential) or {}
+        page = fetch_provider_json("metron", url, credential, force=force) or {}
         rows.extend(row for row in page.get("results") or [] if isinstance(row, dict) and row.get("id"))
         url = page.get("next")
         if not url:
@@ -12063,15 +12069,17 @@ def _issue_sort_key(number: Any) -> tuple[float, str]:
     return (float(match.group()) if match else float("inf"), str(number or ""))
 
 
-def story_arc_detail(arc_id: str, may_see: "Callable[[int], bool] | None" = None) -> dict[str, Any]:
+def story_arc_detail(
+    arc_id: str, may_see: "Callable[[int], bool] | None" = None, *, force: bool = False,
+) -> dict[str, Any]:
     """An arc and its issues, each with what the library holds of it. With
     `may_see`, a run the profile may not see counts as not held at all."""
     arc_id = str(arc_id or "").strip()
     if not re.fullmatch(r"\d+", arc_id):
         raise ValueError("Choose a story arc")
     credential = _provider_credential("metron")
-    arc = fetch_provider_json("metron", f"{METRON_API_BASE}/arc/{arc_id}/", credential) or {}
-    rows = _arc_issue_rows(arc_id, credential)
+    arc = fetch_provider_json("metron", f"{METRON_API_BASE}/arc/{arc_id}/", credential, force=force) or {}
+    rows = _arc_issue_rows(arc_id, credential, force=force)
     # The library's runs: by their confirmed Metron id first, by title and
     # year when a run has none.
     relevance = _library_relevance()
@@ -12112,21 +12120,32 @@ def story_arc_detail(arc_id: str, may_see: "Callable[[int], bool] | None" = None
         "issues": issues, "series": list(series_list.values()),
         "missing": sum(1 for issue in issues if not (issue["owned"] or issue["queued"])),
         "owned": sum(1 for issue in issues if issue["owned"]),
+        # Saved to read across runs already? The drawer then offers Read.
+        "readingListId": _reading_list_id_for_arc(arc_id),
     }
 
 
-def pull_story_arc(arc_id: str) -> dict[str, Any]:
-    """Ask for every issue of an arc the library has not got and is not getting,
-    one pull per series. What could not be pulled is said, and the rest still is."""
-    detail = story_arc_detail(arc_id)
+def _reading_list_id_for_arc(arc_id: str) -> str | None:
+    found = catalog_store().reading_list_by_provider("metron", arc_id)
+    return str(found) if isinstance(found, int) else None
+
+
+def _pull_missing_issues(issues: list[dict[str, Any]], titles: dict[str, str]) -> dict[str, Any]:
+    """Ask for every issue here that is neither owned nor on the way, one pull
+    per series. What could not be pulled is said, and the rest still is; an
+    issue with no catalog id to pull by is said too. Nothing missing is an
+    empty answer, for the caller to word."""
     groups: dict[str, list[str]] = {}
-    for issue in detail["issues"]:
-        if not (issue["owned"] or issue["queued"]):
-            groups.setdefault(issue["providerSeriesId"], []).append(issue["number"])
-    if not groups:
-        raise ValueError("Every issue of this arc is in your library or on the way")
-    titles = {group["providerSeriesId"]: group["title"] for group in detail["series"]}
-    pulled, failed = [], []
+    failed: list[dict[str, Any]] = []
+    for issue in issues:
+        if issue["owned"] or issue["queued"]:
+            continue
+        if (issue.get("provider") or "metron") != "metron" or not issue.get("providerSeriesId"):
+            failed.append({"providerSeriesId": issue.get("providerSeriesId"), "title": issue.get("seriesTitle"),
+                           "error": "No Metron entry to pull it from"})
+            continue
+        groups.setdefault(str(issue["providerSeriesId"]), []).append(issue["number"])
+    pulled = []
     for series_id, numbers in groups.items():
         try:
             result = pull_discovered_issues("metron", series_id, numbers, query=titles.get(series_id, ""))
@@ -12134,10 +12153,286 @@ def pull_story_arc(arc_id: str) -> dict[str, Any]:
                            "request": result.get("request"), "series": result.get("series")})
         except Exception as exc:  # noqa: BLE001 -- the other series are still pulled
             failed.append({"providerSeriesId": series_id, "title": titles.get(series_id), "error": str(exc)})
-    if not pulled:
+    if groups and not pulled:
         raise ValueError(f"The arc could not be pulled: {failed[0]['error']}")
-    return {"name": detail["name"], "pulled": pulled, "failed": failed,
-            "count": sum(len(item["numbers"]) for item in pulled)}
+    return {"pulled": pulled, "failed": failed, "count": sum(len(item["numbers"]) for item in pulled)}
+
+
+def pull_story_arc(arc_id: str, *, allow_nothing: bool = False) -> dict[str, Any]:
+    """Ask for every issue of an arc the library has not got and is not getting,
+    one pull per series. With `allow_nothing`, an arc already here is an empty
+    answer rather than a refusal -- approving a reader's request saves the
+    arc first, and that is the success."""
+    detail = story_arc_detail(arc_id)
+    titles = {group["providerSeriesId"]: group["title"] for group in detail["series"]}
+    result = _pull_missing_issues(detail["issues"], titles)
+    if not result["pulled"] and not result["failed"] and not allow_nothing:
+        raise ValueError("Every issue of this arc is in your library or on the way")
+    return {"name": detail["name"], **result}
+
+
+# ---- Story arcs saved as reading lists ---------------------------------------
+# An arc kept as the household's own ordered list (schema 57), so it can be
+# read across runs, reordered by hand -- Metron has no reading order, only
+# cover dates, so tie-ins within a month come out alphabetical -- and pruned.
+# `story_arcs` is a collection's run groups and unrelated. Each profile's
+# place is derived from reading_progress, as it is for runs.
+
+def _resolve_reading_list_items(
+    items: list[dict[str, Any]], relevance: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, int | None]:
+    """What each item is in the library, by item id: the issue already linked
+    to its provider id, else an issue of the run the provider's series is --
+    linked at the provider, or by title and year, which is what keeps Green
+    Lantern (2011) out of a 2023 arc -- whose number is the same. An item
+    with no provider id keeps what it names."""
+    store = catalog_store()
+    relevance = _library_relevance() if relevance is None else relevance
+    by_provider: dict[str, list[str]] = {}
+    for item in items:
+        if item.get("provider") and item.get("providerIssueId"):
+            by_provider.setdefault(item["provider"], []).append(str(item["providerIssueId"]))
+    exact = {provider: store.issue_ids_by_provider(provider, ids) for provider, ids in by_provider.items()}
+    linked_runs = {provider: store.runs_by_provider_series(provider) for provider in by_provider}
+    resolved: dict[str, int | None] = {}
+    run_for: dict[str, int] = {}
+    for item in items:
+        provider = item.get("provider")
+        if not provider:
+            resolved[item["id"]] = int(item["issueId"]) if item.get("issueId") else None
+            continue
+        hit = exact.get(provider, {}).get(str(item.get("providerIssueId") or ""))
+        if hit is not None:
+            resolved[item["id"]] = int(hit)
+            continue
+        run_id = linked_runs.get(provider, {}).get(str(item.get("providerSeriesId") or ""))
+        if run_id is None:
+            entry = _library_run_for(relevance, item["seriesTitle"], item.get("seriesYear"),
+                                     provider, item.get("providerSeriesId"))
+            run_id = int(entry["runId"]) if entry and str(entry.get("runId") or "").isdigit() else None
+        if run_id is not None:
+            run_for[item["id"]] = int(run_id)
+    numbers = store.issues_by_run(list(set(run_for.values())))
+    for item in items:
+        if item["id"] in resolved:
+            continue
+        run_id = run_for.get(item["id"])
+        key = _issue_key(item["number"])
+        resolved[item["id"]] = next(
+            (issue_id for issue_id, number in numbers.get(str(run_id), []) if _issue_key(number) == key), None,
+        ) if run_id is not None else None
+    return resolved
+
+
+def _reading_list_resolved(list_id: int, relevance: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The arc with its items resolved again and any change written back."""
+    store = catalog_store()
+    data = store.reading_list(list_id)
+    resolved = _resolve_reading_list_items(data["items"], relevance)
+    changed = {
+        int(item["id"]): resolved.get(item["id"]) for item in data["items"]
+        if (str(resolved.get(item["id"])) if resolved.get(item["id"]) is not None else None) != item["issueId"]
+    }
+    if changed:
+        store.set_reading_list_item_issues(list_id, changed)
+        data = store.reading_list(list_id)
+    return data
+
+
+def _arc_item_visible(run_id: Any, may_see: "Callable[[int], bool] | None", may_see_unrated: bool) -> bool:
+    if may_see is None:
+        return True
+    if run_id in (None, ""):
+        return may_see_unrated
+    return may_see(int(run_id))
+
+
+def _arc_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, Any], dict[str, Any]] = {}
+    for item in items:
+        group = groups.setdefault((item["seriesTitle"], item.get("seriesYear")), {
+            "providerSeriesId": item.get("providerSeriesId"), "title": item["seriesTitle"],
+            "year": item.get("seriesYear"), "issueCount": 0, "missing": 0,
+        })
+        group["issueCount"] += 1
+        group["missing"] += 0 if item.get("owned") or item.get("queued") else 1
+    return list(groups.values())
+
+
+def reading_list_detail(
+    list_id: int, *, user_id: int, may_see: "Callable[[int], bool] | None" = None,
+    may_see_unrated: bool = True,
+) -> dict[str, Any]:
+    """An arc as the drawer draws it: every issue in order with what the
+    library holds and where this profile is in it, and where its Read button
+    goes. Items of runs the profile may not see are left out, and an arc with
+    nothing left to show is not there for it."""
+    store = catalog_store()
+    relevance = _library_relevance()
+    data = _reading_list_resolved(list_id, relevance)
+    by_run = {entry["runId"]: entry for entry in relevance.values()}
+    progress = store.reading_progress_by_list(user_id=user_id).get(str(list_id), {})
+    items = []
+    for item in data["items"]:
+        if not _arc_item_visible(item["runId"], may_see, may_see_unrated):
+            continue
+        entry = by_run.get(item["runId"]) if item["runId"] else None
+        path = Path(item["path"]) if item.get("path") else None
+        record = progress.get(item["fileId"] or "") or {}
+        items.append({
+            **{key: value for key, value in item.items() if key != "path"},
+            "owned": bool(item["fileId"]),
+            "queued": bool(entry and not item["fileId"] and _issue_key(item["number"]) in entry["queued"]),
+            "readable": bool(path and path.is_file() and archive_kind(path) is not None),
+            "fileCover": f"/api/v1/files/{item['fileId']}/pages/0" if item["fileId"] else None,
+            "page": record.get("page", 0), "pageCount": record.get("pageCount", 0),
+            "finishedAt": record.get("finishedAt"), "stale": record.get("stale", False),
+        })
+    if not items:
+        raise LookupError("That story arc is not in the library")
+    comics = [{"id": item["fileId"], "issueNumber": item["number"], "filename": item["filename"],
+               "readable": item["readable"]} for item in items if item["fileId"]]
+    meta = {key: value for key, value in data.items() if key != "items"}
+    return {
+        **meta, "issueCount": len(items),
+        "owned": sum(1 for item in items if item["owned"]),
+        "queued": sum(1 for item in items if item["queued"]),
+        "missing": sum(1 for item in items if not (item["owned"] or item["queued"])),
+        "series": _arc_series(items), "resume": reading_target(comics, [], progress), "items": items,
+    }
+
+
+def reading_lists(
+    *, may_see: "Callable[[int], bool] | None" = None, may_see_unrated: bool = True,
+) -> dict[str, Any]:
+    """Every arc for the Comics grid, without progress (that is `reading_by_list`,
+    as `reading_by_run` is for runs) and without resolving anything: the grid
+    asks on every visit."""
+    lists = []
+    for entry in catalog_store().reading_lists_overview():
+        items = [item for item in entry["items"] if _arc_item_visible(item["runId"], may_see, may_see_unrated)]
+        if not items:
+            continue
+        titles = list(dict.fromkeys(item["seriesTitle"] for item in items))
+        lists.append({
+            **{key: value for key, value in entry.items() if key != "items"},
+            "issueCount": len(items), "owned": sum(1 for item in items if item["fileId"]),
+            "missing": sum(1 for item in items if not item["fileId"]),
+            "seriesTitles": titles, "seriesCount": len(titles),
+        })
+    return {"lists": lists}
+
+
+def _reading_place(progress: dict[str, dict[str, Any]], owned_total: int) -> dict[str, Any] | None:
+    """Where a run or an arc was left, from where its comics were: the comic
+    mid-page, else the last one read; and one of three states for the card --
+    "Between issues" used to read as finished, and the cover of a run with
+    one issue read out of twenty-five offered Restart."""
+    live = {file_id: record for file_id, record in progress.items() if not record["stale"]}
+    if not live:
+        return None
+    started = [record for record in live.values() if not record["finishedAt"]]
+    latest = max(started or live.values(), key=lambda record: str(record["updatedAt"] or ""))
+    file_id = next(key for key, record in live.items() if record is latest)
+    finished_count = len(live) - len(started)
+    remaining = max(0, owned_total - finished_count)
+    state = "continue" if started else "next" if remaining else "finished"
+    return {
+        "state": state,
+        "fileId": file_id, "issueNumber": latest["issueNumber"],
+        "page": latest["page"], "pageCount": latest["pageCount"],
+        "lastReadAt": max(str(record["updatedAt"] or "") for record in live.values()) or None,
+        # For the card's marker: a check once every issue is read, else
+        # that the thing has been started.
+        "read": finished_count, "total": int(owned_total),
+    }
+
+
+def reading_by_list(
+    *, user_id: int, may_see: "Callable[[int], bool] | None" = None, may_see_unrated: bool = True,
+) -> dict[str, Any]:
+    """Where each arc was left, for the Comics grid: one query, only arcs
+    with a reading history, the same record a run's card gets."""
+    store = catalog_store()
+    overview = {entry["id"]: entry for entry in store.reading_lists_overview()}
+    lists = {}
+    for list_id, progress in store.reading_progress_by_list(user_id=user_id).items():
+        entry = overview.get(list_id)
+        if entry is None:
+            continue
+        files = {item["fileId"] for item in entry["items"]
+                 if item["fileId"] and _arc_item_visible(item["runId"], may_see, may_see_unrated)}
+        place = _reading_place({file_id: record for file_id, record in progress.items() if file_id in files}, len(files))
+        if place:
+            lists[list_id] = place
+    return {"lists": lists}
+
+
+def mark_reading_list_reading(
+    list_id: int, read: bool, *, user_id: int, may_see: "Callable[[int], bool] | None" = None,
+    may_see_unrated: bool = True,
+) -> dict[str, Any]:
+    """Mark every comic of an arc this profile may see read or unread, as
+    `mark_run_reading` does for a run."""
+    for item in catalog_store().reading_list_files(list_id):
+        if not _arc_item_visible(item["runId"], may_see, may_see_unrated):
+            continue
+        try:
+            mark_file_read(int(item["id"]), read, user_id=user_id)
+        except (ValueError, LookupError, OSError):
+            continue
+    return reading_list_detail(list_id, user_id=user_id, may_see=may_see, may_see_unrated=may_see_unrated)
+
+
+def _arc_items_from_metron(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{
+        "provider": "metron", "providerIssueId": issue["providerIssueId"], "providerSeriesId": issue["providerSeriesId"],
+        "seriesTitle": issue["seriesTitle"], "seriesYear": issue["seriesYear"], "number": issue["number"],
+        "coverDate": issue["coverDate"], "cover": issue["cover"],
+    } for issue in detail["issues"]]
+
+
+def save_story_arc(arc_id: str, *, user_id: int, created_by: int | None = None) -> dict[str, Any]:
+    """Keep a Metron arc as a story arc of the library's own. Saving one
+    already kept is that one, said so."""
+    arc_id = str(arc_id or "").strip()
+    if not re.fullmatch(r"\d+", arc_id):
+        raise ValueError("Choose a story arc")
+    store = catalog_store()
+    existing = store.reading_list_by_provider("metron", arc_id)
+    if existing is not None:
+        return {**reading_list_detail(existing, user_id=user_id), "existed": True}
+    detail = story_arc_detail(arc_id)
+    made = store.create_reading_list(
+        detail["name"] or f"Story arc {arc_id}", description=detail["description"], cover=detail["cover"],
+        source="metron", provider="metron", provider_arc_id=arc_id,
+        created_by=created_by if created_by is not None else user_id, items=_arc_items_from_metron(detail),
+    )
+    return {**reading_list_detail(int(made["id"]), user_id=user_id), "existed": False}
+
+
+def refresh_reading_list(list_id: int, *, user_id: int) -> dict[str, Any]:
+    """Metron's list again: details taken, new issues slotted in after their
+    neighbours, our order and our removals kept."""
+    store = catalog_store()
+    data = store.reading_list(list_id)
+    if data["provider"] != "metron" or not data["providerArcId"]:
+        raise ValueError("This story arc has no catalog entry to refresh from")
+    detail = story_arc_detail(data["providerArcId"], force=True)
+    store.update_reading_list(list_id, name=detail["name"] or None, description=detail["description"], cover=detail["cover"])
+    merged = store.merge_reading_list_items(list_id, _arc_items_from_metron(detail))
+    return {**reading_list_detail(list_id, user_id=user_id), **merged}
+
+
+def pull_reading_list(list_id: int, *, user_id: int) -> dict[str, Any]:
+    """Ask for what the saved arc is missing -- the saved issues, so an issue
+    taken out of the arc is never pulled for it."""
+    detail = reading_list_detail(list_id, user_id=user_id)
+    titles = {item["providerSeriesId"]: item["seriesTitle"] for item in detail["items"] if item.get("providerSeriesId")}
+    result = _pull_missing_issues(detail["items"], titles)
+    if not result["pulled"] and not result["failed"]:
+        raise ValueError("Every issue of this arc is in your library or on the way")
+    return {"name": detail["name"], **result}
 
 
 def request_discovered_series(
@@ -13925,6 +14220,18 @@ class Handler(BaseHTTPRequestHandler):
             payload["runs"] = {run_id: value for run_id, value in payload["runs"].items() if keep(run_id)}
         return payload
 
+    def _arc_visibility(self) -> dict[str, Any]:
+        """How a story arc is trimmed for this profile. `_run_visible` does not
+        know the arc routes -- an arc is many runs -- so their handlers leave
+        out the issues of runs above the profile's rating themselves, as the
+        Discover arc drawer does."""
+        viewer = self._viewer()
+        if viewer is None or viewer.is_admin or not viewer.max_rating:
+            return {}
+        ratings = catalog_store().run_age_ratings()
+        return {"may_see": lambda run_id: viewer_may_see_run(viewer, ratings.get(int(run_id))),
+                "may_see_unrated": viewer_may_see_run(viewer, None)}
+
     def _run_visible(self, path: str) -> bool:
         """Whether the run a reading route is about is one this profile may see."""
         store = catalog_store()
@@ -14321,6 +14628,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/reading/runs":
             self.send_json(self._only_visible_runs(reading_by_run(user_id=self._viewer_id())))
+            return
+        if parsed_url.path == "/api/v1/reading/lists":
+            self.send_json(reading_by_list(user_id=self._viewer_id(), **self._arc_visibility()))
+            return
+        if parsed_url.path == "/api/v1/reading-lists":
+            self.send_json(reading_lists(**self._arc_visibility()))
+            return
+        reading_list_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
+        if reading_list_get:
+            try:
+                self.send_json(reading_list_detail(int(reading_list_get.group(1)), user_id=self._viewer_id(),
+                                                   **self._arc_visibility()))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
             return
         series_reading_match = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
         if series_reading_match:
@@ -15200,6 +15521,52 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        if parsed_url.path == "/api/v1/reading-lists":
+            if str(payload.get("provider") or "metron") != "metron":
+                self.send_json({"error": "Story arcs are saved from Metron"}, 400)
+                return
+            try:
+                saved = save_story_arc(str(payload.get("arcId") or ""), user_id=self._viewer_id())
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001 -- the provider, not the library
+                self.send_json({"error": f"This arc's issues could not be listed: {exc}"}, 502)
+                return
+            self.send_json(saved, 200 if saved.get("existed") else 201)
+            return
+        reading_list_reading_post = re.fullmatch(r"/api/v1/reading-lists/(\d+)/reading", parsed_url.path)
+        if reading_list_reading_post:
+            if not isinstance(payload.get("read"), bool):
+                self.send_json({"error": "Say whether the arc is read (true) or unread (false)"}, 400)
+                return
+            try:
+                result = mark_reading_list_reading(int(reading_list_reading_post.group(1)), payload["read"],
+                                                   user_id=self._viewer_id(), **self._arc_visibility())
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(result)
+            return
+        reading_list_pull = re.fullmatch(r"/api/v1/reading-lists/(\d+)/pull", parsed_url.path)
+        reading_list_refresh = re.fullmatch(r"/api/v1/reading-lists/(\d+)/refresh", parsed_url.path)
+        if reading_list_pull or reading_list_refresh:
+            try:
+                if reading_list_pull:
+                    result = pull_reading_list(int(reading_list_pull.group(1)), user_id=self._viewer_id())
+                else:
+                    result = refresh_reading_list(int(reading_list_refresh.group(1)), user_id=self._viewer_id())
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001 -- the provider, not the library
+                self.send_json({"error": f"This arc's issues could not be listed: {exc}"}, 502)
+                return
+            self.send_json(result)
+            return
         series_reading_post = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
         if series_reading_post:
             if not isinstance(payload.get("read"), bool):
@@ -15405,6 +15772,30 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
             return
+        reading_list_patch = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
+        if reading_list_patch:
+            list_id = int(reading_list_patch.group(1))
+            remove = payload.get("remove")
+            order = payload.get("order")
+            if (remove is not None and not isinstance(remove, list)) or (order is not None and not isinstance(order, list)):
+                self.send_json({"error": "Say which issues to remove, or the order to keep them in"}, 400)
+                return
+            try:
+                if remove:
+                    catalog_store().remove_reading_list_items(list_id, [int(item) for item in remove])
+                if order:
+                    catalog_store().reorder_reading_list(list_id, [int(item) for item in order])
+                if isinstance(payload.get("name"), str):
+                    catalog_store().update_reading_list(list_id, name=payload["name"])
+                result = reading_list_detail(list_id, user_id=self._viewer_id())
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (ValueError, TypeError) as exc:
+                self.send_json({"error": str(exc) or "That is not an issue of this arc"}, 400)
+                return
+            self.send_json(result)
+            return
         if parsed_url.path == "/api/v1/me/prefs":
             try:
                 prefs = own_prefs_patch(_profiles_store(), self._viewer_id(), payload)
@@ -15491,6 +15882,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        reading_list_delete = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
+        if reading_list_delete:
+            try:
+                catalog_store().delete_reading_list(int(reading_list_delete.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json({"status": "removed"})
+            return
         avatar_clear = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)
         if avatar_clear:
             user_id = int(avatar_clear.group(1))

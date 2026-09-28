@@ -5,7 +5,9 @@ import email.message
 import io
 import pathlib
 import os
+import sqlite3
 import tempfile
+from catalog_store import ADMIN_USER_ID, CatalogStore
 import threading
 import types
 import contextlib
@@ -7822,6 +7824,7 @@ class StoryArcTests(unittest.TestCase):
             raise AssertionError(url)
         store = Mock()
         store.runs_by_provider_series.return_value = by_metron or {}
+        store.reading_list_by_provider.return_value = None
         return [patch.object(app, "fetch_provider_json", side_effect=fetch), patch.object(app, "_provider_credential", return_value="t"),
                 patch.object(app, "metron_configured", return_value=True), patch.object(app, "catalog_store", return_value=store),
                 patch.object(app, "_library_relevance", return_value=relevance or {})]
@@ -7864,6 +7867,187 @@ class StoryArcTests(unittest.TestCase):
                 stack.enter_context(item)
             with self.assertRaisesRegex(ValueError, "in your library or on the way"):
                 app.pull_story_arc("482")
+
+
+class ReadingListTests(unittest.TestCase):
+    """Story arcs saved to read across runs: Hush through Batman and Gotham
+    Knights, with #609 missing from the library."""
+
+    def _library(self, root):
+        files = [
+            ("Batman 608.cbz", "Batman", "608", None), ("Batman 610.cbz", "Batman", "610", None),
+            ("Batman - Gotham Knights 001.cbz", "Batman: Gotham Knights", "1", None),
+            ("Green Lantern 001 (2011).cbz", "Green Lantern", "1", 2011),
+        ]
+        parsed = []
+        for name, title, issue, year in files:
+            (root / name).write_bytes(b"comic")
+            parsed.append(app.ParsedFile(str(root / name), name, ".cbz", title, issue=issue, year=year))
+        by_path = {item.path: (item, year) for item, (_, _, _, year) in zip(parsed, files)}
+        store = CatalogStore(root / "catalog.db")
+        store.perform_scan(store.begin_scan(str(root), True), lambda *_: list(parsed), lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {},
+            "file_health": {"status": "ok"},
+            "recommendation": {"title": by_path[p.path][0].title, "issue": p.issue, "record_type": "single_issue",
+                               "publisher": "DC", "source": "Test", "publication_year": by_path[p.path][1]},
+            "file_cover": None,
+        })
+        return store
+
+    def _ids(self, store):
+        """By title: (run id, {number: file id}) and a file's live signature."""
+        out = {}
+        with sqlite3.connect(store.database_path) as connection:
+            for run_id, title in connection.execute("SELECT id, canonical_title FROM series_runs"):
+                files = {
+                    str(number): (int(file_id), f"{mtime:x}-{size:x}") for number, file_id, mtime, size in connection.execute(
+                        """SELECT issues.issue_number, files.id, files.mtime_ns, files.size_bytes FROM files
+                           JOIN file_issue_links ON file_issue_links.file_id=files.id
+                           JOIN issues ON issues.id=file_issue_links.issue_id WHERE issues.series_run_id=?""", (run_id,))
+                }
+                out[title] = (int(run_id), files)
+        return out
+
+    def _open(self, stack, store):
+        seed = StoryArcTests("test_an_arc_already_here_has_nothing_to_pull")._patches()[:3]
+        for item in seed:
+            stack.enter_context(item)
+        stack.enter_context(patch.object(app, "catalog_store", return_value=store))
+        stack.enter_context(patch.object(app, "_start_automatic_release_grabs"))
+        # The files are not archives; what matters here is the order, not the pages.
+        stack.enter_context(patch.object(app, "archive_kind", return_value="zip"))
+
+    def test_saving_an_arc_keeps_metrons_order_and_finds_the_librarys_own_issues(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            saved = app.save_story_arc("482", user_id=ADMIN_USER_ID)
+            ids = self._ids(store)
+            batman, gotham = ids["Batman"], ids["Batman: Gotham Knights"]
+            self.assertEqual((saved["name"], saved["existed"], saved["provider"], saved["providerArcId"]), ("Hush", False, "metron", "482"))
+            self.assertEqual([(i["seriesTitle"], i["number"]) for i in saved["items"]],
+                             [("Batman", "608"), ("Batman", "609"), ("Batman", "610"), ("Batman: Gotham Knights", "1")], "as Metron listed them")
+            self.assertEqual([i["fileId"] for i in saved["items"]],
+                             [str(batman[1]["608"][0]), None, str(batman[1]["610"][0]), str(gotham[1]["1"][0])])
+            self.assertEqual([i["runId"] for i in saved["items"]], [str(batman[0]), None, str(batman[0]), str(gotham[0])])
+            self.assertEqual([(i["owned"], i["queued"]) for i in saved["items"]], [(True, False), (False, False), (True, False), (True, False)])
+            self.assertEqual((saved["issueCount"], saved["owned"], saved["missing"]), (4, 3, 1))
+            self.assertEqual([(g["title"], g["missing"]) for g in saved["series"]], [("Batman", 1), ("Batman: Gotham Knights", 0)])
+            self.assertEqual(saved["resume"]["state"], "unstarted")
+            self.assertEqual(saved["resume"]["fileId"], str(batman[1]["608"][0]))
+            self.assertEqual(saved["items"][0]["fileCover"], f"/api/v1/files/{batman[1]['608'][0]}/pages/0")
+            again = app.save_story_arc("482", user_id=ADMIN_USER_ID)
+            self.assertEqual((again["id"], again["existed"]), (saved["id"], True))
+            self.assertEqual(app.story_arc_detail("482")["readingListId"], saved["id"], "Discover knows it is kept")
+            listed = app.reading_lists()["lists"]
+            self.assertEqual([(l["name"], l["issueCount"], l["owned"], l["missing"], l["seriesTitles"]) for l in listed],
+                             [("Hush", 4, 3, 1, ["Batman", "Batman: Gotham Knights"])])
+            with self.assertRaises(ValueError):
+                app.save_story_arc("hush", user_id=ADMIN_USER_ID)
+
+    def test_reading_an_arc_goes_on_across_runs_and_past_the_gap(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            list_id = int(app.save_story_arc("482", user_id=ADMIN_USER_ID)["id"])
+            ids = self._ids(store)
+            f608, f610, gk1 = ids["Batman"][1]["608"], ids["Batman"][1]["610"], ids["Batman: Gotham Knights"][1]["1"]
+            self.assertEqual(app.reading_by_list(user_id=ADMIN_USER_ID), {"lists": {}}, "nothing opened yet")
+            store.set_reading_progress(f608[0], 23, 24, f608[1], finished=True, user_id=ADMIN_USER_ID)
+            detail = app.reading_list_detail(list_id, user_id=ADMIN_USER_ID)
+            self.assertEqual((detail["resume"]["state"], detail["resume"]["fileId"]), ("next", str(f610[0])), "past the missing #609")
+            self.assertEqual([i["finishedAt"] is not None for i in detail["items"]], [True, False, False, False])
+            place = app.reading_by_list(user_id=ADMIN_USER_ID)["lists"][str(list_id)]
+            self.assertEqual((place["state"], place["read"], place["total"], place["issueNumber"]), ("next", 1, 3, "608"))
+            store.set_reading_progress(gk1[0], 3, 24, gk1[1], user_id=ADMIN_USER_ID)
+            place = app.reading_by_list(user_id=ADMIN_USER_ID)["lists"][str(list_id)]
+            self.assertEqual((place["state"], place["fileId"], place["page"]), ("continue", str(gk1[0]), 3))
+            self.assertEqual(app.reading_list_detail(list_id, user_id=ADMIN_USER_ID)["resume"]["state"], "continue")
+            store.set_reading_progress(gk1[0], 23, 24, gk1[1], finished=True, user_id=ADMIN_USER_ID)
+            store.set_reading_progress(f610[0], 23, 24, f610[1], finished=True, user_id=ADMIN_USER_ID)
+            place = app.reading_by_list(user_id=ADMIN_USER_ID)["lists"][str(list_id)]
+            self.assertEqual((place["state"], place["read"], place["total"]), ("finished", 3, 3))
+            self.assertEqual(app.reading_by_list(user_id=99), {"lists": {}}, "another profile's shelf is untouched")
+            # Files that are not archives are passed over, as a run's are.
+            after = app.mark_reading_list_reading(list_id, False, user_id=ADMIN_USER_ID)
+            self.assertEqual(after["id"], str(list_id))
+
+    def test_our_order_and_removals_survive_a_refresh(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            list_id = int(app.save_story_arc("482", user_id=ADMIN_USER_ID)["id"])
+            items = [int(i["id"]) for i in store.reading_list(list_id)["items"]]
+            store.reorder_reading_list(list_id, [items[3], items[0], items[1], items[2]])
+            store.remove_reading_list_items(list_id, [items[1]])
+            refreshed = app.refresh_reading_list(list_id, user_id=ADMIN_USER_ID)
+            self.assertEqual((refreshed["added"], refreshed["updated"]), (0, 4))
+            self.assertEqual([i["number"] for i in refreshed["items"]], ["1", "608", "610"], "our order, #609 still out")
+            self.assertIsNotNone(refreshed["refreshedAt"])
+            pulls = []
+            stack.enter_context(patch.object(app, "pull_discovered_issues", side_effect=lambda provider, series_id, numbers, **kw: (
+                pulls.append((series_id, numbers)) or {"numbers": numbers, "request": {"id": 3}, "series": {"id": 1}})))
+            with self.assertRaisesRegex(ValueError, "in your library or on the way"):
+                app.pull_reading_list(list_id, user_id=ADMIN_USER_ID)
+            self.assertEqual(pulls, [], "a removed issue is never pulled for the arc")
+            store.delete_reading_list(list_id)
+            with self.assertRaises(LookupError):
+                app.reading_list_detail(list_id, user_id=ADMIN_USER_ID)
+
+    def test_a_run_of_the_same_name_from_another_era_is_not_the_arcs(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            made = store.create_reading_list("Absolute Power", provider="metron", provider_arc_id="1606", items=[
+                {"provider": "metron", "providerIssueId": "g13", "providerSeriesId": "9001", "seriesTitle": "Green Lantern",
+                 "seriesYear": 2023, "number": "1"},
+                {"provider": "metron", "providerIssueId": "g1", "providerSeriesId": "9002", "seriesTitle": "Green Lantern",
+                 "seriesYear": 2012, "number": "1"},
+            ])
+            detail = app.reading_list_detail(int(made["id"]), user_id=ADMIN_USER_ID)
+            self.assertEqual([i["runId"] for i in detail["items"]],
+                             [None, str(self._ids(store)["Green Lantern"][0])], "2023 is another comic; 2012 is a cover-date drift")
+
+    def test_a_reader_sees_an_arc_without_the_runs_above_their_rating(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            list_id = int(app.save_story_arc("482", user_id=ADMIN_USER_ID)["id"])
+            ids = self._ids(store)
+            gotham = ids["Batman: Gotham Knights"]
+            hidden = {"may_see": lambda run_id: run_id != gotham[0], "may_see_unrated": True}
+            store.set_reading_progress(gotham[1]["1"][0], 3, 24, gotham[1]["1"][1], user_id=ADMIN_USER_ID)
+            detail = app.reading_list_detail(list_id, user_id=ADMIN_USER_ID, **hidden)
+            self.assertEqual([i["number"] for i in detail["items"]], ["608", "609", "610"])
+            self.assertEqual(detail["resume"]["state"], "unstarted", "the hidden comic's place does not count")
+            self.assertEqual(app.reading_lists(**hidden)["lists"][0]["seriesTitles"], ["Batman"])
+            self.assertEqual(app.reading_by_list(user_id=ADMIN_USER_ID, **hidden), {"lists": {}})
+            nothing = {"may_see": lambda run_id: False, "may_see_unrated": False}
+            self.assertEqual(app.reading_lists(**nothing), {"lists": []})
+            with self.assertRaises(LookupError):
+                app.reading_list_detail(list_id, user_id=ADMIN_USER_ID, **nothing)
+            unrated_hidden = {"may_see": lambda run_id: True, "may_see_unrated": False}
+            self.assertEqual([i["number"] for i in app.reading_list_detail(list_id, user_id=ADMIN_USER_ID, **unrated_hidden)["items"]],
+                             ["608", "610", "1"], "an issue no run claims follows the unrated rule")
+
+    def test_approving_a_readers_arc_request_saves_the_arc_then_pulls_what_is_missing(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            sam = store.create_user("Sam")["id"]
+            request, _ = store.create_member_request(sam, "discover_arc", "discover:arc:metron:482", "Hush", {"arcId": "482"})
+            pulls = []
+            stack.enter_context(patch.object(app, "pull_discovered_issues", side_effect=lambda provider, series_id, numbers, **kw: (
+                pulls.append((series_id, numbers)) or {"numbers": numbers, "request": {"id": 31}, "series": {"id": 7}})))
+            made, run = app._carry_out_member_request({**request, "params": {"arcId": "482"}})
+            self.assertEqual((made, run, pulls), (31, 7, [("796", ["609"])]))
+            saved = store.reading_lists_overview()
+            self.assertEqual([(l["name"], l["createdBy"]) for l in saved], [("Hush", sam)])
+            self.assertEqual(store.member_requests()[0]["detail"]["readingListId"], saved[0]["id"])
+            # Asked for again once everything is here: saved already, nothing to pull, still approved.
+            pulls.clear()
+            stack.enter_context(patch.object(app, "_pull_missing_issues", return_value={"pulled": [], "failed": [], "count": 0}))
+            self.assertEqual(app._carry_out_member_request({**request, "params": {"arcId": "482"}}), (None, None))
 
 
 class NotificationViewTests(unittest.TestCase):

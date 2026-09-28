@@ -1596,6 +1596,10 @@ NOT_ADMIN = {
     ("GET", "/api/v1/reading/runs"): "reader",
     ("GET", "/api/v1/series/1/reading"): "reader",
     ("POST", "/api/v1/series/1/reading"): "reader",
+    ("GET", "/api/v1/reading-lists"): "reader",
+    ("GET", "/api/v1/reading-lists/1"): "reader",
+    ("POST", "/api/v1/reading-lists/1/reading"): "reader",
+    ("GET", "/api/v1/reading/lists"): "reader",
     ("GET", "/api/v1/files/1/progress"): "reader",
     ("POST", "/api/v1/files/1/progress"): "reader",
     ("GET", "/api/v1/files/1/pages"): "reader",
@@ -1682,6 +1686,28 @@ class ReaderProfileHttpTests(unittest.TestCase):
         stale = self.call("GET", "/api/v1/settings", cookies=other_device)
         self.assertEqual((stale.status, stale.json()["reason"]), (401, "profile_required"),
                          "a cookie from the one-profile days no longer opens the admin")
+
+    def test_a_reader_sees_story_arcs_and_their_own_place_but_only_the_admin_shapes_them(self):
+        sam = self._household_with_a_reader()
+        cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        shelf = self.call("GET", "/api/v1/reading-lists", cookies=cookies)
+        self.assertEqual((shelf.status, shelf.json()), (200, {"lists": []}))
+        places = self.call("GET", "/api/v1/reading/lists", cookies=cookies)
+        self.assertEqual((places.status, places.json()), (200, {"lists": {}}))
+        absent = self.call("GET", "/api/v1/reading-lists/1", cookies=cookies)
+        self.assertEqual(absent.status, 404)
+        marked = self.call("POST", "/api/v1/reading-lists/1/reading", {"read": True}, cookies=cookies)
+        self.assertEqual(marked.status, 404, "the reader's own place, on an arc that is not there")
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists/1/reading", {"read": "yes"}, cookies=cookies).status, 400)
+        for method, path in (("POST", "/api/v1/reading-lists"), ("PATCH", "/api/v1/reading-lists/1"),
+                             ("DELETE", "/api/v1/reading-lists/1"), ("POST", "/api/v1/reading-lists/1/pull"),
+                             ("POST", "/api/v1/reading-lists/1/refresh")):
+            denied = self.call(method, path, {"arcId": "482"}, cookies=cookies)
+            self.assertEqual((denied.status, denied.json().get("reason")), (403, "admin_only"), f"{method} {path}")
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists", {"arcId": "not-an-id"}, cookies=admin).status, 400)
+        self.assertEqual(self.call("DELETE", "/api/v1/reading-lists/1", cookies=admin).status, 404)
+        self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"order": "1,2"}, cookies=admin).status, 400)
 
     def test_a_reader_cannot_be_added_while_the_admin_is_one_tap_away(self):
         refused = self.call("POST", "/api/v1/users", {"name": "Sam"})

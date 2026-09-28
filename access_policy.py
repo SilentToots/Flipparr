@@ -102,6 +102,12 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"GET"}), r"/api/v1/reading/runs", READER),
     # Reading a run, and marking it read or unread -- the profile's own place.
     (frozenset({"GET", "POST"}), r"/api/v1/series/(\d+)/reading", READER),
+    # Story arcs saved to read across runs: seeing them and one's own place
+    # in them. Saving, ordering, pulling and deleting stay the admin's.
+    (frozenset({"GET"}), r"/api/v1/reading-lists", READER),
+    (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)", READER),
+    (frozenset({"POST"}), r"/api/v1/reading-lists/(\d+)/reading", READER),
+    (frozenset({"GET"}), r"/api/v1/reading/lists", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/files/(\d+)/progress", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages/(\d+)", READER),
