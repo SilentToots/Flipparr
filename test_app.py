@@ -3930,7 +3930,7 @@ class RunPackPassTests(unittest.TestCase):
         store.get_acquisition_job_context.return_value = {
             "requestId": "48", "seriesTitle": "Batman", "issueNumber": "1", "runIssueCount": 163,
         }
-        store.rejected_acquisition_release_keys.return_value = set()
+        store.rejected_release_keys_for_jobs.return_value = set()
         return store
 
     @staticmethod
@@ -3979,11 +3979,15 @@ class RunPackPassTests(unittest.TestCase):
     def test_a_pack_that_failed_before_is_not_taken_again(self):
         store = self._store()
         dead = {**self._pack(cid="gc-dead", first=1, last=60), "postUrl": "https://comics.example/y-1-60"}
-        store.rejected_acquisition_release_keys.return_value = {"https://comics.example/y-1-60"}
+        store.rejected_release_keys_for_jobs.return_value = {"https://comics.example/y-1-60"}
         with patch("app.search_prowlarr_releases", return_value={"candidates": [dead]}), \
              patch("app.grab_release_candidate") as grab:
             self.assertIsNone(app._grab_run_pack(store, 48, [100 + n for n in range(1, 41)]))
         grab.assert_not_called()
+        # Judged against every issue of the run, not the one the pack happens
+        # to be grabbed against: after a failure that issue falls back to a
+        # single and another leads, and the refusal must still count.
+        self.assertEqual(sorted(store.rejected_release_keys_for_jobs.call_args.args[0]), [100 + n for n in range(1, 41)])
 
     def test_a_run_pack_that_fails_hands_the_run_to_its_single_issues_at_once(self):
         """Y: The Last Man's sixty issues waited behind a pack that never came."""
@@ -3994,7 +3998,12 @@ class RunPackPassTests(unittest.TestCase):
                 started.append((target, args, kwargs))
             def start(self):
                 pass
-        with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread):
+        with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread), \
+             patch("app._acquisition_services_ready", return_value=False):
+            app._resume_run_after_pack_failure(101, "Batman 001-100 (Digital)")
+        self.assertEqual(started, [], "no indexer or downloader: the same check every automatic search makes")
+        with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread), \
+             patch("app._acquisition_services_ready", return_value=True):
             app._resume_run_after_pack_failure(101, "Batman 001-100 (Digital)")
             app._resume_run_after_pack_failure(101, "Batman 001 (2016) (Digital)")
         self.assertEqual(len(started), 1, "a single issue failing is its own fallback's business")
@@ -7801,7 +7810,7 @@ class RunRatingTests(unittest.TestCase):
                 self.assertEqual(app.find_run_rating(7), ("teen", "cover", "\u201c13+ TEEN\u201d on the cover"))
         store.newest_file_of_run.assert_called_with(7)
 
-    def test_a_failed_lookup_records_nothing_so_it_is_tried_again(self):
+    def test_a_failed_lookup_records_no_rating_but_goes_to_the_back_of_the_queue(self):
         store = self._store()
         store.runs_needing_rating.return_value = [7, 8]
         def find(run_id):
@@ -7811,6 +7820,15 @@ class RunRatingTests(unittest.TestCase):
         with patch.object(app, "catalog_store", return_value=store), patch.object(app, "find_run_rating", side_effect=find):
             self.assertEqual(app.rate_runs_pass(), 1)
         store.record_run_rating.assert_called_once_with(8, "mature", "metron", "Mature (issue 1)")
+        # Left unrecorded it came first in every batch and starved the rest.
+        store.note_rating_check_failed.assert_called_once_with(7, "out of credit")
+
+    def test_a_requests_cover_comes_only_from_a_providers_own_host(self):
+        self.assertEqual(app._cover_url("https://static.metron.cloud/media/issue/2024/x.jpg"),
+                         "https://static.metron.cloud/media/issue/2024/x.jpg")
+        self.assertIsNone(app._cover_url("https://evil.example/pixel.gif"), "a reader must not choose what the admin's browser fetches")
+        self.assertIsNone(app._cover_url("http://static.metron.cloud/x.jpg"))
+        self.assertIsNone(app._cover_url("javascript:alert(1)"))
 
 
 class MemberRequestApprovalTests(unittest.TestCase):
@@ -7901,6 +7919,12 @@ class ProfileTokenTests(unittest.TestCase):
         old = f"d1.5000.{app._signed(self.config, 'device|5000')}"
         self.assertTrue(app.device_token_valid(old, self.config, now=2000))
         self.assertFalse(app.device_token_valid(old, moved, now=2000))
+        # So does the admin's cookie from before profiles.
+        admin_store = Mock()
+        admin_store.user.return_value = {"id": 1, "name": "Admin", "role": "admin", "disabled": False, "sessionVersion": 0}
+        legacy = app.issue_session_token(self.config)
+        self.assertEqual(app.resolve_session_token(legacy, self.config, admin_store)[0].id, 1)
+        self.assertIsNone(app.resolve_session_token(legacy, moved, admin_store)[0], "not once the shared devices were forgotten")
 
     def test_a_pin_slows_down_after_a_few_wrong_guesses(self):
         app._LOGIN_THROTTLE.clear()

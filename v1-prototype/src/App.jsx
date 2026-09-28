@@ -55,6 +55,7 @@ import {
 } from "./notifications.js";
 import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
 import { nextTabBarState, canTuck } from "./tab-bar.js";
+import { sheetPullDecision } from "./sheet.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
 import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, quadrantPanels, pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
@@ -1138,7 +1139,7 @@ function NotificationRow({ item, news, fresh, onOpen, onDismiss, onRetry }) {
   }
   // The row opens the thing; clearing is its own control, so acting on a
   // notification and getting rid of it are never the same tap.
-  return <li className={`notification-row${fresh ? " notification-row--new" : ""}`}>
+  return <li className={`notification-row${fresh ? " notification-row--new" : ""}`} data-id={item.id}>
     <button type="button" className="notification-open" onClick={() => onOpen(item)}>
       {icon}
       <span className="notification-text">
@@ -1148,11 +1149,12 @@ function NotificationRow({ item, news, fresh, onOpen, onDismiss, onRetry }) {
       </span>
     </button>
     <span className="notification-actions">
-      {item.retryJobId ? <button type="button" className="secondary-button notification-retry" onClick={retry} disabled={busy} aria-busy={busy}>
+      {item.retryJobId ? <button type="button" className="secondary-button notification-retry" onClick={retry} disabled={busy} aria-busy={busy}
+        aria-label={`Retry: ${item.title}`}>
         {busy ? <LoadingSpinner size={14} /> : <ArrowCounterClockwise size={14} />} Retry
       </button> : null}
       <button type="button" className="notification-dismiss" onClick={() => onDismiss(item)}
-        aria-label={`${news ? "Clear" : "Dismiss"}: ${item.title}`} title={news ? "Clear" : "Dismiss"}>
+        aria-label={`${news ? "Clear" : "Dismiss"}: ${item.title}`} title={news ? "Clear" : "Dismiss"} data-notification-dismiss>
         <X size={16} />
       </button>
     </span>
@@ -1162,11 +1164,43 @@ function NotificationRow({ item, news, fresh, onOpen, onDismiss, onRetry }) {
 function NotificationCenter({ bell, anchorRef, onClose }) {
   const phone = usePhoneWidth();
   const dialogRef = useDialog(onClose);
+  const headingRef = useRef(null);
   const [place, setPlace] = useState(null);
-  // What was new when the bell opened stays marked while it is open, and the
-  // server is told it has been seen, so the badge does not count it again.
-  const [freshIds] = useState(() => new Set((bell.activity.items || []).filter((item) => !item.read).map((item) => item.id)));
-  useEffect(() => { if (freshIds.size) bell.onSeen(); }, []);
+  // What is new is decided from a fresh answer, not from whatever the bell
+  // held when it was tapped: those rows stay marked while the panel is open,
+  // and the server is told they have been seen, so the badge does not count
+  // them again. Until the answer comes, unread rows stand in.
+  const [freshIds, setFreshIds] = useState(null);
+  useEffect(() => {
+    let live = true;
+    bell.onRefresh().then((data) => {
+      if (!live) return;
+      const ids = new Set((data?.items || bell.activity.items || []).filter((item) => !item.read).map((item) => item.id));
+      setFreshIds(ids);
+      if (ids.size) bell.onSeen();
+    });
+    return () => { live = false; };
+  }, []);
+  // Focus starts on the heading rather than the first control (Clear all),
+  // so a stray Enter clears nothing; and when the focused row goes, focus
+  // moves to the next row or back to the heading rather than to the page.
+  // Once the panel is placed: until then it is hidden, and focusing anything
+  // inside a hidden element does nothing (the phone's sheet is never hidden).
+  useEffect(() => { if (phone || place) headingRef.current?.focus(); }, [phone, Boolean(place)]);
+  const focusNext = useRef(null);
+  useEffect(() => {
+    if (!focusNext.current) return;
+    const wanted = focusNext.current;
+    focusNext.current = null;
+    const rows = [...(dialogRef.current?.querySelectorAll(".notification-row") || [])];
+    const next = rows.find((row) => row.dataset.id === wanted) || rows[0];
+    (next?.querySelector("[data-notification-dismiss]") || headingRef.current)?.focus();
+  });
+  const isFresh = (item) => (freshIds ? freshIds.has(item.id) : !item.read);
+  function removing(items, item) {
+    const index = items.findIndex((row) => row.id === item.id);
+    focusNext.current = items[index + 1]?.id ?? items[index - 1]?.id ?? null;
+  }
   useLayoutEffect(() => {
     if (phone) return undefined;
     function measure() {
@@ -1196,13 +1230,14 @@ function NotificationCenter({ bell, anchorRef, onClose }) {
   }, [phone, onClose]);
   const attention = bell.attention || [];
   const activity = bell.activity.items || [];
-  const fresh = activity.filter((item) => freshIds.has(item.id));
-  const earlier = activity.filter((item) => !freshIds.has(item.id));
+  const fresh = activity.filter(isFresh);
+  const earlier = activity.filter((item) => !isFresh(item));
   const empty = !attention.length && !activity.length;
   const open = (item) => { onClose(); bell.onOpen(item); };
+  const all = [...attention, ...fresh, ...earlier];
   const rows = (items, news) => <ul className="notification-list">{items.map((item) => <NotificationRow key={item.id} item={item} news={news}
-    fresh={news && freshIds.has(item.id)} onOpen={open}
-    onDismiss={news ? bell.onClear : bell.onDismiss} onRetry={bell.onRetry} />)}</ul>;
+    fresh={news && isFresh(item)} onOpen={open}
+    onDismiss={(row) => { removing(all, row); (news ? bell.onClear : bell.onDismiss)(row); }} onRetry={bell.onRetry} />)}</ul>;
   const body = <div className="notifications-body">
     {bell.error ? <p className="workbench-error" role="alert">{bell.error}</p> : null}
     {attention.length ? <section aria-labelledby="notifications-attention">
@@ -1215,8 +1250,8 @@ function NotificationCenter({ bell, anchorRef, onClose }) {
     {empty ? <p className="notifications-empty"><CheckCircle size={22} weight="fill" /> You're all caught up</p> : null}
   </div>;
   const head = <header className="notifications-head">
-    <h2 id="notifications-title">Notifications</h2>
-    {empty ? null : <button type="button" className="notifications-clear" onClick={bell.onClearAll}>Clear all</button>}
+    <h2 id="notifications-title" ref={headingRef} tabIndex={-1}>Notifications</h2>
+    {activity.length ? <button type="button" className="notifications-clear" onClick={bell.onClearAll}>Clear all</button> : null}
     {phone ? <button type="button" className="glass-button glass-button--icon library-sheet-close"
       onClick={() => slideSheetAway(dialogRef.current, onClose)} aria-label="Close"><X size={20} /></button> : null}
   </header>;
@@ -1224,7 +1259,7 @@ function NotificationCenter({ bell, anchorRef, onClose }) {
     return createPortal(<div className="modal-backdrop notifications-sheet-backdrop" onMouseDown={onClose}>
       <section className="modal notifications-sheet" role="dialog" aria-modal="true" aria-labelledby="notifications-title"
         ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
-        <SheetGrabber onClose={onClose} />
+        <SheetGrabber onClose={onClose} pullAnywhere />
         {head}{body}
       </section>
     </div>, document.body);
@@ -1246,7 +1281,7 @@ function NotificationsBell({ bell }) {
     <button
       type="button" ref={buttonRef}
       className={`glass-button glass-button--icon appbar-bell${count ? " unread" : ""}${open ? " active" : ""}`}
-      onClick={() => { if (!open) bell.onRefresh(); setOpen((value) => !value); }}
+      onClick={() => setOpen((value) => !value)}
       aria-label={count ? `Notifications: ${count}` : "Notifications"}
       aria-expanded={open} aria-haspopup="dialog"
     >
@@ -1848,7 +1883,7 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
   const dialogRef = useDialog(onClose);
   return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
     <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
-      <SheetGrabber onClose={onClose} detents />
+      <SheetGrabber onClose={onClose} detents pullAnywhere />
       <header>
         <h2 id="library-sheet-title">View &amp; sort</h2>
         <button type="button" className="glass-button glass-button--icon library-sheet-close"
@@ -2466,6 +2501,9 @@ function slideSheetAway(sheet, then, ms = null) {
   if (!sheet || still || !window.matchMedia?.(SHEET_QUERY).matches) { then(); return; }
   if (sheet.dataset.leaving) return;
   sheet.dataset.leaving = "true";
+  // Still arriving: the opening animation would override the transform and
+  // the sheet would vanish at its end instead of sliding.
+  sheet.getAnimations?.().forEach((animation) => animation.finish());
   const duration = ms ?? motionMs("--motion-duration-sheet-exit");
   const backdrop = sheet.parentElement;
   sheet.style.transition = `transform ${duration}ms var(--motion-ease-sheet)`;
@@ -2477,12 +2515,15 @@ function slideSheetAway(sheet, then, ms = null) {
   window.setTimeout(then, duration + 20);
 }
 
-// The sheet's grabber, and the pull that closes a sheet. Down from anywhere on
-// the sheet while what is under the finger is scrolled to its top follows the
-// finger, as iOS does; the grabber alone also takes a mouse or pen, and a pull
-// up to a taller detent. Past a quarter of its height, or on a flick, the sheet
-// leaves; otherwise it settles back.
-function SheetGrabber({ onClose, detents = false }) {
+// The sheet's grabber, and the pull that closes a sheet. The grabber follows a
+// finger, mouse or pen, and pulls up to a taller detent. With `pullAnywhere`
+// (the bell, the profiles, View & sort -- sheets with nothing to lose) a
+// finger pulling down anywhere on the sheet, with everything under it
+// scrolled to its top, moves the sheet too, as iOS does; a sheet holding a
+// form keeps to its grabber, so a stray drag cannot throw the edits away.
+// Past a quarter of its height, or on a flick, the sheet leaves; otherwise it
+// settles back.
+function SheetGrabber({ onClose, detents = false, pullAnywhere = false }) {
   const ref = useRef(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -2543,43 +2584,45 @@ function SheetGrabber({ onClose, detents = false }) {
       drag = null;
       release(dy, at);
     }
-    // A finger, anywhere on the sheet. The pull is claimed as soon as it
-    // heads down from the top of whatever it started in -- before the browser
-    // can begin its own overscroll, after which the move could not be taken.
+    // A finger. Nothing is decided on the first pixel: sideways is a swipe,
+    // up is a scroll, and down inside anything with somewhere to scroll is a
+    // scroll too (sheetPullDecision). Only a pull is taken from the browser.
     let touch = null;
-    function scrollerFor(target) {
+    function scrollersFor(target) {
+      const found = [];
       for (let node = target; node && node !== sheet.parentElement; node = node.parentElement) {
-        if (node.scrollHeight > node.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+        if (node.scrollHeight > node.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(node).overflowY)) found.push(node);
         if (node === sheet) break;
       }
-      return null;
+      return found;
     }
     function onTouchStart(event) {
       touch = null;
       if (event.touches.length !== 1 || sheet.dataset.leaving) return;
       if (event.target.closest?.("input, textarea, select, [data-sheet-no-drag]")) return;
+      const onGrabber = grabber.contains(event.target);
+      if (!onGrabber && !pullAnywhere) return;
       const point = event.touches[0];
-      touch = { x: point.clientX, y: point.clientY, at: performance.now(), scroller: scrollerFor(event.target), dragging: false, dy: 0 };
+      touch = {
+        x: point.clientX, y: point.clientY, at: performance.now(), onGrabber,
+        scrollers: onGrabber ? [] : scrollersFor(event.target), dragging: false, dy: 0,
+      };
     }
     function onTouchMove(event) {
       if (!touch) return;
       const point = event.touches[0];
-      const dx = point.clientX - touch.x;
-      const dy = point.clientY - touch.y;
       if (!touch.dragging) {
-        const onGrabber = grabber.contains(event.target);
-        const atTop = onGrabber || !touch.scroller || touch.scroller.scrollTop <= 0;
-        // A pull up is the grabber's alone (to a taller detent); anything
-        // else -- sideways, up, or down inside a list that has somewhere to
-        // scroll -- is the page's.
-        if ((dy < 0 && !onGrabber) || Math.abs(dx) > Math.abs(dy) || !atTop) { touch = null; return; }
-        event.preventDefault();
-        if (Math.abs(dy) < 4) return;
+        const decision = sheetPullDecision({
+          dx: point.clientX - touch.x, dy: point.clientY - touch.y,
+          atTop: touch.scrollers.every((node) => node.scrollTop <= 0),
+          onGrabber: touch.onGrabber, pullAnywhere,
+        });
+        if (decision === "wait") return;
+        if (decision === "pass") { touch = null; return; }
         touch = { ...touch, dragging: true, y: point.clientY, at: performance.now() };
         sheet.style.transition = "none";
-        return;
       }
-      event.preventDefault();
+      if (event.cancelable) event.preventDefault();
       touch.dy = point.clientY - touch.y;
       follow(touch.dy);
     }
@@ -2606,7 +2649,7 @@ function SheetGrabber({ onClose, detents = false }) {
       sheet.removeEventListener("touchend", onTouchEnd);
       sheet.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [detents]);
+  }, [detents, pullAnywhere]);
   return <div className="sheet-grabber" ref={ref} aria-hidden="true" />;
 }
 
@@ -4361,7 +4404,7 @@ function ProfileMenu({ onClose }) {
     return createPortal(<div className="modal-backdrop" onMouseDown={onClose}>
       <section className="modal profile-sheet" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="profile-sheet-title"
         onMouseDown={(event) => event.stopPropagation()}>
-        <SheetGrabber onClose={onClose} />
+        <SheetGrabber onClose={onClose} pullAnywhere />
         <header>
           <h2 id="profile-sheet-title">Who's reading?</h2>
           <button type="button" className="glass-button glass-button--icon library-sheet-close"
@@ -4566,7 +4609,7 @@ function ProfileSheet({ onClose, ...props }) {
   return createPortal(<div className="modal-backdrop" onMouseDown={onClose}>
     <section className="modal profile-page-sheet" ref={dialogRef} role="dialog" aria-modal="true" aria-label="Your profile"
       onMouseDown={(event) => event.stopPropagation()}>
-      <SheetGrabber onClose={onClose} />
+      <SheetGrabber onClose={onClose} pullAnywhere />
       <button type="button" className="glass-button glass-button--icon profile-page-sheet-close"
         onClick={() => slideSheetAway(dialogRef.current, onClose)} aria-label="Close"><X size={20} /></button>
       <ProfileView {...props} sheet onLeave={onClose} />
@@ -8270,6 +8313,8 @@ const VIEW_BY_ROUTE = Object.fromEntries(
 // The views that carry a query: the Search page above 640px, and Discover,
 // where a phone searches.
 const SEARCH_VIEWS = new Set(["search", "discover"]);
+// How often the library's own polling may refresh the bell.
+const BELL_REFRESH_MIN_MS = 30_000;
 const PHONE_QUERY = "(max-width: 640px)";
 const isPhoneWidth = () => Boolean(window.matchMedia?.(PHONE_QUERY).matches);
 function usePhoneWidth() {
@@ -8320,11 +8365,22 @@ function stateFromLocation(pathname, search) {
   };
 }
 
-const BOOT_ROUTE = stateFromLocation(window.location.pathname, window.location.search);
+const BOOT_ROUTE = (() => {
+  const route = stateFromLocation(window.location.pathname, window.location.search);
+  // On a phone your profile is a sheet over the library, not a page. Decided
+  // here, before anything reads the address: left to an effect, the boot's
+  // own canonicalisation put /profile back into history, and every Back onto
+  // that entry opened the sheet again.
+  if (route.active === "profile" && isPhoneWidth()) {
+    window.history.replaceState(null, "", ROUTE_BY_VIEW.library);
+    return { ...route, active: "library", profileSheet: true };
+  }
+  return route;
+})();
 
 export function App() {
   const [active, setActive] = useState(BOOT_ROUTE.active);
-  const [profileSheet, setProfileSheet] = useState(false);
+  const [profileSheet, setProfileSheet] = useState(Boolean(BOOT_ROUTE.profileSheet));
   const [searchQuery, setSearchQuery] = useState(BOOT_ROUTE.searchQuery);
   // A phone has no Search page, and above 640px Discover shows only the week's
   // releases -- so a search follows the width it is read at: a /search link
@@ -8340,8 +8396,14 @@ export function App() {
   }, [phoneWidth]);
   // Arriving at /profile on a phone (a bookmark, a reload, a narrowed window)
   // is the library with your profile's sheet over it.
+  // Reached later -- Back onto an old /profile entry, or a window narrowed
+  // on the profile page -- the same: the entry becomes the library's and the
+  // sheet opens over it, so no entry is left that reopens it on every Back.
   useEffect(() => {
-    if (active === "profile" && phoneWidth) { setActive("library"); setProfileSheet(true); }
+    if (active !== "profile" || !phoneWidth) return;
+    window.history.replaceState(null, "", ROUTE_BY_VIEW.library);
+    setActive("library");
+    setProfileSheet(true);
   }, [active, phoneWidth]);
   // Above 640px Discover is the releases alone; the search stays open on the
   // Search page, and Discover neither shows it nor carries it in its address.
@@ -8524,41 +8586,68 @@ export function App() {
     }
   }
 
+  // Dismissals made here and not yet confirmed: an answer to some other
+  // request (a refresh, a clear) must not put them back.
+  const pendingDismissals = useRef(new Set());
+  const withPending = (dismissed) => [...new Set([...(dismissed || []), ...pendingDismissals.current])];
+  const bellRefreshedAt = useRef(0);
   const refreshBell = useCallback(async () => {
     try {
-      setBellNews(await apiRequest("/api/v1/notifications"));
+      const data = await apiRequest("/api/v1/notifications");
+      bellRefreshedAt.current = Date.now();
+      setBellNews({ ...data, dismissed: withPending(data.dismissed) });
       setBellError("");
+      return data;
     } catch (error) {
       if (error.status !== 401) setBellError("Notifications could not be loaded. They will be tried again.");
+      return null;
     }
   }, []);
   async function sendBell(path, body) {
     try {
       const result = await apiRequest(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (result.items) setBellNews(result);
-      else setBellNews((current) => ({ ...current, ...result }));
+      // Only the dismissals endpoint speaks for the dismissals.
+      if (path.endsWith("/dismissed")) {
+        setBellNews((current) => ({ ...current, dismissed: withPending(result.dismissed) }));
+      } else if (result.items) {
+        setBellNews((current) => ({ ...result, dismissed: current.dismissed }));
+      } else {
+        setBellNews((current) => ({ ...current, ...result, dismissed: current.dismissed }));
+      }
       setBellError("");
+      return result;
     } catch (error) {
       setBellError(error.message);
       refreshBell();
+      return null;
     }
   }
   function changeDismissals({ add = [], remove = [] }) {
     // At once on screen; the server's answer settles it.
+    add.forEach((key) => pendingDismissals.current.add(key));
     setBellNews((current) => ({
       ...current,
       dismissed: [...new Set([...(current.dismissed || []).filter((key) => !remove.includes(key)), ...add])],
     }));
-    return sendBell("/api/v1/notifications/dismissed", { add, remove });
+    return sendBell("/api/v1/notifications/dismissed", { add, remove })
+      .finally(() => add.forEach((key) => pendingDismissals.current.delete(key)));
   }
 
   const viewerIsAdmin = isAdmin(authStatus?.viewer);
   const attention = useMemo(
     () => needsAttention(catalog, bellNews.dismissed || [], { admin: viewerIsAdmin }),
     [catalog, bellNews.dismissed, viewerIsAdmin]);
-  // The news is asked for whenever the library is: an import that brought
-  // comics changes both.
-  useEffect(() => { if (catalog && authStatus?.viewer) refreshBell(); }, [catalog, authStatus?.viewer?.id]);
+  // The news is asked for when the library is -- an import that brought
+  // comics changes both -- but not on every one of the library's 5-second
+  // polls while something downloads: once every half minute from here, and
+  // at once when the bell is opened or a profile signs in.
+  const bellViewer = useRef(null);
+  useEffect(() => {
+    if (!catalog || !authStatus?.viewer) return;
+    const changed = bellViewer.current !== authStatus.viewer.id;
+    bellViewer.current = authStatus.viewer.id;
+    if (changed || Date.now() - bellRefreshedAt.current >= BELL_REFRESH_MIN_MS) refreshBell();
+  }, [catalog, authStatus?.viewer?.id]);
   // A dismissal whose notification is gone is forgotten: a retried job fails
   // again under the same id, and must be able to say so.
   useEffect(() => {
@@ -8566,12 +8655,13 @@ export function App() {
     const stale = staleDismissals(catalog, bellNews.dismissed);
     if (stale.length) changeDismissals({ remove: stale });
   }, [catalog, bellNews.dismissed, viewerIsAdmin]);
-  // Dismissals this browser kept before the server did move up once.
+  // Dismissals this browser kept before the server did move up once, and
+  // are forgotten here only once the server has them.
   useEffect(() => {
     if (!authStatus?.viewer) return;
     const legacy = readLegacyDismissed(profileStorage());
-    if (legacy.length) changeDismissals({ add: legacy });
-    forgetLegacyState(profileStorage());
+    if (!legacy.length) { forgetLegacyState(profileStorage()); return; }
+    changeDismissals({ add: legacy }).then((result) => { if (result) forgetLegacyState(profileStorage()); });
   }, [authStatus?.viewer?.id]);
 
   const bell = {
@@ -8584,11 +8674,11 @@ export function App() {
       setBellNews((current) => ({ ...current, items: current.items.filter((row) => row.id !== item.id) }));
       return sendBell("/api/v1/notifications/clear", { ids: [item.id] });
     },
+    // Clear all clears the news. What needs someone stays until it is dealt
+    // with, or dismissed one by one.
     onClearAll: () => {
-      const shown = attention.map((item) => item.id);
       setBellNews((current) => ({ ...current, items: [], unread: 0 }));
       sendBell("/api/v1/notifications/clear", { all: true });
-      if (shown.length) changeDismissals({ add: shown });
     },
     onRetry: async (item) => {
       try {

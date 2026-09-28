@@ -937,6 +937,64 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(len(store.notifications_for(2, limit=1000)), store.NOTIFICATIONS_KEEP_ROWS)
             self.assertEqual(len(store.notifications_for(1)), 1, "another profile's bell is its own")
 
+    def test_a_run_whose_rating_lookup_failed_waits_its_turn_with_a_note(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                ids = [int(connection.execute(
+                    "INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    (title, title.lower(), now, now)).lastrowid) for title in ("Broken", "Fine")]
+            self.assertEqual(store.runs_needing_rating(), ids)
+            store.note_rating_check_failed(ids[0], "Metron said 404")
+            self.assertEqual(store.runs_needing_rating(), [ids[1]], "the failed one has had its turn")
+            def rating_of(run_id):
+                with store._connect() as connection:
+                    row = connection.execute("SELECT age_rating, age_rating_note FROM series_runs WHERE id=?", (run_id,)).fetchone()
+                return row["age_rating"], row["age_rating_note"]
+            self.assertEqual(rating_of(ids[0]), (None, "Couldn't check: Metron said 404"))
+            # A rated run keeps its rating and its note through a failed refresh.
+            store.record_run_rating(ids[1], "teen", "metron", "Teen (issue 1)")
+            store.note_rating_check_failed(ids[1], "timeout")
+            self.assertEqual(rating_of(ids[1]), ("teen", "Teen (issue 1)"))
+            # "Look again" brings the unrated one back.
+            self.assertEqual(store.forget_unfound_ratings(), 1)
+            self.assertEqual(store.runs_needing_rating(), [ids[0]])
+
+    def test_an_arcs_every_pull_finds_the_reader_who_asked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = _utc_now()
+            with store._connect() as connection:
+                connection.execute("INSERT INTO users(id, name, role, created_at, updated_at) VALUES (2, 'Sam', 'reader', ?, ?)", (now, now))
+                run = int(connection.execute(
+                    "INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at) VALUES ('Batman', 'batman', ?, ?)",
+                    (now, now)).lastrowid)
+                acquisitions = [int(connection.execute(
+                    """INSERT INTO acquisition_requests(scope_type, series_run_id, status, coverage, acquisition_preference,
+                                                        created_at, updated_at)
+                       VALUES ('series', ?, 'open', 'run', 'either', ?, ?)""", (run, now, now)).lastrowid) for _ in range(3)]
+            request, _ = store.create_member_request(2, "discover_arc", "discover:arc:metron:482", "Hush", {"arcId": "482"})
+            store.claim_member_request(request["id"], 1, "approved")
+            store.record_member_request_outcome(request["id"], acquisition_request_id=acquisitions[0], series_run_id=run)
+            store.add_member_request_detail(request["id"], {"acquisitionRequestIds": acquisitions[:2]})
+            self.assertEqual(store.readers_waiting_on(acquisitions), {acquisitions[0]: {2}, acquisitions[1]: {2}},
+                             "the first from the column, the second from the detail, the third nobody's")
+
+    def test_a_profiles_dismissals_are_kept_within_bounds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            long_key = "job:" + "9" * 300
+            store.change_notification_dismissals(1, add=[long_key])
+            self.assertEqual(store.notification_dismissals(1), [long_key[:200]])
+            store.change_notification_dismissals(1, remove=[long_key])
+            self.assertEqual(store.notification_dismissals(1), [], "removed by the same cut key it was kept under")
+            for chunk in range(0, store.NOTIFICATION_DISMISSALS_KEEP + 20, 100):
+                store.change_notification_dismissals(1, add=[f"inbox:{n}" for n in range(chunk, chunk + 100)])
+            kept = store.notification_dismissals(1)
+            self.assertEqual(len(kept), store.NOTIFICATION_DISMISSALS_KEEP)
+            self.assertNotIn("inbox:0", kept, "the oldest go first")
+
     def test_collected_edition_year_does_not_create_a_second_run(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

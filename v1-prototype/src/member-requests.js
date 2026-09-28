@@ -102,8 +102,11 @@ export function requestNotifications(requests, { admin = false } = {}) {
   if (!waiting.length) return failed;
   const newest = waiting.reduce((a, b) => (Number(b.id) > Number(a.id) ? b : a));
   const who = [...new Set(waiting.map((request) => request.requestedBy?.name).filter(Boolean))];
+  // Keyed on the whole set waiting: keyed on the newest alone, deciding it
+  // brought back a line the admin had dismissed for the older ones.
+  const key = waiting.map((request) => Number(request.id)).sort((a, b) => a - b).join(",");
   return [...failed, {
-    id: `requests-waiting:${newest.id}`,
+    id: `requests-waiting:${key}`,
     kind: "request",
     severity: "warning",
     title: waiting.length === 1

@@ -1819,6 +1819,12 @@ class ReaderProfileHttpTests(unittest.TestCase):
                 """INSERT INTO acquisition_download_imports(download_id, job_id, issue_id, destination, imported_at)
                    VALUES (?, ?, ?, '/comics/Example 005.cbz', ?)""", (download, jobs[1][0], jobs[1][1], long_ago))
         store.set_notification_mark("arrivals", "2000-01-01T00:00:00+00:00")
+        # Sam is limited before the sweep: the run is unrated, so the line is
+        # hidden -- but recorded, and shown once the rating allows it.
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "teen"}, cookies=admin_cookies)
+        limited = bell(sam_cookies)
+        self.assertEqual([item["title"] for item in limited["items"]], ["Found was declined", "Example was approved"])
+        store.record_run_rating(run, "teen", "metron", "Teen (issue 1)")
         mine = bell(sam_cookies)
         self.assertEqual([item["title"] for item in mine["items"]],
                          ["Found was declined", "Example was approved", "Example: 2 new issues"],
@@ -1840,6 +1846,9 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual([item["title"] for item in cleared.json()["items"]], ["Example was approved", "Example: 2 new issues"])
         self.assertEqual(self.call("POST", "/api/v1/notifications/clear", {"all": True}, cookies=sam_cookies).json()["items"], [])
         self.assertEqual(self.call("POST", "/api/v1/notifications/read", {"ids": "all"}, cookies=sam_cookies).status, 400)
+        self.assertEqual(self.call("POST", "/api/v1/notifications/read", {}, cookies=sam_cookies).status, 400,
+                         "nothing named is not everything")
+        self.assertEqual(self.call("POST", "/api/v1/notifications/clear", {"ids": [True]}, cookies=sam_cookies).status, 400)
         # What was dismissed of the things needing attention follows the profile.
         dismissed = self.call("POST", "/api/v1/notifications/dismissed", {"add": ["job:9", "metadata-match:1:0"]},
                               cookies=admin_cookies).json()["dismissed"]
@@ -1894,6 +1903,48 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(len(self.call("GET", "/api/v1/catalog", cookies=admin).json()["series"]), 1)
         summary = self.call("GET", "/api/v1/ratings", cookies=admin).json()
         self.assertEqual((summary["runs"], summary["rated"]), (1, 0))
+
+    def test_a_limited_reader_gets_no_trace_of_a_hidden_run(self):
+        store, run = self._library_of_one_run()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "teen"}, cookies=admin)
+        store.record_run_rating(run, "mature", "metron", "Mature (issue 1)")
+        # Followed, so asking for it would have said its title.
+        followed = self.call("POST", "/api/v1/requests", {"scopeType": "series", "scopeId": run}, cookies=admin)
+        self.assertEqual(followed.status, 201, followed.body)
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        catalog = self.call("GET", "/api/v1/catalog", cookies=reader).json()
+        self.assertEqual((catalog["series"], catalog["files"], catalog["families"]), ([], [], []),
+                         "the file list gave away every hidden run's title, cover and path")
+        asked = self.call("POST", "/api/v1/member-requests", {"kind": "run", "seriesId": run}, cookies=reader)
+        self.assertEqual(asked.status, 404)
+        self.assertNotIn("Example", asked.body.decode(), "not even whether it is followed")
+        # The cover route is checked by the path it serves, not the spelling asked for.
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        for spelling in (root / "Example 001.cbz", root / "." / "Example 001.cbz"):
+            self.assertEqual(self.call("GET", "/api/file-cover?path=" + urllib.parse.quote(str(spelling)), cookies=reader).status,
+                             404, spelling)
+        self.assertNotEqual(self.call("GET", "/api/file-cover?path=" + urllib.parse.quote(str(root / "Example 001.cbz")),
+                                      cookies=admin).status, 404, "the admin still reaches it")
+
+    def test_a_password_changed_on_a_shared_device_is_still_that_devices(self):
+        self.call("PATCH", "/api/v1/me", {"pin": "2468"})
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        login = {"username": "owner", "password": "the admin password"}
+        tablet = self.call("POST", "/api/v1/auth/login", login).cookies
+        made = self.call("POST", "/api/v1/users", {"name": "Sam", "loginName": "sam", "password": "sams password"}, cookies=tablet)
+        tablet = {**tablet, **made.cookies}
+        sam_on_tablet = {**tablet, **self.call("POST", "/api/v1/profiles/switch", {"userId": made.json()["id"]}, cookies=tablet).cookies}
+        changed = self.call("PATCH", "/api/v1/me", {"password": "a newer password", "currentPassword": "sams password"},
+                            cookies=sam_on_tablet)
+        self.assertEqual(changed.status, 200, changed.body)
+        sam_on_tablet = {**sam_on_tablet, **changed.cookies}
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam_on_tablet).status, 200)
+        laptop = self.call("POST", "/api/v1/auth/login", login).cookies
+        self.assertEqual(self.call("POST", "/api/v1/devices/forget", {}, cookies=laptop).status, 200)
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=sam_on_tablet).status, 401,
+                         "a new password on the tablet did not make the tablet Sam's own phone")
 
     def test_the_picker_knows_how_many_digits_a_pin_has(self):
         sam = self._household_with_a_reader()

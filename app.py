@@ -437,7 +437,9 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
         return current
 
 
-_AUTH_CONFIG_LOCK = threading.Lock()
+# Re-entrant: a change holds it across load, change and write, and load and
+# write each take it on their own too.
+_AUTH_CONFIG_LOCK = threading.RLock()
 _AUTH_METHODS = frozenset({"none", "forms"})
 _SESSION_COOKIE = "flipparr_session"
 _SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
@@ -540,6 +542,11 @@ def load_auth_config() -> dict[str, Any]:
 
 
 def save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
+    with _AUTH_CONFIG_LOCK:
+        return _save_auth_config(patch)
+
+
+def _save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_auth_config()
     method = str(patch.get("method", current["method"]))
     if method not in _AUTH_METHODS:
@@ -707,11 +714,12 @@ def device_token_valid(token: str, config: dict[str, Any], now: float | None = N
 def forget_shared_devices() -> dict[str, Any]:
     """End every shared device and every profile opened from one, by moving
     the household epoch on. Returns the new sign-in config."""
-    current = load_auth_config()
-    current["householdEpoch"] = _household_epoch(current) + 1
-    if not current["sessionSecret"]:
-        current["sessionSecret"] = secrets.token_urlsafe(32)
-    _write_auth_config(current)
+    with _AUTH_CONFIG_LOCK:
+        current = load_auth_config()
+        current["householdEpoch"] = _household_epoch(current) + 1
+        if not current["sessionSecret"]:
+            current["sessionSecret"] = secrets.token_urlsafe(32)
+        _write_auth_config(current)
     return current
 
 
@@ -760,7 +768,7 @@ def resolve_session_token(
     if not session_token_valid(token, config):
         return None, False
     admin = store.user(ADMIN_USER_ID)
-    if admin is None or admin["sessionVersion"] != 0:
+    if admin is None or admin["sessionVersion"] != 0 or _household_epoch(config) != 0:
         return None, False
     return viewer_for(admin), True
 
@@ -1085,11 +1093,41 @@ def reader_catalog(payload: dict[str, Any], viewer: "Viewer | None" = None) -> d
         payload["series"] = [item for item in payload.get("series") or []
                              if viewer_may_see_run(viewer, item.get("ageRating"))]
         visible = {str(item["id"]) for item in payload["series"]}
+        # A file the catalog has not tied to a run is unrated, and follows
+        # the profile's unrated setting like a run with no rating would.
+        unrated_ok = viewer_may_see_run(viewer, None)
+        payload["files"] = [
+            item for item in payload.get("files") or []
+            if ((item.get("canonicalSeriesId") in visible) if item.get("canonicalSeriesId") else unrated_ok)
+        ]
         families = []
         for family in payload.get("families") or []:
             runs = [run for run in family.get("runs") or [] if str(run.get("id")) in visible]
-            if runs:
-                families.append({**family, "runs": runs})
+            if not runs:
+                continue
+            # Everything the family says about itself is re-said from the
+            # runs left: its cover can be a hidden run's, its arcs carry
+            # whole run records, and its counts would give the rest away.
+            arcs = []
+            for arc in family.get("storyArcs") or []:
+                arc_runs = [run for run in arc.get("runs") or [] if str(run.get("id")) in visible]
+                if arc_runs:
+                    arcs.append({**arc, "runs": arc_runs, "runIds": [run["id"] for run in arc_runs]})
+            covers = list(dict.fromkeys(
+                cover for run in runs for cover in (run.get("coverCandidates") or []) if cover))
+            families.append({
+                **family, "runs": runs, "runIds": [run["id"] for run in runs], "runCount": len(runs),
+                "owned": sum(int(run.get("owned") or 0) for run in runs),
+                "total": sum(int(run.get("total") or 0) for run in runs),
+                "releaseSummary": {
+                    key: sum(int((run.get("releaseSummary") or {}).get(key) or 0) for run in runs)
+                    for key in ("releasedMissing", "upcoming", "unknown", "owned")
+                },
+                "cover": covers[0] if covers else None, "coverCandidates": covers,
+                "storyArcs": arcs,
+                "mainArcCount": sum(1 for arc in arcs if arc.get("type") == "main"),
+                "specialGroupCount": sum(1 for arc in arcs if arc.get("type") == "specials"),
+            })
         payload["families"] = families
         stats = payload.setdefault("stats", {})
         stats["series"] = len(payload["series"])
@@ -1126,9 +1164,15 @@ def _request_text(value: Any, limit: int = 200) -> str:
 
 
 def _cover_url(value: Any) -> str | None:
-    """A Discover cover, only as a provider's https image address."""
-    text = str(value or "").strip()
-    return text[:500] if text.startswith("https://") else None
+    """A Discover cover, only as an https address on a provider's own image
+    host -- a reader's request is shown to the admin, and any other address
+    would let a reader's browser choose what the admin's fetches."""
+    text = str(value or "").strip()[:500]
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except ValueError:
+        return None
+    return text if parts.scheme == "https" and (parts.hostname or "") in ART_SWATCH_HOSTS else None
 
 
 def member_request_spec(payload: Any, catalog: dict[str, Any]) -> tuple[str, str, str, dict[str, Any], dict[str, Any]]:
@@ -1213,6 +1257,13 @@ def _carry_out_member_request(request: dict[str, Any]) -> tuple[int | None, int 
         result = pull_story_arc(params["arcId"])
         first = result["pulled"][0]
         made, run = first.get("request") or {}, first.get("series") or {}
+        # One arc, several series, several pulls: the request's own column
+        # holds the first, and the rest ride in its detail, so the reader
+        # hears of every series' issues arriving.
+        pulled_ids = [int(item["request"]["id"]) for item in result["pulled"]
+                      if isinstance(item.get("request"), dict) and str(item["request"].get("id") or "").isdigit()]
+        if len(pulled_ids) > 1:
+            catalog_store().add_member_request_detail(request["id"], {"acquisitionRequestIds": pulled_ids})
         return (int(made["id"]) if made.get("id") else None), (int(run["id"]) if run.get("id") else None)
     if kind == "discover_run":
         result = request_discovered_series(params["provider"], params["query"], params["providerSeriesId"], "either")
@@ -1283,18 +1334,17 @@ def sweep_arrivals(now: dt.datetime | None = None) -> int:
             return 0
         arrivals = store.arrivals_between(after, until)
         admins = [user["id"] for user in store.list_users() if user["role"] == "admin" and not user["disabled"]]
+        # A reader who asked for the run is told whatever its rating is now:
+        # a run just added is usually unrated for a while, and the bell hides
+        # the line until the rating allows it (`notifications_for`) rather
+        # than the sweep leaving them out for good.
         readers = store.readers_waiting_on([arrival["requestId"] for arrival in arrivals])
-        ratings = store.run_age_ratings() if readers else {}
-        users = {user["id"]: viewer_for(user) for user in store.list_users()} if readers else {}
         for arrival in arrivals:
             item = {"key": str(arrival["issueId"]), "issueId": arrival["issueId"], "number": arrival["number"],
                     "title": arrival["issueTitle"], "fileId": arrival["fileId"]}
             payload = {"runId": arrival["runId"], "runTitle": arrival["runTitle"],
                        "startYear": arrival["startYear"], "requestId": arrival["requestId"], "items": [item]}
-            audience = set(admins) | {
-                user_id for user_id in readers.get(arrival["requestId"], set())
-                if viewer_may_see_run(users.get(user_id), ratings.get(arrival["runId"]))
-            }
+            audience = set(admins) | readers.get(arrival["requestId"], set())
             for user_id in sorted(audience):
                 store.record_notification(user_id, "arrived", f"arrived:run:{arrival['runId']}", payload,
                                           at=arrival["at"], merge=True)
@@ -1578,8 +1628,13 @@ def rate_runs_pass(limit: int = RATING_BATCH) -> int:
             break
         try:
             rating, source, note = find_run_rating(run_id)
-        except Exception as exc:  # noqa: BLE001 -- asked again next pass
+        except Exception as exc:  # noqa: BLE001 -- noted, and asked again once it is stale
+            # Left unrecorded, a run whose lookup always fails (a Metron id
+            # gone, a file that will not open) came first in every batch and
+            # starved the rest. It is put to the back with a note, and "Look
+            # again" or the stale window brings it round.
             log_event("run_rating_skipped", level="info", series_run_id=run_id, error=str(exc)[:200])
+            store.note_rating_check_failed(run_id, str(exc)[:200])
             continue
         store.record_run_rating(run_id, rating, source, note)
         settled += 1
@@ -1648,9 +1703,24 @@ def ask_member_request(viewer: Viewer, payload: Any) -> tuple[dict[str, Any], bo
     if not viewer.is_admin and not viewer.can_discover and isinstance(payload, dict) \
             and str(payload.get("kind") or "").startswith("discover"):
         raise PermissionError("Discover is off for this profile")
-    kind, key, title, params, detail = member_request_spec(payload, store.catalog())
-    if kind == "run" and not viewer_may_see_run(viewer, store.run_age_ratings().get(int(params["seriesId"]))):
-        raise LookupError("That run is not in the library")
+    catalog = store.catalog()
+    # A run above the profile's limit, or a collection with none of its runs
+    # within it, is not in the library as far as this profile is concerned --
+    # said before anything about it (its title, whether it is followed) is.
+    if not viewer.is_admin and viewer.max_rating and isinstance(payload, dict):
+        ratings = store.run_age_ratings()
+        asked = str(payload.get("kind") or "")
+        if asked == "run":
+            run_id = str(payload.get("seriesId") or "")
+            if not (run_id.isdigit() and int(run_id) in ratings and viewer_may_see_run(viewer, ratings[int(run_id)])):
+                raise LookupError("That run is not in the library")
+        elif asked == "collection":
+            family_id = str(payload.get("collectionId") or "")
+            family = next((item for item in catalog.get("families") or [] if str(item.get("id")) == family_id), None)
+            run_ids = [int(value) for value in (family or {}).get("runIds") or [] if str(value).isdigit()]
+            if not any(viewer_may_see_run(viewer, ratings.get(run_id)) for run_id in run_ids):
+                raise LookupError("That collection is not in the library")
+    kind, key, title, params, detail = member_request_spec(payload, catalog)
     request, created = store.create_member_request(viewer.id, kind, key, title, params, detail)
     if created:
         threading.Thread(target=_learn_about_member_request, args=(request["id"], kind, params),
@@ -4635,12 +4705,14 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             store.update_acquisition_download(
                 download_id, "failed", error=message, failure_stage="download",
             )
-            if isinstance(exc, DirectSiteNotAFile):
-                # The same link will lead to the same page, so this release is
-                # set aside for good rather than tried again.
-                store.record_acquisition_release_failure(
-                    job_id, post_url, title, str(exc), kind="not_a_file",
-                )
+            # The same link will lead to the same page, so a post that is not
+            # a file is set aside for good. Anything else -- a timeout, a
+            # link gone, a file too large -- is set aside for a day (`lost`),
+            # or the run-pack pass would pick the same post straight back up.
+            store.record_acquisition_release_failure(
+                job_id, post_url, title, str(exc),
+                kind="not_a_file" if isinstance(exc, DirectSiteNotAFile) else "lost",
+            )
             # Wanted again rather than failed outright: another release, or the
             # same one later, is a normal way out of this.
             store.update_acquisition_job(job_id, "queued", message)
@@ -5811,6 +5883,8 @@ def _resume_run_after_pack_failure(job_id: int, release_title: str) -> None:
             return
     except Exception:  # noqa: BLE001 -- the scheduled sweep is still there
         return
+    if not _acquisition_services_ready(request_id):
+        return
     log_event("run_pack_fell_back", request_id=request_id, job_id=job_id, release=release_title[:200])
     threading.Thread(
         target=_automatic_release_grabs, args=(request_id,),
@@ -5867,8 +5941,11 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         log_event("run_pack_direct_site_failed", level="warning", request_id=request_id, error=str(exc)[:160])
     # A pack that already failed for this run -- a DirectSite link that opens
     # a file host's page, an NZB that would not complete -- is not tried again.
+    # Judged against every issue of the run: after a failure the issue the
+    # pack was grabbed against falls back to a single and another leads, and
+    # the refusal must still count.
     try:
-        refused = set(store.rejected_acquisition_release_keys(lead_job))
+        refused = set(store.rejected_release_keys_for_jobs(job_ids))
     except Exception:  # noqa: BLE001
         refused = set()
     offers: list[tuple[int, int, dict[str, Any]]] = []
@@ -6050,6 +6127,22 @@ def _automatic_release_grabs(
     )
 
 
+def _acquisition_services_ready(request_id: int) -> bool:
+    """Whether automatic searching can do anything: no indexer or no download
+    client means every search would fail in a loop and say nothing useful,
+    so the jobs are left for the list."""
+    for service in ("prowlarr", "sabnzbd"):
+        try:
+            _enabled_acquisition_service(service)
+        except Exception:
+            log_event(
+                "automatic_release_grabs_skipped", level="info",
+                request_id=request_id, reason=f"{service} is not configured",
+            )
+            return False
+    return True
+
+
 def _start_automatic_release_grabs(request: Any) -> None:
     """Run the automatic search off the request thread.
 
@@ -6070,17 +6163,8 @@ def _start_automatic_release_grabs(request: Any) -> None:
         request_id = 0
     if not request_id:
         return
-    # No indexer or no download client means every search would fail in a loop
-    # and say nothing useful. Leave the jobs for the list.
-    for service in ("prowlarr", "sabnzbd"):
-        try:
-            _enabled_acquisition_service(service)
-        except Exception:
-            log_event(
-                "automatic_release_grabs_skipped", level="info",
-                request_id=request_id, reason=f"{service} is not configured",
-            )
-            return
+    if not _acquisition_services_ready(request_id):
+        return
     threading.Thread(
         target=_automatic_release_grabs, args=(request_id,),
         name=f"flipparr-auto-grab-{request_id}", daemon=True,
@@ -11683,8 +11767,9 @@ def _issue_sort_key(number: Any) -> tuple[float, str]:
     return (float(match.group()) if match else float("inf"), str(number or ""))
 
 
-def story_arc_detail(arc_id: str) -> dict[str, Any]:
-    """An arc and its issues, each with what the library holds of it."""
+def story_arc_detail(arc_id: str, may_see: "Callable[[int], bool] | None" = None) -> dict[str, Any]:
+    """An arc and its issues, each with what the library holds of it. With
+    `may_see`, a run the profile may not see counts as not held at all."""
     arc_id = str(arc_id or "").strip()
     if not re.fullmatch(r"\d+", arc_id):
         raise ValueError("Choose a story arc")
@@ -11705,6 +11790,8 @@ def story_arc_detail(arc_id: str) -> dict[str, Any]:
         run_id = by_metron.get(series_id)
         entry = by_run.get(str(run_id)) if run_id is not None else None
         entry = entry or relevance.get(f"{normalized_title(title)}|{year or ''}")
+        if entry and may_see is not None and str(entry.get("runId") or "").isdigit() and not may_see(int(entry["runId"])):
+            entry = None
         key = _issue_key(row.get("number"))
         issues.append({
             "providerIssueId": str(row["id"]), "providerSeriesId": series_id,
@@ -13466,6 +13553,9 @@ class Handler(BaseHTTPRequestHandler):
         cookies = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
         viewer = None
         session = cookies.get(_SESSION_COOKIE)
+        # Opened from a shared device's picker: a session re-issued on this
+        # request (a new password, forgetting devices) stays one.
+        self._shared_session = bool(session is not None and session.value.startswith("v3."))
         if session is not None and session.value:
             viewer, legacy = resolve_session_token(session.value, config, store)
             if viewer is not None and legacy:
@@ -13530,7 +13620,8 @@ class Handler(BaseHTTPRequestHandler):
             return payload
         ratings = catalog_store().run_age_ratings()
         def keep(run_id: Any) -> bool:
-            return run_id in (None, "") or viewer_may_see_run(viewer, ratings.get(int(run_id)))
+            # No run: unrated, and the profile's unrated setting decides.
+            return viewer_may_see_run(viewer, None if run_id in (None, "") else ratings.get(int(run_id)))
         for key in ("items", "history"):
             if isinstance(payload.get(key), list):
                 payload[key] = [item for item in payload[key] if keep(item.get("seriesRunId"))]
@@ -13553,12 +13644,20 @@ class Handler(BaseHTTPRequestHandler):
                 break
         else:
             if path == "/api/file-cover":
+                # Looked up by the path the handler will actually serve, not
+                # the spelling in the query: `/comics/./X.cbz` names the same
+                # file, and only the resolved form is in the catalog.
                 source = (urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("path") or [""])[0]
-                run_id = store.run_for_path(source) if source else None
+                resolved = _cover_source_path(source)
+                if resolved is None:
+                    return True  # the handler refuses it
+                run_id = store.run_for_path(str(resolved)) or store.run_for_path(source)
             else:
                 return True
+        # Nothing ties this to a run: it is unrated, and follows the
+        # profile's unrated setting rather than being waved through.
         if run_id is None:
-            return True
+            return viewer_may_see_run(self.viewer, None)
         return viewer_may_see_run(self.viewer, store.run_age_ratings().get(int(run_id)))
 
     def _dispatch(self, route: Callable[[], None]) -> None:
@@ -13580,6 +13679,7 @@ class Handler(BaseHTTPRequestHandler):
         self.viewer = None
         self._household = False
         self._shared_device_cookie = False
+        self._shared_session = False
         self._pending_cookies = []
         started = time.monotonic()
         try:
@@ -13789,8 +13889,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/discover/arc":
             arc_id = (urllib.parse.parse_qs(parsed_url.query).get("id") or [""])[0]
+            viewer = self._viewer()
+            may_see = None
+            if not viewer.is_admin and viewer.max_rating:
+                ratings = catalog_store().run_age_ratings()
+                may_see = lambda run_id: viewer_may_see_run(viewer, ratings.get(run_id))  # noqa: E731
             try:
-                self.send_json(story_arc_detail(arc_id))
+                self.send_json(story_arc_detail(arc_id, may_see))
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
@@ -14226,9 +14331,12 @@ class Handler(BaseHTTPRequestHandler):
         # things needing attention. Each profile reaches only its own rows.
         if parsed_url.path in ("/api/v1/notifications/read", "/api/v1/notifications/clear"):
             body = payload if isinstance(payload, dict) else {}
-            ids = None if body.get("all") else body.get("ids")
-            if ids is not None and (not isinstance(ids, list) or not all(isinstance(value, int) for value in ids)):
-                self.send_json({"error": "Say which notifications, or all"}, 400)
+            ids = body.get("ids")
+            if body.get("all") is True:
+                ids = None
+            elif not isinstance(ids, list) or len(ids) > 500 \
+                    or not all(type(value) is int and 0 < value < 2 ** 53 for value in ids):
+                self.send_json({"error": "Say which notifications (ids), or all: true"}, 400)
                 return
             store = catalog_store()
             if parsed_url.path.endswith("/read"):
@@ -14252,7 +14360,8 @@ class Handler(BaseHTTPRequestHandler):
             # place, and this device stays shared if it was.
             config = forget_shared_devices()
             admin = _profiles_store().user(self._viewer_id())
-            self._sign_in_as(admin, config, device=self._shared_device_cookie, shared=self._shared_device_cookie)
+            self._sign_in_as(admin, config, device=self._shared_device_cookie,
+                             shared=self._shared_session or self._shared_device_cookie)
             self.send_json({"status": "forgotten"})
             return
         users_sign_out = re.fullmatch(r"/api/v1/users/(\d+)/sign-out", parsed_url.path)
@@ -15010,8 +15119,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if target_id == self._viewer_id() and updated["sessionVersion"] != target["sessionVersion"]:
                 # A new password ends every sign-in this profile had -- except
-                # the one making the change, which is issued afresh.
-                self._sign_in_as(updated, config, device=False)
+                # the one making the change, which is issued afresh -- and one
+                # opened on a shared device stays a shared device's, so
+                # forgetting the shared devices still ends it.
+                self._sign_in_as(updated, config, device=False, shared=self._shared_session or self._shared_device_cookie)
             self.send_json(profile_record(updated, config))
             return
         page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)

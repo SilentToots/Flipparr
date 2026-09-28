@@ -61,7 +61,7 @@ test("the admin hears that requests wait, and which could not be done", () => {
   const [admin] = requestNotifications(requests, { admin: true });
   assert.equal(admin.title, "2 requests waiting");
   assert.equal(admin.detail, "From Sam and Pat");
-  assert.equal(admin.id, "requests-waiting:6", "a new request is news again");
+  assert.equal(admin.id, "requests-waiting:5,6", "a new request is news again; deciding one does not revive a dismissed line");
   const [one] = requestNotifications(requests.slice(0, 1), { admin: true });
   assert.equal(one.title, "Sam asked to follow Saga");
   assert.equal(one.detail, "New issues as they come out");

@@ -226,9 +226,10 @@ button.
 The bell (2026-09-27) opens a panel of the same glass on a larger screen,
 placed from the bell's own position and kept 16px inside the window; on a
 phone it is the standard sheet at the screen's full height. It has two halves:
-"Needs you" (worked out from the library; a row is dismissed, and comes back
-if the thing changes) and the news (kept per profile on the server, so every
-device agrees; cleared by the row or Clear all). A row opens what it is about;
+"Needs you" (worked out from the library; a row is dismissed one at a time,
+and comes back if the thing changes) and the news (kept per profile on the
+server, so every device agrees; cleared by the row or Clear all, which never
+touches what needs you). Focus opens on the heading, not on Clear all. A row opens what it is about;
 clearing is its own control. News carries a cover when it has one and the
 time in a phone's words ("5m", "Yesterday"), and a row new since the bell
 was last opened has a violet dot. Titles wrap; nothing is truncated.
@@ -363,10 +364,13 @@ Motion tokens:
   tab keeps Safari's.
 - **Sheets on a phone.** A dialog is a sheet from the bottom, 8px in from
   the screen's edges with 24px corners, over the tab bar, with a grabber
-  (`SheetGrabber`). It slides up as it opens. A finger pulling down anywhere
-  on it -- while what is under the finger is scrolled to its top -- moves the
-  sheet with it, as iOS does; past a quarter of its height or on a flick it
-  leaves, otherwise it settles back. However it is closed (Done, the
+  (`SheetGrabber`). It slides up as it opens. On a sheet with nothing to
+  lose (`pullAnywhere`: the bell, the profiles, View & sort) a finger pulling
+  down anywhere on it -- once it has clearly moved down, with everything under
+  it scrolled to its top (`sheetPullDecision`, `sheet.js`) -- moves the sheet
+  with it, as iOS does; a sheet holding a form pulls only by its grabber, so a
+  stray drag cannot throw the edits away. Past a quarter of its height or on a
+  flick it leaves, otherwise it settles back. However it is closed (Done, the
   backdrop, Escape, the back gesture) it slides down and its backdrop fades
   (`slideSheetAway`) rather than vanishing. A sheet with `detents` taller
   than three-quarters of the screen opens at half height and is pulled up to

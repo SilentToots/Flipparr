@@ -4211,6 +4211,7 @@ class CatalogStore:
     NOTIFICATIONS_KEEP_CLEARED_DAYS = 30
     NOTIFICATIONS_KEEP_DAYS = 90
     NOTIFICATIONS_KEEP_ROWS = 200
+    NOTIFICATION_DISMISSALS_KEEP = 500
 
     def notification_mark(self, name: str) -> str | None:
         with self._connect() as connection:
@@ -4262,17 +4263,24 @@ class CatalogStore:
         ids = sorted({int(value) for value in acquisition_request_ids})
         if not ids:
             return {}
+        wanted = set(ids)
         with self._connect() as connection:
             rows = connection.execute(
-                f"""SELECT member_requests.acquisition_request_id, member_requests.requested_by
+                f"""SELECT member_requests.acquisition_request_id, member_requests.requested_by,
+                           json_extract(member_requests.detail_json, '$.acquisitionRequestIds') AS more
                       FROM member_requests JOIN users ON users.id = member_requests.requested_by
                      WHERE member_requests.status='approved' AND users.disabled=0
-                       AND member_requests.acquisition_request_id IN ({', '.join('?' for _ in ids)})""",
+                       AND (member_requests.acquisition_request_id IN ({', '.join('?' for _ in ids)})
+                            OR more IS NOT NULL)""",
                 ids,
             ).fetchall()
         audience: dict[int, set[int]] = {}
         for row in rows:
-            audience.setdefault(int(row["acquisition_request_id"]), set()).add(int(row["requested_by"]))
+            # The column holds one; an arc's several pulls ride in the detail.
+            linked = {int(row["acquisition_request_id"])} if row["acquisition_request_id"] is not None else set()
+            linked |= {int(value) for value in (_load_json(row["more"], []) or []) if str(value).isdigit()}
+            for request_id in linked & wanted:
+                audience.setdefault(request_id, set()).add(int(row["requested_by"]))
         return audience
 
     def record_notification(
@@ -4382,7 +4390,15 @@ class CatalogStore:
             )
             connection.executemany(
                 "DELETE FROM notification_dismissals WHERE user_id=? AND key=?",
-                [(int(user_id), str(key)) for key in remove],
+                [(int(user_id), str(key)[:200]) for key in remove],
+            )
+            # A profile keeps its newest few hundred; the rest were about
+            # things long gone.
+            connection.execute(
+                """DELETE FROM notification_dismissals WHERE user_id=? AND key NOT IN (
+                       SELECT key FROM notification_dismissals WHERE user_id=?
+                        ORDER BY dismissed_at DESC, rowid DESC LIMIT ?)""",
+                (int(user_id), int(user_id), self.NOTIFICATION_DISMISSALS_KEEP),
             )
         return self.notification_dismissals(user_id)
 
@@ -4673,6 +4689,19 @@ class CatalogStore:
                 """UPDATE series_runs SET age_rating=?, age_rating_source=?, age_rating_note=?,
                           age_rating_checked_at=? WHERE id=?""",
                 (rating, source if rating else None, (note or None) if rating else None, _utc_now(), int(series_run_id)),
+            )
+
+    def note_rating_check_failed(self, series_run_id: int, error: str) -> None:
+        """A lookup that could not be made: the run keeps whatever rating it
+        has, is marked checked so it goes to the back of the queue, and -- if
+        it has no rating -- says why in its note."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE series_runs
+                      SET age_rating_checked_at=?,
+                          age_rating_note=CASE WHEN age_rating IS NULL THEN ? ELSE age_rating_note END
+                    WHERE id=?""",
+                (_utc_now(), f"Couldn't check: {str(error or '').strip()[:160]}", int(series_run_id)),
             )
 
     def set_run_rating_override(self, series_run_id: int, rating: str | None) -> None:
@@ -7129,6 +7158,20 @@ class CatalogStore:
             ).fetchall()
         return {str(row["release_key"]) for row in rows}
 
+    def rejected_release_keys_for_jobs(self, job_ids: Sequence[int]) -> set[str]:
+        """Release identities refused for any of these wanted issues and still
+        set aside -- a run's pack is judged against the whole run."""
+        ids = sorted({int(value) for value in job_ids})
+        if not ids:
+            return set()
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT release_key FROM acquisition_release_failures
+                    WHERE job_id IN ({', '.join('?' for _ in ids)}) AND {self._REFUSAL_IN_FORCE}""",
+                (*ids, self._soft_refusal_cutoff()),
+            ).fetchall()
+        return {str(row["release_key"]) for row in rows}
+
     def rejected_acquisition_releases(self, job_id: int) -> list[dict[str, Any]]:
         """Refused release identities and titles still set aside, for search de-duplication."""
         with self._connect() as connection:
@@ -7214,9 +7257,11 @@ class CatalogStore:
         desired = str(status or "").strip().casefold()
         if desired not in allowed:
             raise ValueError("Unsupported acquisition download status")
-        now = _utc_now()
-        imported_at = now if desired == "imported" else None
         with self._write_lock, self._connect() as connection:
+            # Taken once the lock is held: a time stamped before a long wait
+            # on it can fall behind the notifications' arrivals mark.
+            now = _utc_now()
+            imported_at = now if desired == "imported" else None
             if not connection.execute(
                 "SELECT id FROM acquisition_downloads WHERE id=?", (download_id,)
             ).fetchone():
