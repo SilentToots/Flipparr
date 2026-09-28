@@ -8651,6 +8651,17 @@ export function App() {
   // play its exit animation rather than being removed from the tree outright.
   const [drawerDismissSignal, setDrawerDismissSignal] = useState(0);
   const [selectedSeries, setSelectedSeries] = useState(null);
+  // What the drawer shows right now, for work that finishes later. A check,
+  // a save or a sync that ended after the drawer was closed used to set the
+  // run again and open the drawer on its own; refreshing is only for a drawer
+  // that is still open on that run.
+  const selectedSeriesRef = useRef(null);
+  useEffect(() => { selectedSeriesRef.current = selectedSeries; }, [selectedSeries]);
+  const refreshOpenSeries = useCallback((refreshed) => {
+    if (refreshed && selectedSeriesRef.current && String(selectedSeriesRef.current.id) === String(refreshed.id)) {
+      setSelectedSeries(refreshed);
+    }
+  }, []);
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [seriesParentCollection, setSeriesParentCollection] = useState(null);
   const [collectionTab, setCollectionTab] = useState("overview");
@@ -9069,7 +9080,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === String(seriesId));
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast("Series alias confirmed");
       return { ok: true };
     } catch (error) {
@@ -9085,7 +9096,7 @@ export function App() {
       const selectedId = selectedSeries?.id;
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === selectedId);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast(`Collection “${name}” created`);
       return { ok: true };
     } catch (error) {
@@ -9101,7 +9112,7 @@ export function App() {
       const selectedId = selectedSeries?.id;
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === selectedId);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast(familyId ? "Run moved into collection" : "Run removed from collection");
       return { ok: true };
     } catch (error) {
@@ -9140,7 +9151,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const updated = data?.series?.find((item) => item.id === String(series.id));
-      if (updated) setSelectedSeries(updated);
+      refreshOpenSeries(updated);
       const providerNote = result?.refresh?.status === "unavailable"
         ? " The provider could not be reached, so run Refresh details later."
         : "";
@@ -9161,7 +9172,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === String(seriesId));
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       const metadata = result.metadata || {};
       const repaired = (metadata.repairedTitleCount || 0) + (metadata.repairedDateCount || 0);
       const remaining = (metadata.missingTitleCount || 0) + (metadata.missingDateCount || 0);
@@ -9198,7 +9209,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === runWorkbench.series.id);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       setRunWorkbench(null);
       showToast(`${result.issueCount} canonical issues loaded from the confirmed run`);
     } catch (error) {
@@ -9306,8 +9317,8 @@ export function App() {
     const selectedId = healing?.seriesId || selectedSeries?.id;
     const data = await loadCatalog();
     const refreshed = data?.series?.find((item) => item.id === selectedId);
-    if (refreshed) setSelectedSeries(refreshed);
-    else if (selectedSeries) setSelectedSeries(null);
+    if (refreshed) refreshOpenSeries(refreshed);
+    else if (selectedSeriesRef.current) setSelectedSeries(null);
     setWorkbench(null);
     if (healing?.status === "healed" && healing.healedFileCount > 1) {
       showToast(`${message} · ${healing.healedFileCount} connected files updated`);
@@ -9361,7 +9372,7 @@ export function App() {
     const data = await loadCatalog();
     if (selectedSeriesId) {
       const refreshedSeries = data?.series?.find((item) => item.id === selectedSeriesId);
-      if (refreshedSeries) setSelectedSeries(refreshedSeries);
+      refreshOpenSeries(refreshedSeries);
     }
     if (selectedCollectionId) {
       const refreshedCollection = data?.families?.find((item) => item.id === selectedCollectionId);
@@ -9463,7 +9474,7 @@ export function App() {
         if (refreshedCollection && selectedCollection) setSelectedCollection(refreshedCollection);
       } else {
         const refreshedSeries = data?.series?.find((item) => String(item.id) === String(collection.id));
-        if (refreshedSeries && selectedSeries) setSelectedSeries(refreshedSeries);
+        refreshOpenSeries(refreshedSeries);
       }
       const wantedCount = Number(request.wantedIssueCount || 0);
       showToast(wantedCount
@@ -9589,7 +9600,7 @@ export function App() {
       const data = await loadCatalog();
       if (selectedSeriesId) {
         const refreshed = data?.series?.find((item) => item.id === selectedSeriesId);
-        if (refreshed) setSelectedSeries(refreshed);
+        refreshOpenSeries(refreshed);
       }
       setReplacementFile(null);
       showToast(`Replacement requested for ${request.targetTitle}`);
@@ -9652,7 +9663,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === selectedSeries?.id);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast(rating ? `${subject} rated ${rating} star${rating === 1 ? "" : "s"}` : `Rating removed from ${subject}`);
     } catch (error) { showToast(error.message, "error"); }
   }
@@ -9663,7 +9674,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === series.id);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast(rating ? `${series.title} rated ${RATING_LABELS[rating]}` : `${series.title} uses the rating found for it`);
     } catch (error) { showToast(error.message, "error"); }
   }
@@ -9675,7 +9686,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === series.id);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast(saved.readingDirection
         ? `${series.title} reads ${saved.readingDirection === "rtl" ? "right to left" : "left to right"}`
         : `${series.title} follows its medium again`);
@@ -9714,7 +9725,7 @@ export function App() {
     const selectedId = selectedSeries?.id;
     const data = await loadCatalog();
     const refreshed = data?.series?.find((item) => item.id === selectedId);
-    if (refreshed) setSelectedSeries(refreshed);
+    refreshOpenSeries(refreshed);
     setCoverWorkbench(null);
     showToast(message);
   }
@@ -9757,7 +9768,7 @@ export function App() {
     const selectedId = selectedSeries?.id;
     const data = await loadCatalog();
     const refreshed = data?.series?.find((item) => item.id === selectedId);
-    if (refreshed) setSelectedSeries(refreshed);
+    refreshOpenSeries(refreshed);
     setSeriesCoverWorkbench(null);
     showToast(message);
   }
@@ -9786,7 +9797,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((item) => item.id === series.id);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       showToast(`No longer following ${series.title}`);
     } catch (error) { showToast(error.message, "error"); }
     setUnfollowBusy(false);
@@ -9856,7 +9867,7 @@ export function App() {
       });
       const data = await loadCatalog();
       const refreshed = data?.series?.find((entry) => entry.id === seriesId);
-      if (refreshed) setSelectedSeries(refreshed);
+      refreshOpenSeries(refreshed);
       setMatchWorkbench(null);
       showToast(`Matched to ${result.matchedTitle || item.title}`);
     } catch (error) { setMatchError(error.message); }
@@ -9875,7 +9886,7 @@ export function App() {
     const selectedCollectionId = selectedCollection?.id;
     const catalogData = await loadCatalog();
     const refreshed = catalogData?.series?.find((item) => item.id === selectedId);
-    if (refreshed) setSelectedSeries(refreshed);
+    refreshOpenSeries(refreshed);
     const refreshedCollection = catalogData?.families?.find((item) => item.id === selectedCollectionId);
     if (refreshedCollection) setSelectedCollection(refreshedCollection);
     setContentsWorkbench(data);
