@@ -945,6 +945,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .reading-list-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); }
 .reading-list-edit-actions { display: flex; justify-content: flex-end; gap: var(--space-8); }
 .reading-list-title-badge { margin-left: var(--space-6); vertical-align: middle; }
+.arc-tools { display: flex; justify-content: flex-end; margin-bottom: var(--space-16); }
+.import-list-modal form { display: grid; gap: var(--space-16); }
+.import-list-modal input[type="file"] { padding: var(--space-8) var(--space-12); }
+.import-list-credit { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-relaxed); }
+.import-list-duplicate { flex-wrap: wrap; }
 .request-swipe-pile { display: grid; }
 .request-swipe-pile > * { grid-area: 1 / 1; }
 .request-swipe-peek { transform: translateY(var(--space-12)) scale(.96); opacity: .5; pointer-events: none; }

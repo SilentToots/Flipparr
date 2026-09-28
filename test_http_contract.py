@@ -1704,10 +1704,19 @@ class ReaderProfileHttpTests(unittest.TestCase):
                              ("POST", "/api/v1/reading-lists/1/refresh")):
             denied = self.call(method, path, {"arcId": "482"}, cookies=cookies)
             self.assertEqual((denied.status, denied.json().get("reason")), (403, "admin_only"), f"{method} {path}")
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists/import", {"url": "https://example.invalid/x.cbl"}, cookies=cookies).json().get("reason"), "admin_only")
         admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
         self.assertEqual(self.call("POST", "/api/v1/reading-lists", {"arcId": "not-an-id"}, cookies=admin).status, 400)
-        self.assertEqual(self.call("DELETE", "/api/v1/reading-lists/1", cookies=admin).status, 404)
-        self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"order": "1,2"}, cookies=admin).status, 400)
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists/import", {"url": "ftp://x/y.cbl"}, cookies=admin).status, 400)
+        cbl = (b'<ReadingList><Name>Two</Name><Books><Book Series="Example" Number="1" Volume="2020"/>'
+               b'<Book Series="Example" Number="2" Volume="2020"/></Books></ReadingList>')
+        raw = request("POST", self.base + "/api/v1/reading-lists/import", cbl, "application/octet-stream",
+                      headers={"X-Filename": "two.cbl", "Cookie": "; ".join(f"{k}={v}" for k, v in admin.items())})
+        self.assertEqual((raw.status, raw.json()["name"], raw.json()["issueCount"]), (201, "Two", 2), raw.body)
+        self.assertEqual(self.call("GET", "/api/v1/reading-lists", cookies=cookies).json()["lists"][0]["name"], "Two", "the reader sees it")
+        self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"order": "1,2"}, cookies=admin).status, 400, "an order is a list")
+        self.assertEqual(self.call("DELETE", "/api/v1/reading-lists/1", cookies=admin).status, 200)
+        self.assertEqual(self.call("DELETE", "/api/v1/reading-lists/1", cookies=admin).status, 404, "gone")
 
     def test_a_reader_cannot_be_added_while_the_admin_is_one_tap_away(self):
         refused = self.call("POST", "/api/v1/users", {"name": "Sam"})

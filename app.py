@@ -21,7 +21,9 @@ import html
 import http.cookies
 import base64
 import io
+import http.client
 import ipaddress
+import socket
 import json
 import math
 import mimetypes
@@ -41,6 +43,8 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from reading_list_formats import parse_reading_list
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
@@ -12147,20 +12151,21 @@ def _pull_missing_issues(issues: list[dict[str, Any]], titles: dict[str, str]) -
     per series. What could not be pulled is said, and the rest still is; an
     issue with no catalog id to pull by is said too. Nothing missing is an
     empty answer, for the caller to word."""
-    groups: dict[str, list[str]] = {}
+    groups: dict[tuple[str, str], list[str]] = {}
     failed: list[dict[str, Any]] = []
     for issue in issues:
         if issue["owned"] or issue["queued"]:
             continue
-        if (issue.get("provider") or "metron") != "metron" or not issue.get("providerSeriesId"):
+        provider = str(issue.get("provider") or "metron")
+        if not issue.get("providerSeriesId") or provider not in {"metron", "comic_vine", "gcd"}:
             failed.append({"providerSeriesId": issue.get("providerSeriesId"), "title": issue.get("seriesTitle"),
-                           "error": "No Metron entry to pull it from"})
+                           "error": "No catalog entry to pull it from"})
             continue
-        groups.setdefault(str(issue["providerSeriesId"]), []).append(issue["number"])
+        groups.setdefault((provider, str(issue["providerSeriesId"])), []).append(issue["number"])
     pulled = []
-    for series_id, numbers in groups.items():
+    for (provider, series_id), numbers in groups.items():
         try:
-            result = pull_discovered_issues("metron", series_id, numbers, query=titles.get(series_id, ""))
+            result = pull_discovered_issues(provider, series_id, numbers, query=titles.get(series_id, ""))
             pulled.append({"providerSeriesId": series_id, "title": titles.get(series_id), "numbers": result["numbers"],
                            "request": result.get("request"), "series": result.get("series")})
         except Exception as exc:  # noqa: BLE001 -- the other series are still pulled
@@ -12449,12 +12454,121 @@ def refresh_reading_list(list_id: int, *, user_id: int) -> dict[str, Any]:
     neighbours, our order and our removals kept."""
     store = catalog_store()
     data = store.reading_list(list_id)
-    if data["provider"] != "metron" or not data["providerArcId"]:
-        raise ValueError("This story arc has no catalog entry to refresh from")
-    detail = story_arc_detail(data["providerArcId"], force=True)
-    store.update_reading_list(list_id, name=detail["name"] or None, description=detail["description"], cover=detail["cover"])
-    merged = store.merge_reading_list_items(list_id, _arc_items_from_metron(detail))
+    if data["provider"] == "metron" and data["providerArcId"]:
+        detail = story_arc_detail(data["providerArcId"], force=True)
+        store.update_reading_list(list_id, name=detail["name"] or None, description=detail["description"], cover=detail["cover"])
+        merged = store.merge_reading_list_items(list_id, _arc_items_from_metron(detail))
+    elif data["source"] == "cbl" and data["sourceUrl"]:
+        raw, _ = _fetch_reading_list(data["sourceUrl"])
+        parsed = parse_reading_list(raw)
+        store.update_reading_list(list_id, description=parsed["description"], cover=(parsed["coverUrls"] or [None])[0])
+        merged = store.merge_reading_list_items(list_id, parsed["items"])
+    else:
+        raise ValueError("This story arc came from a file, so there is nothing to refresh it from")
     return {**reading_list_detail(list_id, user_id=user_id), **merged}
+
+
+# ---- Reading lists from files and links (CBL) --------------------------------
+# The community keeps reading orders as CBL files -- DieselTech's
+# CBL-ReadingLists on GitHub, made from CBRO and CMRO, is the one Kavita and
+# Komga import -- and those carry the story order Metron does not. They are
+# other people's work under no stated licence, so nothing is bundled: the
+# admin imports a file they have, or pastes a link, and the arc says where
+# it came from.
+
+READING_LIST_IMPORT_MAX_BYTES = 2 * 1024 * 1024
+
+
+class ReadingListDuplicate(ValueError):
+    def __init__(self, name: str, list_id: str):
+        super().__init__(f"You already have a story arc called {name}")
+        self.name, self.list_id = name, list_id
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401 -- urllib's signature
+        raise ValueError("That link redirects somewhere else; paste the link it ends up at")
+
+
+def _reading_list_link(url: str) -> str:
+    """The link as it will be fetched and remembered: http(s) only, a GitHub
+    page link turned into the raw file it shows, and the path encoded --
+    the community's file names have spaces and brackets, and a link copied
+    from a browser bar carries them as typed."""
+    url = str(url or "").strip()
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Paste a link that starts with https://")
+    if parsed.hostname == "github.com":
+        blob = re.fullmatch(r"/([^/]+)/([^/]+)/blob/(.+)", parsed.path)
+        if blob:
+            parsed = urllib.parse.urlsplit(f"https://raw.githubusercontent.com/{blob.group(1)}/{blob.group(2)}/{blob.group(3)}")
+    path = urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/:@!$&'()*+,;=-._~")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+
+
+def _fetch_reading_list(url: str) -> tuple[bytes, str]:
+    """A reading list from a link the admin pasted: never a host inside the
+    household's own network, no redirects, five seconds, two megabytes."""
+    url = _reading_list_link(url)
+    parsed = urllib.parse.urlsplit(url)
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))}
+    except socket.gaierror as exc:
+        raise ValueError(f"{parsed.hostname} could not be found") from exc
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            raise ValueError("That link points inside your own network")
+    request = urllib.request.Request(url, headers={
+        "User-Agent": f"Flipparr/{APP_VERSION}",
+        "Accept": "application/xml, application/json, text/xml, text/plain;q=0.9, */*;q=0.5",
+    })
+    opener = urllib.request.build_opener(_NoRedirects)
+    try:
+        with opener.open(request, timeout=5) as response:
+            data = response.read(READING_LIST_IMPORT_MAX_BYTES + 1)
+    except http.client.HTTPException as exc:
+        raise ValueError(f"That link could not be read: {exc}") from exc
+    if len(data) > READING_LIST_IMPORT_MAX_BYTES:
+        raise ValueError("That reading list is larger than 2 MB")
+    return data, url
+
+
+def import_reading_list(
+    *, data: bytes | None = None, url: str | None = None, filename: str = "", user_id: int,
+    replace_duplicate: bool = False,
+) -> dict[str, Any]:
+    """A CBL or JSON reading list, from a file or a link, kept as a story
+    arc. The same link twice is the same arc; a file whose name and length
+    match an arc already here is refused unless the admin says otherwise."""
+    store = catalog_store()
+    source_url = None
+    if url:
+        # The same list from the same place is the same arc, however the
+        # link was spelled.
+        existing = store.reading_list_by_source_url(_reading_list_link(url))
+        if existing is not None:
+            return {**reading_list_detail(existing, user_id=user_id), "existed": True}
+        data, source_url = _fetch_reading_list(url)
+    parsed = parse_reading_list(data or b"")
+    name = parsed["name"] or Path(filename).stem or "Reading list"
+    if not replace_duplicate:
+        for entry in store.reading_lists_overview():
+            if entry["source"] == "cbl" and entry["name"].casefold() == name.casefold() and len(entry["items"]) == len(parsed["items"]):
+                raise ReadingListDuplicate(name, entry["id"])
+    made = store.create_reading_list(
+        name, description=parsed["description"], cover=(parsed["coverUrls"] or [None])[0], source="cbl",
+        source_url=source_url, source_name=parsed["name"] or None, created_by=user_id, items=parsed["items"],
+    )
+    detail = reading_list_detail(int(made["id"]), user_id=user_id)
+    if not detail["cover"]:
+        # No picture of its own: the first comic that is here stands for it.
+        first = next((item["fileCover"] for item in detail["items"] if item["fileCover"]), None)
+        if first:
+            store.update_reading_list(int(made["id"]), cover=first)
+            detail["cover"] = first
+    return {**detail, "existed": False}
 
 
 def pull_reading_list(list_id: int, *, user_id: int) -> dict[str, Any]:
@@ -14824,6 +14938,10 @@ class Handler(BaseHTTPRequestHandler):
         if series_upload_match:
             self.handle_cover_upload(int(series_upload_match.group(1)), "series")
             return
+        if parsed_url.path == "/api/v1/reading-lists/import":
+            # A reading list file as a raw body, or JSON naming a link.
+            self.handle_reading_list_import()
+            return
         try:
             payload = self.read_json_body()
         except ValueError as exc:
@@ -16218,6 +16336,36 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": f"The comic could not be imported: {exc}"}, 500)
             return
         self.send_json(result, 201)
+
+    def handle_reading_list_import(self) -> None:
+        content_type = str(self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        try:
+            if content_type == "application/json":
+                payload = self.read_json_body()
+                result = import_reading_list(url=str(payload.get("url") or ""), user_id=self._viewer_id(),
+                                             replace_duplicate=bool(payload.get("force")))
+            else:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    self.send_json({"error": "Invalid Content-Length"}, 400)
+                    return
+                if length <= 0 or length > READING_LIST_IMPORT_MAX_BYTES:
+                    self.send_json({"error": "Upload a reading list no larger than 2 MB"}, 413)
+                    return
+                filename = urllib.parse.unquote(str(self.headers.get("X-Filename") or "")).strip()
+                result = import_reading_list(data=self.rfile.read(length), filename=filename, user_id=self._viewer_id(),
+                                             replace_duplicate=str(self.headers.get("X-Import-Anyway") or "") == "1")
+        except ReadingListDuplicate as exc:
+            self.send_json({"error": str(exc), "readingListId": exc.list_id}, 409)
+            return
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        except (urllib.error.URLError, OSError) as exc:
+            self.send_json({"error": f"The reading list could not be fetched: {getattr(exc, 'reason', exc)}"}, 502)
+            return
+        self.send_json(result, 200 if result.get("existed") else 201)
 
     def handle_cover_upload(self, entity_id: int, kind: str = "files") -> None:
         """Take a raw image body for a comic file or for a series run.

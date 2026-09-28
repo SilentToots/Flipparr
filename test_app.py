@@ -8050,6 +8050,82 @@ class ReadingListTests(unittest.TestCase):
             self.assertEqual(app._carry_out_member_request({**request, "params": {"arcId": "482"}}), (None, None))
 
 
+class ReadingListImportTests(ReadingListTests):
+    """A reading list from a file or a link, kept as a story arc."""
+
+    CBL = (b'<?xml version="1.0"?><ReadingList><Name>Hush (Batman)</Name><NumIssues>3</NumIssues><Books>'
+           b'<Book Series="Batman" Number="608" Volume="1940" Year="2002"><Database Name="cv" Series="796" Issue="1"/></Book>'
+           b'<Book Series="Batman" Number="609" Volume="1940" Year="2003"><Database Name="cv" Series="796" Issue="2"/></Book>'
+           b'<Book Series="Green Lantern" Number="1" Volume="2023" Year="2023"><Database Name="cv" Series="9001" Issue="3"/></Book>'
+           b'</Books></ReadingList>')
+
+    def test_a_file_becomes_an_arc_matched_to_the_library_without_the_wrong_era(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            made = app.import_reading_list(data=self.CBL, filename="hush.cbl", user_id=ADMIN_USER_ID)
+            ids = self._ids(store)
+            self.assertEqual((made["name"], made["source"], made["sourceName"], made["existed"]), ("Hush (Batman)", "cbl", "Hush (Batman)", False))
+            self.assertEqual([(i["seriesTitle"], i["number"], i["provider"], i["providerIssueId"]) for i in made["items"]],
+                             [("Batman", "608", "comic_vine", "1"), ("Batman", "609", "comic_vine", "2"), ("Green Lantern", "1", "comic_vine", "3")])
+            self.assertEqual([i["runId"] for i in made["items"]], [str(ids["Batman"][0]), None, None],
+                             "Batman #608 by title; #609 is no issue the library knows; Green Lantern (2023) is not the 2011 run")
+            self.assertEqual([i["owned"] for i in made["items"]], [True, False, False])
+            self.assertEqual(made["cover"], f"/api/v1/files/{ids['Batman'][1]['608'][0]}/pages/0", "the first comic here stands in for a cover")
+            with self.assertRaises(app.ReadingListDuplicate):
+                app.import_reading_list(data=self.CBL, filename="hush.cbl", user_id=ADMIN_USER_ID)
+            again = app.import_reading_list(data=self.CBL, filename="hush.cbl", user_id=ADMIN_USER_ID, replace_duplicate=True)
+            self.assertNotEqual(again["id"], made["id"])
+            with self.assertRaisesRegex(ValueError, "not a CBL"):
+                app.import_reading_list(data=b"hello", filename="x.cbl", user_id=ADMIN_USER_ID)
+            with self.assertRaisesRegex(ValueError, "nothing to refresh"):
+                app.refresh_reading_list(int(made["id"]), user_id=ADMIN_USER_ID)
+
+    def test_a_linked_run_is_the_arcs_whatever_the_title_says(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            ids = self._ids(store)
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute(
+                    "INSERT INTO series_provider_ids(series_run_id, provider, provider_id, confirmed, source, updated_at) VALUES (?, 'comic_vine', '9001', 1, 'test', 'now')",
+                    (ids["Green Lantern"][0],))
+            made = app.import_reading_list(data=self.CBL, filename="hush.cbl", user_id=ADMIN_USER_ID)
+            self.assertEqual(made["items"][2]["runId"], str(ids["Green Lantern"][0]), "linked at Comic Vine, so the title's era does not decide")
+
+    def test_a_link_is_fetched_once_kept_and_refreshed_but_never_from_inside_the_house(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            fetched = []
+            def fetch(url):
+                fetched.append(url)
+                return self.CBL, url
+            stack.enter_context(patch.object(app, "_fetch_reading_list", side_effect=fetch))
+            made = app.import_reading_list(url="https://example.invalid/hush.cbl", user_id=ADMIN_USER_ID)
+            self.assertEqual((made["sourceUrl"], made["existed"], fetched), ("https://example.invalid/hush.cbl", False, ["https://example.invalid/hush.cbl"]))
+            same = app.import_reading_list(url="https://example.invalid/hush.cbl", user_id=ADMIN_USER_ID)
+            self.assertEqual((same["id"], same["existed"], len(fetched)), (made["id"], True, 1), "the same link is the same arc")
+            refreshed = app.refresh_reading_list(int(made["id"]), user_id=ADMIN_USER_ID)
+            self.assertEqual((refreshed["added"], refreshed["updated"], len(fetched)), (0, 3, 2))
+        for bad in ("file:///etc/hosts", "ftp://x/y", "", "http://127.0.0.1/list.cbl", "http://localhost/list.cbl", "http://10.0.0.5/a.cbl"):
+            with self.assertRaises(ValueError, msg=bad):
+                app._fetch_reading_list(bad)
+        with patch.object(app.socket, "getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 443))]):
+            with patch.object(app.urllib.request, "build_opener") as opener:
+                opener.return_value.open.return_value.__enter__.return_value.read.return_value = b"x" * (app.READING_LIST_IMPORT_MAX_BYTES + 1)
+                with self.assertRaisesRegex(ValueError, "larger than 2 MB"):
+                    app._fetch_reading_list("https://example.invalid/big.cbl")
+                opener.return_value.open.return_value.__enter__.return_value.read.return_value = self.CBL
+                data, url = app._fetch_reading_list("https://github.com/DieselTech/CBL-ReadingLists/blob/main/DC/x.cbl")
+                self.assertEqual((data, url), (self.CBL, "https://raw.githubusercontent.com/DieselTech/CBL-ReadingLists/main/DC/x.cbl"),
+                                 "a GitHub page link is read as the raw file")
+        self.assertEqual(app._reading_list_link("https://github.com/D/L/blob/main/DC/2023 - Dawn/[DC Comics] Absolute Power (WEB-CBRO).cbl"),
+                         "https://raw.githubusercontent.com/D/L/main/DC/2023%20-%20Dawn/%5BDC%20Comics%5D%20Absolute%20Power%20(WEB-CBRO).cbl",
+                         "spaces and brackets as a browser bar shows them")
+        self.assertEqual(app._reading_list_link("https://x.invalid/a%20b.cbl"), "https://x.invalid/a%20b.cbl", "already encoded stays so")
+
+
 class NotificationViewTests(unittest.TestCase):
     def test_an_arrival_shows_the_comics_own_first_page(self):
         viewer = Viewer(id=1, name="Admin", role="admin")

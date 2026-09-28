@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 # The modules a user's request actually travels through.
-CHECKED = ["app.py", "catalog_store.py", "page_panels.py", "access_policy.py", "content_rating.py"]
+CHECKED = ["app.py", "catalog_store.py", "page_panels.py", "access_policy.py", "content_rating.py", "reading_list_formats.py"]
 
 
 class NoUndefinedNamesTests(unittest.TestCase):
