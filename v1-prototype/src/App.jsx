@@ -6182,12 +6182,12 @@ function ReadRunOverlay({ run, reading, onRead }) {
   // Only a comic mid-page is opened by file: between issues the latest file is
   // the one just finished, and the reader would reopen it from page one. The
   // run resolves to the next unread -- or, once every issue is read, to #1.
-  // The marker: a check once every issue is read; how many are left on a run
-  // that has been started (Plex's unwatched count, only once you have begun).
-  const left = place && place.total ? Math.max(0, place.total - (place.read || 0)) : 0;
+  // The marker says the same words an issue's badge does: "Read" once every
+  // issue is, "In progress" on a run that has been started. A bare count of
+  // what was left said nothing on its own (the owner, 2026-09-28).
   return <>
-    {place?.state === "finished" ? <span className="series-card-mark done" role="img" aria-label="Read"><Check size={13} weight="bold" /></span>
-      : place && left ? <span className="series-card-mark" role="img" aria-label={`${left} unread`}>{left}</span> : null}
+    {place?.state === "finished" ? <span className="series-card-mark done">Read</span>
+      : place ? <span className="series-card-mark">In progress</span> : null}
     <button type="button" className="series-card-read" title={verb}
       onClick={() => onRead(started ? { id: place.fileId } : { runId: run.id })} aria-label={label}>
       <BookOpen size={16} weight="fill" />
