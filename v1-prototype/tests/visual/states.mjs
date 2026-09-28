@@ -72,19 +72,23 @@ export const states = [
     },
   },
   {
-    // Requires the menu, not just the bar: a click that lands before the
-    // bell has items photographs the closed state, and the run reads clean
-    // having captured the same page as library-grid.
+    // Requires the popover, not just the bar: a click that lands before the
+    // bell is ready photographs the closed state, and the run reads clean
+    // having captured the same page as library-grid. The bell opens a glass
+    // popover (`.notifications-popover`) above 640px and a full-screen sheet
+    // (`.notifications-sheet`) on a phone; the menu it replaced is gone.
+    // Opening it marks the news read on the server, which a scratch library
+    // does not mind and the shared one would.
     name: "notifications-open",
     // The phone's bell is a different control in the Comics header.
     phone: false,
     path: "/library",
     waitForCatalog: true,
-    require: [".page-header", ".notifications-menu", ".series-card"],
+    require: [".page-header", ".notifications-popover", ".series-card"],
     async setup(page) {
       await page.waitForSelector(".appbar-notifications button", { timeout: 15000 });
       await page.locator(".appbar-notifications button").first().click();
-      await page.waitForSelector(".notifications-menu", { timeout: 15000 });
+      await page.waitForSelector(".notifications-popover", { timeout: 15000 });
       await settle(page);
     },
   },
@@ -175,7 +179,13 @@ export const states = [
     },
   },
   { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
-  { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .empty-state"] },
+  // Wanted is the first tab -- a request's row or the "All caught up" empty
+  // state -- unless a reader's request is waiting, when the page opens on the
+  // Requests tab instead: a queue row on desktop, a swipe card on a phone, and
+  // no empty state at all. Every one of those is proof of content, but they
+  // are different pages, so the baseline is made with no request pending (see
+  // README.md, "What the library needs").
+  { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .request-queue-row, .request-swipe, .request-empty"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },

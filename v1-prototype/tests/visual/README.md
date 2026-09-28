@@ -1,16 +1,47 @@
 # Visual regression
 
-Fifteen screens, photographed and measured, so a change to the design system
-can be made without guessing at what it did to the rest of the app.
+Nineteen screens, photographed and measured at two widths — 33 captures — so
+a change to the design system can be made without guessing at what it did to
+the rest of the app.
 
 ## Running it
 
-Needs the UI dev loop up — the SSH tunnel to the backend and the Vite server:
+Run it against a scratch backend on this machine, with a small library made
+for it (below). The shared QA library changes under a capture — someone
+reads, something arrives — and since profiles, a capture cannot sign in to
+production at all; opening the bell also marks that profile's news read on
+the server, which is nobody's to do on a library they share.
+
+From the repository root, with the Python 3.13 venv the backend tests use:
 
 ```
-ssh -f -N -L 127.0.0.1:8795:<backend-address>:8795 <your-ssh-host>
-npm run dev:uiqa                      # or preview_start name flipparr-ui
+export FLIPPARR_DATABASE=/path/to/scratch/config/flipparr.db
+export FLIPPARR_PROVIDER_CONFIG=/path/to/scratch/config/metadata-providers.json
+export FLIPPARR_ACQUISITION_CONFIG=/path/to/scratch/config/acquisition-services.json
+export FLIPPARR_SETTINGS_CONFIG=/path/to/scratch/config/settings.json
+export FLIPPARR_AUTH_CONFIG=/path/to/scratch/config/auth.json
+export FLIPPARR_LIBRARY_ROOT=/path/to/scratch/comics
+export FLIPPARR_SAB_COMPLETE_ROOT=/path/to/scratch/completed
+python -B app.py serve --port 8801
 ```
+
+and from `v1-prototype/`, a Vite server proxying `/api` to it:
+
+```
+SONICBOOM_API_ORIGIN=http://127.0.0.1:8801 npx vite --port 4199 --strictPort
+```
+
+Point the scripts at both — `VISUAL_APP_ORIGIN` for every state and
+`VISUAL_BACKEND_ORIGIN` for `intake`, which is served by the backend itself:
+
+```
+export VISUAL_APP_ORIGIN=http://localhost:4199
+export VISUAL_BACKEND_ORIGIN=http://127.0.0.1:8801
+```
+
+(The tunnelled QA library still works for `layout:check`, which only reads:
+`ssh -f -N -L 127.0.0.1:8795:<backend-address>:8795 <your-ssh-host>` and
+`npm run dev:uiqa`, and the defaults point there.)
 
 Then, from `v1-prototype/`:
 
@@ -22,8 +53,46 @@ node tests/visual/compare.mjs baseline current
 ```
 
 Captures are gitignored. They are ~20MB a run and regenerate deterministically
-in about 40 seconds, so the scripts are tracked and the output is not — to
-compare against an older commit, check it out and capture again.
+in about two minutes — the same library captured twice diffs at zero pixels
+on every state — so the scripts are tracked and the output is not. To compare
+against an older commit, check it out and capture again.
+
+## What the library needs
+
+Each state declares the selectors that prove it photographed something, and
+several of them can only be satisfied by data. A scratch library that passes
+every state has:
+
+- **At least three runs, one of them with two or more readable issues.**
+  `reader-finish` opens the last page of a run's first issue and needs a next
+  one to offer. The reader renders the pages, so the archives need real
+  images in them, not placeholder bytes: a `.cbz` of a few small JPEGs per
+  issue, made with Pillow, is enough.
+- **One followed run** for `library-following`, and **one run in progress** —
+  started, with issues still unread — for `library-in-progress`. The same run
+  can be both. Scan the folder with `metadataMode: "local"` (`POST
+  /api/v1/scans`) so nothing is asked of a provider, then `POST
+  /api/v1/series/<id>/monitoring` with `{}` to follow it and `POST
+  /api/v1/files/<fileId>/progress` with `{"page": 2}` to be part-way through
+  its first issue.
+- **No reader's request waiting.** A pending `member_requests` row opens the
+  Pull List on its Requests tab — a queue row on desktop, a swipe card on a
+  phone — which is a different page from the Wanted tab the baseline holds,
+  even though `pull-list` accepts either as content.
+- **No acquisition requests**, so the Pull List photographs its "All caught
+  up" empty state and stays the same from one run to the next. Against a live
+  library that tab changes on its own; read its row with that in mind.
+- **Sign-in off, and one profile.** A fresh Playwright context carries no
+  session. With sign-in off and only the admin, every request is the admin's
+  and the grid opens straight away; a household with more than one profile
+  opens on "Who's reading?" instead, and every state fails on the picker.
+- **No metadata or acquisition services configured.** Discover's release
+  shelves are stubbed (`stubs.mjs`) and the rest of the app says the
+  catalogs are not connected, which is a stable thing to photograph.
+
+The baseline was last regenerated (2026-09-28) against three runs — Saga
+2012 ×3, Paper Girls 2015 ×2, Wolverine 2020 ×2, six pages each — with Saga
+followed and its first issue on page 2.
 
 ## What it checks
 
@@ -68,8 +137,7 @@ colours, so a type change shows up in the report as exactly which elements
 moved and from what to what.
 
 `VISUAL_APP_ORIGIN` and `VISUAL_BACKEND_ORIGIN` point the run somewhere other
-than `dev:uiqa`. Against a live library, the Pull List changes between runs on
-its own; read its row in the report with that in mind.
+than `dev:uiqa`; the defaults are that dev server and the tunnel it proxies.
 
 ## The guard that matters
 
@@ -77,6 +145,16 @@ its own; read its row in the report with that in mind.
 renders its empty state and a capture would "succeed" having photographed
 nothing. Each state in `states.mjs` therefore declares the selectors that prove
 it has real content, and the run fails if they are missing.
+
+The same guard catches the harness's own drift. One page serves every state,
+and the Comics grid remembers its view in localStorage under a key namespaced
+by profile (`flipparr.u1.library`), so `capture.mjs` clears that key before
+each state — `library-list` would otherwise leave a page of rows behind for
+every state after it that waits for a card, which is exactly what happened
+when the key gained its profile prefix and the script went on clearing the old
+name. A required selector that a refactor renamed (`.notifications-menu`
+became `.notifications-popover`) fails the same way, loudly, rather than
+photographing the closed bell.
 
 `intake` is captured on the backend origin, not through Vite — the dev server
 only proxies `/api`, and that surface consumes the same tokens.

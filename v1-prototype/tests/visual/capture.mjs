@@ -180,8 +180,17 @@ for (const { suffix, width, height } of VIEWPORTS) {
   // and filters in localStorage -- so library-list would otherwise leave the
   // list view behind for every state after it that waits for a card. Each
   // state starts from the grid's defaults, before its own setup runs.
+  //
+  // The key is namespaced by profile (`flipparr.u1.library` for the admin;
+  // src/profiles.js), so it is matched rather than named: clearing the old
+  // unscoped key alone is what left every drawer state after library-list
+  // waiting for a card on a page of rows.
   await page.addInitScript(() => {
-    try { localStorage.removeItem("flipparr.library"); } catch { /* private mode */ }
+    try {
+      for (const key of Object.keys(localStorage)) {
+        if (/^flipparr\.(u\d+\.)?library$/.test(key)) localStorage.removeItem(key);
+      }
+    } catch { /* private mode */ }
   });
   const work = [
     ...states.map((s) => [s, APP]),
