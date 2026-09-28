@@ -4344,6 +4344,16 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     return score, reasons
 
 
+def _plain_query_title(title: str) -> str:
+    """A title as a release spells it: apostrophes dropped ("World's" ->
+    "Worlds"), a hyphen inside a name kept ("Spider-Man"), every other mark a
+    space, one space between words."""
+    text = re.sub(r"['’]", "", str(title or ""))
+    text = re.sub(r"[^\w\s-]", " ", text)
+    text = re.sub(r"(?<!\w)-|-(?!\w)", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     """The queries to try for one wanted issue, widest match last.
 
@@ -4361,9 +4371,17 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     # "The Department of Truth 004" found nothing, "Department of Truth 004"
     # found the issue twice over. The catalog title is still tried first.
     titles = [series]
-    without_article = _without_leading_article(series)
-    if without_article and without_article != series:
-        titles.append(without_article)
+    # A release writes a title without its punctuation: "Batman / Superman:
+    # World's Finest" is posted as "Batman-Superman - Worlds Finest", and an
+    # indexer given the slash, the colon and the apostrophe found none of it
+    # while the same words alone found it twice. Asked plain as well.
+    plain = _plain_query_title(series)
+    if plain and plain != series:
+        titles.append(plain)
+    for title in list(titles):
+        without_article = _without_leading_article(title)
+        if without_article and without_article not in titles:
+            titles.append(without_article)
     issue = str(context.get("issueNumber") or "").strip()
     forms = []
     for title in titles:

@@ -4831,6 +4831,15 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
             ["Superior Spider-Man 006 AU", "Superior Spider-Man 6 AU", "Superior Spider-Man"],
         )
 
+    def test_punctuation_in_a_title_is_also_asked_for_plain(self):
+        forms = app._prowlarr_query_forms({"seriesTitle": "Batman / Superman: World's Finest", "issueNumber": "32"})
+        self.assertEqual(forms[0], "Batman / Superman: World's Finest 032", "the catalog's own spelling first")
+        self.assertLess(forms.index("Batman Superman Worlds Finest 032"), forms.index("Batman / Superman: World's Finest"),
+                        "the plain wording of the issue before any search for the series alone")
+        self.assertIn("Batman Superman Worlds Finest", forms)
+        self.assertEqual(len(forms), len(set(forms)), "each wording once")
+        self.assertEqual(app._plain_query_title("Ultimate Spider-Man"), "Ultimate Spider-Man", "a hyphen inside a name stays")
+
     def test_a_half_issue_is_asked_for_as_releases_write_it(self):
         self.assertEqual(
             app._prowlarr_query_forms({"seriesTitle": "Ultimate Spider-Man", "issueNumber": "½"}),
