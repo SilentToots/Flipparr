@@ -2054,7 +2054,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
             for header in (urllib.parse.quote(name), "Saga 001.cbz"):
                 response = request("POST", self.base + "/api/v1/acquisition-jobs/7/import", b"PK\x03\x04comic",
                                    "application/octet-stream", headers={"X-Filename": header})
-                self.assertEqual(response.status, 200, response.body)
+                self.assertEqual(response.status, 201, response.body)
         self.assertEqual([entry[2] for entry in seen], [name, "Saga 001.cbz"])
 
     def test_a_cookie_from_before_profiles_is_the_admins_and_is_upgraded(self):
