@@ -25,3 +25,13 @@ export function nextTabBarState({ scrollY, maxScroll, lastY, collapsed }) {
   if (y >= max - TAB_BAR_BOTTOM_ZONE) return { collapsed, lastY: y };
   return { collapsed: false, lastY: y };
 }
+
+/**
+ * Whether the bar may tuck on this screen: it folds into the current tab, so
+ * a screen with no tab of its own on a phone -- your profile, reached from
+ * the header; Search, whose tab is the desktop's -- keeps the whole bar
+ * rather than folding into an empty pill.
+ */
+export function canTuck(active, items) {
+  return (items || []).some((item) => item.id === active && !item.desktopOnly);
+}

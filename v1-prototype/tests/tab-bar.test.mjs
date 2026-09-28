@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nextTabBarState } from "../src/tab-bar.js";
+import { nextTabBarState, canTuck } from "../src/tab-bar.js";
 
 // Feed a run of scroll positions through the decision, as the scroll listener
 // does, and report the bar's state after each.
@@ -36,4 +36,12 @@ test("scrolling back up from the bottom still opens the bar once clear of the en
 
 test("a page too short to scroll keeps the bar open", () => {
   assert.deepEqual(replay([0, 30, 60], { maxScroll: 40 }), [false, false, false]);
+});
+
+test("the bar tucks only into a tab the phone shows", () => {
+  const items = [{ id: "search", desktopOnly: true }, { id: "library" }, { id: "settings" }];
+  assert.equal(canTuck("library", items), true);
+  assert.equal(canTuck("profile", items), false, "your profile has no tab: an empty pill (2026-09-27)");
+  assert.equal(canTuck("search", items), false, "Search's tab is the desktop's");
+  assert.equal(canTuck("library", null), false);
 });

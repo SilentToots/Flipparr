@@ -371,7 +371,9 @@ Motion tokens:
   (`slideSheetAway`) rather than vanishing. A sheet with `detents` taller
   than three-quarters of the screen opens at half height and is pulled up to
   full, by the grabber. The bell and the profile menu are sheets on a phone
-  and glass menus above 640px.
+  and glass menus above 640px. Your profile is a sheet on a phone (it has no
+  tab, and as a page left the tab bar nothing to fold into) and a page above
+  640px. The tab bar folds only into a tab the phone shows (`canTuck`).
 - **Choosing a profile** looks the same everywhere (`ProfileTiles`), after
   Plex's "Who's watching?": a disc with the name under it in regular weight,
   the one reading now named in white and marked "Reading now", and Add as a
