@@ -104,10 +104,29 @@ install is still one household on a trusted network: one admin, and optional
 reader profiles, Plex-Home style, each with its own reading history, place and
 ratings, chosen on a shared device ("Who's reading?", optional PIN) or signed
 into with the reader's own password. Every route has an access class and is
-the admin's unless listed (`access_policy.py`). Phase 1 (profiles, per-reader
-history, the picker and the reader boundary) is in; reader requests that wait
-for the admin's approval, and content restrictions for younger readers, are
-later phases. Multi-tenant public hosting remains out of scope.
+the admin's unless listed (`access_policy.py`). All three phases are in:
+
+- **Profiles** (schema 49-51, 53): per-reader history, the picker, the reader
+  boundary, and a per-profile lock -- open, PIN or password; the admin is never
+  open once readers exist.
+- **Requests** (schema 52, 55): a reader asks to follow a run or collection, or
+  to pull issues or a story arc from Discover. The request waits, inert, until
+  the admin approves it (or the reader is auto-approved); approving runs the
+  same work the admin's own request would.
+- **Content restrictions** (schema 54): each run carries an age rating on one
+  scale (Everyone, Teen, Teen+, Mature) -- the admin's own mark first, then
+  Metron's first and latest issues (the stricter wins), then, when turned on,
+  the rating printed on the cover as read by the vision model. A reader may
+  have a highest rating, may or may not see unrated comics, and may be kept out
+  of Discover. Everything above the limit is hidden server-side: a hidden run's
+  files, issues and covers answer 404.
+
+Shared devices can be forgotten all at once (a lost tablet): each needs the
+admin's password again, and every profile opened on one is signed out.
+Remaining profile work is release-gate testing of schemas 49-55 (clean install,
+upgrade, backup/restore) rather than new features; per-reader request quotas and
+per-device notification state are optional follow-ups. Multi-tenant public
+hosting remains out of scope.
 
 The V2 production interface will use React, TypeScript, Vite, and Tailwind CSS
 as its implementation foundation. This is a V2 replacement decision, not a
