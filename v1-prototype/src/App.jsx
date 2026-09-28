@@ -5764,7 +5764,10 @@ function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, className
   const label = issueLabel(issue.number, medium);
   const items = [];
   if (read && onRead) items.push({ key: "read", label: read.label, icon: <BookOpen size={16} weight="fill" />, onSelect: () => onRead({ id: issue.fileId }) });
-  if (read && onMark) items.push({ key: "mark", label: read.finished ? "Mark as unread" : "Mark as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMark(issue, !read.finished) });
+  // Part-read, it can be finished or forgotten; read, forgotten; untouched,
+  // finished. Someone else's place on your profile is cleared the same way.
+  if (read && onMark && !read.finished) items.push({ key: "mark-read", label: "Mark as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMark(issue, true) });
+  if (read && onMark && (read.finished || read.fraction)) items.push({ key: "mark-unread", label: "Mark as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMark(issue, false) });
   if (onEditIssue) items.push({ key: "edit", label: "Edit issue metadata", icon: <PencilSimple size={16} />, onSelect: () => onEditIssue(issue) });
   if (!items.length) return null;
   return <>
@@ -5787,12 +5790,14 @@ function readingBadge(read) {
 }
 
 // The run's own menu in its group header: mark every issue read, or unread.
-function RunMenu({ runRead, onMarkRun }) {
+function RunMenu({ runRead, runStarted, onMarkRun }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
   const close = useCallback(() => setOpen(false), []);
-  const items = [{ key: "mark", label: runRead ? "Mark run as unread" : "Mark run as read", icon: <Check size={16} weight="bold" />,
-    onSelect: () => onMarkRun(!runRead) }];
+  const items = [
+    ...(runRead ? [] : [{ key: "mark-read", label: "Mark run as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMarkRun(true) }]),
+    ...(runRead || runStarted ? [{ key: "mark-unread", label: "Mark run as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMarkRun(false) }] : []),
+  ];
   return <>
     <button type="button" ref={buttonRef} className="issue-group-menu" onClick={() => setOpen((value) => !value)}
       aria-haspopup="menu" aria-expanded={open} aria-label="Options for this run" title="Options">
@@ -5802,7 +5807,7 @@ function RunMenu({ runRead, onMarkRun }) {
   </>;
 }
 
-function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, runRead = false, readingFiles, medium }) {
+function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, runRead = false, runStarted = false, readingFiles, medium }) {
   // Covers are why the tab exists, so posters lead. A long run is also less
   // scrolling this way than as tall rows: four across beats one down.
   const [view, setView] = useState("grid");
@@ -5834,7 +5839,7 @@ function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, on
     {groups.map((group, groupIndex) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
     return <section className="issue-run-group" key={group.key}>
-      <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && onMarkRun && readingFiles ? <RunMenu runRead={runRead} onMarkRun={onMarkRun} /> : null}</div></header>
+      <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && onMarkRun && readingFiles ? <RunMenu runRead={runRead} runStarted={runStarted} onMarkRun={onMarkRun} /> : null}</div></header>
       <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
         // "Volume 5" under "Vol. 5" says it twice.
         const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
@@ -6575,7 +6580,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
         {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
       </> : null}
-      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} onMarkRun={onMarkRun ? (read) => onMarkRun(series, read) : undefined} runRead={runAllRead} readingFiles={readingFiles} medium={series.medium} /> : null}
+      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} onMarkRun={onMarkRun ? (read) => onMarkRun(series, read) : undefined} runRead={runAllRead} runStarted={runStarted} readingFiles={readingFiles} medium={series.medium} /> : null}
       {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
       {tab === "files" ? <FileInventory files={series.fileDetails} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
       {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
@@ -6596,10 +6601,15 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
           <button type="button" onClick={() => onRead({ id: restartFile.id, fromStart: true })}><ArrowCounterClockwise size={16} /> Restart</button>
         </section> : null}
         {readableFiles.length && onMarkRun ? <section className="advanced-card">
-          <div><strong>{runAllRead ? "Mark run as unread" : "Mark run as read"}</strong><p>{runAllRead
-            ? "Forgets your place in every issue of this run, for your profile only."
-            : "Marks every issue of this run read, for your profile only. Each issue's check does the same for one."}</p></div>
-          <button type="button" onClick={() => onMarkRun(series, !runAllRead)}><Check size={16} weight="bold" /> {runAllRead ? "Mark unread" : "Mark read"}</button>
+          <div><strong>Reading state</strong><p>{runAllRead
+            ? "Every issue is read. Marking the run unread forgets your place in all of them, for your profile only."
+            : runStarted
+              ? "Some of this run is read or in progress. Mark it all read, or unread to forget every place -- someone else's reading on your profile included."
+              : "Marks every issue of this run read, for your profile only. Each issue's menu does the same for one."}</p></div>
+          <div className="advanced-card-actions">
+            {!runAllRead ? <button type="button" onClick={() => onMarkRun(series, true)}><Check size={16} weight="bold" /> Mark read</button> : null}
+            {runAllRead || runStarted ? <button type="button" onClick={() => onMarkRun(series, false)}><ArrowCounterClockwise size={16} /> Mark unread</button> : null}
+          </div>
         </section> : null}
         <section className="advanced-card">
           <div><strong>Combine duplicate run</strong><p>One run split into two entries? Merge them. Files on disk aren&rsquo;t changed.</p></div>

@@ -391,8 +391,9 @@ Motion tokens:
   Komga, Plex and Panels. Changing it is never a tap on the cover -- that
   opens the comic -- but a "..." menu (`IssueMenu`, `ActionMenu`): revealed on
   hover on a desktop, always shown to a finger, and opened by a long press on
-  a tile. It holds Read / Continue, Mark as read or unread (this profile's
-  own), and the admin's Edit. The run's own "..." in its group header marks
+  a tile. It holds Read / Continue, Mark as read and Mark as unread -- both
+  offered while an issue is part-read, so a place someone else left on your
+  profile can be cleared -- and the admin's Edit. The run's own "..." in its group header marks
   the whole run, as does the Advanced tab. A run's card carries the same
   words, centred over its cover as an issue's are: "In progress" on a run that
   has been started, "Read" once every issue is, nothing before (a bare count of

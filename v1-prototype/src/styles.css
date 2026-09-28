@@ -1529,6 +1529,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .issue-group-menu { width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-8); background: transparent; color: var(--muted-strong); display: grid; place-items: center; cursor: pointer; }
 @media (hover: hover) { .issue-group-menu:hover { background: var(--surface-hover); color: var(--text); } }
 .action-menu button { min-height: 40px; }
+.advanced-card-actions { display: flex; flex-wrap: wrap; gap: var(--space-8); }
 .issue-tile-mark.done { position: absolute; z-index: 2; right: 6px; bottom: 6px; width: var(--space-24); height: var(--space-24); border-radius: var(--radius-pill); background: var(--badge-green-bg); color: var(--color-neutral-0); display: grid; place-items: center; }
 /* A run's card carries the issue badge's words, centred over the cover as an
    issue's is: "In progress" on a run that has been started, "Read" once every
