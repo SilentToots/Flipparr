@@ -357,10 +357,15 @@ Motion tokens:
   tab keeps Safari's.
 - **Sheets on a phone.** A dialog is a sheet from the bottom, 8px in from
   the screen's edges with 24px corners, over the tab bar, with a grabber
-  (`SheetGrabber`): the sheet follows a finger on it, and leaves past a
-  quarter of its height or on a flick, otherwise settling back. A sheet with
-  `detents` taller than three-quarters of the screen opens at half height and
-  is pulled up to full.
+  (`SheetGrabber`). It slides up as it opens. A finger pulling down anywhere
+  on it -- while what is under the finger is scrolled to its top -- moves the
+  sheet with it, as iOS does; past a quarter of its height or on a flick it
+  leaves, otherwise it settles back. However it is closed (Done, the
+  backdrop, Escape, the back gesture) it slides down and its backdrop fades
+  (`slideSheetAway`) rather than vanishing. A sheet with `detents` taller
+  than three-quarters of the screen opens at half height and is pulled up to
+  full, by the grabber. The bell and the profile menu are sheets on a phone
+  and glass menus above 640px.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

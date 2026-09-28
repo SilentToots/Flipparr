@@ -427,8 +427,20 @@ function useDialog(onClose) {
     const initial = focusable()[0] || node;
     if (initial === node && !node.hasAttribute("tabindex")) node.setAttribute("tabindex", "-1");
     initial.focus();
+    // A phone sheet leaves by sliding down, however it is closed.
+    const isSheet = () => node.matches(".modal, .library-sheet") && Boolean(window.matchMedia?.(SHEET_QUERY).matches);
+    const leave = () => (isSheet() ? slideSheetAway(node, () => closeRef.current?.()) : closeRef.current?.());
+    // The backdrop's own handler would close it at once; a tap on a sheet's
+    // backdrop is taken here first and slides it away instead.
+    const backdrop = node.parentElement?.matches?.(".modal-backdrop") ? node.parentElement : null;
+    function onBackdrop(event) {
+      if (event.target !== backdrop || !isSheet()) return;
+      event.stopPropagation();
+      leave();
+    }
+    backdrop?.addEventListener("mousedown", onBackdrop);
     openDialogs.push(node);
-    dialogClosers.set(node, () => closeRef.current?.());
+    dialogClosers.set(node, leave);
     let mark = 0;
     if (!node.hasAttribute("data-in-address")) {
       mark = ++dialogMarkCount;
@@ -441,7 +453,7 @@ function useDialog(onClose) {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        closeRef.current?.();
+        leave();
         return;
       }
       if (event.key !== "Tab") return;
@@ -464,6 +476,7 @@ function useDialog(onClose) {
     document.addEventListener("keydown", handleKeyDown, true);
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
+      backdrop?.removeEventListener("mousedown", onBackdrop);
       const index = openDialogs.indexOf(node);
       if (index !== -1) openDialogs.splice(index, 1);
       dialogClosers.delete(node);
@@ -1197,7 +1210,8 @@ function NotificationCenter({ bell, anchorRef, onClose }) {
   const head = <header className="notifications-head">
     <h2 id="notifications-title">Notifications</h2>
     {empty ? null : <button type="button" className="notifications-clear" onClick={bell.onClearAll}>Clear all</button>}
-    {phone ? <button type="button" className="glass-button glass-button--icon library-sheet-close" onClick={onClose} aria-label="Close"><X size={20} /></button> : null}
+    {phone ? <button type="button" className="glass-button glass-button--icon library-sheet-close"
+      onClick={() => slideSheetAway(dialogRef.current, onClose)} aria-label="Close"><X size={20} /></button> : null}
   </header>;
   if (phone) {
     return createPortal(<div className="modal-backdrop notifications-sheet-backdrop" onMouseDown={onClose}>
@@ -1830,7 +1844,8 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
       <SheetGrabber onClose={onClose} detents />
       <header>
         <h2 id="library-sheet-title">View &amp; sort</h2>
-        <button type="button" className="glass-button glass-button--icon library-sheet-close" onClick={onClose} aria-label="Close"><X size={20} /></button>
+        <button type="button" className="glass-button glass-button--icon library-sheet-close"
+          onClick={(event) => slideSheetAway(event.currentTarget.closest(".library-sheet"), onClose)} aria-label="Close"><X size={20} /></button>
       </header>
       {/* The desktop tools row's controls: segmented, with the sliding thumb. */}
       {editionsOn ? <fieldset>
@@ -2414,7 +2429,8 @@ function DialogCloseButton({ onClose, label, drawer = false }) {
   return <>
     {drawer ? null : <SheetGrabber onClose={onClose} />}
     <button type="button" className={`glass-button glass-button--icon modal-close${back ? " modal-back" : ""}`}
-      onClick={onClose} aria-label={back ? "Back" : label}>{back ? <ArrowLeft size={20} /> : <X size={20} />}</button>
+      onClick={(event) => (drawer ? onClose() : slideSheetAway(event.currentTarget.closest(".modal"), onClose))}
+      aria-label={back ? "Back" : label}>{back ? <ArrowLeft size={20} /> : <X size={20} />}</button>
   </>;
 }
 
@@ -2425,6 +2441,29 @@ function DialogCloseButton({ onClose, label, drawer = false }) {
 // (`detents`) opens at half height and is pulled up to full, then down to half
 // and away. Above 640px dialogs are centred and the grabber is not drawn.
 const SHEET_QUERY = "(max-width: 640px)";
+// A sheet leaving slides down and its backdrop fades, however it is closed --
+// Done, the backdrop, Escape, the back gesture -- as an iOS sheet does,
+// rather than vanishing. Off a phone, or with reduced motion, it just closes.
+function slideSheetAway(sheet, then) {
+  const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (!sheet || still || !window.matchMedia?.(SHEET_QUERY).matches) { then(); return; }
+  if (sheet.dataset.leaving) return;
+  sheet.dataset.leaving = "true";
+  const backdrop = sheet.parentElement;
+  sheet.style.transition = "transform var(--motion-duration-standard) var(--motion-ease-standard)";
+  sheet.style.transform = "translateY(110%)";
+  if (backdrop) {
+    backdrop.style.transition = "opacity var(--motion-duration-standard) var(--motion-ease-standard)";
+    backdrop.style.opacity = "0";
+  }
+  window.setTimeout(then, 260);
+}
+
+// The sheet's grabber, and the pull that closes a sheet. Down from anywhere on
+// the sheet while what is under the finger is scrolled to its top follows the
+// finger, as iOS does; the grabber alone also takes a mouse or pen, and a pull
+// up to a taller detent. Past a quarter of its height, or on a flick, the sheet
+// leaves; otherwise it settles back.
 function SheetGrabber({ onClose, detents = false }) {
   const ref = useRef(null);
   const closeRef = useRef(onClose);
@@ -2444,24 +2483,12 @@ function SheetGrabber({ onClose, detents = false }) {
       const done = () => { sheet.style.transition = ""; then?.(); };
       if (still) done(); else window.setTimeout(done, 280);
     }
-    function onDown(event) {
-      if (event.button !== 0) return;
-      drag = { y: event.clientY, at: performance.now(), dy: 0 };
-      grabber.setPointerCapture(event.pointerId);
-      sheet.style.transition = "none";
-    }
-    function onMove(event) {
-      if (!drag) return;
-      const dy = event.clientY - drag.y;
+    function follow(dy) {
       // Down follows the finger; up past where it rests stiffens, unless there
       // is a taller detent to pull it to.
-      drag.dy = dy;
       sheet.style.transform = `translateY(${dy > 0 ? dy : dy / (sheet.dataset.detent === "medium" ? 1.4 : 4)}px)`;
     }
-    function onUp() {
-      if (!drag) return;
-      const { dy, at } = drag;
-      drag = null;
+    function release(dy, at) {
       const speed = dy / Math.max(1, performance.now() - at);
       if (sheet.dataset.detent === "medium" && dy < -48) {
         sheet.dataset.detent = "large";
@@ -2470,20 +2497,96 @@ function SheetGrabber({ onClose, detents = false }) {
         sheet.dataset.detent = "medium";
         settle("translateY(0)");
       } else if (dy > sheet.offsetHeight * 0.25 || speed > 0.9) {
+        const backdrop = sheet.parentElement;
+        if (backdrop && !still) {
+          backdrop.style.transition = "opacity var(--motion-duration-standard) var(--motion-ease-standard)";
+          backdrop.style.opacity = "0";
+        }
+        sheet.dataset.leaving = "true";
         settle("translateY(110%)", () => closeRef.current?.());
       } else {
         settle("translateY(0)");
       }
     }
+    function onDown(event) {
+      if (event.button !== 0 || event.pointerType === "touch") return;
+      drag = { y: event.clientY, at: performance.now(), dy: 0 };
+      grabber.setPointerCapture(event.pointerId);
+      sheet.style.transition = "none";
+    }
+    function onMove(event) {
+      if (!drag) return;
+      drag.dy = event.clientY - drag.y;
+      follow(drag.dy);
+    }
+    function onUp() {
+      if (!drag) return;
+      const { dy, at } = drag;
+      drag = null;
+      release(dy, at);
+    }
+    // A finger, anywhere on the sheet. The pull is claimed as soon as it
+    // heads down from the top of whatever it started in -- before the browser
+    // can begin its own overscroll, after which the move could not be taken.
+    let touch = null;
+    function scrollerFor(target) {
+      for (let node = target; node && node !== sheet.parentElement; node = node.parentElement) {
+        if (node.scrollHeight > node.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+        if (node === sheet) break;
+      }
+      return null;
+    }
+    function onTouchStart(event) {
+      touch = null;
+      if (event.touches.length !== 1 || sheet.dataset.leaving) return;
+      if (event.target.closest?.("input, textarea, select, [data-sheet-no-drag]")) return;
+      const point = event.touches[0];
+      touch = { x: point.clientX, y: point.clientY, at: performance.now(), scroller: scrollerFor(event.target), dragging: false, dy: 0 };
+    }
+    function onTouchMove(event) {
+      if (!touch) return;
+      const point = event.touches[0];
+      const dx = point.clientX - touch.x;
+      const dy = point.clientY - touch.y;
+      if (!touch.dragging) {
+        const onGrabber = grabber.contains(event.target);
+        const atTop = onGrabber || !touch.scroller || touch.scroller.scrollTop <= 0;
+        // A pull up is the grabber's alone (to a taller detent); anything
+        // else -- sideways, up, or down inside a list that has somewhere to
+        // scroll -- is the page's.
+        if ((dy < 0 && !onGrabber) || Math.abs(dx) > Math.abs(dy) || !atTop) { touch = null; return; }
+        event.preventDefault();
+        if (Math.abs(dy) < 4) return;
+        touch = { ...touch, dragging: true, y: point.clientY, at: performance.now() };
+        sheet.style.transition = "none";
+        return;
+      }
+      event.preventDefault();
+      touch.dy = point.clientY - touch.y;
+      follow(touch.dy);
+    }
+    function onTouchEnd() {
+      const ended = touch;
+      touch = null;
+      if (ended?.dragging) release(ended.dy, ended.at);
+    }
     grabber.addEventListener("pointerdown", onDown);
     grabber.addEventListener("pointermove", onMove);
     grabber.addEventListener("pointerup", onUp);
     grabber.addEventListener("pointercancel", onUp);
+    sheet.addEventListener("touchstart", onTouchStart, { passive: true });
+    sheet.addEventListener("touchmove", onTouchMove, { passive: false });
+    sheet.addEventListener("touchend", onTouchEnd);
+    sheet.addEventListener("touchcancel", onTouchEnd);
     return () => {
       grabber.removeEventListener("pointerdown", onDown);
       grabber.removeEventListener("pointermove", onMove);
       grabber.removeEventListener("pointerup", onUp);
       grabber.removeEventListener("pointercancel", onUp);
+      sheet.removeEventListener("touchstart", onTouchStart);
+      sheet.removeEventListener("touchmove", onTouchMove);
+      sheet.removeEventListener("touchend", onTouchEnd);
+      sheet.removeEventListener("touchcancel", onTouchEnd);
     };
   }, [detents]);
   return <div className="sheet-grabber" ref={ref} aria-hidden="true" />;
@@ -4175,13 +4278,17 @@ function HeaderProfile() {
   </div>;
 }
 
+// On a phone the menu is a sheet from the bottom, as the bell is, with rows a
+// finger can hit; elsewhere a glass menu under the avatar.
 function ProfileMenu({ onClose }) {
   const header = useContext(HeaderContext);
   const viewer = useViewer();
   const actions = header.profile;
+  const phone = usePhoneWidth();
   const dialogRef = useDialog(onClose);
   const [others, setOthers] = useState(() => (actions.household ? null : []));
   useEffect(() => {
+    if (phone) return undefined;
     function handlePointerDown(event) {
       const node = dialogRef.current;
       if (!node || node.contains(event.target) || event.target.closest?.(".appbar-profile")) return;
@@ -4189,7 +4296,7 @@ function ProfileMenu({ onClose }) {
     }
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [onClose]);
+  }, [onClose, phone]);
   useEffect(() => {
     if (!actions.household) return;
     apiRequest("/api/v1/profiles")
@@ -4197,7 +4304,7 @@ function ProfileMenu({ onClose }) {
       .catch(() => setOthers([]));
   }, []);
   const go = (action) => () => { onClose(); action(); };
-  return <div className="profile-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-label="Profiles">
+  const rows = <>
     <button type="button" className="profile-menu-self" onClick={go(actions.onOpenProfile)}>
       <ProfileAvatar profile={viewer} />
       <span><strong>{viewer.name}</strong><small>View profile</small></span>
@@ -4218,7 +4325,22 @@ function ProfileMenu({ onClose }) {
     {actions.method === "forms" ? <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onSignOut)}>
       <SignOut size={16} /><span>Sign out</span>
     </button> : null}
-  </div>;
+  </>;
+  if (phone) {
+    return createPortal(<div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal profile-sheet" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="profile-sheet-title"
+        onMouseDown={(event) => event.stopPropagation()}>
+        <SheetGrabber onClose={onClose} />
+        <header>
+          <h2 id="profile-sheet-title">Profiles</h2>
+          <button type="button" className="glass-button glass-button--icon library-sheet-close"
+            onClick={() => slideSheetAway(dialogRef.current, onClose)} aria-label="Close"><X size={20} /></button>
+        </header>
+        <div className="profile-menu">{rows}</div>
+      </section>
+    </div>, document.body);
+  }
+  return <div className="profile-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-label="Profiles">{rows}</div>;
 }
 
 // Adding a profile the way Plex adds one: a name. Its colour is given to it
