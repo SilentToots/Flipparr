@@ -385,15 +385,17 @@ Motion tokens:
   sheet -- they are three to a row across the full width, each disc as wide as
   its column, its initials scaled to it; above 640px the picker centres them
   and the header's menu lays them from the left.
-- **Read marks (2026-09-28).** An issue's cover carries a round chip in its
-  bottom-right (`ReadMark`, `.issue-tile-mark`): solid green with a check once
-  read, faint until then (revealed on hover, always shown to a finger). It is
-  the control too: a tap marks the issue read or unread, for this profile. List
-  rows show the same check among their actions and the page reached in their
-  byline. A run's card carries the chip top-right: a check when every issue is
-  read, else the count left of a run that has been started (Plex's unwatched
-  count, only once you have begun, so an untouched library stays clean). The
-  whole run is marked read or unread from the drawer's Advanced tab.
+- **Reading state (2026-09-28).** Once an issue is owned, its badge slot (where
+  Missing / Waiting sit on an unowned one) says how it stands: "In progress"
+  (violet, over the progress bar) or "Read" (green); unread is plain, as in
+  Komga, Plex and Panels. Changing it is never a tap on the cover -- that
+  opens the comic -- but a "..." menu (`IssueMenu`, `ActionMenu`): revealed on
+  hover on a desktop, always shown to a finger, and opened by a long press on
+  a tile. It holds Read / Continue, Mark as read or unread (this profile's
+  own), and the admin's Edit. The run's own "..." in its group header marks
+  the whole run, as does the Advanced tab. A run's card carries a chip
+  top-right: a check when every issue is read, else the count left of a run
+  that has been started (Plex's unwatched count, only once you have begun).
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

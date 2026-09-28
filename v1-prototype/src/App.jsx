@@ -5680,20 +5680,129 @@ function issueReadState(issue, readingFiles) {
   };
 }
 
-// The check on an issue: read when solid, and a tap turns it -- mark as read,
-// or unread again -- for this profile alone.
-function ReadMark({ read, issue, medium, onMark, className }) {
-  if (!read || !onMark) return null;
-  const label = issueLabel(issue.number, medium);
-  return <button type="button" className={`${className}${read.finished ? " done" : ""}`} aria-pressed={read.finished}
-    onClick={() => onMark(issue, !read.finished)}
-    aria-label={read.finished ? `Read. Mark ${label} as unread` : `Mark ${label} as read`}
-    title={read.finished ? "Read · mark as unread" : "Mark as read"}>
-    <Check size={13} weight="bold" />
-  </button>;
+// A small menu of actions on one thing, drawn over everything from its
+// button's position (as GlassSelect's list is), right edge under the button's.
+// It joins the dialog stack, so Escape closes it and not what is under it.
+function ActionMenu({ anchor, label, items, onClose }) {
+  const menuRef = useDialog(onClose);
+  const [place, setPlace] = useState(null);
+  useLayoutEffect(() => {
+    const button = anchor.current?.getBoundingClientRect();
+    const menu = menuRef.current;
+    if (!button || !menu) return;
+    const gap = 6;
+    const margin = 12;
+    const width = Math.min(240, window.innerWidth - margin * 2);
+    const below = window.innerHeight - button.bottom - gap - margin;
+    const up = menu.scrollHeight > below && button.top - gap - margin > below;
+    setPlace({
+      width, left: Math.min(Math.max(margin, button.right - width), window.innerWidth - margin - width),
+      ...(up ? { bottom: window.innerHeight - button.top + gap } : { top: button.bottom + gap }),
+      transformOrigin: up ? "bottom right" : "top right",
+    });
+  }, []);
+  useEffect(() => {
+    function outside(event) {
+      if (menuRef.current?.contains(event.target) || anchor.current?.contains(event.target)) return;
+      onClose();
+    }
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("scroll", onClose, true);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("scroll", onClose, true);
+    };
+  }, [onClose]);
+  return createPortal(<div className="glass-menu glass-select-menu action-menu" ref={menuRef} role="menu" aria-label={label}
+    style={place ? { ...place } : { visibility: "hidden", top: 0, left: 0 }} onMouseDown={(event) => event.stopPropagation()}>
+    {items.map((item) => <button type="button" role="menuitem" key={item.key} onClick={() => { onClose(); item.onSelect(); }}>
+      <span className="sort-menu-check" aria-hidden="true">{item.icon}</span>
+      <span>{item.label}</span>
+    </button>)}
+  </div>, document.body);
 }
 
-function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, readingFiles, medium }) {
+// What can be done to one issue, as every reader offers it: a menu from a
+// "..." (shown on hover on a desktop, always to a finger) or a long press on
+// the tile -- never a tap on the cover, which opens the comic. Read or
+// continue it, mark it read or unread for this profile, and, for the admin,
+// edit its metadata.
+function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, className, longPress = false }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  useEffect(() => {
+    if (!longPress) return undefined;
+    const tile = buttonRef.current?.closest(".issue-tile");
+    if (!tile) return undefined;
+    let timer = 0;
+    let held = false;
+    const cancel = () => { window.clearTimeout(timer); timer = 0; };
+    function onDown(event) {
+      if (event.pointerType === "mouse" || event.button !== 0) return;
+      held = false;
+      timer = window.setTimeout(() => { held = true; setOpen(true); }, 500);
+    }
+    // A press that became the menu must not also open the comic on release.
+    function onClick(event) {
+      if (held) { event.preventDefault(); event.stopPropagation(); held = false; }
+    }
+    tile.addEventListener("pointerdown", onDown);
+    tile.addEventListener("pointermove", cancel);
+    tile.addEventListener("pointerup", cancel);
+    tile.addEventListener("pointercancel", cancel);
+    tile.addEventListener("click", onClick, true);
+    return () => {
+      cancel();
+      tile.removeEventListener("pointerdown", onDown);
+      tile.removeEventListener("pointermove", cancel);
+      tile.removeEventListener("pointerup", cancel);
+      tile.removeEventListener("pointercancel", cancel);
+      tile.removeEventListener("click", onClick, true);
+    };
+  }, [longPress]);
+  const label = issueLabel(issue.number, medium);
+  const items = [];
+  if (read && onRead) items.push({ key: "read", label: read.label, icon: <BookOpen size={16} weight="fill" />, onSelect: () => onRead({ id: issue.fileId }) });
+  if (read && onMark) items.push({ key: "mark", label: read.finished ? "Mark as unread" : "Mark as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMark(issue, !read.finished) });
+  if (onEditIssue) items.push({ key: "edit", label: "Edit issue metadata", icon: <PencilSimple size={16} />, onSelect: () => onEditIssue(issue) });
+  if (!items.length) return null;
+  return <>
+    <button type="button" ref={buttonRef} className={className} onClick={() => setOpen((value) => !value)}
+      aria-haspopup="menu" aria-expanded={open} aria-label={`Options for ${label}`} title="Options">
+      <DotsThree size={18} weight="bold" />
+    </button>
+    {open ? <ActionMenu anchor={buttonRef} label={`Options for ${label}`} items={items} onClose={close} /> : null}
+  </>;
+}
+
+// What an issue's badge says about reading it, in the ownership badge's spot,
+// once the issue is owned: "In progress" over its bar, "Read" when finished.
+// Unread is plain, as in every reader looked at (Komga, Plex, Panels).
+function readingBadge(read) {
+  if (!read) return null;
+  if (read.finished) return { label: "Read", tone: "reading-read" };
+  if (read.fraction) return { label: "In progress", tone: "reading-progress" };
+  return null;
+}
+
+// The run's own menu in its group header: mark every issue read, or unread.
+function RunMenu({ runRead, onMarkRun }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  const items = [{ key: "mark", label: runRead ? "Mark run as unread" : "Mark run as read", icon: <Check size={16} weight="bold" />,
+    onSelect: () => onMarkRun(!runRead) }];
+  return <>
+    <button type="button" ref={buttonRef} className="issue-group-menu" onClick={() => setOpen((value) => !value)}
+      aria-haspopup="menu" aria-expanded={open} aria-label="Options for this run" title="Options">
+      <DotsThree size={18} weight="bold" />
+    </button>
+    {open ? <ActionMenu anchor={buttonRef} label="Options for this run" items={items} onClose={close} /> : null}
+  </>;
+}
+
+function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, runRead = false, readingFiles, medium }) {
   // Covers are why the tab exists, so posters lead. A long run is also less
   // scrolling this way than as tall rows: four across beats one down.
   const [view, setView] = useState("grid");
@@ -5725,7 +5834,7 @@ function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, re
     {groups.map((group, groupIndex) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
     return <section className="issue-run-group" key={group.key}>
-      <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong></div></header>
+      <header><div><span>{group.type === "specials" ? "Special / one-shot" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && onMarkRun && readingFiles ? <RunMenu runRead={runRead} onMarkRun={onMarkRun} /> : null}</div></header>
       <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
         // "Volume 5" under "Vol. 5" says it twice.
         const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
@@ -5750,21 +5859,22 @@ function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, re
                 so a missing issue's dimmed cover does not dim its badge too. */}
             <span className="issue-tile-art">
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
-              {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}
+              {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
+                : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}
               {/* Inside the cover's box, not the tile's: anchored to the tile
                   it would sit under the issue title. */}
               {read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
                 title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
               {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
-              <ReadMark read={read} issue={issue} medium={medium} onMark={onMark} className="issue-tile-mark" />
+              <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} className="issue-tile-menu" longPress />
             </span>
             {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
             <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong>
             {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
           </article>;
         }
-        return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions"><ReadMark read={read} issue={issue} medium={medium} onMark={onMark} className="issue-row-mark" />{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}</div></article>;
+        return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions">{!stateLabel && readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}<IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} className="issue-row-menu" /></div></article>;
       })}</div>
     </section>;
   })}</div>;
@@ -6459,7 +6569,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
         {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
       </> : null}
-      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} readingFiles={readingFiles} medium={series.medium} /> : null}
+      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} onMarkRun={onMarkRun ? (read) => onMarkRun(series, read) : undefined} runRead={runAllRead} readingFiles={readingFiles} medium={series.medium} /> : null}
       {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
       {tab === "files" ? <FileInventory files={series.fileDetails} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
       {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}

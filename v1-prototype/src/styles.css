@@ -1511,19 +1511,29 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    control, never glass, because a cover is content and not navigation. */
 .issue-tile-read, .comic-drawer-card-art .issue-tile-read { position: absolute; top: 6px; left: 6px; right: auto; bottom: auto; width: 27px; height: 27px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--violet-text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
 .issue-tile-read:focus-visible { opacity: 1; }
-/* The check on an issue (ReadMark): solid green once read, always shown;
-   before that a faint chip a pointer reveals on hover and a finger always
-   sees. In the cover's bottom-right, clear of the Read control (top-left)
-   and the admin's pencil (the tile's top-right). A run's card carries the
-   same chip top-right: a check when every issue is read, else how many are
-   left of a run that has been started. */
-.issue-tile-mark, .series-card-mark { position: absolute; z-index: 2; right: 6px; min-width: var(--space-24); height: var(--space-24); padding: 0 var(--space-6); border: 0; border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); display: grid; place-items: center; font-size: var(--text-xs); font-weight: var(--weight-bold); line-height: var(--leading-none); cursor: pointer; transition: opacity var(--motion-duration-fast) ease; }
-.issue-tile-mark { bottom: 6px; opacity: 0; }
-.series-card-mark { top: var(--space-8); right: var(--space-8); cursor: default; }
-.issue-tile-mark.done, .series-card-mark.done { background: var(--badge-green-bg); opacity: 1; }
-.issue-tile:hover .issue-tile-mark, .issue-tile-mark:focus-visible { opacity: 1; }
-@media (hover: none) { .issue-tile-mark { opacity: .7; } }
-.issue-row-mark.done { color: var(--green) !important; }
+/* Reading state on an issue, in the ownership badge's spot once the issue is
+   owned: "In progress" (violet, over its bar) and "Read" (green). Unread is
+   plain, as in every reader looked at (2026-09-28). */
+.ownership-source.reading-read { background: var(--green-soft); color: var(--green-text); }
+.ownership-source.reading-progress { background: var(--violet-soft); color: var(--violet-text); }
+/* An issue's "..." menu: in the cover's bottom-right, revealed on hover to a
+   pointer and always shown to a finger (a long press on the tile opens it too).
+   The run's own "..." sits in its group header. A shelf card, whose whole face
+   opens the comic, keeps a small check once read. */
+/* A long press on a tile is the menu's, not the system's (iOS offers to save
+   the cover image, and selects text, on a hold). */
+.issue-tile { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.issue-tile-menu { position: absolute; z-index: 2; right: 6px; bottom: 6px; width: 27px; height: 27px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--text); display: grid; place-items: center; opacity: 0; transition: opacity var(--motion-duration-fast) ease; cursor: pointer; }
+.issue-tile:hover .issue-tile-menu, .issue-tile-menu:focus-visible, .issue-tile-menu[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .issue-tile-menu { opacity: .9; } }
+.issue-group-menu { width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-8); background: transparent; color: var(--muted-strong); display: grid; place-items: center; cursor: pointer; }
+@media (hover: hover) { .issue-group-menu:hover { background: var(--surface-hover); color: var(--text); } }
+.action-menu button { min-height: 40px; }
+.issue-tile-mark.done { position: absolute; z-index: 2; right: 6px; bottom: 6px; width: var(--space-24); height: var(--space-24); border-radius: var(--radius-pill); background: var(--badge-green-bg); color: var(--color-neutral-0); display: grid; place-items: center; }
+/* A run's card carries the same word top-right: a check when every issue is
+   read, else how many are left of a run that has been started. */
+.series-card-mark { position: absolute; z-index: 2; top: var(--space-8); right: var(--space-8); min-width: var(--space-24); height: var(--space-24); padding: 0 var(--space-6); border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); display: grid; place-items: center; font-size: var(--text-xs); font-weight: var(--weight-bold); line-height: var(--leading-none); }
+.series-card-mark.done { background: var(--badge-green-bg); }
 
 @media (hover: hover) { .issue-tile:hover .issue-tile-read, .pull-card:has(.discover-open:hover) .issue-tile-read { opacity: 1; } }
 @media (hover: none) { .issue-tile-read { opacity: 1; } }
