@@ -454,6 +454,13 @@ class FilenameParserTests(unittest.TestCase):
         self.assertFalse(app._release_issue_matches("Green.Lantern.023.2.(2013).(Digital).(Nahga-Empire)", "23"))
         self.assertTrue(app._release_issue_matches("Green.Lantern.023.2.(2013).(Digital).(Nahga-Empire)", "23.2"))
         self.assertTrue(app._release_issue_matches("Green Lantern 023 (2013) (Digital) (Nahga-Empire)", "23"))
+        # The series is still read in front of a decimal number, dots or spaces.
+        for title in ("Green.Lantern.023.2.(2013).(Digital).(Nahga-Empire)", "Green Lantern 023.2 (2013) (Digital) (Nahga-Empire) (cbr)"):
+            self.assertTrue(app._release_series_matches(title, "Green Lantern", "23.2"), title)
+            score, reasons = app._release_candidate_score(
+                {"title": title, "categories": [{"id": 7030}]},
+                {"seriesTitle": "Green Lantern", "issueNumber": "23.2", "publicationYear": 2013})
+            self.assertGreaterEqual(score, 85, (title, reasons))
         self.assertNotIn("key", first)
         self.assertNotIn("secret", str(result))
 

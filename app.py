@@ -3193,9 +3193,10 @@ def _release_series_lead_in(text: str, number: str) -> str | None:
         return value
 
     # Once with the separators the poster used, once after they are normalised:
-    # a date is "2013.05.01" before and "2013 05 01" after.
+    # a date is "2013.05.01" before and "2013 05 01" after. A decimal issue
+    # number keeps its dot, or "023.2" could never be found as 23.2.
     text = strip_noise(text)
-    text = strip_noise(re.sub(r"[._]+", " ", text))
+    text = strip_noise(_separators_to_spaces(text))
     escaped = re.escape(number.lstrip("0") or "0")
     found = re.search(rf"(?:#|\b0*){escaped}{_NOT_GLUED_TO_A_TAG}", text, re.I)
     if not found:
@@ -6972,14 +6973,19 @@ def split_compound_title(title: str) -> tuple[str, bool]:
     return result, result != title
 
 
+def _separators_to_spaces(text: str) -> str:
+    """Dots and underscores are a scene name's separators -- except the dot
+    inside a decimal issue number: DC's Villains Month "Green Lantern 023.2"
+    is issue 23.2, and read with the dot as a space it became issue 2 of
+    "Green Lantern 023". One or two digits after the dot; "001.2016" is an
+    issue and a year, and "2013.05.01" a date, both still split."""
+    kept = re.sub(r"(?<=\d)\.(?=\d{1,2}(?!\d))", "\x00", str(text or ""))
+    return re.sub(r"[._]+", " ", kept).replace("\x00", ".")
+
+
 def parse_filename(path: Path) -> ParsedFile:
     decoded_filename = urllib.parse.unquote(path.name)
-    # Dots are separators in a scene name -- except inside a decimal issue
-    # number: DC's Villains Month "Green Lantern 023.2" is issue 23.2, and
-    # read with the dot as a space it became issue 2 of "Green Lantern 023".
-    # One or two digits after the dot; "001.2016" is an issue and a year.
-    stem = re.sub(r"(?<=\d)\.(?=\d{1,2}(?!\d))", "\x00", Path(decoded_filename).stem)
-    raw = stem.replace("_", " ").replace(".", " ").replace("\x00", ".")
+    raw = _separators_to_spaces(Path(decoded_filename).stem)
     raw = re.sub(r"\s+", " ", raw).strip()
 
     isbn_match = find_isbn(raw)
