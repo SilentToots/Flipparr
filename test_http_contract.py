@@ -1174,6 +1174,42 @@ class HttpContractTests(unittest.TestCase):
                          "a PDF named .cbz is not offered")
         self.assertNotIn("path", by_id[str(readable)], "the library's paths stay on the server")
 
+    def test_an_issue_or_a_run_is_marked_read_or_unread_outright(self):
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "one.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(3):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            impostor = Path(folder) / "two.cbz"
+            impostor.write_bytes(b"%PDF-1.7\n")
+            import app as app_module
+            store = app_module.catalog_store()
+            run = self._series_run(store, "Marks Contract")
+            readable = self._library_file(comic, run=run, issue="1")
+            self._library_file(impostor, run=run, issue="2")
+            # One issue, marked read without turning a page.
+            marked = self.post(f"/api/v1/files/{readable}/progress", {"read": True})
+            self.assertEqual(marked.status, 200, marked.body)
+            self.assertTrue(marked.json()["finishedAt"])
+            self.assertEqual((marked.json()["page"], marked.json()["pageCount"]), (2, 3), "its place is the last page")
+            runs = self.get("/api/v1/reading/runs").json()["runs"][str(run)]
+            self.assertEqual((runs["read"], runs["total"], runs["state"]), (1, 2, "next"),
+                             "the card knows one of two is read")
+            # And unread again, which forgets it.
+            self.assertIsNone(self.post(f"/api/v1/files/{readable}/progress", {"read": False}).json()["finishedAt"])
+            self.assertNotIn(str(run), self.get("/api/v1/reading/runs").json()["runs"])
+            self.assertEqual(self.post(f"/api/v1/files/{readable}/progress", {"read": "yes"}).status, 400)
+            # The whole run: the file that cannot be paged is passed over.
+            whole = self.post(f"/api/v1/series/{run}/reading", {"read": True})
+            self.assertEqual(whole.status, 200, whole.body)
+            by_id = {item["id"]: item for item in whole.json()["issues"]}
+            self.assertTrue(by_id[str(readable)]["finishedAt"])
+            self.assertEqual(whole.json()["resume"]["state"], "finished")
+            cleared = self.post(f"/api/v1/series/{run}/reading", {"read": False})
+            self.assertIsNone({item["id"]: item for item in cleared.json()["issues"]}[str(readable)]["finishedAt"])
+            self.assertEqual(self.post(f"/api/v1/series/{run}/reading", {}).status, 400)
+            self.assertEqual(self.post("/api/v1/series/999999/reading", {"read": True}).status, 404)
+
     def test_reading_direction_is_set_beside_the_format_and_can_be_handed_back(self):
         import app as app_module
 
@@ -1240,7 +1276,8 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(entry["issueNumber"], "4")
         self.assertEqual(entry["state"], "continue")
         self.assertRegex(entry["lastReadAt"], r"^\d{4}-\d{2}-\d{2}T", "Recent sorts on it as a string")
-        self.assertEqual(set(entry), {"state", "fileId", "issueNumber", "page", "pageCount", "lastReadAt"})
+        self.assertEqual(set(entry), {"state", "fileId", "issueNumber", "page", "pageCount", "lastReadAt", "read", "total"})
+        self.assertEqual((entry["read"], entry["total"]), (0, 1), "the card's marker: none read yet of one")
 
     def test_a_person_can_set_a_pages_panels_and_take_them_back(self):
         """PATCH keeps rectangles as the person's, in their order; DELETE forgets them and the page is read afresh."""
@@ -1558,6 +1595,7 @@ NOT_ADMIN = {
     ("GET", "/api/v1/reading"): "reader",
     ("GET", "/api/v1/reading/runs"): "reader",
     ("GET", "/api/v1/series/1/reading"): "reader",
+    ("POST", "/api/v1/series/1/reading"): "reader",
     ("GET", "/api/v1/files/1/progress"): "reader",
     ("POST", "/api/v1/files/1/progress"): "reader",
     ("GET", "/api/v1/files/1/pages"): "reader",

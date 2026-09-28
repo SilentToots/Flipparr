@@ -11214,6 +11214,9 @@ def reading_by_run(*, user_id: int) -> dict[str, Any]:
             "fileId": file_id, "issueNumber": latest["issueNumber"],
             "page": latest["page"], "pageCount": latest["pageCount"],
             "lastReadAt": max(str(record["updatedAt"] or "") for record in live.values()) or None,
+            # For the card's marker: a check once every issue is read, else
+            # how many are left of a run that has been started.
+            "read": finished_count, "total": int(owned.get(run_id, 0)),
         }
     return {"runs": runs}
 
@@ -11801,6 +11804,34 @@ def set_file_reading_progress(file_id: int, page: int, panel: int = 0, *, user_i
         file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1, panel=panel,
         user_id=user_id,
     )
+
+
+def mark_file_read(file_id: int, read: bool, *, user_id: int) -> dict[str, Any]:
+    """Mark one comic read -- its place on the last page, finished -- or
+    unread, which forgets its place altogether."""
+    if not read:
+        catalog_store().clear_reading_progress(file_id, user_id=user_id)
+        return file_reading_progress(file_id, user_id=user_id)
+    path = catalog_store().library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Only a comic archive can be marked read")
+    pages = cached_page_members(path)
+    if not pages:
+        raise ValueError("This comic has no pages")
+    return set_file_reading_progress(file_id, len(pages) - 1, 0, user_id=user_id)
+
+
+def mark_run_reading(series_run_id: int, read: bool, *, user_id: int) -> dict[str, Any]:
+    """Mark every comic of a run read or unread for one profile. A file that
+    cannot be paged (not an archive, or empty) is passed over rather than
+    stopping the rest; the answer is the run's reading as it now stands."""
+    files = catalog_store().run_reading_files(series_run_id)
+    for item in [*files.get("issues", []), *files.get("volumes", [])]:
+        try:
+            mark_file_read(int(item["id"]), read, user_id=user_id)
+        except (ValueError, LookupError, OSError):
+            continue
+    return series_reading(series_run_id, user_id=user_id)
 
 
 def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
@@ -15103,7 +15134,13 @@ class Handler(BaseHTTPRequestHandler):
             file_id = int(file_progress_post.group(1))
             page = payload.get("page")
             try:
-                if page is None:
+                if "read" in payload:
+                    # Marked read or unread outright, without a page: the check
+                    # on an issue's cover.
+                    if not isinstance(payload["read"], bool):
+                        raise ValueError("read is true or false")
+                    result = mark_file_read(file_id, payload["read"], user_id=self._viewer_id())
+                elif page is None:
                     catalog_store().clear_reading_progress(file_id, user_id=self._viewer_id())
                     result = file_reading_progress(file_id, user_id=self._viewer_id())
                 else:
@@ -15118,6 +15155,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
+        series_reading_post = re.fullmatch(r"/api/v1/series/(\d+)/reading", parsed_url.path)
+        if series_reading_post:
+            if not isinstance(payload.get("read"), bool):
+                self.send_json({"error": "Say whether the run is read (true) or unread (false)"}, 400)
+                return
+            try:
+                result = mark_run_reading(int(series_reading_post.group(1)), payload["read"], user_id=self._viewer_id())
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
                 return
             self.send_json(result)
             return

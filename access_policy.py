@@ -100,7 +100,8 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"GET"}), r"/api/v1/issues/(\d+)/detail", READER),
     (frozenset({"GET"}), r"/api/v1/reading", READER),
     (frozenset({"GET"}), r"/api/v1/reading/runs", READER),
-    (frozenset({"GET"}), r"/api/v1/series/(\d+)/reading", READER),
+    # Reading a run, and marking it read or unread -- the profile's own place.
+    (frozenset({"GET", "POST"}), r"/api/v1/series/(\d+)/reading", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/files/(\d+)/progress", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages/(\d+)", READER),
