@@ -2040,6 +2040,23 @@ class ReaderProfileHttpTests(unittest.TestCase):
         refused = self.call("POST", "/api/v1/devices/forget", {}, cookies=sams_phone)
         self.assertEqual(refused.status, 403, "the admin's to do")
 
+    def test_an_uploaded_comics_name_arrives_whole_however_it_is_spelled(self):
+        # A header holds only ASCII, so the page percent-encodes the name; a
+        # plain name decodes to itself. "Batman – Superman – World's Finest
+        # #35 (2025).cbz" failed in the browser before any request was made.
+        name = "Batman – Superman – World's Finest #35 (2025).cbz"
+        seen = []
+        def fake_import(job_id, stream, length, filename):
+            seen.append((job_id, length, filename))
+            stream.read(length)
+            return {"status": "imported", "file": filename}
+        with patch("app.import_uploaded_comic", side_effect=fake_import):
+            for header in (urllib.parse.quote(name), "Saga 001.cbz"):
+                response = request("POST", self.base + "/api/v1/acquisition-jobs/7/import", b"PK\x03\x04comic",
+                                   "application/octet-stream", headers={"X-Filename": header})
+                self.assertEqual(response.status, 200, response.body)
+        self.assertEqual([entry[2] for entry in seen], [name, "Saga 001.cbz"])
+
     def test_a_cookie_from_before_profiles_is_the_admins_and_is_upgraded(self):
         app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
         legacy = {"flipparr_session": app.issue_session_token(app.load_auth_config())}

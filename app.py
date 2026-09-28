@@ -15668,7 +15668,11 @@ class Handler(BaseHTTPRequestHandler):
         if length <= 0 or length > MANUAL_IMPORT_MAX_BYTES:
             self.send_json({"error": "Upload a comic file no larger than 2 GB"}, 413)
             return
-        filename = str(self.headers.get("X-Filename") or "").strip()
+        # Percent-encoded by the page: a header holds only ASCII, and a comic's
+        # name often does not -- "Batman – Superman – World's Finest #35" has
+        # an en dash, and sending it raw failed in the browser before any
+        # request was made. A plain name decodes to itself.
+        filename = urllib.parse.unquote(str(self.headers.get("X-Filename") or "")).strip()
         if not filename:
             self.send_json({"error": "Send the comic's filename in an X-Filename header"}, 400)
             return

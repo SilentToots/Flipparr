@@ -3763,7 +3763,9 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
     try {
       await apiRequest(`/api/v1/acquisition-jobs/${job.id}/import`, {
         method: "POST",
-        headers: { "Content-Type": "application/octet-stream", "X-Filename": file.name },
+        // A header holds only ASCII; a comic's name often has an en dash or a
+        // curly apostrophe, and fetch refuses the header outright otherwise.
+        headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) },
         body: file,
       });
       onRefresh?.();
