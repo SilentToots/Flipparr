@@ -3055,7 +3055,9 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
 
 # A number run into letters and more digits is a name, not an issue: the
 # release group "21A1" is not issue 21. A variant letter alone ("21a") still is.
-_NOT_GLUED_TO_A_TAG = r"(?!\d|[A-Za-z]\d)"
+# Nor is a number with a decimal after it: "023.2" is issue 23.2, not 23 --
+# a fraction of one or two digits, that is; "068.2024" is issue 68 and a year.
+_NOT_GLUED_TO_A_TAG = r"(?!\d|[A-Za-z]\d|\.\d{1,2}(?!\d))"
 
 # "001-060", "#1-60", "1 - 60". Not "2009-2016", which is when the run ran.
 _ISSUE_RANGE = re.compile(r"(?<![\d.])#?\s*(\d{1,4})\s*[-–—]\s*#?\s*(\d{1,4})(?![\d.])")
@@ -4372,6 +4374,12 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
             forms.append(f"{title} {issue.zfill(3)}")
             if issue.lstrip("0") != issue.zfill(3):
                 forms.append(f"{title} {issue.lstrip('0') or '0'}")
+        elif re.fullmatch(r"\d+\.\d+", issue):
+            # "Green Lantern 023.1", as a release names DC's Villains Month
+            # issues; the unpadded form is a different word to an indexer.
+            whole, fraction = issue.split(".", 1)
+            forms.append(f"{title} {whole.zfill(3)}.{fraction}")
+            forms.append(f"{title} {whole.lstrip('0') or '0'}.{fraction}")
         elif issue:
             forms.append(f"{title} {issue}")
     forms.extend(titles)
@@ -5821,9 +5829,25 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
         )
         return None
     candidates = search.get("candidates") if isinstance(search, dict) else []
-    if not isinstance(candidates, list) or not candidates:
-        return None
     context = (search.get("job") if isinstance(search, dict) else None) or {}
+    if not isinstance(candidates, list) or not candidates:
+        # Usenet has nothing. DirectSite may: a strong match for the very
+        # issue is taken the way a run's pack from there already is -- when
+        # it can be downloaded from at all. Usenet stays first; this is the
+        # answer when there is none. World's Finest #32 sat at "No release
+        # found yet" while Find release showed the issue, confidently, from
+        # DirectSite -- a list a person had to go and act on.
+        fallback = _direct_site_single_to_take(job_id, context)
+        if fallback is None:
+            return None
+        try:
+            grabbed = grab_release_candidate(job_id, str(fallback["id"]))
+        except Exception as exc:  # noqa: BLE001 -- the row says; the next pass tries again
+            log_event("direct_site_single_grab_failed", level="warning", job_id=job_id,
+                      release=str(fallback.get("title") or ""), error=str(exc)[:200])
+            _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on DirectSite but could not fetch it: {exc}")
+            return None
+        return {**grabbed, "release": fallback}
     candidates, held_back = _automatic_grab_order(context, candidates)
     if not candidates:
         if held_back:
@@ -5864,6 +5888,33 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
         f"Found {len(candidates)} release{'s' if len(candidates) != 1 else ''} but none "
         f"could be fetched ({problems[0]}); it will be tried again",
     )
+    return None
+
+
+def _direct_site_single_to_take(job_id: int, context: dict[str, Any]) -> dict[str, Any] | None:
+    """The one DirectSite release the automatic search may take for an issue
+    Usenet has nothing for: a strong match for that issue alone (a pack is
+    the run's question, asked elsewhere), not refused before, and only while
+    DirectSite can be downloaded from."""
+    try:
+        _enabled_acquisition_service("flaresolverr")
+    except ValueError:
+        return None
+    title = str(context.get("seriesTitle") or "").strip()
+    if not title:
+        return None
+    try:
+        found = _direct_site_candidates(job_id, context, title)
+        refused = set(catalog_store().rejected_acquisition_release_keys(job_id))
+    except Exception as exc:  # noqa: BLE001 -- DirectSite down is not a reason to stop
+        log_event("direct_site_single_search_failed", level="info", job_id=job_id, error=str(exc)[:160])
+        return None
+    for candidate in sorted(found, key=lambda item: -int(item.get("matchScore") or 0)):
+        if candidate.get("pack") or int(candidate.get("matchScore") or 0) < 85:
+            continue
+        if {str(candidate.get(key) or "") for key in ("postUrl", "releaseKey", "guid")} & refused:
+            continue
+        return candidate
     return None
 
 
@@ -6923,7 +6974,12 @@ def split_compound_title(title: str) -> tuple[str, bool]:
 
 def parse_filename(path: Path) -> ParsedFile:
     decoded_filename = urllib.parse.unquote(path.name)
-    raw = Path(decoded_filename).stem.replace("_", " ").replace(".", " ")
+    # Dots are separators in a scene name -- except inside a decimal issue
+    # number: DC's Villains Month "Green Lantern 023.2" is issue 23.2, and
+    # read with the dot as a space it became issue 2 of "Green Lantern 023".
+    # One or two digits after the dot; "001.2016" is an issue and a year.
+    stem = re.sub(r"(?<=\d)\.(?=\d{1,2}(?!\d))", "\x00", Path(decoded_filename).stem)
+    raw = stem.replace("_", " ").replace(".", " ").replace("\x00", ".")
     raw = re.sub(r"\s+", " ", raw).strip()
 
     isbn_match = find_isbn(raw)
@@ -6936,8 +6992,9 @@ def parse_filename(path: Path) -> ParsedFile:
     if issue_match is None and volume_match is None:
         issue_match = UNMARKED_ISSUE.search(raw)
     issue = issue_match.group(1) if issue_match else None
-    if issue and issue.isdigit():
-        issue = str(int(issue))
+    if issue and re.fullmatch(r"\d+(?:\.\d+)?", issue):
+        # Leading zeros are padding: "023" is 23, "023.2" is 23.2.
+        issue = re.sub(r"^0+(?=\d)", "", issue)
     # A scene name marks the issue "No 19", after the series' own volume, and
     # puts only tags after the number: "American Vampire Vol 1 No 19 Nov 2011
     # SCAN Comic eBook-iNTENSiTY" is issue 19 of the first series, not

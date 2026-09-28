@@ -450,6 +450,10 @@ class FilenameParserTests(unittest.TestCase):
         self.assertFalse(app._release_issue_matches(
             'Week of 2022.02.16 [53/72] - yEnc "Supergirl - Woman of Tomorrow 08 (of 08) (2022)"', "2"))
         self.assertTrue(app._release_issue_matches("Supergirl - Woman of Tomorrow 02 (of 08) (2021)", "2"))
+        # "023.2" is issue 23.2: not an answer for #23, the answer for #23.2.
+        self.assertFalse(app._release_issue_matches("Green.Lantern.023.2.(2013).(Digital).(Nahga-Empire)", "23"))
+        self.assertTrue(app._release_issue_matches("Green.Lantern.023.2.(2013).(Digital).(Nahga-Empire)", "23.2"))
+        self.assertTrue(app._release_issue_matches("Green Lantern 023 (2013) (Digital) (Nahga-Empire)", "23"))
         self.assertNotIn("key", first)
         self.assertNotIn("secret", str(result))
 
@@ -1957,6 +1961,16 @@ class FilenameParserTests(unittest.TestCase):
         # A four-digit run is left in place by the guard; only the pre-existing
         # year rule may remove one.
         self.assertEqual(parse_filename(Path("Judge Dredd 1234.cbz")).title, "Judge Dredd 1234")
+
+    def test_a_decimal_issue_number_survives_the_dots(self):
+        # DC's Villains Month (2013): issue 23.2, not issue 2 of "Green Lantern 023".
+        for name in ("Green Lantern 023.2 (2013) (Digital) (Nahga-Empire).cbr",
+                     "Green.Lantern.023.2.(2013).(Digital).(Nahga-Empire).cbr"):
+            parsed = parse_filename(Path(name))
+            self.assertEqual((parsed.title, parsed.issue, parsed.year), ("Green Lantern", "23.2", 2013), name)
+        # A dot before a year is still a separator.
+        dotted = parse_filename(Path("Batman.001.2016.Digital.cbz"))
+        self.assertEqual((dotted.title, dotted.issue, dotted.year), ("Batman", "1", 2016))
 
     def test_omnibus_with_isbn(self):
         item = parse_filename(Path("Wolverine Omnibus Vol 1 978-1-302-95008-8.cbz"))
@@ -4767,6 +4781,12 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
         self.assertEqual(
             app._prowlarr_query_forms({"seriesTitle": "Fables", "issueNumber": "129"}),
             ["Fables 129", "Fables"],
+        )
+
+    def test_a_decimal_issue_is_asked_for_padded_as_releases_name_it(self):
+        self.assertEqual(
+            app._prowlarr_query_forms({"seriesTitle": "Green Lantern", "issueNumber": "23.1"}),
+            ["Green Lantern 023.1", "Green Lantern 23.1", "Green Lantern"],
         )
 
     def test_a_run_with_no_issue_number_searches_the_series(self):
@@ -7760,6 +7780,46 @@ class StoryArcTests(unittest.TestCase):
                 stack.enter_context(item)
             with self.assertRaisesRegex(ValueError, "in your library or on the way"):
                 app.pull_story_arc("482")
+
+
+class DirectSiteSingleFallbackTests(unittest.TestCase):
+    """Usenet has nothing; DirectSite has the very issue, strongly. Taken --
+    as a run's pack from there already is -- rather than left on a list."""
+
+    def _run(self, found, flaresolverr=True):
+        store = Mock()
+        store.rejected_acquisition_release_keys.return_value = {"https://comics.example/refused"}
+        context = {"requestId": "78", "seriesTitle": "Batman / Superman: World's Finest", "issueNumber": "32"}
+        services = (lambda name: {}) if flaresolverr else Mock(side_effect=ValueError("off"))
+        with patch("app.catalog_store", return_value=store), patch("app._issue_year_gate", return_value=None), \
+             patch("app.search_prowlarr_releases", return_value={"candidates": [], "job": context}), \
+             patch("app._enabled_acquisition_service", services), \
+             patch("app._direct_site_candidates", return_value=found) as searched, \
+             patch("app.grab_release_candidate", return_value={"status": "grabbed"}) as grab:
+            result = app._auto_grab_release(1616)
+        return result, grab, searched
+
+    def test_a_strong_single_is_taken_when_usenet_has_nothing(self):
+        strong = {"id": "gc-32", "title": "Batman Superman World's Finest #32", "matchScore": 92, "postUrl": "https://comics.example/wf-32"}
+        result, grab, _ = self._run([strong])
+        grab.assert_called_once_with(1616, "gc-32")
+        self.assertEqual(result["release"], strong)
+
+    def test_weak_refused_and_pack_results_are_left_for_a_person(self):
+        weak = {"id": "gc-weak", "title": "Batman Superman World's Finest #23", "matchScore": 60, "postUrl": "https://comics.example/wf-23"}
+        refused = {"id": "gc-refused", "title": "Batman Superman World's Finest #32", "matchScore": 95, "postUrl": "https://comics.example/refused"}
+        pack = {"id": "gc-pack", "title": "World's Finest #1-40", "matchScore": 88, "postUrl": "https://comics.example/wf-pack",
+                "pack": {"first": 1, "last": 40}}
+        result, grab, _ = self._run([weak, refused, pack])
+        self.assertIsNone(result)
+        grab.assert_not_called()
+
+    def test_nothing_is_asked_of_direct_site_without_a_way_to_download_from_it(self):
+        strong = {"id": "gc-32", "title": "x", "matchScore": 92, "postUrl": "https://comics.example/wf-32"}
+        result, grab, searched = self._run([strong], flaresolverr=False)
+        self.assertIsNone(result)
+        searched.assert_not_called()
+        grab.assert_not_called()
 
 
 class RunRatingTests(unittest.TestCase):
