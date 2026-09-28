@@ -1355,6 +1355,13 @@ def sweep_arrivals(now: dt.datetime | None = None) -> int:
                 store.record_notification(user_id, "arrived", f"arrived:run:{arrival['runId']}", payload,
                                           at=arrival["at"], merge=True)
         store.set_notification_mark("arrivals", until)
+    if arrivals:
+        # Every import path lands here, packs included: a comic that arrived
+        # may be one a saved story arc was waiting for.
+        try:
+            heal_reading_lists()
+        except Exception as exc:  # noqa: BLE001 -- the bell is told either way
+            log_event("reading_list_heal_failed", level="warning", error=str(exc)[:200])
     return len(arrivals)
 
 
@@ -7041,6 +7048,11 @@ def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str =
         completed = store.get_scan(scan_id)
         if completed and completed.get("status") == "complete":
             store.enqueue_metadata_enrichment()
+            # A run that arrived may be one a saved story arc was waiting for.
+            try:
+                heal_reading_lists()
+            except Exception as exc:  # noqa: BLE001 -- the scan is done either way
+                log_event("reading_list_heal_failed", level="warning", error=str(exc)[:200])
 
     worker = threading.Thread(
         target=perform,
@@ -12392,6 +12404,27 @@ def _arc_items_from_metron(detail: dict[str, Any]) -> list[dict[str, Any]]:
     } for issue in detail["issues"]]
 
 
+def heal_reading_lists() -> int:
+    """Every saved arc with an issue not yet found in the library, resolved
+    again. Called when a run can have appeared -- a scan, an import -- so
+    the grid does not say "0 of 5" about comics that are here until someone
+    opens the arc. Returns how many arcs gained an issue."""
+    store = catalog_store()
+    waiting = [entry for entry in store.reading_lists_overview() if any(item["issueId"] is None for item in entry["items"])]
+    if not waiting:
+        return 0
+    relevance = _library_relevance()
+    healed = 0
+    for entry in waiting:
+        try:
+            before = sum(1 for item in entry["items"] if item["issueId"])
+            after = sum(1 for item in _reading_list_resolved(int(entry["id"]), relevance)["items"] if item["issueId"])
+            healed += after > before
+        except Exception as exc:  # noqa: BLE001 -- one arc failing leaves the rest healed
+            log_event("reading_list_heal_failed", level="warning", listId=entry["id"], error=str(exc)[:200])
+    return healed
+
+
 def save_story_arc(arc_id: str, *, user_id: int, created_by: int | None = None) -> dict[str, Any]:
     """Keep a Metron arc as a story arc of the library's own. Saving one
     already kept is that one, said so."""
@@ -15112,7 +15145,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed_url.path == "/api/v1/discover/pull-arc":
             try:
-                result = pull_story_arc(str((payload or {}).get("arcId") or ""))
+                # Pulling an arc keeps it: the issues without their order would
+                # be the gap the saved arc exists to close.
+                saved = save_story_arc(str((payload or {}).get("arcId") or ""), user_id=self._viewer_id())
+                result = {**pull_story_arc(str((payload or {}).get("arcId") or "")), "readingListId": saved["id"]}
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

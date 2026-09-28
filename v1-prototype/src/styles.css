@@ -930,6 +930,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 @media (hover: hover) { .arc-row:hover { background: var(--surface-hover); } }
 .arc-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .arc-issue-list .discover-issue-row { grid-template-columns: 36px minmax(0, 1fr); cursor: default; }
+/* A saved story arc's issues: their place in the order first, then the
+   cover and the comic; a comic that is here opens on a tap, one that is
+   not is a plain row. In edit mode a column of tools joins on the right. */
+.reading-list-items .discover-issue-row { grid-template-columns: 24px 36px minmax(0, 1fr); cursor: default; }
+.reading-list-items .discover-issue-row.openable { cursor: pointer; }
+.reading-list-items.editing .discover-issue-row { grid-template-columns: 24px 36px minmax(0, 1fr) auto; }
+/* Named, because the row's copy is no longer its last span once the tools
+   join, and the shared rule above keys on the last span. */
+.reading-list-items .discover-issue-row > .reading-list-copy { display: grid; gap: var(--space-4); min-width: 0; }
+.reading-list-position { color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-semibold); text-align: right; }
+.reading-list-items .discover-issue-row > .reading-list-row-tools { display: flex; gap: var(--space-4); }
+.reading-list-row-tools button:disabled { opacity: .4; }
+.reading-list-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); }
+.reading-list-edit-actions { display: flex; justify-content: flex-end; gap: var(--space-8); }
+.reading-list-title-badge { margin-left: var(--space-6); vertical-align: middle; }
 .request-swipe-pile { display: grid; }
 .request-swipe-pile > * { grid-area: 1 / 1; }
 .request-swipe-peek { transform: translateY(var(--space-12)) scale(.96); opacity: .5; pointer-events: none; }

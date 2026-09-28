@@ -21,6 +21,10 @@ export const LIBRARY_DEFAULTS = Object.freeze({
   sort: "recent", view: "grid", scope: "runs", followingOnly: false, inProgressOnly: false,
 });
 
+// What the grid can show: runs, collections (with editions on), or the story
+// arcs saved to read across runs.
+export const SCOPES = new Set(["runs", "collections", "arcs"]);
+
 // Collections have a name where runs have a title; both fall back to the
 // title rather than to an arbitrary order that would look like a broken sort.
 const byTitle = (a, b) => String(a.title ?? a.name ?? "")
@@ -87,7 +91,7 @@ export function loadLibraryPrefs(storage = profileStorage()) {
   return {
     sort: SORT_IDS.has(saved.sort) ? saved.sort : LIBRARY_DEFAULTS.sort,
     view: saved.view === "list" ? "list" : LIBRARY_DEFAULTS.view,
-    scope: saved.scope === "collections" ? "collections" : LIBRARY_DEFAULTS.scope,
+    scope: SCOPES.has(saved.scope) ? saved.scope : LIBRARY_DEFAULTS.scope,
     followingOnly: saved.followingOnly === true,
     inProgressOnly: saved.inProgressOnly === true,
   };

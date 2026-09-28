@@ -401,7 +401,11 @@ Motion tokens:
   (`--scrim-strong` over `--glass-blur`, white type, a step larger): "In
   progress" on a run that has been started, "Read" with a check once every
   issue is, nothing before (a bare count of what was left said nothing). The
-  drawer's hero repeats it as a status badge, with how many are read.
+  drawer's hero repeats it as a status badge, with how many are read. A
+  story arc -- issues saved to read in order across runs -- is a card in the
+  Comics grid's *Story arcs* scope (shown once an arc exists) with the same
+  badge, and its drawer lists the issues in order, each saying whether it is
+  here, on the way or missing, and whether it is read.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

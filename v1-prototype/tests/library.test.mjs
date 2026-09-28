@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SORT_OPTIONS, LIBRARY_DEFAULTS, recencyOf, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs,
+  SORT_OPTIONS, LIBRARY_DEFAULTS, SCOPES, recencyOf, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs,
 } from "../src/library.js";
 
 const runs = [
@@ -95,4 +95,14 @@ test("a storage that throws is the same as an empty one", () => {
   const hostile = { getItem() { throw new Error("private mode"); }, setItem() { throw new Error("quota"); } };
   assert.deepEqual(loadLibraryPrefs(hostile), { ...LIBRARY_DEFAULTS });
   assert.doesNotThrow(() => saveLibraryPrefs({ sort: "title", view: "grid", scope: "runs", followingOnly: false }, hostile));
+});
+
+test("the story arcs scope is remembered, and an unknown scope falls back to runs", () => {
+  const storage = new Map();
+  const memory = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  saveLibraryPrefs({ sort: "recent", view: "grid", scope: "arcs", followingOnly: false, inProgressOnly: true }, memory);
+  assert.equal(loadLibraryPrefs(memory).scope, "arcs");
+  assert.deepEqual([...SCOPES], ["runs", "collections", "arcs"]);
+  saveLibraryPrefs({ sort: "recent", view: "grid", scope: "shelves", followingOnly: false, inProgressOnly: false }, memory);
+  assert.equal(loadLibraryPrefs(memory).scope, "runs");
 });
