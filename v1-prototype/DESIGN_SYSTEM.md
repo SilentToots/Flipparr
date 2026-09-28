@@ -255,6 +255,12 @@ Motion tokens:
   another (the tab bar tucking away, the header condensing).
 - `--motion-duration-press` and `--motion-ease-spring`: a press. The spring is
   a `linear()` curve, with a `cubic-bezier` fallback.
+- `--motion-duration-sheet` (500ms), `--motion-duration-sheet-exit` (400ms)
+  and `--motion-ease-sheet` (`cubic-bezier(.32, .72, 0, 1)`, Vaul's curve for
+  an iOS sheet): a phone sheet arriving, leaving and settling back, and its
+  backdrop fading with it. Brisk at first and slow to settle, never
+  overshooting -- the press spring on something the size of the screen read
+  as a jolt (2026-09-27). A sheet flicked away leaves at the finger's speed.
 - **Drawer transitions.** A drawer slides in and out on its own; the cover
   does not fly between card and drawer (removed 2026-09-19 at the user's
   request -- it was unnecessary). A drawer's tab
@@ -366,6 +372,13 @@ Motion tokens:
   than three-quarters of the screen opens at half height and is pulled up to
   full, by the grabber. The bell and the profile menu are sheets on a phone
   and glass menus above 640px.
+- **Choosing a profile** looks the same everywhere (`ProfileTiles`), after
+  Plex's "Who's watching?": a disc with the name under it in regular weight,
+  the one reading now named in white and marked "Reading now", and Add as a
+  plain grey disc with a thin plus. On a phone -- the picker and the header's
+  sheet -- they are three to a row across the full width, each disc as wide as
+  its column, its initials scaled to it; above 640px the picker centres them
+  and the header's menu lays them from the left.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

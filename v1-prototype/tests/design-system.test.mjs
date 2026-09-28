@@ -108,7 +108,11 @@ test("every font-size is a step on the ladder", () => {
     || /^clamp\(var\(--text-[a-z0-9]+\), [^,]+, var\(--text-[a-z0-9]+\)\)$/.test(d.value)
     || d.value === "inherit"
     // The setup step marker is a dot; its number is for screen readers.
-    || (d.value === "0" && d.selector === ".setup-step-marker");
+    || (d.value === "0" && d.selector === ".setup-step-marker")
+    // A profile's initials fill its disc, and on a phone the disc is a third
+    // of the screen (Plex's "Who's watching?", 2026-09-27): the letters scale
+    // with the tile they sit in, as a photo would.
+    || (d.value === "36cqi" && d.selector === ".profile-picker-list .profile-avatar--lg");
   const bad = styles().filter((d) => d.property === "font-size" && !ok(d)).map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });

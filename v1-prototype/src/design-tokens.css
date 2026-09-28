@@ -442,6 +442,14 @@
   --motion-ease-morph: cubic-bezier(.45, 0, .15, 1);
   --motion-duration-loader: 880ms;
   --motion-ease-standard: cubic-bezier(.2, .8, .2, 1);
+  /* A sheet arriving and leaving, as an iOS sheet does: long enough to be
+     seen travelling, on a curve that starts briskly and settles slowly with
+     no overshoot -- a bounce reads as a jolt on something the size of the
+     screen. The curve is the one Vaul (the iOS-style web drawer) uses for
+     UIKit's sheet; leaving is a little quicker than arriving. */
+  --motion-duration-sheet: 500ms;
+  --motion-duration-sheet-exit: 400ms;
+  --motion-ease-sheet: cubic-bezier(.32, .72, 0, 1);
   /* A press: quick in, and a small overshoot back out. The spring is written
      with linear() (a bounce of about 0.15); older browsers keep the curve. */
   --motion-duration-press: 260ms;
@@ -501,6 +509,8 @@
     --motion-duration-standard: 1ms;
     --motion-duration-exit: 1ms;
     --motion-duration-morph: 1ms;
+    --motion-duration-sheet: 1ms;
+    --motion-duration-sheet-exit: 1ms;
     --motion-duration-press: 1ms;
     --motion-duration-loader: 1600ms;
   }

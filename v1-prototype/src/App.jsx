@@ -2441,22 +2441,33 @@ function DialogCloseButton({ onClose, label, drawer = false }) {
 // (`detents`) opens at half height and is pulled up to full, then down to half
 // and away. Above 640px dialogs are centred and the grabber is not drawn.
 const SHEET_QUERY = "(max-width: 640px)";
+// A motion token's duration in milliseconds, as the stylesheet has it now
+// (reduced motion collapses them all to 1ms).
+function motionMs(token) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  const ms = value.endsWith("ms") ? parseFloat(value) : value.endsWith("s") ? parseFloat(value) * 1000 : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 // A sheet leaving slides down and its backdrop fades, however it is closed --
 // Done, the backdrop, Escape, the back gesture -- as an iOS sheet does,
-// rather than vanishing. Off a phone, or with reduced motion, it just closes.
-function slideSheetAway(sheet, then) {
+// rather than vanishing. `ms` is how long it takes: the token's, or less when
+// a flick has already given it speed. Off a phone, or with reduced motion, it
+// just closes.
+function slideSheetAway(sheet, then, ms = null) {
   const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   if (!sheet || still || !window.matchMedia?.(SHEET_QUERY).matches) { then(); return; }
   if (sheet.dataset.leaving) return;
   sheet.dataset.leaving = "true";
+  const duration = ms ?? motionMs("--motion-duration-sheet-exit");
   const backdrop = sheet.parentElement;
-  sheet.style.transition = "transform var(--motion-duration-standard) var(--motion-ease-standard)";
+  sheet.style.transition = `transform ${duration}ms var(--motion-ease-sheet)`;
   sheet.style.transform = "translateY(110%)";
   if (backdrop) {
-    backdrop.style.transition = "opacity var(--motion-duration-standard) var(--motion-ease-standard)";
+    backdrop.style.transition = `opacity ${duration}ms var(--motion-ease-sheet)`;
     backdrop.style.opacity = "0";
   }
-  window.setTimeout(then, 260);
+  window.setTimeout(then, duration + 20);
 }
 
 // The sheet's grabber, and the pull that closes a sheet. Down from anywhere on
@@ -2477,11 +2488,12 @@ function SheetGrabber({ onClose, detents = false }) {
     // a shorter one opens at its own height, with nothing to pull up.
     if (detents && sheet.scrollHeight > window.innerHeight * 0.75) sheet.dataset.detent = "medium";
     let drag = null;
-    function settle(transform, then) {
-      sheet.style.transition = still ? "none" : "transform var(--motion-duration-standard) var(--motion-ease-spring)";
+    // Back to where it rests, on the sheet's own curve: no bounce.
+    function settle(transform) {
+      const ms = motionMs("--motion-duration-sheet");
+      sheet.style.transition = still ? "none" : `transform ${ms}ms var(--motion-ease-sheet)`;
       sheet.style.transform = transform;
-      const done = () => { sheet.style.transition = ""; then?.(); };
-      if (still) done(); else window.setTimeout(done, 280);
+      if (still) sheet.style.transition = ""; else window.setTimeout(() => { sheet.style.transition = ""; }, ms + 20);
     }
     function follow(dy) {
       // Down follows the finger; up past where it rests stiffens, unless there
@@ -2497,13 +2509,12 @@ function SheetGrabber({ onClose, detents = false }) {
         sheet.dataset.detent = "medium";
         settle("translateY(0)");
       } else if (dy > sheet.offsetHeight * 0.25 || speed > 0.9) {
-        const backdrop = sheet.parentElement;
-        if (backdrop && !still) {
-          backdrop.style.transition = "opacity var(--motion-duration-standard) var(--motion-ease-standard)";
-          backdrop.style.opacity = "0";
-        }
-        sheet.dataset.leaving = "true";
-        settle("translateY(110%)", () => closeRef.current?.());
+        // It carries on at the speed the finger let go at, rather than
+        // slowing to the token's pace -- a flick leaves at once. The curve
+        // starts about 2.2 times faster than its average, hence the factor.
+        const remaining = sheet.offsetHeight * 1.1 - dy;
+        const exit = motionMs("--motion-duration-sheet-exit");
+        slideSheetAway(sheet, () => closeRef.current?.(), speed > 0.3 ? Math.max(180, Math.min(exit, remaining / speed * 2.2)) : exit);
       } else {
         settle("translateY(0)");
       }
@@ -4261,6 +4272,28 @@ function ProfileAvatar({ profile, size = "md" }) {
   </span>;
 }
 
+// Profiles to choose from, as Plex and Netflix show them everywhere a profile
+// is chosen -- the picker, the header's menu, its sheet: a large disc, the name
+// under it, and a word for the one reading now or one that asks for a PIN.
+function ProfileTiles({ profiles, current, onChoose, onAdd = null, busy = false }) {
+  return <ul className="profile-picker-list">
+    {profiles.map((profile) => <li key={profile.id}>
+      <button type="button" onClick={() => onChoose(profile)} disabled={busy} aria-current={profile.id === current ? "true" : undefined}>
+        <ProfileAvatar profile={profile} size="lg" />
+        <span className="profile-tile-name">{profile.name}</span>
+        {profile.id === current ? <small>Reading now</small>
+          : isLocked(profile) ? <small><LockSimple size={12} /> Locked</small> : null}
+      </button>
+    </li>)}
+    {onAdd ? <li>
+      <button type="button" onClick={onAdd} disabled={busy}>
+        <span className="profile-avatar profile-avatar--lg profile-avatar--add" aria-hidden="true"><Plus size={32} weight="light" /></span>
+        <span className="profile-tile-name">Add profile</span>
+      </button>
+    </li> : null}
+  </ul>;
+}
+
 // Your picture in every page's header, where Plex keeps it: a tap opens a
 // menu of who else can read here, adding a profile, your own page, and
 // signing out. The header is the one place every page has.
@@ -4304,27 +4337,18 @@ function ProfileMenu({ onClose }) {
       .catch(() => setOthers([]));
   }, []);
   const go = (action) => () => { onClose(); action(); };
+  // You first, as Plex puts the one signed in first: your tile opens your
+  // page, anyone else's switches to them.
   const rows = <>
-    <button type="button" className="profile-menu-self" onClick={go(actions.onOpenProfile)}>
-      <ProfileAvatar profile={viewer} />
-      <span><strong>{viewer.name}</strong><small>View profile</small></span>
-      <CaretRight size={16} aria-hidden="true" />
-    </button>
+    <ProfileTiles profiles={[viewer, ...(others || [])]} current={viewer.id}
+      onChoose={(profile) => go(profile.id === viewer.id ? actions.onOpenProfile : () => actions.onSwitchTo(profile))()}
+      onAdd={isAdmin(viewer) && others !== null ? go(actions.onAdd) : null} />
     {others === null ? <p className="profile-menu-loading"><LoadingSpinner size={16} /></p> : null}
-    {others?.length ? <>
-      <p className="profile-menu-label">Switch to</p>
-      {others.map((profile) => <button type="button" className="profile-menu-item" key={profile.id} onClick={go(() => actions.onSwitchTo(profile))}>
-        <ProfileAvatar profile={profile} />
-        <span>{profile.name}</span>
-        {isLocked(profile) ? <LockSimple size={14} aria-label={profile.lock === "pin" ? "Asks for a PIN" : "Asks for a password"} /> : null}
-      </button>)}
-    </> : null}
-    {isAdmin(viewer) ? <button type="button" className="profile-menu-item" onClick={go(actions.onAdd)}>
-      <span className="profile-menu-plus" aria-hidden="true"><Plus size={16} /></span><span>Add profile</span>
-    </button> : null}
-    {actions.method === "forms" ? <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onSignOut)}>
-      <SignOut size={16} /><span>Sign out</span>
-    </button> : null}
+    {actions.method === "forms" ? <div className="profile-menu-actions">
+      <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onSignOut)}>
+        <SignOut size={18} /><span>Sign out</span>
+      </button>
+    </div> : null}
   </>;
   if (phone) {
     return createPortal(<div className="modal-backdrop" onMouseDown={onClose}>
@@ -4332,7 +4356,7 @@ function ProfileMenu({ onClose }) {
         onMouseDown={(event) => event.stopPropagation()}>
         <SheetGrabber onClose={onClose} />
         <header>
-          <h2 id="profile-sheet-title">Profiles</h2>
+          <h2 id="profile-sheet-title">Who's reading?</h2>
           <button type="button" className="glass-button glass-button--icon library-sheet-close"
             onClick={() => slideSheetAway(dialogRef.current, onClose)} aria-label="Close"><X size={20} /></button>
         </header>
@@ -4340,7 +4364,7 @@ function ProfileMenu({ onClose }) {
       </section>
     </div>, document.body);
   }
-  return <div className="profile-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-label="Profiles">{rows}</div>;
+  return <div className="profile-menu glass-menu" ref={dialogRef} role="dialog" aria-modal="false" aria-label="Who's reading?">{rows}</div>;
 }
 
 // Adding a profile the way Plex adds one: a name. Its colour is given to it
@@ -4660,22 +4684,8 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
         </div>
       </form> : <>
         {profiles === null && !error ? <LoadingSpinner size={22} /> : null}
-        <ul className="profile-picker-list">
-          {(profiles || []).map((profile) => <li key={profile.id}>
-            <button type="button" onClick={() => choose(profile)} disabled={busy} aria-current={profile.id === current ? "true" : undefined}>
-              <ProfileAvatar profile={profile} size="lg" />
-              <span>{profile.name}</span>
-              {profile.id === current ? <small>Reading now</small>
-                : isLocked(profile) ? <small><LockSimple size={12} /> Locked</small> : null}
-            </button>
-          </li>)}
-          {canAdd && profiles ? <li>
-            <button type="button" onClick={() => onAdd?.()} disabled={busy}>
-              <span className="profile-avatar profile-avatar--lg profile-avatar--add" aria-hidden="true"><Plus size={32} /></span>
-              <span>Add profile</span>
-            </button>
-          </li> : null}
-        </ul>
+        <ProfileTiles profiles={profiles || []} current={current} onChoose={choose} busy={busy}
+          onAdd={canAdd && profiles ? () => onAdd?.() : null} />
         {error ? <p className="login-error" role="alert">{error}</p> : null}
         {signInAvailable ? <button type="button" className="profile-picker-other" onClick={() => enterProfile(null)}>
           Sign in with a password instead

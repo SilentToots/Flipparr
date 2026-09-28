@@ -3327,8 +3327,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   .modal {
     max-height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom));
     padding-top: var(--space-28); border-radius: var(--radius-24);
-    animation: sheet-in var(--motion-duration-standard) var(--motion-ease-spring);
+    animation: sheet-in var(--motion-duration-sheet) var(--motion-ease-sheet);
   }
+  /* The dimming comes up with the sheet rather than snapping on under it. */
+  .modal-backdrop { animation: sheet-backdrop-in var(--motion-duration-sheet) var(--motion-ease-sheet); }
   .sheet-grabber {
     display: block; position: absolute; z-index: 2; top: 0; left: 25%; right: 25%; height: var(--space-28);
     touch-action: none; cursor: grab;
@@ -3342,13 +3344,14 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
     position: relative; max-height: calc(100dvh - var(--space-48) - var(--space-8) - env(safe-area-inset-bottom));
     padding: var(--space-20) var(--space-16) var(--space-16);
     border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-24);
-    animation: sheet-in var(--motion-duration-standard) var(--motion-ease-spring);
-    transition: max-height var(--motion-duration-standard) var(--motion-ease-spring);
+    animation: sheet-in var(--motion-duration-sheet) var(--motion-ease-sheet);
+    transition: max-height var(--motion-duration-sheet) var(--motion-ease-sheet);
   }
   .library-sheet[data-detent="medium"] { max-height: 50dvh; }
 }
 @keyframes sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .modal, .library-sheet { animation: none; transition: none; } }
+@keyframes sheet-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .modal, .library-sheet, .modal-backdrop { animation: none; transition: none; } }
 
 /* The View & sort sheet's rows: segmented controls as the desktop's tools
    row, and the sort as an iOS grouped list with a check on the chosen one. */
@@ -3802,9 +3805,13 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-picker-card h1 { margin: 0; font-size: var(--text-2xl); }
 .profile-picker-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-24); }
 .profile-picker-list button {
-  display: grid; justify-items: center; gap: var(--space-8); min-width: var(--space-96); padding: var(--space-8);
+  display: grid; justify-items: center; align-content: start; gap: var(--space-8); min-width: var(--space-96); padding: var(--space-8);
   border: 0; border-radius: var(--radius-8); background: transparent; color: var(--text); font-size: var(--text-md); cursor: pointer;
 }
+/* The name is the tile's label, as large as Plex sets it; a long one wraps
+   under the disc rather than being cut. */
+.profile-tile-name { max-width: 112px; color: var(--muted-strong); font-size: var(--text-lg); font-weight: var(--weight-regular); line-height: var(--leading-snug); text-align: center; overflow-wrap: anywhere; }
+.profile-picker-list button[aria-current="true"] .profile-tile-name { color: var(--text); }
 .profile-picker-list button small { display: inline-flex; align-items: center; gap: var(--space-4); color: var(--muted); font-size: var(--text-xs); }
 .profile-picker-list button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (hover: hover) { .profile-picker-list button:not(:disabled):hover { background: var(--surface-soft); } }
@@ -3879,38 +3886,54 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .profile-avatar--fill { width: 100%; height: 100%; font-size: var(--text-xs); }
 .profile-avatar--xl { width: calc(var(--space-80) * 2); height: calc(var(--space-80) * 2); font-size: var(--text-2xl); }
-.profile-avatar--add { background: var(--surface-soft); color: var(--muted-strong); }
+.profile-avatar--add { background: var(--button-standard-bg); color: var(--muted-strong); }
+.profile-avatar--add svg { width: 40%; height: 40%; }
+/* On a phone, profiles are chosen as Plex's "Who's watching?" shows them
+   (2026-09-27): three to a row across the whole width, each disc as wide as
+   its column, the name under it wrapping as it must, and Add in the next
+   place in the grid. The picker and the header's sheet are the same. */
+@media (max-width: 640px) {
+  .profile-picker-card { width: 100%; }
+  .profile-picker-list, .profile-sheet .profile-menu .profile-picker-list {
+    width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); justify-content: stretch; gap: var(--space-24) var(--space-16);
+  }
+  .profile-picker-list li { min-width: 0; container-type: inline-size; }
+  .profile-picker-list button, .profile-sheet .profile-menu .profile-picker-list button { width: 100%; min-width: 0; padding: 0; gap: var(--space-10); }
+  .profile-picker-list .profile-avatar--lg { width: 100%; height: auto; aspect-ratio: 1; font-size: 36cqi; }
+  .profile-tile-name { max-width: none; }
+  @media (hover: hover) { .profile-picker-list button:not(:disabled):hover { background: transparent; } }
+}
 
 /* The header's avatar, beside the bell, and its menu -- the bell's shape. */
 .appbar-profile { position: relative; display: flex; }
 .appbar-profile-button { padding: var(--space-2); overflow: hidden; }
 .profile-menu {
-  position: absolute; z-index: 60; top: calc(100% + var(--space-8)); right: 0; width: min(300px, calc(100vw - var(--space-32)));
-  padding: var(--space-6); display: grid; gap: var(--space-2); border-radius: var(--radius-16);
+  position: absolute; z-index: 60; top: calc(100% + var(--space-8)); right: 0; width: min(360px, calc(100vw - var(--space-32)));
+  padding: var(--space-12) var(--space-8) var(--space-8); display: grid; gap: var(--space-8); border-radius: var(--radius-16);
 }
-.profile-menu :is(.profile-menu-self, .profile-menu-item) {
+/* The picker's tiles (ProfileTiles), in the menu: from the left, as many to a
+   row as fit, the one reading now first. */
+.profile-menu .profile-picker-list { justify-content: flex-start; gap: var(--space-4); }
+/* One column, whatever a glass menu gives its buttons (an icon and a label). */
+.profile-menu .profile-picker-list button { width: 104px; min-width: 0; padding: var(--space-8) var(--space-4); grid-template-columns: minmax(0, 1fr); }
+@media (hover: hover) { .profile-menu .profile-picker-list button:not(:disabled):hover { background: var(--glass-bg-hover); } }
+.profile-menu-actions { display: grid; padding-top: var(--space-6); box-shadow: inset 0 1px 0 var(--line); }
+.profile-menu-item {
   display: flex; align-items: center; gap: var(--space-10); width: 100%; min-height: var(--control-height-md); padding: var(--space-6) var(--space-8);
   border: 0; border-radius: var(--radius-8); background: transparent; color: var(--text); font-size: var(--text-sm); text-align: left; cursor: pointer;
 }
-.profile-menu .profile-menu-self { min-height: var(--space-64); }
-.profile-menu-self > span:not(.profile-avatar) { display: grid; gap: var(--space-2); flex: 1; min-width: 0; }
-.profile-menu-self small { color: var(--muted); font-size: var(--text-xs); }
-.profile-menu-item > span:not(.profile-avatar):not(.profile-menu-plus) { flex: 1; min-width: 0; }
-.profile-menu-label { margin: var(--space-6) var(--space-8) 0; color: var(--muted); font-size: var(--text-xs); }
 .profile-menu-loading { display: flex; justify-content: center; margin: var(--space-8) 0; }
-.profile-menu-plus { display: grid; place-items: center; width: var(--control-height-sm); height: var(--control-height-sm); border-radius: var(--radius-pill); background: var(--surface-soft); }
 .profile-menu-quiet { color: var(--muted-strong); }
-@media (hover: hover) { .profile-menu :is(.profile-menu-self, .profile-menu-item):hover { background: var(--glass-bg-hover); } }
-/* On a phone the menu is a sheet: the same rows, sized for a finger, in the
-   sheet's own grouped list rather than floating glass. */
+@media (hover: hover) { .profile-menu-item:hover { background: var(--glass-bg-hover); } }
+/* On a phone the menu is a sheet, laid out as the picker is: the tiles
+   centred and roomy, a finger's row for signing out under them. */
 .profile-sheet { padding: var(--space-20) var(--space-16) calc(var(--space-16) + env(safe-area-inset-bottom)); }
-.profile-sheet > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin-bottom: var(--space-8); }
-.profile-sheet h2 { margin: 0; color: var(--text); font-size: var(--text-md); }
-.profile-sheet .profile-menu { position: static; width: auto; padding: 0; gap: 0; overflow: hidden; border-radius: var(--radius-12); background: var(--button-standard-bg); }
-.profile-sheet .profile-menu :is(.profile-menu-self, .profile-menu-item) { min-height: 56px; padding: var(--space-8) var(--space-16); border-radius: 0; font-size: var(--text-md); }
-.profile-sheet .profile-menu :is(.profile-menu-self, .profile-menu-item) + :is(.profile-menu-item, .profile-menu-label) { box-shadow: inset 0 1px 0 var(--line); }
-.profile-sheet .profile-menu-label { margin: 0; padding: var(--space-12) var(--space-16) var(--space-4); }
-.profile-sheet .profile-menu-loading { margin: var(--space-12) 0; }
+.profile-sheet > header { position: relative; display: flex; align-items: center; justify-content: center; min-height: 48px; margin-bottom: var(--space-20); }
+.profile-sheet h2 { margin: 0; color: var(--text); font-size: var(--text-2xl); font-weight: var(--weight-bold); }
+.profile-sheet > header .library-sheet-close { position: absolute; right: 0; }
+.profile-sheet .profile-menu { position: static; width: auto; padding: 0 var(--space-4); gap: var(--space-24); }
+.profile-sheet .profile-menu-actions { padding-top: 0; box-shadow: none; overflow: hidden; border-radius: var(--radius-12); background: var(--button-standard-bg); }
+.profile-sheet .profile-menu-item { min-height: 52px; padding: var(--space-8) var(--space-16); border-radius: 0; font-size: var(--text-md); }
 
 /* The picker over the app, as Switch profile opens it. */
 .profile-picker--overlay { position: fixed; inset: 0; z-index: 95; overflow-y: auto; }
