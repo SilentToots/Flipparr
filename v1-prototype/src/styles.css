@@ -2820,6 +2820,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .alias-form button { min-height: 44px; }
   .backdrop-workbench-tools label { flex-basis: 100%; min-width: 0; }
   .backdrop-workbench-tools .secondary-button { width: 100%; justify-content: center; }
+  /* The sheet already scrolls; a second scroll region inside it cut the
+     page grid off after two and a half rows (the owner, 2026-09-29). */
+  .backdrop-page-grid { max-height: none; overflow: visible; }
 
   /* Settings: Manage folders and Scan library stacked at two different widths;
      the provider rows' Manage was the only regular-weight button. */
