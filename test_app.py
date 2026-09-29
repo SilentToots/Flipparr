@@ -4748,11 +4748,23 @@ class ReleaseSeriesMatchTests(unittest.TestCase):
         # Not from this incident: a prefix test would let these through.
         ("Batman Beyond 001 (2016) (Digital)", "Batman", "1"),
         ("Hulk and Power Pack 001 (2007) (Digital)", "Hulk", "1"),
+        # A wanted name of one or two words is never extended by "and …".
+        ("Batman and Robin 001 (2011) (Digital)", "Batman", "1"),
+        ("Green Lantern and the Sinestro Corps War 001 (2008)", "Green Lantern", "1"),
+        ("Green Lantern-Sinestro Corps - Secret Files and Origins and Other Stories Collected 01", "Green Lantern / Sinestro Corps: Secret Files", "1"),
     ]
 
     # The right comic, behind whatever wrapper the poster used.
     RIGHT_SERIES = [
         ("Saga 006 (2012) (Digital) (Zone-Empire)", "Saga", "6"),
+        # A one-shot the cover calls "Secret Files and Origins" and Metron
+        # "Secret Files", with the posting's date between name and number
+        # (Green Lantern / Sinestro Corps, 2026-09-28).
+        ("Green Lantern-Sinestro Corps - Secret Files and Origins, 2007-12-28 (01) (digital) (OkC.O.M.P.U.T.O.-Novus-HD)",
+         "Green Lantern / Sinestro Corps: Secret Files", "1"),
+        ("Green Lantern-Sinestro Corps - Secret Files and Origins 2007-12-28 01 digital OkC.O.M.P.U.T.O.-Novus-HD",
+         "Green Lantern / Sinestro Corps: Secret Files", "1"),
+        ("JLA - Secret Files & Origins 001 (1997) (Digital)", "JLA: Secret Files", "1"),
         ("Saga.068.2024.Digital.Zone-Empire", "Saga", "68"),
         # No brackets, so the scene group trails the issue number.
         ("Saga 015 2013 digital Minutemen-Spaztastic (cbr)", "Saga", "15"),

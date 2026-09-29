@@ -3250,6 +3250,11 @@ def _release_series_trim(lead: str, publisher: Any) -> str:
     value = re.sub(
         r"[\s.]*\b(?:no|nos|number|issue)\.?\s*$", "", value, flags=re.I
     ).strip(" -.:")
+    # A date stamp between the name and the number is the posting's, not the
+    # series': "Secret Files and Origins, 2007-12-28 (01)" names no series
+    # ending in a date.
+    value = value.strip(" -.:,([")
+    value = re.sub(r"[\s,\-]*\b(?:19|20)\d{2}(?:[.\-/_ ]\d{1,2}[.\-/_ ]\d{1,2})?\s*$", "", value).strip(" -.:,([")
     known = str(publisher or "").strip()
     if known:
         value = re.sub(
@@ -3304,9 +3309,29 @@ def _release_lead_is_series(lead: str, wanted: str, series_title: Any, publisher
     if bool(bare_wanted) and bare_lead == bare_wanted:
         return True
     trimmed = _release_series_trim(lead, publisher)
-    return bool(bare_wanted) and normalized_title(
-        _without_leading_article(trimmed)
-    ) == bare_wanted
+    if bool(bare_wanted) and normalized_title(_without_leading_article(trimmed)) == bare_wanted:
+        return True
+    return _lead_extends_series(trimmed, series_title)
+
+
+def _title_words(value: Any) -> list[str]:
+    """A title as words, "&" kept as one, for comparing names word by word."""
+    return re.findall(r"[a-z0-9]+|&", str(value or "").lower())
+
+
+def _lead_extends_series(lead: str, series_title: Any) -> bool:
+    """A release name that begins with the whole wanted name and goes on with
+    "and …": DC's one-shots are "Secret Files and Origins" on the cover and
+    "Secret Files" in a catalog, and the release is right. Only for a wanted
+    name of three words or more, and at most three words after the "and" --
+    "Hulk and Power Pack" is not Hulk, "Batman and Robin" is not Batman, and
+    "Green Lantern and the Sinestro Corps War" is not Green Lantern."""
+    wanted = _title_words(_without_leading_article(series_title))
+    words = _title_words(_without_leading_article(lead))
+    if len(wanted) < 3 or len(words) <= len(wanted) or words[:len(wanted)] != wanted:
+        return False
+    rest = words[len(wanted):]
+    return rest[0] in ("and", "&") and 1 <= len(rest) - 1 <= 3
 
 
 def _release_year_conflict(title: str, context: dict[str, Any]) -> str | None:
