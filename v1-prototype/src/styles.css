@@ -309,7 +309,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .run-status.active { background: var(--badge-violet-bg); }
 .run-status.complete { background: var(--badge-muted-bg); }
 
-.primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button { border: 0; border-radius: var(--radius-8); min-height: var(--control-height-md); padding: 0 var(--space-16); display: inline-flex; justify-content: center; align-items: center; gap: var(--space-8); font-weight: var(--weight-semibold); font-size: var(--text-sm); cursor: pointer; transition: transform var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard); }
+.primary-button, .secondary-button, .ghost-button, .ui-button { border: 0; border-radius: var(--radius-8); min-height: var(--control-height-md); padding: 0 var(--space-16); display: inline-flex; justify-content: center; align-items: center; gap: var(--space-8); font-weight: var(--weight-semibold); font-size: var(--text-sm); cursor: pointer; transition: transform var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), border-color var(--motion-duration-fast) var(--motion-ease-standard); }
 .primary-button { background: var(--violet); color: var(--color-neutral-0); }
 @media (hover: hover) { .primary-button:hover:not(:disabled) { background: var(--violet); transform: translateY(-1px); } }
 .primary-button:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
@@ -445,9 +445,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .page-header--search-page .page-header-search, .page-header--search-page .page-header-search:focus-within { width: 520px; }
 @media (min-width: 641px) { .page-header--search-phone .page-header-search { display: none; } }
 .page-header-actions { grid-area: actions; display: flex; align-items: center; gap: var(--space-8); }
-.page-header .library-phone-view { display: none; }
+/* One View & sort button on every width (2026-09-29). */
+.page-header .library-view-button { display: inline-flex; position: relative; }
 .page-header-tools { grid-area: tools; min-width: 0; margin-top: var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
-.page-header-tools > .library-tools { flex: 1 1 auto; min-width: 0; }
 
 /* --- Glass controls ------------------------------------------------------------
    The navigation layer's material (see the --glass-* tokens): a tinted blur, a
@@ -502,9 +502,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   }
   :is(.page-header--search-page, .page-header--search-phone) .page-header-search, :is(.page-header--search-page, .page-header--search-phone) .page-header-search:focus-within { width: 100%; margin-top: var(--space-12); }
   .page-header .glass-field input { font-size: var(--text-input); }
-  .page-header .library-phone-view { display: inline-flex; }
+  .page-header .library-view-button { display: inline-flex; }
   .page-header-actions { gap: var(--space-6); }
-  .page-header-tools.library-tools-row { display: none; }
   /* The frost on the header itself as well as on its band, once the page
      has moved: iOS 26 Safari colours the status-bar zone above the page by
      sampling the sticky element at the top edge, reading its background and
@@ -585,31 +584,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .library-loading-cell.short { width: 68px; }
 @keyframes library-skeleton { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
-.library-tools { min-height: 38px; display: flex; align-items: center; gap: var(--space-12); }
 /* One control shape across the row, per the design: a --line-strong hairline
    at --radius, 4px of padding, and 14px bold --muted-weak copy. Only the
    selected view is filled, and it is filled with the accent itself. */
 .view-toggle { display: inline-flex; gap: var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-8); padding: var(--space-4); background: transparent; }
 .view-toggle button { border: 0; box-sizing: content-box; padding: var(--space-4); display: grid; place-items: center; border-radius: var(--radius-4); background: transparent; color: var(--chrome-label); cursor: pointer; }
 .view-toggle button.active { background: var(--color-violet-700); color: var(--color-neutral-0); }
-.sort-field { position: relative; display: flex; align-items: center; }
 /* The file's 200px control: label hard left, chevron hard right, 8px of
    padding holding both. */
-.sort-trigger { width: 200px; height: 38px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: transparent; color: var(--muted-weak); font-size: var(--text-sm); font-weight: var(--weight-bold); white-space: nowrap; cursor: pointer; }
-@media (hover: hover) { .sort-trigger:not(:disabled):hover { color: var(--muted-strong); } }
 /* Below the trigger, not over it -- which is the one thing a native select on
    this platform will not do. */
-.sort-menu { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; width: 200px; margin: 0; padding: var(--space-4); list-style: none; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface-raised); box-shadow: 0 18px 44px var(--scrim); }
-.sort-menu button { width: 100%; min-height: 32px; padding: var(--space-4) var(--space-8); border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-strong); font-size: var(--text-sm); font-weight: var(--weight-bold); text-align: left; white-space: nowrap; cursor: pointer; }
 /* The menu holds the sort list and, on a phone, the filters under it. */
-.sort-menu-options { margin: 0; padding: 0; list-style: none; }
-.sort-menu button:focus-visible { background: var(--surface-hover); color: var(--text); }
-@media (hover: hover) { .sort-menu button:not(:disabled):hover { background: var(--surface-hover); color: var(--text); } }
-.sort-menu button.selected { background: var(--nav-active-bg); color: var(--text); }
-.sort-field { margin-left: auto; }
-.filter-button { height: 38px; min-height: 38px; gap: var(--space-4); padding: var(--space-4) var(--space-8); white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--muted-weak); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius-8); }
-.filter-button.active { border-color: var(--violet); background: var(--nav-active-bg); color: var(--text); }
-.library-tools { gap: var(--space-12); }
 
 /* Comics' tools row in Liquid Glass (2026-09-19): grid or list (and runs or
    collections) as segmented controls with the sliding glass thumb; Sort and
@@ -618,7 +603,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .segmented-tab--icon { width: 36px; padding: 0; justify-content: center; }
 /* The sort menu hangs from the capsule's right edge: the capsule ends the row,
    and the page clips anything wider than itself. */
-.library-refine { position: relative; margin-left: auto; }
 .glass-capsule { box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-pill); }
 .glass-capsule-divider { flex: none; width: 1px; height: 20px; background: var(--line-strong); }
 .glass-capsule .glass-capsule-segment {
@@ -628,27 +612,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap; cursor: pointer;
   transition: background var(--motion-duration-fast) ease, color var(--motion-duration-fast) ease, scale var(--motion-duration-press) var(--motion-ease-spring);
 }
-.glass-capsule .sort-trigger { padding-right: var(--space-10); }
-.glass-capsule .sort-trigger > svg { color: var(--muted); }
 @media (hover: hover) { .glass-capsule .glass-capsule-segment:not(.active):hover { background: var(--glass-bg-hover); } }
 .glass-capsule .glass-capsule-segment:active { scale: .95; }
 .glass-capsule .glass-capsule-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
-.glass-capsule .filter-button.active { background: var(--glass-primary-bg); color: var(--color-neutral-0); }
-@media (hover: hover) { .glass-capsule .filter-button.active:hover { background: var(--glass-primary-bg-hover); } }
-.glass-capsule .sort-field { position: static; margin-left: 0; }
-.sort-menu.glass-menu {
-  top: calc(100% + var(--space-8)); right: 0; left: auto; width: 220px; padding: var(--space-6);
-  border-radius: var(--radius-16); background: var(--glass-menu-bg); box-shadow: var(--glass-rim), var(--glass-shadow);
-  transform-origin: top right; animation: glass-menu-in var(--motion-duration-standard) var(--motion-ease-spring);
-}
-.glass-menu .sort-menu-options { display: grid; gap: var(--space-2); }
 .glass-menu button { min-height: 36px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: var(--space-6); padding: 0 var(--space-10); border-radius: var(--radius-8); color: var(--text); font-weight: var(--weight-medium); }
 .glass-menu button.selected { background: transparent; color: var(--text); font-weight: var(--weight-semibold); }
 @media (hover: hover) { .glass-menu button:not(:disabled):hover { background: var(--glass-bg-hover); } }
 .glass-menu button:focus-visible { background: var(--glass-bg-hover); }
 .sort-menu-check { display: grid; place-items: center; color: var(--violet-text); }
 @keyframes glass-menu-in { from { opacity: 0; scale: .6; } to { opacity: 1; scale: 1; } }
-@media (prefers-reduced-motion: reduce) { .sort-menu.glass-menu { animation: none; } .glass-capsule .glass-capsule-segment:active { scale: none; } }
 
 .series-table { border-top: 1px solid var(--line); }
 .series-table-head, .series-row { display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(160px, .85fr) minmax(120px, .72fr) minmax(130px, .7fr) 24px; gap: var(--space-20); align-items: center; }
@@ -2181,7 +2153,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      than the screen and scrolled sideways for the rest of the visit, which is
      disorienting in a way a slightly larger font is not. */
   .release-query input { font-size: var(--text-input); }
-  .filter-button, .view-toggle button { font-size: var(--text-md); }
+  .view-toggle button { font-size: var(--text-md); }
 
   /* #2: this card is a two-column grid (text | action) with no mobile
      treatment, so at 375px the copy was crushed into a narrow column beside a
@@ -3290,7 +3262,7 @@ button:not(:disabled):active { scale: var(--button-press-scale); }
    the controls instead. Last in the file so it wins on source order against
    each control's own rule, at that rule's own specificity. */
 @media (max-width: 640px) {
-  .primary-button, .secondary-button, .ghost-button, .filter-button, .ui-button, .follow-switch, .setup-pill { font-size: var(--text-md); }
+  .primary-button, .secondary-button, .ghost-button, .ui-button, .follow-switch, .setup-pill { font-size: var(--text-md); }
   .did-you-mean button, .ui-button--sm, .issue-catalog-card button { font-size: var(--text-md); }
 }
 
@@ -3435,6 +3407,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 
 /* The View & sort sheet's rows: segmented controls as the desktop's tools
    row, and the sort as an iOS grouped list with a check on the chosen one. */
+/* The same controls in a drawer above the phone width: the sheet's inner
+   styling stays, its bottom-sheet shape and slide go. */
+.library-drawer { width: min(400px, 100%); padding: var(--space-16) var(--space-20) var(--space-24); }
+.library-drawer .library-sheet--drawer { max-height: none; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; animation: none; overflow: visible; }
 .library-sheet-segmented { width: 100%; }
 .library-sheet-segmented .segmented-tab { flex: 1 1 0; justify-content: center; min-height: 40px; }
 .library-sheet .library-sheet-options { gap: 0; overflow: hidden; border-radius: var(--radius-12); background: var(--button-standard-bg); }

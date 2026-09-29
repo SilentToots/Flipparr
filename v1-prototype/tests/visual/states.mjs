@@ -50,10 +50,14 @@ export const states = [
     // loading skeleton and pass, which is the false clean `require` exists to
     // stop. A card has to be on screen for the shot to mean anything.
     waitForCatalog: true,
-    require: [".filter-button", ".series-card"],
+    require: [".library-view-button", ".series-card"],
+    // One View & sort button on every width (2026-09-29): the filters live in
+    // its drawer, so the state opens it, flips the switch and closes it.
     async setup(page) {
-      await page.waitForSelector(".filter-button", { timeout: 15000 });
-      await page.locator(".filter-button").first().click();
+      await page.waitForSelector(".library-view-button", { timeout: 15000 });
+      await page.locator(".library-view-button").click();
+      await page.getByRole("switch", { name: "Following only" }).click();
+      await page.locator(".library-sheet-done").click();
       await settle(page);
     },
   },
@@ -64,10 +68,12 @@ export const states = [
     phone: false,
     path: "/library",
     waitForCatalog: true,
-    require: [".filter-button", ".series-card"],
+    require: [".library-view-button", ".series-card"],
     async setup(page) {
-      await page.waitForSelector(".filter-button", { timeout: 15000 });
-      await page.locator(".filter-button").nth(1).click();
+      await page.waitForSelector(".library-view-button", { timeout: 15000 });
+      await page.locator(".library-view-button").click();
+      await page.getByRole("switch", { name: "In progress only" }).click();
+      await page.locator(".library-sheet-done").click();
       await settle(page);
     },
   },

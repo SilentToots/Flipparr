@@ -146,7 +146,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   same (the library's size is in the rail's foot and Settings › Library
   folders). On the right: the page's actions and one primary action, as glass
   controls, then the bell.
-  Under them, an optional tools row (tabs, or view and sort). The header is
+  Under them, an optional tools row (tabs). The header is
   sticky. Once the page moves it *condenses*: the title scales to 18px and,
   on a desktop, the header rises into its top padding.
   Its height never changes, so nothing under a scroll jumps. Content under it
@@ -236,8 +236,12 @@ was last opened has a violet dot. Titles wrap; nothing is truncated.
 
 Settings chosen from a few (grid or list, runs or collections) are
 `GlassSegmented`: SegmentedTabs' track and sliding glass thumb, as radios.
-Comics' tools row is two of those on the left and a Sort + Following
-`.glass-capsule` at its end.
+Comics has no tools row: one *View & sort* button in the header on every
+width (the owner, 2026-09-29) opens the same controls -- scope, grid or list,
+sort, the Following / In progress / arc-grouping switches -- as a sheet from
+the bottom on a phone and as a drawer from the right above 640px
+(`LibraryViewSheet`). The button carries a dot while anything is off its
+default.
 
 Liquid Glass is for the navigation layer only: page-header controls, the
 search field, the tab bars, the drawer tabs and a drawer's top bar. Never cards, rows or covers,
@@ -408,9 +412,9 @@ Motion tokens:
   saying whether it is here, on the way or missing, and whether it is read.
   On the Runs shelf a run kept only for an arc -- not followed, every owned
   issue an arc's -- is folded into the arc's card ("N runs inside"), as a
-  confirmed collection folds its runs; *Group arcs* in the refine capsule
-  (the sheet's "Group arc-only runs under their arc") turns it off, per
-  profile. A search looks through everything, folded or not.
+  confirmed collection folds its runs; View & sort's "Group arc-only runs
+  under their arc" turns it off, per profile. A search looks through
+  everything, folded or not.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

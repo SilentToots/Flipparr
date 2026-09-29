@@ -1966,14 +1966,16 @@ function ImportReadingListModal({ onClose, onImported }) {
 }
 
 function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowingOnly, inProgressOnly, onInProgressOnly, groupArcRuns = true, onGroupArcRuns = null, scopeItems = [], scope, onScope, onClose }) {
-  const dialogRef = useDialog(onClose);
-  return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
-    <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
-      <SheetGrabber onClose={onClose} detents pullAnywhere />
+  const phone = usePhoneWidth();
+  // Above the phone width the same controls sit in a drawer from the right,
+  // as a run's details do; on a phone they are a sheet from the bottom.
+  const { closing, requestClose } = useDrawerExit(onClose);
+  const dialogRef = useDialog(phone ? onClose : requestClose);
+  const controls = <>
       <header>
         <h2 id="library-sheet-title">View &amp; sort</h2>
         <button type="button" className="glass-button glass-button--icon library-sheet-close"
-          onClick={(event) => slideSheetAway(event.currentTarget.closest(".library-sheet"), onClose)} aria-label="Close"><X size={20} /></button>
+          onClick={(event) => (phone ? slideSheetAway(event.currentTarget.closest(".library-sheet"), onClose) : requestClose())} aria-label="Close"><X size={20} /></button>
       </header>
       {/* The desktop tools row's controls: segmented, with the sliding thumb. */}
       {scopeItems.length > 1 ? <fieldset>
@@ -1997,78 +1999,23 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
       {scope === "runs" ? <FollowSwitch following={followingOnly} label="Following only" onChange={onFollowingOnly} /> : null}
       {scope !== "collections" ? <FollowSwitch following={inProgressOnly} label="In progress only" onChange={onInProgressOnly} /> : null}
       {scope === "runs" && onGroupArcRuns ? <FollowSwitch following={groupArcRuns} label="Group arc-only runs under their arc" onChange={onGroupArcRuns} /> : null}
-      <button type="button" className="library-sheet-done" onClick={onClose}>Done</button>
-    </section>
+      <button type="button" className="library-sheet-done" onClick={phone ? onClose : requestClose}>Done</button>
+  </>;
+  if (phone) {
+    return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
+      <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
+        <SheetGrabber onClose={onClose} detents pullAnywhere />
+        {controls}
+      </section>
+    </div>;
+  }
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
+    <aside className={`series-drawer library-drawer ${closing ? "closing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
+      <section className="library-sheet library-sheet--drawer">{controls}</section>
+    </aside>
   </div>;
 }
 
-function SortMenu({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
-  const current = SORT_OPTIONS.find((option) => option.value === value) || SORT_OPTIONS[0];
-  useEffect(() => {
-    if (!open) return undefined;
-    function onPointerDown(event) {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
-    }
-    function onKeyDown(event) {
-      if (event.key === "Escape") { setOpen(false); rootRef.current?.querySelector("button")?.focus(); }
-    }
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-  function choose(option) {
-    onChange(option.value);
-    setOpen(false);
-    rootRef.current?.querySelector("button")?.focus();
-  }
-  // Arrow keys move through the options once the list is open, which a native
-  // select gave for free and a button does not.
-  function onListKeyDown(event) {
-    const items = [...(rootRef.current?.querySelectorAll('[role="option"]') || [])];
-    const index = items.indexOf(document.activeElement);
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const next = event.key === "ArrowDown" ? index + 1 : index - 1;
-      items[(next + items.length) % items.length]?.focus();
-    }
-  }
-  // The trigger is a segment of the Sort and Following capsule, and the menu
-  // is glass that grows out of it, as iOS 26's pull-down menus do.
-  return <div className="sort-field" ref={rootRef}>
-    <button
-      type="button" className="sort-trigger glass-capsule-segment" aria-haspopup="listbox" aria-expanded={open}
-      aria-label={`Sort by. ${current.label}`} onClick={() => setOpen((value) => !value)}
-    >{current.label}<ChevronDown /></button>
-    {open ? <div className="sort-menu glass-menu">
-      <ul className="sort-menu-options" role="listbox" aria-label="Sort by" onKeyDown={onListKeyDown}>
-        {SORT_OPTIONS.map((option) => (
-          <li key={option.value} role="none">
-            <button
-              type="button" role="option" aria-selected={option.value === value}
-              className={option.value === value ? "selected" : ""}
-              onClick={() => choose(option)}
-            ><span className="sort-menu-check" aria-hidden="true">{option.value === value ? <Check size={16} weight="bold" /> : null}</span>{option.label}</button>
-          </li>
-        ))}
-      </ul>
-    </div> : null}
-  </div>;
-}
-
-// The phone's search: a full-screen flyout over Comics instead of a field
-// dropped into the page. It uses Discover's own search field, and shows the
-// library's matching runs as you type with Discover's Library Matches cards.
-// Search (Enter) looks through the comic catalogs on Discover, as the desktop
-// bar does.
-// Null until the first answer: the grid's Recent order needs it, and a grid
-// drawn before it came was drawn in added order and then re-sorted under
-// the eye, the comics read last jumping to the front. A refresh keeps the
-// last map until the next one lands, so nothing flickers.
 function useRunReading(version) {
   const [runs, setRuns] = useState(() => lastAnswer("/api/v1/reading/runs")?.runs ?? null);
   useEffect(() => {
@@ -2200,38 +2147,15 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
           placeholder: "Search your comics…",
         }}
         actions={<button
-          type="button" className="glass-button glass-button--icon library-phone-view"
+          type="button" className="glass-button glass-button--icon library-view-button"
           aria-label={viewCustomized ? "View and sort, changed from the default" : "View and sort"}
           aria-haspopup="dialog" aria-expanded={viewSheetOpen} onClick={() => setViewSheetOpen(true)}
         ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button>}
-        toolsClassName="library-tools-row"
-        tools={<div className="library-tools">
-          {/* The layout choices on the left as segmented controls; how the
-              grid is ordered and filtered on the right, in one glass
-              capsule, Following turning violet while it filters. */}
-          {scopeItems.length > 1 ? <GlassSegmented label="Choose catalog grouping" value={effectiveScope} onChange={setScope} className="library-scope-toggle"
-            items={scopeItems} /> : null}
-          {effectiveScope === "runs" ? <GlassSegmented label="Choose library view" value={view} onChange={setView} className="library-view-toggle"
-            items={[{ id: "grid", title: "Grid view", icon: <GridViewIcon /> }, { id: "list", title: "List view", icon: <ListViewIcon /> }]} /> : null}
-          <div className="glass-capsule library-refine">
-            <SortMenu value={sort} onChange={setSort} />
-            {effectiveScope === "runs" ? <>
-              <span className="glass-capsule-divider" aria-hidden="true" />
-              <button type="button" className={`glass-capsule-segment filter-button${followingOnly ? " active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button>
-              {(readingLists?.length || 0) > 0 ? <>
-                <span className="glass-capsule-divider" aria-hidden="true" />
-                <button type="button" className={`glass-capsule-segment filter-button${groupArcRuns ? " active" : ""}`} aria-pressed={groupArcRuns}
-                  title="Runs kept only for a story arc are shown as the arc" onClick={() => setGroupArcRuns((value) => !value)}><ListNumbers size={17} /> Group arcs</button>
-              </> : null}
-            </> : null}
-            {effectiveScope !== "collections" ? <>
-              <span className="glass-capsule-divider" aria-hidden="true" />
-              <button type="button" className={`glass-capsule-segment filter-button${inProgressOnly ? " active" : ""}`} aria-pressed={inProgressOnly} onClick={() => setInProgressOnly((value) => !value)}><BookOpen size={17} weight="fill" /> In progress</button>
-            </> : null}
-          </div>
-        </div>}
       />
-      {/* View, sort and the filters are a sheet on a phone. */}
+      {/* One button on every width (the owner, 2026-09-29): view, sort and the
+          filters are a sheet on a phone and a drawer on a desktop, with the
+          same controls in each. The desktop's row of segmented controls and
+          its glass capsule are gone. */}
       {viewSheetOpen ? <LibraryViewSheet
         view={view} onView={setView} sort={sort} onSort={setSort}
         followingOnly={followingOnly} onFollowingOnly={setFollowingOnly}
