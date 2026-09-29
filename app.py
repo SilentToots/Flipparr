@@ -12438,6 +12438,18 @@ def _arc_items_from_metron(detail: dict[str, Any]) -> list[dict[str, Any]]:
     } for issue in detail["issues"]]
 
 
+def _reading_list_cover_choices(list_id: int) -> set[str]:
+    """The covers an arc may wear: the first page of any of its comics that
+    is here, or a picture the provider or the list gave it. Never a link
+    someone typed."""
+    data = catalog_store().reading_list(list_id)
+    choices = {f"/api/v1/files/{item['fileId']}/pages/0" for item in data["items"] if item.get("fileId")}
+    choices |= {str(item["cover"]) for item in data["items"] if str(item.get("cover") or "").startswith("https://")}
+    if str(data.get("cover") or "").startswith("https://"):
+        choices.add(str(data["cover"]))
+    return choices
+
+
 def heal_reading_lists() -> int:
     """Every saved arc with an issue not yet found in the library, resolved
     again. Called when a run can have appeared -- a scan, an import -- so
@@ -15968,8 +15980,12 @@ class Handler(BaseHTTPRequestHandler):
                     catalog_store().remove_reading_list_items(list_id, [int(item) for item in remove])
                 if order:
                     catalog_store().reorder_reading_list(list_id, [int(item) for item in order])
-                if isinstance(payload.get("name"), str):
-                    catalog_store().update_reading_list(list_id, name=payload["name"])
+                if isinstance(payload.get("name"), str) or isinstance(payload.get("cover"), str):
+                    cover = payload.get("cover") if isinstance(payload.get("cover"), str) else None
+                    if cover is not None and cover not in _reading_list_cover_choices(list_id):
+                        raise ValueError("Choose a cover from the arc's own comics")
+                    catalog_store().update_reading_list(
+                        list_id, name=payload.get("name") if isinstance(payload.get("name"), str) else None, cover=cover)
                 result = reading_list_detail(list_id, user_id=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)

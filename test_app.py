@@ -8092,6 +8092,8 @@ class ReadingListImportTests(ReadingListTests):
                 app.import_reading_list(data=b"hello", filename="x.cbl", user_id=ADMIN_USER_ID)
             with self.assertRaisesRegex(ValueError, "nothing to refresh"):
                 app.refresh_reading_list(int(made["id"]), user_id=ADMIN_USER_ID)
+            self.assertEqual(app._reading_list_cover_choices(int(made["id"])), {f"/api/v1/files/{ids['Batman'][1]['608'][0]}/pages/0"},
+                             "its own comics' first pages, and nothing typed")
 
     def test_a_linked_run_is_the_arcs_whatever_the_title_says(self):
         with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:

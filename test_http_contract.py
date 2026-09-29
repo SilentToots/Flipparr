@@ -1714,6 +1714,11 @@ class ReaderProfileHttpTests(unittest.TestCase):
                       headers={"X-Filename": "two.cbl", "Cookie": "; ".join(f"{k}={v}" for k, v in admin.items())})
         self.assertEqual((raw.status, raw.json()["name"], raw.json()["issueCount"]), (201, "Two", 2), raw.body)
         self.assertEqual(self.call("GET", "/api/v1/reading-lists", cookies=cookies).json()["lists"][0]["name"], "Two", "the reader sees it")
+        # A cover is one of the arc's own comics or the picture it came with, never a typed link.
+        for bad in ("https://evil.invalid/x.jpg", "javascript:alert(1)", "/api/v1/files/999/pages/0"):
+            self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"cover": bad}, cookies=admin).status, 400, bad)
+        renamed = self.call("PATCH", "/api/v1/reading-lists/1", {"name": "Two, renamed"}, cookies=admin)
+        self.assertEqual((renamed.status, renamed.json()["name"]), (200, "Two, renamed"))
         self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"order": "1,2"}, cookies=admin).status, 400, "an order is a list")
         self.assertEqual(self.call("DELETE", "/api/v1/reading-lists/1", cookies=admin).status, 200)
         self.assertEqual(self.call("DELETE", "/api/v1/reading-lists/1", cookies=admin).status, 404, "gone")
