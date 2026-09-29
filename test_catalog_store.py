@@ -2325,6 +2325,30 @@ class CatalogStoreTests(unittest.TestCase):
             store.reconcile_acquisition_jobs()
             self.assertEqual(self._job(root, job_id)["status"], "cancelled")
 
+    def test_a_download_taken_by_hand_is_marked_until_the_next_grab(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            taken = store.record_acquisition_download(job_id, "SAB-1", "Odd Name 002", "k1", taken_by_hand=True)
+            self.assertTrue(taken["takenByHand"])
+            self.assertTrue(store.acquisition_download_for_job(job_id)["taken_by_hand"])
+            again = store.record_acquisition_download(job_id, "SAB-2", "Example 002 (2026)", "k2")
+            self.assertFalse(again["takenByHand"], "an automatic grab of the same issue is judged as usual")
+            self.assertFalse(store.acquisition_download_for_job(job_id)["taken_by_hand"])
+
+    def test_a_refusal_is_lifted_by_key_or_by_title(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.record_acquisition_release_failure(job_id, "k1", "Example 002 (2026) (Digital)", "Aborted", kind="download")
+            store.record_acquisition_release_failure(job_id, "k2", "Example  002 (2026) (c2c)", "Aborted", kind="download")
+            store.record_acquisition_release_failure(job_id, "k3", "Example 002 (2026) (scan)", "Aborted", kind="download")
+            self.assertEqual(store.forget_release_refusal(job_id, "k1"), 1)
+            self.assertEqual(store.forget_release_refusal(job_id, "nope", "example 002 (2026) (C2C)"), 1,
+                             "by title, whitespace and case aside")
+            self.assertEqual(store.forget_release_refusal(job_id, "", None), 0)
+            self.assertEqual(store.rejected_acquisition_release_keys(job_id), {"k3"})
+
     def test_an_arrival_is_dated_when_it_landed_not_when_it_was_last_touched(self):
         # The catalog exposed only updated_at, which unfollowing rewrites for
         # every job at once -- so a run unfollowed after it finished read as
@@ -4726,10 +4750,22 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 58)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 59)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
+
+    def test_a_library_from_before_hand_taken_releases_gains_the_column(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("ALTER TABLE acquisition_downloads DROP COLUMN taken_by_hand")
+                connection.execute("UPDATE schema_info SET version=58")
+            CatalogStore(store.database_path)
+            with sqlite3.connect(store.database_path) as connection:
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")}
+                self.assertIn("taken_by_hand", columns)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 59)
 
     def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
         with tempfile.TemporaryDirectory() as folder:

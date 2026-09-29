@@ -542,6 +542,75 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(store.update_acquisition_job.call_args_list[0].args[1], "searching")
         self.assertEqual(store.update_acquisition_job.call_args_list[-1].args[1], "queued")
 
+    def test_a_release_set_aside_can_be_taken_by_hand(self):
+        """the owner (2026-09-29): "staring right at the file I need and can't
+        download it" -- the Flashpoint tie-ins under batch-numbered names."""
+        context = {
+            "id": "12", "requestId": "4", "status": "queued", "issueId": "8", "issueNumber": "1",
+            "publicationYear": 2011, "publicationDate": "2011-06-01", "seriesId": "2",
+            "seriesTitle": "Flashpoint: Secret Seven", "seriesYear": 2011, "publisher": "DC Comics",
+            "acquisitionPreference": "either",
+        }
+        store = Mock()
+        store.get_acquisition_job_context.return_value = context
+        store.rejected_acquisition_releases.return_value = [{
+            "release_key": "old", "release_title": "Flashpoint - Secret Seven 001 (2011) (noads)",
+            "error": "Aborted, cannot be completed - https://sabnzbd.org/not-complete",
+        }]
+        releases = [
+            {"guid": "a", "title": "009-Flashpoint -Secret Seven 01 2011 noads DangerAngel-CPS", "protocol": "usenet",
+             "downloadUrl": "http://prowlarr/a", "indexer": "One", "size": 1, "categories": [{"id": 7030}]},
+            {"guid": "b", "title": "Flashpoint - Secret Seven 001 (2011) (noads)", "protocol": "usenet",
+             "downloadUrl": "http://prowlarr/b", "indexer": "One", "size": 1, "categories": [{"id": 7030}]},
+        ]
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.load_acquisition_service_config", return_value={
+                "prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"}
+            }
+        ), patch("app.fetch_json_with_headers", return_value=releases):
+            result = search_prowlarr_releases(12)
+        self.assertEqual(result["candidateCount"], 0)
+        by_title = {miss["title"]: miss for miss in result["nearMisses"]}
+        aside = by_title["009-Flashpoint -Secret Seven 01 2011 noads DangerAngel-CPS"]
+        self.assertEqual((aside["setAside"], aside["refused"], aside["reason"], aside["source"]),
+                         (True, False, "Not this series", "usenet"))
+        refused = by_title["Flashpoint - Secret Seven 001 (2011) (noads)"]
+        self.assertEqual((refused["refused"], refused["reason"]),
+                         (True, "Refused before: Aborted, cannot be completed - https://sabnzbd.org/not-complete"))
+        registered = _RELEASE_CANDIDATES[aside["id"]]
+        self.assertEqual((registered["setAside"], registered["setAsideReason"], registered["downloadPath"]),
+                         (True, "Not this series", "/a"))
+        # A stale client cannot grab it blindly.
+        with self.assertRaisesRegex(ValueError, "set aside as Not this series; take it anyway to grab it"):
+            app._claim_release_candidate(12, aside["id"])
+        self.assertIs(app._claim_release_candidate(12, aside["id"], anyway=True), registered)
+        # Taking it: the refusal goes, its kept files go first, the row says so.
+        store.kept_refused_downloads.return_value = [
+            {"id": 3, "release_title": "Flashpoint - Secret Seven 001 (2011) (noads)", "sab_nzo_id": "old-nzo",
+             "sab_storage": "/downloads/complete/comics/old"},
+        ]
+        store.update_acquisition_job.return_value = {"id": "12", "status": "grabbed"}
+        with patch("app.catalog_store", return_value=store), patch(
+            "app.load_acquisition_service_config", return_value={
+                "prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"},
+                "sabnzbd": {"enabled": True, "url": "http://sab", "apiKey": "sab-secret", "category": "comics"},
+            }
+        ), patch("app.fetch_bytes_with_headers", return_value=(
+            b'<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>'
+        )), patch("app.post_multipart_file_json", return_value={"status": True, "nzo_ids": ["queue-id"]}), \
+             patch("app._sab_remove_job") as remove:
+            with self.assertRaisesRegex(ValueError, "take it anyway"):
+                app.grab_release_candidate(12, refused["id"])
+            taken = app.grab_release_candidate(12, refused["id"], anyway=True)
+        self.assertEqual((taken["status"], taken["takenByHand"]), ("grabbed", True))
+        remove.assert_called_once_with({"sab_nzo_id": "old-nzo", "sab_storage": "/downloads/complete/comics/old"})
+        store.forget_release_refusal.assert_called_once_with(
+            12, _RELEASE_CANDIDATES.get(refused["id"], registered)["releaseKey"] if refused["id"] in _RELEASE_CANDIDATES
+            else store.forget_release_refusal.call_args.args[1], "Flashpoint - Secret Seven 001 (2011) (noads)")
+        self.assertEqual(store.record_acquisition_download.call_args.kwargs, {"taken_by_hand": True})
+        self.assertEqual(store.update_acquisition_job.call_args.args[1:],
+                         ("grabbed", "Taken by hand: Flashpoint - Secret Seven 001 (2011) (noads)"))
+
     def test_sabnzbd_grab_fetches_nzb_privately_and_uploads_a_clean_file(self):
         _RELEASE_CANDIDATES["candidate"] = {
             "jobId": 12, "downloadPath": "/9/download?id=42",
@@ -3611,6 +3680,35 @@ class DirectSiteSearchTests(unittest.TestCase):
         self.assertEqual(app._direct_site_queries({"seriesTitle": "Farmhand", "issueNumber": "3"}, "farmhand deluxe"),
                          ["farmhand deluxe"])
 
+    def test_a_direct_site_post_below_the_bar_is_set_aside_not_dropped(self):
+        feed = ("<rss><channel>"
+                "<item><title>Supergirl &#8211; Woman of Tomorrow #3 (2022)</title>"
+                "<link>https://comics.example/dc/swot-3/</link><description>Size : 50 MB</description></item>"
+                "<item><title>Batman &#8211; The Long Halloween #3 (1997)</title>"
+                "<link>https://comics.example/dc/tlh-3/</link><description>Size : 40 MB</description></item>"
+                "</channel></rss>").encode()
+        aside = []
+        with patch("app.fetch_bytes_with_headers", return_value=feed):
+            self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl", set_aside=aside), [])
+        self.assertEqual(aside, [], "without a solver nothing could be taken, so nothing is offered")
+        with patch("app.fetch_bytes_with_headers", return_value=feed), \
+             patch("app._enabled_acquisition_service", return_value={}):
+            self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl", set_aside=aside), [])
+        self.assertEqual([(m["title"], m["reason"], m["source"], m["setAside"]) for m in aside],
+                         [("Supergirl – Woman of Tomorrow #3 (2022)", "Not this issue", "direct_site", True)],
+                         "the post naming the series is offered; the unrelated one is not")
+        self.assertEqual(_RELEASE_CANDIDATES[aside[0]["id"]]["postUrl"], "https://comics.example/dc/swot-3/")
+        with patch("app.fetch_bytes_with_headers", return_value=feed), \
+             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app.search_prowlarr_releases", return_value={
+                 "job": self.CONTEXT, "query": "Supergirl", "candidateCount": 0, "candidates": [],
+                 "resultCount": 0, "nearMisses": [{"id": "u1", "title": "Other 008", "score": 35, "reasons": [],
+                                                  "copies": 1, "setAside": True, "refused": False,
+                                                  "reason": "Not this series", "source": "usenet"}]}):
+            merged = app.search_release_candidates(7)
+        self.assertEqual([m["title"] for m in merged["nearMisses"]],
+                         ["Other 008", "Supergirl – Woman of Tomorrow #3 (2022)"], "both lists, best first")
+
     def test_a_collection_posts_part_stands_in_for_the_post(self):
         # R.E.B.E.L.S. #12 was on DirectSite only inside "R.E.B.E.L.S. Vol. 1 – 2
         # (Collection) (1994-2011)", whose title names no issue (2026-09-29).
@@ -3756,6 +3854,32 @@ class DirectSiteDownloadTests(unittest.TestCase):
         final = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "completed"]
         self.assertEqual(len(final), 1)
         self.assertTrue(str(final[0].kwargs["sab_storage"]).endswith("/11"))
+
+    def test_a_post_taken_by_hand_is_marked_and_its_part_chosen_by_number_alone(self):
+        store = Mock()
+        store.record_acquisition_download.return_value = {"id": 9}
+        far = time.time() + 600
+        with patch("app.catalog_store", return_value=store), patch("app._enabled_acquisition_service"), \
+             patch("app._start_direct_fetch"), patch.dict(app._RELEASE_CANDIDATES, {
+                 "gc": {"jobId": 5, "source": "direct_site", "postUrl": "https://comics.example/x/", "title": "X Vol. 1",
+                        "expiresAt": far, "setAside": True, "setAsideReason": "Not this issue"}}):
+            with self.assertRaisesRegex(ValueError, "set aside as Not this issue"):
+                app.grab_release_candidate(5, "gc")
+            result = app.grab_release_candidate(5, "gc", anyway=True)
+        self.assertTrue(result["takenByHand"])
+        self.assertEqual(store.record_acquisition_download.call_args.kwargs["taken_by_hand"], True)
+        store.forget_release_refusal.assert_called_once_with(5, "https://comics.example/x/", "X Vol. 1")
+        self.assertEqual(store.update_acquisition_job.call_args.args[1:], ("grabbed", "Taken by hand: X Vol. 1"))
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {"issueNumber": "12", "seriesYear": 2009, "publicationYear": 2010}
+        store.acquisition_download_for_job.return_value = {"id": 9, "taken_by_hand": 1}
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.acquisition_staging_dir", return_value=Path(folder) / "direct_site"), \
+                 patch("app.direct_site_download_link", return_value="https://comics.example/dls/token") as choose, \
+                 patch("app._safe_urlopen", return_value=self._response(b"comic-bytes" * 1000)):
+                app._fetch_direct_site_download(9, 5, "https://comics.example/x/", "X Vol. 1")
+        choose.assert_called_once_with("https://comics.example/x/", "12", None)
 
     def test_the_part_is_chosen_by_the_jobs_issue_and_years(self):
         store = Mock()
@@ -3993,6 +4117,26 @@ class ComicPackDownloadTests(unittest.TestCase):
                 app.select_downloaded_comic(source, {**self.JOB, "issueNumber": "25"}, root)
         self.assertEqual(caught.exception.kind, "contradiction")
         self.assertIn("#1-#3", str(caught.exception))
+
+    def test_a_pack_taken_by_hand_gives_up_the_issue_by_number_alone(self):
+        job = {**self.JOB, "seriesTitle": "Justice League Unlimited"}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = self._pack(root)
+            with patch("app.inventory_file", side_effect=self._inventory):
+                with self.assertRaises(app.DownloadContentMismatch):
+                    app.select_downloaded_comic(source, job, root)
+                selected = app.select_downloaded_comic(source, job, root, vouched=True)
+            try:
+                self.assertEqual(Path(selected["path"]).name,
+                                 "Batman Beyond 2.0 002 (2013) (digital) (Son of Ultron-Empire).cbz")
+            finally:
+                app._discard_converted(selected)
+            with patch("app.inventory_file", side_effect=self._inventory), \
+                    self.assertRaises(app.DownloadContentMismatch) as caught:
+                app.select_downloaded_comic(source, {**job, "issueNumber": "25"}, root, vouched=True)
+        self.assertEqual(caught.exception.kind, "unidentified", "their pack proves nothing against the release")
+        self.assertIn("it holds: Batman Beyond 2.0 001 (2013)", str(caught.exception))
 
     def test_a_path_inside_a_pack_never_leaves_the_folder_it_is_copied_to(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -5187,6 +5331,29 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
                          {"kind": "unidentified", "storage": "/downloads/complete/comics/x"})
         failed = next(call for call in store.update_acquisition_download.call_args_list
                       if call.args[1] == "failed")
+        self.assertEqual(failed.kwargs["failure_stage"], "unidentified")
+
+    def test_a_hand_taken_download_that_fails_is_not_replaced_or_recorded(self):
+        download = {
+            "id": 31, "job_id": 7, "sab_nzo_id": "queue-id", "taken_by_hand": 1,
+            "release_title": "009-Flashpoint -Secret Seven 01", "release_key": "by-hand-key",
+            "sab_storage": "/downloads/complete/comics/x",
+        }
+        store = Mock()
+        with patch("app.catalog_store", return_value=store), patch(
+            "app._sab_history_slot", return_value={
+                "nzo_id": "queue-id", "status": "Completed", "storage": "/downloads/complete/comics/x",
+            },
+        ), patch("app.import_downloaded_comic", side_effect=app.DownloadContentMismatch(
+            "None of the 2 files names Flashpoint: Secret Seven #1: a.cbr, b.cbr\nFiles read:\n- a.cbr", kind="unidentified",
+        )), patch("app._fallback_after_sab_failure") as fallback:
+            result = app.reconcile_acquisition_download(download)
+        fallback.assert_not_called()
+        store.record_acquisition_release_failure.assert_not_called()
+        self.assertEqual((result["status"], result["automaticFallback"], result["takenByHand"]), ("failed", False, True))
+        self.assertEqual(store.update_acquisition_job.call_args.args,
+                         (7, "failed", "Taken by hand, but None of the 2 files names Flashpoint: Secret Seven #1: a.cbr, b.cbr"))
+        failed = next(call for call in store.update_acquisition_download.call_args_list if call.args[1] == "failed")
         self.assertEqual(failed.kwargs["failure_stage"], "unidentified")
 
     def test_a_local_failure_is_not_blamed_on_the_release(self):
@@ -7661,6 +7828,44 @@ class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
             self.choose(["a.cbr", "b.cbr"])
         self.assertEqual(refused.exception.kind, "unidentified")
         self.assertIn("which of 2 files", str(refused.exception))
+
+    def vouch(self, names, release="misc comics upload 2021"):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "download"
+            source.mkdir()
+            for name in names:
+                (source / name).write_bytes(b"\x00" * (2 << 20) if "holed" in name else b"comic")
+            with patch("app.inventory_file", side_effect=self.inventory):
+                return app.select_downloaded_comic(source, self.supergirl, root, release_title=release, vouched=True)
+
+    def test_a_release_taken_by_hand_is_on_the_persons_word(self):
+        """the owner (2026-09-29): "your word wins on names" -- the release
+        name, the file's name, its year and its language are not judged."""
+        self.assertEqual(self.vouch(["swot.cbr"])["acceptedOn"], "hand", "a silent file under an unmatched release")
+        self.assertEqual(self.vouch(["Batman 002 (2021).cbr"])["acceptedOn"], "file", "another series' name, the right number")
+        self.assertEqual(Path(self.vouch(["Supergirl - Woman of Tomorrow 03 (of 08) (2021).cbr"])["path"]).name,
+                         "Supergirl - Woman of Tomorrow 03 (of 08) (2021).cbr", "one file stating another number is still theirs to take")
+        self.assertEqual(Path(self.vouch(["Supergirl 02 (French).cbr"], release="Supergirl 02 (French)")["path"]).name,
+                         "Supergirl 02 (French).cbr", "a language label is not judged")
+        self.assertEqual(Path(self.vouch(["x 003.cbr", "y 002.cbr"])["path"]).name, "y 002.cbr",
+                         "among several files the one naming the issue is taken")
+
+    def test_a_release_taken_by_hand_still_has_to_hold_one_readable_comic(self):
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.vouch(["broken.cbr"])
+        self.assertEqual(refused.exception.kind, "unreadable")
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.vouch(["broken holed - swot 02.cbr"])
+        self.assertEqual(refused.exception.kind, "damaged")
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.vouch(["a.cbr", "b.cbr"])
+        self.assertEqual(refused.exception.kind, "unidentified")
+        self.assertIn("None of the 2 files names Supergirl: Woman of Tomorrow #2: a.cbr, b.cbr", str(refused.exception))
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.vouch(["x 002.cbr", "y 002.cbr"])
+        self.assertIn("Could not tell which of 2 files is Supergirl: Woman of Tomorrow #2", str(refused.exception))
+        self.assertIn("Release: misc comics upload 2021 -- taken by hand as", str(refused.exception))
 
 
 class RemoveFromLibraryTests(unittest.TestCase):

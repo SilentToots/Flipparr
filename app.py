@@ -3801,12 +3801,18 @@ def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
     return [text for text in queries if text]
 
 
-def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) -> list[dict[str, Any]]:
+def _direct_site_candidates(
+    job_id: int, context: dict[str, Any], query: str, *, set_aside: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """DirectSite results for one wanted issue, judged the way any release is.
 
     Listed, not grabbable: reading the post page a link lives on needs a
     Cloudflare solver, which is its own piece of work. Knowing the issue is
     there is worth having on its own -- it is what a person checks by hand.
+
+    With `set_aside`, a post below the bar that still names the series or the
+    issue is appended there, registered so a person can take it by hand --
+    only while the solver is ready, since otherwise nothing could be taken.
     """
     found: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
@@ -3832,25 +3838,52 @@ def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) ->
     now = time.time()
     candidates: list[dict[str, Any]] = []
     reads = 0
+    refused: dict[str, str] = {}
+    if set_aside is not None:
+        try:
+            records = catalog_store().rejected_acquisition_releases(job_id)
+            for record in records if isinstance(records, list) else []:
+                if isinstance(record, dict):
+                    reason = (str(record.get("error") or "").strip().splitlines() or ["no reason recorded"])[0]
+                    refused[str(record.get("release_key") or "")] = reason
+        except Exception:  # noqa: BLE001 -- refusals are context, not the search
+            refused = {}
     for item in found:
         title = _plain_dashes(item["title"])
         score, reasons = _release_candidate_score({"title": title}, context)
         pack = _release_pack_coverage(title, context)
         shown = item["title"]
         size = int(item.get("sizeBytes") or 0)
-        if score < 85 and not (pack and score >= 70):
+        if item["url"] in refused:
+            score, reasons, pack = None, [f"Refused before: {refused[item['url']]}"], None
+        if score is None or (score < 85 and not (pack and score >= 70)):
+            part = None
             # A collection of the series names its issues in its parts, not
             # its title. Read at most a few posts a search: each is a solver
             # round trip, and without a solver the post cannot be read at all.
-            if not solver_ready or reads >= 3:
-                continue
-            try:
-                reads += 1
-                part = _direct_site_collection_part(item["url"], item["title"], context)
-            except Exception as exc:  # noqa: BLE001 -- an unreadable post is not a search failure
-                log_event("direct_site_post_unreadable", level="info", job_id=job_id, url=item["url"], error=str(exc)[:160])
-                continue
+            if score is not None and solver_ready and reads < 3:
+                try:
+                    reads += 1
+                    part = _direct_site_collection_part(item["url"], item["title"], context)
+                except Exception as exc:  # noqa: BLE001 -- an unreadable post is not a search failure
+                    log_event("direct_site_post_unreadable", level="info", job_id=job_id, url=item["url"], error=str(exc)[:160])
             if not part:
+                names_it = score is None or score > 0 or _release_issue_matches(title, context.get("issueNumber"))
+                if set_aside is not None and solver_ready and names_it:
+                    reason = _set_aside_reason(score, reasons)
+                    aside_id = hashlib.sha256(f"gc:{job_id}:aside:{item['url']}:{now}".encode()).hexdigest()[:24]
+                    with _RELEASE_CANDIDATE_LOCK:
+                        _RELEASE_CANDIDATES[aside_id] = {
+                            "jobId": int(job_id), "source": "direct_site", "postUrl": item["url"],
+                            "title": item["title"], "releaseKey": item["url"],
+                            "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
+                            "setAside": True, "setAsideReason": reason,
+                        }
+                    set_aside.append({
+                        "id": aside_id, "title": item["title"], "score": score, "reasons": reasons,
+                        "copies": 1, "setAside": True, "refused": score is None, "reason": reason,
+                        "source": "direct_site", "grabbable": True,
+                    })
                 continue
             shown, score, reasons, pack, size = part["label"], part["score"], part["reasons"], part["pack"], part["sizeBytes"]
         candidate_id = hashlib.sha256(f"gc:{job_id}:{item['url']}:{now}".encode()).hexdigest()[:24]
@@ -3902,7 +3935,12 @@ def search_release_candidates(job_id: int, query: str | None = None) -> dict[str
     wanted = str(query or "").strip() or str(context.get("seriesTitle") or "")
     if not wanted:
         return result
-    extra = _direct_site_candidates(job_id, context, wanted)
+    aside: list[dict[str, Any]] = []
+    extra = _direct_site_candidates(job_id, context, wanted, set_aside=aside)
+    if aside:
+        merged = list(result.get("nearMisses") or []) + aside
+        merged.sort(key=lambda item: -(item["score"] if item.get("score") is not None else 101))
+        result = {**result, "nearMisses": merged[:8]}
     if not extra:
         return result
     candidates = list(result.get("candidates") or []) + extra
@@ -3929,6 +3967,20 @@ def _release_pack_coverage(title: Any, context: dict[str, Any]) -> tuple[int, in
         return None
     number = int(wanted.group(1))
     return stated if stated[0] <= number <= stated[1] else None
+
+
+def _set_aside_reason(score: int | None, reasons: list[str]) -> str:
+    """Why a release was set aside, in the words the release list shows
+    (mirrored by setAsideReason in pull-list.js): the grab's refusal and the
+    row a person is looking at say the same thing."""
+    reasons = list(reasons or [])
+    if score is None or (score == 0 and reasons):
+        return reasons[0] if reasons else "Set aside"
+    if not any(re.match(r"^Issue #.+ matches$", reason) for reason in reasons):
+        return "Not this issue"
+    if not any(reason.startswith("Series title matches") for reason in reasons):
+        return "Not this series"
+    return f"Too weak a match ({score} of the 85 needed)"
 
 
 def _release_format_tags(title: Any) -> list[str]:
@@ -4799,7 +4851,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             normalized_title = re.sub(r"\s+", " ", title).strip().casefold()
             if release_key in rejected_keys or normalized_title in rejected_titles:
                 reason = refusal_reasons.get(release_key) or refusal_reasons.get(normalized_title)
-                near_misses.append({"title": title, "score": None, "key": release_key,
+                near_misses.append({"title": title, "score": None, "key": release_key, "downloadPath": download_path,
                                     "reasons": [f"Refused before: {reason}" if reason else "Refused before for this issue"]})
                 continue
             score, reasons = _release_candidate_score(release, context)
@@ -4808,7 +4860,8 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             # and, for an automatic grab, judged against the run separately.
             pack = _release_pack_coverage(title, context)
             if score < 85 and not (pack and score >= 70):
-                near_misses.append({"title": title, "score": score, "reasons": reasons, "key": release_key})
+                near_misses.append({"title": title, "score": score, "reasons": reasons, "key": release_key,
+                                    "downloadPath": download_path})
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
             candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
@@ -4883,39 +4936,41 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         title_key = re.sub(r"\s+", " ", miss["title"]).strip().casefold()
         entry = distinct.setdefault(title_key, {**miss, "listings": set()})
         entry["listings"].add(miss["key"])
-    near_misses = sorted(
-        ({key: value for key, value in entry.items() if key not in {"key", "listings"}}
-         | {"copies": len(entry["listings"])} for entry in distinct.values()),
-        key=lambda item: -(item["score"] if item["score"] is not None else 101),
-    )
+    ordered = sorted(
+        distinct.values(), key=lambda item: -(item["score"] if item["score"] is not None else 101),
+    )[:8]
+    # What was set aside can still be taken by hand: a person who is looking
+    # at the right file under a name the matcher did not read is not sent to
+    # a developer (the owner, 2026-09-29). Each row is registered like a
+    # candidate, marked set aside, so a grab without "anyway" still refuses it.
+    set_aside = []
+    for entry in ordered:
+        reason = _set_aside_reason(entry["score"], entry["reasons"])
+        aside_id = hashlib.sha256(f"{job_id}:aside:{entry['key']}:{now}".encode()).hexdigest()[:24]
+        with _RELEASE_CANDIDATE_LOCK:
+            _RELEASE_CANDIDATES[aside_id] = {
+                "jobId": int(job_id), "downloadPath": entry["downloadPath"], "title": entry["title"],
+                "releaseKey": entry["key"], "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
+                "source": "usenet", "setAside": True, "setAsideReason": reason,
+            }
+        set_aside.append({
+            "id": aside_id, "title": entry["title"], "score": entry["score"], "reasons": entry["reasons"],
+            "copies": len(entry["listings"]), "setAside": True, "refused": entry["score"] is None,
+            "reason": reason, "source": "usenet", "grabbable": True,
+        })
     return {
         "job": context, "query": query, "candidateCount": len(candidates),
         "candidates": candidates,
-        "resultCount": len(results_seen), "nearMisses": near_misses[:8],
+        "resultCount": len(results_seen), "nearMisses": set_aside,
     }
 
 
-def grab_release_candidate(job_id: int, candidate_id: str) -> dict[str, Any]:
-    """Take the release a person chose, by whichever road it came down.
+def _claim_release_candidate(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
+    """The registered result a grab names, or why it cannot be grabbed.
 
-    Usenet goes to SABnzbd as it always has. A direct download is Flipparr's
-    own job: there is no download client to hand it to.
-    """
-    with _RELEASE_CANDIDATE_LOCK:
-        candidate = _RELEASE_CANDIDATES.get(candidate_id)
-        source = str((candidate or {}).get("source") or "usenet")
-    if candidate and source == "direct_site":
-        return grab_direct_site_release(job_id, candidate_id)
-    return send_release_to_sabnzbd(job_id, candidate_id)
-
-
-def grab_direct_site_release(job_id: int, candidate_id: str) -> dict[str, Any]:
-    """Start fetching a DirectSite post, and let the row show it happening.
-
-    The bytes are fetched on a thread of their own: a comic is tens or hundreds
-    of megabytes, and the page that asked for it should not wait for them. The
-    import worker picks the download up when it lands, exactly as it does for
-    anything SABnzbd finishes.
+    A result set aside by the matcher is registered too, so that a person who
+    can see it is the right file may take it -- but only by saying so
+    (`anyway`): a client holding a stale list cannot grab it blindly.
     """
     now = time.time()
     with _RELEASE_CANDIDATE_LOCK:
@@ -4924,20 +4979,80 @@ def grab_direct_site_release(job_id: int, candidate_id: str) -> dict[str, Any]:
                 or float(candidate.get("expiresAt") or 0) <= now):
             _RELEASE_CANDIDATES.pop(candidate_id, None)
             raise ValueError("This release result expired; search again")
+    if candidate.get("setAside") and not anyway:
+        raise ValueError(
+            f"This release was set aside as {candidate.get('setAsideReason') or 'not this issue'}; "
+            "take it anyway to grab it"
+        )
+    return candidate
+
+
+def _lift_release_refusal(store: Any, job_id: int, release_key: str, title: str) -> None:
+    """The person has overruled a refusal of this release for this issue.
+
+    Its kept evidence goes first (the refusal row is what _discard_kept_downloads
+    finds it by), then the row itself, by key or title.
+    """
+    try:
+        wanted = re.sub(r"\s+", " ", str(title or "")).strip().casefold()
+        kept = store.kept_refused_downloads(job_id=int(job_id))
+        for row in kept if isinstance(kept, list) else []:
+            if not isinstance(row, dict):
+                continue
+            if re.sub(r"\s+", " ", str(row.get("release_title") or "")).strip().casefold() == wanted:
+                _sab_remove_job({"sab_nzo_id": row.get("sab_nzo_id"), "sab_storage": row.get("sab_storage")})
+        store.forget_release_refusal(int(job_id), release_key, title)
+    except Exception as exc:  # noqa: BLE001 -- the grab is the point; a refusal left behind only sets it aside again
+        log_exception("release_refusal_not_lifted", exc, level="warning")
+
+
+def grab_release_candidate(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
+    """Take the release a person chose, by whichever road it came down.
+
+    Usenet goes to SABnzbd as it always has. A direct download is Flipparr's
+    own job: there is no download client to hand it to. `anyway` is the
+    person taking a set-aside release on their own word.
+    """
+    with _RELEASE_CANDIDATE_LOCK:
+        candidate = _RELEASE_CANDIDATES.get(candidate_id)
+        source = str((candidate or {}).get("source") or "usenet")
+    # Named only when meant: the automatic grabs call this too, and their
+    # calls read exactly as before.
+    by_hand = {"anyway": True} if anyway else {}
+    if candidate and source == "direct_site":
+        return grab_direct_site_release(job_id, candidate_id, **by_hand)
+    return send_release_to_sabnzbd(job_id, candidate_id, **by_hand)
+
+
+def grab_direct_site_release(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
+    """Start fetching a DirectSite post, and let the row show it happening.
+
+    The bytes are fetched on a thread of their own: a comic is tens or hundreds
+    of megabytes, and the page that asked for it should not wait for them. The
+    import worker picks the download up when it lands, exactly as it does for
+    anything SABnzbd finishes.
+    """
+    candidate = _claim_release_candidate(job_id, candidate_id, anyway=anyway)
     _enabled_acquisition_service("flaresolverr")
     post_url = str(candidate.get("postUrl") or "")
     title = str(candidate.get("title") or "DirectSite download")
     store = catalog_store()
+    if anyway:
+        _lift_release_refusal(store, job_id, post_url, title)
     download = store.record_acquisition_download(
         # Per job as well as per post: a post in parts serves one job with
         # "#13 – 23" and another with "#34 – 36", and the download identity
         # is unique across the table.
         job_id, f"direct_site:{hashlib.sha256(post_url.encode()).hexdigest()[:20]}:{int(job_id)}",
         title, release_key=post_url, source="direct_site",
+        **({"taken_by_hand": True} if anyway else {}),
     )
-    store.update_acquisition_job(job_id, "grabbed", f"Downloading from DirectSite: {title}")
+    store.update_acquisition_job(
+        job_id, "grabbed", f"Taken by hand: {title}" if anyway else f"Downloading from DirectSite: {title}",
+    )
     _start_direct_fetch(int(download["id"]), int(job_id), post_url, title)
-    return {"status": "grabbed", "source": "direct_site", "release": {"title": title}, "download": download}
+    return {"status": "grabbed", "source": "direct_site", "release": {"title": title}, "download": download,
+            "takenByHand": bool(anyway)}
 
 
 class DirectSiteNotAFile(ValueError):
@@ -5042,6 +5157,13 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             years = (context.get("seriesYear"), context.get("publicationYear"))
         except Exception:  # noqa: BLE001 -- a job with no context still gets the post's first link
             wanted, years = None, None
+        try:
+            # Taken by hand: the person's word covers the years; the number still picks the part.
+            row = store.acquisition_download_for_job(int(job_id))
+            if isinstance(row, dict) and row.get("taken_by_hand"):
+                years = None
+        except Exception:  # noqa: BLE001 -- no row to read is no reason not to fetch
+            pass
         link = direct_site_download_link(post_url, wanted, years)
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)
@@ -5132,15 +5254,9 @@ def _download_filename(response: Any, fallback: str) -> str:
     return _safe_path_component(f"{fallback}.cbz", "download.cbz")
 
 
-def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
+def send_release_to_sabnzbd(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
     """Fetch a selected NZB privately, validate it, and upload the file to SABnzbd."""
-    now = time.time()
-    with _RELEASE_CANDIDATE_LOCK:
-        candidate = _RELEASE_CANDIDATES.get(candidate_id)
-        if (not candidate or int(candidate.get("jobId") or 0) != int(job_id)
-                or float(candidate.get("expiresAt") or 0) <= now):
-            _RELEASE_CANDIDATES.pop(candidate_id, None)
-            raise ValueError("This release result expired; search again")
+    candidate = _claim_release_candidate(job_id, candidate_id, anyway=anyway)
     if str(candidate.get("source") or "usenet") != "usenet":
         # SABnzbd takes NZBs. A direct download has its own road, and
         # grab_release_candidate is the fork that chooses between them.
@@ -5151,21 +5267,24 @@ def send_release_to_sabnzbd(job_id: int, candidate_id: str) -> dict[str, Any]:
     queue_ids = [str(value) for value in (payload.get("nzo_ids") or [])]
     if not queue_ids:
         raise SABSubmissionError("SABnzbd accepted the NZB but did not return a queue ID")
-    detail = f"Sent to SABnzbd: {candidate['title']}"
+    detail = f"Taken by hand: {candidate['title']}" if anyway else f"Sent to SABnzbd: {candidate['title']}"
     store = catalog_store()
     release_key = str(candidate.get("releaseKey") or "").strip()
     if not release_key:
         release_key = hashlib.sha256(
             f"candidate|{candidate.get('title')}|{candidate.get('downloadPath')}".encode()
         ).hexdigest()
+    if anyway:
+        _lift_release_refusal(store, job_id, release_key, str(candidate["title"]))
     store.record_acquisition_download(
-        job_id, queue_ids[0], candidate["title"], release_key
+        job_id, queue_ids[0], candidate["title"], release_key,
+        **({"taken_by_hand": True} if anyway else {}),
     )
     job = store.update_acquisition_job(job_id, "grabbed", detail)
     with _RELEASE_CANDIDATE_LOCK:
         _RELEASE_CANDIDATES.pop(candidate_id, None)
     return {"status": "grabbed", "job": job, "queueIds": queue_ids,
-            "detail": "Release sent to SABnzbd."}
+            "detail": "Release sent to SABnzbd.", "takenByHand": bool(anyway)}
 
 
 def _safe_path_component(value: str, fallback: str = "Comic") -> str:
@@ -5419,14 +5538,17 @@ def _comic_pack_members(path: Path) -> list[zipfile.ZipInfo] | None:
     return members or None
 
 
-def _pack_member_matches(name: str, context: dict[str, Any]) -> bool:
-    """Whether a pack's file names the wanted issue of the wanted series."""
+def _pack_member_matches(name: str, context: dict[str, Any], *, vouched: bool = False) -> bool:
+    """Whether a pack's file names the wanted issue of the wanted series --
+    or, for a pack the person chose, the wanted issue at all."""
     parsed = parse_filename(Path(name))
     number = parsed.issue
     if context.get("format") == "manga" and not number:
         number = _manga_file_volume(name)
     if not number or _issue_key(number) != _issue_key(context.get("issueNumber")):
         return False
+    if vouched:
+        return True
     wanted = normalized_title(_without_leading_article(context.get("seriesTitle") or ""))
     title = normalized_title(_without_leading_article(parsed.title or ""))
     return bool(wanted) and difflib.SequenceMatcher(None, title, wanted).ratio() >= 0.55
@@ -5443,7 +5565,9 @@ def _pack_holdings(members: list[zipfile.ZipInfo]) -> str:
     return f"{len(members)} files"
 
 
-def _unpack_comic_packs(candidates: list[Path], context: dict[str, Any]) -> tuple[list[Path], Path | None]:
+def _unpack_comic_packs(
+    candidates: list[Path], context: dict[str, Any], *, vouched: bool = False,
+) -> tuple[list[Path], Path | None]:
     """The candidates with every pack replaced by the wanted issue's file from
     inside it, and the folder those files were copied to (None if none were)."""
     kept: list[Path] = []
@@ -5455,9 +5579,15 @@ def _unpack_comic_packs(candidates: list[Path], context: dict[str, Any]) -> tupl
             kept.append(path)
             continue
         wanted = [entry for entry in members
-                  if _pack_member_matches(Path(entry.filename).name, context) and entry.file_size <= PACK_MEMBER_MAX_BYTES]
+                  if _pack_member_matches(Path(entry.filename).name, context, vouched=vouched)
+                  and entry.file_size <= PACK_MEMBER_MAX_BYTES]
         if not wanted:
-            missing.append(f"{path.name} is a pack of {len(members)} comics ({_pack_holdings(members)})")
+            held = f"{path.name} is a pack of {len(members)} comics ({_pack_holdings(members)})"
+            if vouched:
+                # The person chose the pack; they are told what is in it.
+                names = [Path(entry.filename).name for entry in members]
+                held += "; it holds: " + ", ".join(names[:12]) + (f", and {len(names) - 12} more" if len(names) > 12 else "")
+            missing.append(held)
             continue
         unpacked_dir = unpacked_dir or Path(tempfile.mkdtemp(prefix="flipparr-pack-"))
         with zipfile.ZipFile(path) as archive:
@@ -5472,23 +5602,32 @@ def _unpack_comic_packs(candidates: list[Path], context: dict[str, Any]) -> tupl
         wanted_label = f"{context.get('seriesTitle')} {_number_label(context)}"
         raise DownloadContentMismatch(
             f"The download is a pack, and {wanted_label} is not in it: " + "; ".join(missing),
-            kind="contradiction",
+            # A pack the person chose proves nothing against the release.
+            kind="unidentified" if vouched else "contradiction",
         )
     return kept, unpacked_dir
 
 
 def select_downloaded_comic(
     source: Path, context: dict[str, Any], completed_root: Path = SAB_COMPLETE_ROOT,
-    *, release_title: str | None = None,
+    *, release_title: str | None = None, vouched: bool = False,
 ) -> dict[str, Any]:
+    """The comic in a download that is the issue wanted.
+
+    `vouched` is a release the person took by hand from the set-aside list:
+    what it and its files call themselves is then not judged (see
+    _choose_downloaded_comic). It is a keyword rather than part of `context`
+    because the same download is offered to a run's other wanted issues
+    (_sweep_download_for_other_issues) on the matcher's judgment alone.
+    """
     candidates = _comic_files_under(source, completed_root)
     if not candidates:
         raise DownloadContentMismatch(
             "The completed download does not contain a supported comic file", kind="format",
         )
-    candidates, unpacked_dir = _unpack_comic_packs(candidates, context)
+    candidates, unpacked_dir = _unpack_comic_packs(candidates, context, vouched=vouched)
     try:
-        selected = _select_downloaded_comic(candidates, source, context, release_title)
+        selected = _select_downloaded_comic(candidates, source, context, release_title, vouched=vouched)
     except Exception:
         if unpacked_dir is not None:
             shutil.rmtree(unpacked_dir, ignore_errors=True)
@@ -5498,6 +5637,7 @@ def select_downloaded_comic(
 
 def _select_downloaded_comic(
     candidates: list[Path], source: Path, context: dict[str, Any], release_title: str | None,
+    *, vouched: bool = False,
 ) -> dict[str, Any]:
     converted_dir: Path | None = None
     if context.get("format") == "manga":
@@ -5526,7 +5666,7 @@ def _select_downloaded_comic(
                 archives.append(target)
         candidates = archives
     try:
-        selected = _choose_downloaded_comic(candidates, source, context, release_title)
+        selected = _choose_downloaded_comic(candidates, source, context, release_title, vouched=vouched)
     except Exception:
         if converted_dir is not None:
             shutil.rmtree(converted_dir, ignore_errors=True)
@@ -5560,7 +5700,7 @@ def _comic_pdf_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict
 
 def _choose_downloaded_comic(
     candidates: list[Path], source: Path, context: dict[str, Any],
-    release_title: str | None = None,
+    release_title: str | None = None, *, vouched: bool = False,
 ) -> dict[str, Any]:
     """The comic in a finished download that is the issue it was grabbed for.
 
@@ -5570,6 +5710,12 @@ def _choose_downloaded_comic(
     that could be it. Only a file that says it is something else is refused
     as the wrong comic; one that cannot be read or identified is refused as
     unproven, which does not bar its release.
+
+    A release the person took by hand (`vouched`) is on their word: what it
+    or its file calls itself, its year and its language are not judged
+    (the owner, 2026-09-29: "your word wins on names"). The file still has to
+    be a readable comic, and a download holding several comics still has to
+    name the issue on one of them -- guessing between files is never done.
 
     This used to refuse anything the file alone could not confirm, and every
     name it could not read -- "Vol.1.No.19", "No.04", Supergirl: Woman of
@@ -5582,11 +5728,12 @@ def _choose_downloaded_comic(
         key=lambda item: (-item[0], str(item[1]["path"])),
     )
     readings = "\n".join(_download_reading(info, score) for score, info in ranked)
-    release_matches = bool(release_title) and _release_candidate_score(
+    release_matches = vouched or (bool(release_title) and _release_candidate_score(
         {"title": release_title}, context
-    )[0] >= 85
+    )[0] >= 85)
     release_line = (
-        f"Release: {release_title} -- {'matches' if release_matches else 'does not match'} {wanted_label}"
+        f"Release: {release_title} -- taken by hand as {wanted_label}" if vouched
+        else f"Release: {release_title} -- {'matches' if release_matches else 'does not match'} {wanted_label}"
         if release_title else "Release: not recorded"
     )
 
@@ -5604,6 +5751,16 @@ def _choose_downloaded_comic(
             raise refuse(f"The download is incomplete ({reason})", "damaged")
         raise refuse(f"No comic in the download could be read ({reason})", "unreadable")
     score, selected = ranked[0]
+    if vouched:
+        names = ", ".join(Path(info["path"]).name for info in readable)
+        numbered = [info for info in readable if info.get("issueMatch")]
+        if len(numbered) == 1:
+            return {**numbered[0], "acceptedOn": "file"}
+        if len(readable) == 1:
+            return {**readable[0], "acceptedOn": "hand"}
+        if numbered:
+            raise refuse(f"Could not tell which of {len(numbered)} files is {wanted_label}: {names}", "unidentified")
+        raise refuse(f"None of the {len(readable)} files names {wanted_label}: {names}", "unidentified")
     if not (score >= 180 and selected.get("issueMatch") and selected.get("titleRatio", 0) >= 0.55):
         judged = [(info, _download_contradiction(info, context)) for info in readable]
         uncontradicted = [info for info, contradiction in judged if not contradiction]
@@ -5823,6 +5980,7 @@ def import_downloaded_comic(
     selected = select_downloaded_comic(
         source_container, context, completed_root,
         release_title=str(download.get("release_title") or "") or None,
+        vouched=bool(download.get("taken_by_hand")),
     )
     try:
         return _import_selected_comic(selected, context, download, library_root)
@@ -6956,6 +7114,13 @@ def _import_completed_download(
             int(download["id"]), "failed", sab_storage=storage, error=message,
             failure_stage=exc.stage if isinstance(exc, DownloadContentMismatch) else "import",
         )
+        if isinstance(exc, DownloadContentMismatch) and download.get("taken_by_hand"):
+            # The person chose this release; another is not grabbed in its
+            # place, and nothing is recorded against it. Its files stay where
+            # they are for them to look at (SABnzbd's own retention applies).
+            headline = (message.splitlines() or ["it could not be imported"])[0]
+            store.update_acquisition_job(int(download["job_id"]), "failed", f"Taken by hand, but {headline}")
+            return {"status": "failed", "error": message, "automaticFallback": False, "takenByHand": True}
         if isinstance(exc, DownloadContentMismatch):
             # Its files stay in SABnzbd's folder: they are the evidence for
             # why it was refused. Supergirl: Woman of Tomorrow #2's were
@@ -6983,7 +7148,8 @@ def _import_completed_download(
     )
     store.update_acquisition_job(
         int(download["job_id"]), "fulfilled",
-        f"Imported and verified as {Path(imported['destination']).name}",
+        f"Imported as {Path(imported['destination']).name} on your word" if download.get("taken_by_hand")
+        else f"Imported and verified as {Path(imported['destination']).name}",
     )
     # Before the folder goes: a pack holds the run's other wanted issues, and
     # _sab_remove_job is about to delete it.
@@ -15797,7 +15963,8 @@ class Handler(BaseHTTPRequestHandler):
             job_id = int(acquisition_grab.group(1))
             try:
                 result = grab_release_candidate(
-                    job_id, str(payload.get("candidateId") or "").strip()
+                    job_id, str(payload.get("candidateId") or "").strip(),
+                    anyway=bool(payload.get("anyway")),
                 )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)

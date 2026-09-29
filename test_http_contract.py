@@ -989,6 +989,19 @@ class HttpContractTests(unittest.TestCase):
     # the feature, because the directory it wrote to was inside a read-only
     # image. Nothing asked these routes anything, which is how that lasted.
 
+    def test_taking_a_set_aside_release_by_hand_is_said_in_the_request(self):
+        with patch("app.grab_release_candidate", return_value={"status": "grabbed", "takenByHand": True}) as grab:
+            response = self.post("/api/v1/acquisition-jobs/7/grab", {"candidateId": "aside-1", "anyway": True})
+        self.assertEqual(response.status, 202)
+        grab.assert_called_once_with(7, "aside-1", anyway=True)
+        with patch("app.grab_release_candidate", side_effect=ValueError(
+            "This release was set aside as Not this series; take it anyway to grab it",
+        )) as grab:
+            response = self.post("/api/v1/acquisition-jobs/7/grab", {"candidateId": "aside-1"})
+        self.assertEqual(response.status, 400)
+        grab.assert_called_once_with(7, "aside-1", anyway=False)
+        self.assertIn("take it anyway", json.loads(response.body)["error"])
+
     def test_replacing_a_file_searches_for_its_own_request(self):
         """The replacement's number is not its acquisition request's."""
         with patch("app.catalog_store") as store, patch("app._start_automatic_release_grabs") as grabs:

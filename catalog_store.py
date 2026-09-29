@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 59
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1151,6 +1151,11 @@ class CatalogStore:
                     bytes_total INTEGER NOT NULL DEFAULT 0,
                     error TEXT,
                     failure_stage TEXT,
+                    -- A release a person took from the set-aside list. The
+                    -- import then takes their word on its name (app.py,
+                    -- _choose_downloaded_comic) and never grabs another
+                    -- release in its place.
+                    taken_by_hand INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     imported_at TEXT
@@ -1704,6 +1709,14 @@ class CatalogStore:
                     CREATE INDEX acquisition_downloads_status
                         ON acquisition_downloads(status, updated_at);
                     """
+                )
+            # After the rebuild above: its explicit column list would drop a
+            # column added before it.
+            if "taken_by_hand" not in {
+                row["name"] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")
+            }:
+                connection.execute(
+                    "ALTER TABLE acquisition_downloads ADD COLUMN taken_by_hand INTEGER NOT NULL DEFAULT 0"
                 )
             monitor_now = _utc_now()
             monitor_next = (
@@ -7509,13 +7522,16 @@ class CatalogStore:
         release_title: str,
         release_key: str | None = None,
         source: str = "sabnzbd",
+        *,
+        taken_by_hand: bool = False,
     ) -> dict[str, Any]:
         """Persist the identity needed to reconcile a download and its import.
 
         `sab_nzo_id` is SABnzbd's queue id for a download it is carrying, and
         the source's own identity for anything else -- a file the user handed
         over has no queue to be in. The column keeps its name because that is
-        what every existing row means.
+        what every existing row means. `taken_by_hand` is set by a grab the
+        person made from the set-aside list, and cleared by any later grab.
         """
         queue_id = str(sab_nzo_id or "").strip()
         title = str(release_title or "").strip()
@@ -7528,20 +7544,21 @@ class CatalogStore:
             connection.execute(
                 """INSERT INTO acquisition_downloads(
                        job_id, sab_nzo_id, source, release_title, release_key,
-                       status, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+                       taken_by_hand, status, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)
                    ON CONFLICT(job_id) DO UPDATE SET
                        sab_nzo_id=excluded.sab_nzo_id,
                        source=excluded.source,
                        release_title=excluded.release_title,
                        release_key=excluded.release_key,
+                       taken_by_hand=excluded.taken_by_hand,
                        status='queued', error=NULL, failure_stage=NULL,
                        sab_storage=NULL, local_source=NULL, destination=NULL,
                        source_size=NULL, source_sha256=NULL, imported_at=NULL,
                        updated_at=excluded.updated_at""",
                 (
                     job_id, queue_id, str(source or "sabnzbd").strip() or "sabnzbd", title,
-                    str(release_key or "").strip() or None, now, now,
+                    str(release_key or "").strip() or None, 1 if taken_by_hand else 0, now, now,
                 ),
             )
             row = connection.execute(
@@ -7551,7 +7568,39 @@ class CatalogStore:
             "id": str(row["id"]), "jobId": str(row["job_id"]),
             "queueId": row["sab_nzo_id"], "releaseTitle": row["release_title"],
             "status": row["status"], "updatedAt": row["updated_at"],
+            "takenByHand": bool(row["taken_by_hand"]),
         }
+
+    def forget_release_refusal(
+        self, job_id: int, release_key: str, release_title: str | None = None,
+    ) -> int:
+        """Lift a refusal the person has overruled by taking the release by hand.
+
+        By key or by title: the search sets a release aside under either
+        (rejected_acquisition_releases), so both have to go. Other jobs'
+        refusals of the same release stand -- they were judged for their own
+        issue. Returns how many rows went.
+        """
+        key = str(release_key or "").strip()
+        title = re.sub(r"\s+", " ", str(release_title or "")).strip().casefold()
+        if not key and not title:
+            return 0
+        with self._write_lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id, release_key, release_title FROM acquisition_release_failures WHERE job_id=?",
+                (int(job_id),),
+            ).fetchall()
+            doomed = [
+                int(row["id"]) for row in rows
+                if (key and str(row["release_key"] or "") == key)
+                or (title and re.sub(r"\s+", " ", str(row["release_title"] or "")).strip().casefold() == title)
+            ]
+            if doomed:
+                connection.execute(
+                    f"DELETE FROM acquisition_release_failures WHERE id IN ({', '.join('?' for _ in doomed)})",
+                    doomed,
+                )
+        return len(doomed)
 
     def record_acquisition_release_failure(
         self,
@@ -10433,6 +10482,7 @@ class CatalogStore:
                 "downloadDestination": download["destination"] if download else None,
                 "downloadError": download["error"] if download else None,
                 "downloadFailureStage": download["failure_stage"] if download else None,
+                "downloadTakenByHand": bool(download["taken_by_hand"]) if download else False,
                 # When the issue actually landed, which is not the same as when
                 # the job was last touched: unfollowing a run rewrites every
                 # job's updated_at, so "what arrived lately" read off that would
