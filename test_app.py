@@ -7984,6 +7984,29 @@ class ReadingListTests(unittest.TestCase):
             after = app.mark_reading_list_reading(list_id, False, user_id=ADMIN_USER_ID)
             self.assertEqual(after["id"], str(list_id))
 
+    def test_an_arcs_header_background_is_chosen_from_its_own_comics_or_found(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            store = self._library(Path(folder))
+            self._open(stack, store)
+            list_id = int(app.save_story_arc("482", user_id=ADMIN_USER_ID)["id"])
+            ids = self._ids(store)
+            f608, f610 = ids["Batman"][1]["608"][0], ids["Batman"][1]["610"][0]
+            stack.enter_context(patch.object(app, "archive_page_members", return_value=["p01.jpg", "p02.jpg", "p03.jpg"]))
+            stack.enter_context(patch.object(app, "_file_signature", return_value="sig-1"))
+            stack.enter_context(patch.object(app, "automatic_backdrop_page", return_value="p02.jpg"))
+            found = app.reading_list_backdrop(list_id)
+            self.assertEqual((found["source"], found["fileId"], found["page"]), ("auto", str(f608), 1), "the arc's first comic lends a page")
+            self.assertTrue(found["url"].startswith(f"/api/v1/files/{f608}/pages/1?"))
+            chosen = app.choose_reading_list_backdrop(list_id, str(f610), 2)
+            self.assertEqual((chosen["source"], chosen["fileId"], chosen["page"]), ("chosen", str(f610), 2))
+            self.assertEqual(app.reading_list_backdrop(list_id)["source"], "chosen", "a chosen page stands")
+            with self.assertRaisesRegex(ValueError, "not part of this story arc"):
+                app.choose_reading_list_backdrop(list_id, str(ids["Green Lantern"][1]["1"][0]), 0)
+            with self.assertRaisesRegex(ValueError, "not in this comic"):
+                app.choose_reading_list_backdrop(list_id, str(f610), 7)
+            store.clear_reading_list_backdrop(list_id)
+            self.assertEqual(app.reading_list_backdrop(list_id)["source"], "auto", "cleared, a page is found again")
+
     def test_our_order_and_removals_survive_a_refresh(self):
         with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
             store = self._library(Path(folder))

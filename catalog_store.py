@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1385,6 +1385,12 @@ class CatalogStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     refreshed_at TEXT,
+                    -- The page behind the drawer's header (schema 58): one of
+                    -- the arc's own comics, chosen or found, as a run's is.
+                    backdrop_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                    backdrop_member TEXT,
+                    backdrop_source TEXT,
+                    backdrop_signature TEXT,
                     UNIQUE(provider, provider_arc_id)
                 );
                 CREATE TABLE IF NOT EXISTS reading_list_items (
@@ -1844,6 +1850,12 @@ class CatalogStore:
             # time it is entered right.
             if "pin_length" not in user_columns:
                 connection.execute("ALTER TABLE users ADD COLUMN pin_length INTEGER")
+            # 58: a story arc's header background, chosen from its own comics.
+            list_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reading_lists)")}
+            for column, kind in (("backdrop_file_id", "INTEGER REFERENCES files(id) ON DELETE SET NULL"),
+                                 ("backdrop_member", "TEXT"), ("backdrop_source", "TEXT"), ("backdrop_signature", "TEXT")):
+                if list_columns and column not in list_columns:
+                    connection.execute(f"ALTER TABLE reading_lists ADD COLUMN {column} {kind}")
             # 55: member_requests loses its CHECK on kind (story arcs are a new
             # kind; kinds are validated in Python). SQLite cannot drop a
             # constraint in place, so the table is copied, counted and swapped.
@@ -4078,6 +4090,38 @@ class CatalogStore:
                 "stale": row["file_signature"] != row["scanned_signature"],
             }
         return by_list
+
+    def reading_list_backdrop_preference(self, list_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = self._require_reading_list(connection, list_id)
+        if row["backdrop_file_id"] is None or not row["backdrop_member"]:
+            return None
+        return {"fileId": str(row["backdrop_file_id"]), "member": row["backdrop_member"],
+                "source": row["backdrop_source"] or "chosen", "fileSignature": row["backdrop_signature"]}
+
+    def set_reading_list_backdrop(
+        self, list_id: int, file_id: int, member: str, source: str, file_signature: str | None = None,
+    ) -> None:
+        """The page behind the arc's header: one of its own comics only."""
+        if source not in {"chosen", "auto"}:
+            raise ValueError("Unsupported background source")
+        if not member:
+            raise ValueError("Choose a page")
+        if not any(item["id"] == str(file_id) for item in self.reading_list_files(list_id)):
+            raise ValueError("That comic is not part of this story arc")
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE reading_lists SET backdrop_file_id=?, backdrop_member=?, backdrop_source=?,
+                       backdrop_signature=?, updated_at=? WHERE id=?""",
+                (int(file_id), member, source, file_signature, _utc_now(), int(list_id)),
+            )
+
+    def clear_reading_list_backdrop(self, list_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            connection.execute(
+                """UPDATE reading_lists SET backdrop_file_id=NULL, backdrop_member=NULL, backdrop_source=NULL,
+                       backdrop_signature=NULL, updated_at=? WHERE id=?""", (_utc_now(), int(list_id)))
 
     def issue_ids_by_provider(self, provider: str, provider_ids: list[str]) -> dict[str, int]:
         """Local issues already linked to these provider issue ids."""

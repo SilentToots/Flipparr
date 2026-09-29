@@ -4726,10 +4726,44 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 57)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 58)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
+
+    def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, _ = self._hush(store)
+            with sqlite3.connect(store.database_path) as connection:
+                # The table as schema 57 made it: no backdrop columns.
+                connection.execute("CREATE TABLE lists57 AS SELECT id, name, description, cover, source, provider, provider_arc_id, source_url, source_name, created_by, created_at, updated_at, refreshed_at FROM reading_lists")
+                connection.execute("PRAGMA foreign_keys = OFF")
+                connection.execute("DROP TABLE reading_lists")
+                connection.execute("ALTER TABLE lists57 RENAME TO reading_lists")
+                connection.execute("UPDATE schema_info SET version=57")
+            reopened = CatalogStore(store.database_path)
+            self.assertEqual([entry["name"] for entry in reopened.reading_lists_overview()], ["Hush"], "kept")
+            self.assertIsNone(reopened.reading_list_backdrop_preference(int(arc["id"])))
+
+    def test_an_arcs_header_background_is_one_of_its_own_comics(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, ids = self._hush(store)
+            list_id = int(arc["id"])
+            f608 = ids["Batman"][2]["608"]
+            self.assertIsNone(store.reading_list_backdrop_preference(list_id))
+            store.set_reading_list_backdrop(list_id, f608, "p03.jpg", "chosen", "sig")
+            self.assertEqual(store.reading_list_backdrop_preference(list_id),
+                             {"fileId": str(f608), "member": "p03.jpg", "source": "chosen", "fileSignature": "sig"})
+            with self.assertRaises(ValueError):
+                store.set_reading_list_backdrop(list_id, 9999, "p01.jpg", "chosen")
+            with self.assertRaises(ValueError):
+                store.set_reading_list_backdrop(list_id, f608, "", "chosen")
+            store.clear_reading_list_backdrop(list_id)
+            self.assertIsNone(store.reading_list_backdrop_preference(list_id))
+            with self.assertRaises(LookupError):
+                store.clear_reading_list_backdrop(999)
 
 
 class IssueFileCountTests(LibraryFixture):

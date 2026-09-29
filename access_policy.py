@@ -106,6 +106,7 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # in them. Saving, ordering, pulling and deleting stay the admin's.
     (frozenset({"GET"}), r"/api/v1/reading-lists", READER),
     (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)", READER),
+    (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)/backdrop", READER),
     (frozenset({"POST"}), r"/api/v1/reading-lists/(\d+)/reading", READER),
     (frozenset({"GET"}), r"/api/v1/reading/lists", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/files/(\d+)/progress", READER),

@@ -12450,6 +12450,57 @@ def _reading_list_cover_choices(list_id: int) -> set[str]:
     return choices
 
 
+def reading_list_backdrop(list_id: int) -> dict[str, Any]:
+    """The page behind an arc's drawer header: the one chosen, or one found
+    in the first of its comics that are here -- as a run's is."""
+    store = catalog_store()
+    files = store.reading_list_files(list_id)
+    by_id = {item["id"]: item for item in files}
+    preference = store.reading_list_backdrop_preference(list_id)
+    if preference and preference["fileId"] in by_id:
+        path = Path(by_id[preference["fileId"]]["path"])
+        try:
+            signature = _file_signature(path)
+        except OSError:
+            signature = None
+        if signature and (preference["source"] == "chosen" or preference["fileSignature"] == signature):
+            pages = archive_page_members(path)
+            if preference["member"] in pages:
+                index = pages.index(preference["member"])
+                return {"url": _page_url(preference["fileId"], index, path, "backdrop"),
+                        "source": preference["source"], "fileId": preference["fileId"], "page": index}
+    for item in files[:3]:
+        path = Path(item["path"])
+        try:
+            if not path.is_file() or archive_kind(path) is None:
+                continue
+            member = automatic_backdrop_page(path)
+            signature = _file_signature(path)
+        except OSError:
+            continue
+        if not member:
+            continue
+        store.set_reading_list_backdrop(list_id, int(item["id"]), member, "auto", signature)
+        index = archive_page_members(path).index(member)
+        return {"url": _page_url(item["id"], index, path, "backdrop"), "source": "auto", "fileId": item["id"], "page": index}
+    return {"url": None, "source": "none", "fileId": None, "page": None}
+
+
+def choose_reading_list_backdrop(list_id: int, file_id: str, page: int) -> dict[str, Any]:
+    """A page the admin picked from one of the arc's own comics."""
+    files = {item["id"]: item for item in catalog_store().reading_list_files(list_id)}
+    if str(file_id) not in files:
+        raise ValueError("That comic is not part of this story arc")
+    path = Path(files[str(file_id)]["path"])
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("That comic cannot be opened")
+    pages = archive_page_members(path)
+    if not 0 <= int(page) < len(pages):
+        raise ValueError("That page is not in this comic")
+    catalog_store().set_reading_list_backdrop(list_id, int(file_id), pages[int(page)], "chosen", _file_signature(path))
+    return reading_list_backdrop(list_id)
+
+
 def heal_reading_lists() -> int:
     """Every saved arc with an issue not yet found in the library, resolved
     again. Called when a run can have appeared -- a scan, an import -- so
@@ -14823,6 +14874,13 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/reading-lists":
             self.send_json(reading_lists(**self._arc_visibility()))
             return
+        reading_list_backdrop_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
+        if reading_list_backdrop_get:
+            try:
+                self.send_json(reading_list_backdrop(int(reading_list_backdrop_get.group(1))))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+            return
         reading_list_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
         if reading_list_get:
             try:
@@ -15740,6 +15798,26 @@ class Handler(BaseHTTPRequestHandler):
                                                    user_id=self._viewer_id(), **self._arc_visibility())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(result)
+            return
+        reading_list_backdrop_post = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
+        if reading_list_backdrop_post:
+            list_id = int(reading_list_backdrop_post.group(1))
+            try:
+                if str(payload.get("source") or "") == "auto":
+                    catalog_store().clear_reading_list_backdrop(list_id)
+                    result = reading_list_backdrop(list_id)
+                else:
+                    page = payload.get("page")
+                    if not isinstance(page, int) or isinstance(page, bool):
+                        raise ValueError("Choose a page")
+                    result = choose_reading_list_backdrop(list_id, str(payload.get("fileId") or ""), page)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
             return

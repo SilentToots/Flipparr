@@ -1598,6 +1598,7 @@ NOT_ADMIN = {
     ("POST", "/api/v1/series/1/reading"): "reader",
     ("GET", "/api/v1/reading-lists"): "reader",
     ("GET", "/api/v1/reading-lists/1"): "reader",
+    ("GET", "/api/v1/reading-lists/1/backdrop"): "reader",
     ("POST", "/api/v1/reading-lists/1/reading"): "reader",
     ("GET", "/api/v1/reading/lists"): "reader",
     ("GET", "/api/v1/files/1/progress"): "reader",
@@ -1699,9 +1700,10 @@ class ReaderProfileHttpTests(unittest.TestCase):
         marked = self.call("POST", "/api/v1/reading-lists/1/reading", {"read": True}, cookies=cookies)
         self.assertEqual(marked.status, 404, "the reader's own place, on an arc that is not there")
         self.assertEqual(self.call("POST", "/api/v1/reading-lists/1/reading", {"read": "yes"}, cookies=cookies).status, 400)
+        self.assertEqual(self.call("GET", "/api/v1/reading-lists/1/backdrop", cookies=cookies).status, 404, "no arc, no background")
         for method, path in (("POST", "/api/v1/reading-lists"), ("PATCH", "/api/v1/reading-lists/1"),
                              ("DELETE", "/api/v1/reading-lists/1"), ("POST", "/api/v1/reading-lists/1/pull"),
-                             ("POST", "/api/v1/reading-lists/1/refresh")):
+                             ("POST", "/api/v1/reading-lists/1/refresh"), ("POST", "/api/v1/reading-lists/1/backdrop")):
             denied = self.call(method, path, {"arcId": "482"}, cookies=cookies)
             self.assertEqual((denied.status, denied.json().get("reason")), (403, "admin_only"), f"{method} {path}")
         self.assertEqual(self.call("POST", "/api/v1/reading-lists/import", {"url": "https://example.invalid/x.cbl"}, cookies=cookies).json().get("reason"), "admin_only")
@@ -1717,6 +1719,10 @@ class ReaderProfileHttpTests(unittest.TestCase):
         # A cover is one of the arc's own comics or the picture it came with, never a typed link.
         for bad in ("https://evil.invalid/x.jpg", "javascript:alert(1)", "/api/v1/files/999/pages/0"):
             self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"cover": bad}, cookies=admin).status, 400, bad)
+        background = self.call("GET", "/api/v1/reading-lists/1/backdrop", cookies=cookies)
+        self.assertEqual((background.status, background.json()["source"]), (200, "none"), "nothing is here to take a page from")
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists/1/backdrop", {"fileId": "9", "page": 0}, cookies=admin).status, 400)
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists/1/backdrop", {"fileId": "9", "page": "0"}, cookies=admin).status, 400)
         renamed = self.call("PATCH", "/api/v1/reading-lists/1", {"name": "Two, renamed"}, cookies=admin)
         self.assertEqual((renamed.status, renamed.json()["name"]), (200, "Two, renamed"))
         self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"order": "1,2"}, cookies=admin).status, 400, "an order is a list")

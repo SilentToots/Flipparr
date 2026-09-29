@@ -7120,6 +7120,32 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
     const wanted = new Set(items.map((item) => item.fileId).filter(Boolean).map(String));
     return runsInArc.flatMap((run) => (run.fileDetails || []).filter((file) => wanted.has(String(file.id))));
   }, [items, runsInArc]);
+  // The page behind the header: chosen from the arc's own comics, or found
+  // in the first of them, as a run's is. Nothing until this arc's answer is
+  // in, so another arc's page never flashes behind a new title.
+  const [backdrop, setBackdrop] = useState({ forId: null, url: null, source: null, fileId: null, page: null });
+  const [backdropFailed, setBackdropFailed] = useState(false);
+  const [backdropVersion, setBackdropVersion] = useState(0);
+  const [backdropBusy, setBackdropBusy] = useState(false);
+  const [backdropError, setBackdropError] = useState("");
+  useEffect(() => {
+    let live = true;
+    setBackdropFailed(false);
+    apiRequest(`/api/v1/reading-lists/${list.id}/backdrop`)
+      .then((answer) => { if (live) setBackdrop({ ...answer, forId: list.id }); })
+      .catch(() => { if (live) setBackdrop({ forId: list.id, url: null, source: "none", fileId: null, page: null }); });
+    return () => { live = false; };
+  }, [list.id, backdropVersion]);
+  const shownBackdrop = backdrop.forId === list.id ? backdrop : null;
+  async function saveBackdrop(body, message) {
+    setBackdropBusy(true); setBackdropError("");
+    try {
+      await apiRequest(`/api/v1/reading-lists/${list.id}/backdrop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      setBackdropVersion((value) => value + 1);
+      setEdit("");
+    } catch (error) { setBackdropError(error.message); }
+    setBackdropBusy(false);
+  }
   const readableFiles = items.filter((item) => item.fileId && item.readable);
   const allRead = readableFiles.length > 0 && readableFiles.every((item) => item.finishedAt && !item.stale);
   const readCount = readableFiles.filter((item) => item.finishedAt && !item.stale).length;
@@ -7127,6 +7153,8 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
   const readingBadgeText = allRead ? { tone: "green", text: "Read" } : started ? { tone: "violet", text: `In progress · ${readCount} of ${readableFiles.length} read` } : null;
   const restartFile = readableFiles[0] || null;
   const coverArt = data?.cover || list.cover || null;
+  const pageArt = shownBackdrop?.url && !backdropFailed ? shownBackdrop.url : null;
+  const heroArt = shownBackdrop ? pageArt || coverArt : null;
   const toned = toneProps(useArtTone(coverArt));
   const tabs = [
     ["overview", "Overview"],
@@ -7173,11 +7201,11 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
   const missingCount = counts.missing;
   const pullLabel = admin ? `Pull ${missingCount} missing` : `Request ${missingCount} missing`;
   const pullMissing = () => run("pull", () => (admin ? onPullMissing : onRequestMissing)(data));
-  const EDIT_ARC = [["name", "Name"], ["cover", "Cover"], ["order", "Reading order"]];
+  const EDIT_ARC = [["name", "Name"], ["cover", "Cover"], ["backdrop", "Header background"], ["order", "Reading order"]];
   const advanced = <div className="advanced-tools">
     <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
     <section className="advanced-card">
-      <div><strong>Edit this arc</strong><p>Its name, its cover, and the order its issues are read in -- or which of them belong.</p></div>
+      <div><strong>Edit this arc</strong><p>Its name, its cover, its header background, and the order its issues are read in -- or which of them belong.</p></div>
       <button type="button" onClick={() => setEdit("")}><PencilSimple size={16} /> Edit</button>
     </section>
     {restartFile && onRead ? <section className="advanced-card">
@@ -7225,7 +7253,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
         {edit === null && admin && data ? <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => { setNameDraft(name); setEdit(""); }} aria-label={`Edit ${name}`} title="Edit"><PencilSimple size={20} /></button> : null}
       </DrawerTopBar>
       <header className="comic-drawer-hero">
-        {coverArt ? <><img className="comic-drawer-backdrop" src={coverArt} alt="" aria-hidden="true" key={coverArt} /><img className="comic-drawer-backdrop blurred" src={coverArt} alt="" aria-hidden="true" key={`${coverArt}-blurred`} /></> : null}
+        {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={pageArt ? () => setBackdropFailed(true) : undefined} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
         <span className="comic-drawer-scrim" aria-hidden="true" />
         <div className="comic-drawer-identity">
           <div className="comic-drawer-cover">{admin && data ? <button type="button" className="drawer-cover-button" onClick={() => setEdit("cover")} aria-label={`Change the cover for ${name}`}><DiscoverCover src={coverArt} alt={`${name} cover`} glyph={30} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <DiscoverCover src={coverArt} alt={`${name} cover`} glyph={30} />}</div>
@@ -7251,8 +7279,9 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
       {edit !== null && data ? <div className="comic-drawer-body comic-drawer-edit">
         {edit === "" ? <div className="advanced-tools">
           {EDIT_ARC.map(([id, label]) => <section className="advanced-card" key={id}>
-            <div><strong>{label}</strong><p>{id === "name" ? "What the arc is called in your comics." : id === "cover" ? "One of its comics' covers, or the picture it came with." : "Move issues up or down, or take one out of the arc."}</p></div>
-            <button type="button" onClick={() => (id === "order" ? beginOrder() : setEdit(id))}><PencilSimple size={16} /> {label}</button>
+            <div><strong>{label}</strong><p>{id === "name" ? "What the arc is called in your comics." : id === "cover" ? "One of its comics' covers, or the picture it came with."
+              : id === "backdrop" ? "A page from one of its comics, behind the header." : "Move issues up or down, or take one out of the arc."}</p></div>
+            <button type="button" onClick={() => (id === "order" ? beginOrder() : setEdit(id))} disabled={id === "backdrop" && !files.length}><PencilSimple size={16} /> {label}</button>
           </section>)}
         </div> : null}
         {edit === "name" ? <form className="arc-edit-form" onSubmit={(event) => { event.preventDefault(); run("name", () => patch({ name: nameDraft.trim() })).then(() => setEdit("")); }}>
@@ -7265,6 +7294,13 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
             <DiscoverCover src={choice.url} alt="" glyph={22} /><small>{choice.label}</small>
           </button>) : <div className="drawer-empty"><ImageSquare size={26} weight="duotone" /><strong>No covers to choose from yet</strong><span>The arc's covers come from the comics of it that are here.</span></div>}
         </div> : null}
+        {edit === "backdrop" ? <>
+          <p className="backdrop-workbench-intro">Choose a page from one of {name}&rsquo;s comics to show behind the drawer&rsquo;s header.</p>
+          <BackdropPicker series={{ id: `arc-${list.id}`, title: name, fileDetails: files }} readable={readingFiles} current={shownBackdrop}
+            busy={backdropBusy} error={backdropError}
+            onChoose={(fileId, page) => saveBackdrop({ fileId, page }, "Header background updated")}
+            onAutomatic={() => saveBackdrop({ source: "auto" }, "Automatic background restored")} />
+        </> : null}
         {edit === "order" ? <>
           <div className="reading-list-edit-actions">
             <button type="button" className="ghost-button" onClick={() => setEdit("")} disabled={busy === "order"}>Cancel</button>
