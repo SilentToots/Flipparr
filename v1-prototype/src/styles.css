@@ -1492,6 +1492,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .issue-run-group > div { padding: 0 var(--space-12); }
 .issue-run-group article { min-height: 55px; display: grid; grid-template-columns: 32px 40px minmax(0, 1fr) auto; gap: var(--space-12); align-items: center; border-bottom: 1px solid var(--line); }
 .issue-run-group article:last-child { border-bottom: 0; }
+/* On a phone the row's tools -- five stars, read, edit, the menu -- are wider
+   than the line leaves the title, which came out one word per line. They take
+   a line of their own under the title, and the cover spans both. */
+@media (max-width: 640px) {
+  .issue-run-group article { grid-template-columns: 32px 40px minmax(0, 1fr); row-gap: var(--space-6); padding: var(--space-8) 0; }
+  .issue-run-group article > .grouped-issue-cover { grid-row: 1 / 3; }
+  .issue-run-group article > .issue-row-actions { grid-column: 2 / -1; justify-content: flex-start; }
+}
 /* The cover inside the file that satisfies this issue, so a download that
    turned out to be the wrong comic is visible in the list itself. */
 .grouped-issue-cover { width: 32px; height: 48px; border-radius: var(--radius-4); overflow: hidden; background: var(--surface-soft); border: 1px solid var(--line); display: grid; place-items: center; }
