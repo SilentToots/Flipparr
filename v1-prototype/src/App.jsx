@@ -2986,11 +2986,17 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
       load();
     }
   }
-  const verb = reader ? "Request" : "Pull";
-  const label = !data ? `${verb} arc` : data.missing === issues.length ? `${verb} all ${issues.length} issues`
-    : data.missing ? `${verb} ${data.missing} missing issue${data.missing === 1 ? "" : "s"}` : `${verb} arc`;
   const nothingLeft = Boolean(data) && !data.missing;
   const saved = Boolean(data?.readingListId);
+  // One action. Pulling keeps the arc as well -- the issues without their
+  // order would be the gap a saved arc exists to close -- so a second "save
+  // only" card read as the same thing minus something (the owner, 2026-09-28).
+  // With nothing left to pull, the one thing to do is keep it; pruning
+  // tie-ins happens in the arc's own drawer afterwards.
+  const saveOnly = nothingLeft && !reader;
+  const verb = saveOnly ? "Save" : reader ? "Request" : "Pull";
+  const label = !data ? `${verb} arc` : saveOnly ? "Save arc" : data.missing === issues.length ? `${verb} all ${issues.length} issues`
+    : data.missing ? `${verb} ${data.missing} missing issue${data.missing === 1 ? "" : "s"}` : `${verb} arc`;
   const [saving, setSaving] = useState(false);
   async function save() {
     if (!data || saving) return;
@@ -3024,31 +3030,21 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
               <BookOpen size={18} weight="fill" /> Read
             </button> : null}
           </div>
-        </section> : <section className="run-pull-options" aria-label={reader ? "Request the arc" : "Pull or save the arc"}>
+        </section> : <section className="run-pull-options" aria-label={reader ? "Request the arc" : saveOnly ? "Save the arc" : "Pull the arc"}>
           <div className="run-pull-option">
             <span className="run-pull-option-copy">
-              <strong>{nothingLeft && !reader ? "Every issue is here or on the way" : label}</strong>
+              <strong>{label}</strong>
               <small role="status" aria-live="polite">{done || (detail.state === "loading" ? "Getting the arc’s issues…"
                 : reader ? "Saved to your comics once approved, in reading order."
-                : `${seriesNames.length > 1 ? `Across ${seriesNames.length} series, in reading order.` : "In reading order."} Pulling saves the arc too.`)}</small>
+                : saveOnly ? "Every issue is here or on the way. Keep the reading order in your comics."
+                : `${seriesNames.length > 1 ? `Across ${seriesNames.length} series, in reading order.` : "In reading order."} The arc is kept in your comics.`)}</small>
             </span>
             <button type="button" className="pull-button pull-button-md pull-button-idle"
-              disabled={!data || (nothingLeft && !reader) || busy || saving || Boolean(done)} onClick={pull} aria-busy={busy || undefined}>
-              <span>{busy ? `${reader ? "Requesting" : "Pulling"}…` : verb}</span>
-              {busy ? <LoadingIndicator size={16} /> : <PullIcon />}
+              disabled={!data || busy || saving || Boolean(done)} onClick={saveOnly ? save : pull} aria-busy={busy || saving || undefined}>
+              <span>{busy ? `${reader ? "Requesting" : "Pulling"}…` : saving ? "Saving…" : verb}</span>
+              {busy || saving ? <LoadingIndicator size={16} /> : saveOnly ? <BookmarkSimple size={16} /> : <PullIcon />}
             </button>
           </div>
-          {!reader && onSave ? <div className="run-pull-option">
-            <span className="run-pull-option-copy">
-              <strong>Save arc</strong>
-              <small>Keep this reading order in your comics without pulling anything.</small>
-            </span>
-            <button type="button" className="pull-button pull-button-md pull-button-idle"
-              disabled={!data || busy || saving} onClick={save} aria-busy={saving || undefined}>
-              <span>{saving ? "Saving…" : "Save"}</span>
-              {saving ? <LoadingIndicator size={16} /> : <BookmarkSimple size={16} />}
-            </button>
-          </div> : null}
         </section>}
         {detail.state === "loading" ? <div role="status" aria-busy="true">
           {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}><i /><span className="discover-cover" /><span><i /><i /></span></div>)}
