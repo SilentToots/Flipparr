@@ -3052,11 +3052,21 @@ def _without_leading_article(value: Any) -> str:
     return re.sub(r"^(?:the|a|an)\s+", "", str(value or "").strip(), flags=re.I).strip()
 
 
+# A poster's reading order in front of the name: "Flashpoint. 02.03 Flashpoint
+# - Abin Sur - The Green Lantern V2011 #001" is the third of the event's second
+# week, and "02.03" is neither the issue nor part of the series.
+_RELEASE_READING_ORDER = re.compile(r"^\s*[A-Za-z][A-Za-z' ]{1,30}\.\s*\d{1,2}\.\d{1,2}\s+")
+# A batch counter glued to the name: "010-Flashpoint -Abin Sur", "25.Flashpoint-Secret.Seven".
+# Glued only: "100 Bullets" and "2000 AD" keep their numbers.
+_RELEASE_BATCH_COUNTER = re.compile(r"^\s*\d{1,3}[-.](?=[A-Za-z])")
+
+
 def _release_issue_matches(title: str, issue_number: Any) -> bool:
     number = str(issue_number or "").strip()
     if not number:
         return False
     pattern = _issue_number_pattern(number)
+    title = _RELEASE_READING_ORDER.sub("", str(title or ""))
     # Numbers that belong to something other than this issue are taken out
     # first: "02 of 04" counts the run, and "Vol 04" is a collected volume.
     # Both read as issue four, so a wanted issue would have been answered
@@ -3172,11 +3182,14 @@ def _release_name_forms(title: str) -> list[str]:
     (2013.01.25) - ' -- so its series never matched and it was thrown away.
     Every quoted stretch is a candidate, the last first, then the whole title.
     """
-    text = str(title or "")
+    text = _RELEASE_READING_ORDER.sub("", str(title or ""))
     forms = [match.group(1) for match in _RELEASE_QUOTED_NAME.finditer(text)]
     if '"' in text:
         forms += [part for part in reversed(text.split('"')) if len(part.strip()) >= 4]
     forms.append(text)
+    # A batch counter in front of the name is tried both ways: stripped for
+    # "010-Flashpoint -Abin Sur", kept for a name that starts with a number.
+    forms += [_RELEASE_BATCH_COUNTER.sub("", form) for form in list(forms) if _RELEASE_BATCH_COUNTER.match(form)]
     seen: set[str] = set()
     ordered = []
     for form in forms:
@@ -3249,12 +3262,14 @@ def _release_series_trim(lead: str, publisher: Any) -> str:
     value = str(lead or "").strip()
     value = re.sub(
         r"[\s.]*\b(?:no|nos|number|issue)\.?\s*$", "", value, flags=re.I
-    ).strip(" -.:")
+    ).strip(" -.:#")
     # A date stamp between the name and the number is the posting's, not the
     # series': "Secret Files and Origins, 2007-12-28 (01)" names no series
     # ending in a date.
-    value = value.strip(" -.:,([")
+    value = value.strip(" -.:,([#")
     value = re.sub(r"[\s,\-]*\b(?:19|20)\d{2}(?:[.\-/_ ]\d{1,2}[.\-/_ ]\d{1,2})?\s*$", "", value).strip(" -.:,([")
+    # "The Green Lantern V2011 #001": the volume's year, tagged onto the name.
+    value = re.sub(r"[\s\-]*\bv(?:ol)?\.?\s*(?:19|20)\d{2}\s*$", "", value, flags=re.I).strip(" -.:,([")
     known = str(publisher or "").strip()
     if known:
         value = re.sub(
@@ -3311,7 +3326,18 @@ def _release_lead_is_series(lead: str, wanted: str, series_title: Any, publisher
     trimmed = _release_series_trim(lead, publisher)
     if bool(bare_wanted) and normalized_title(_without_leading_article(trimmed)) == bare_wanted:
         return True
+    # "Convergence - The Titans" is "Convergence: Titans": an article inside
+    # the name comes and goes between a catalog and a poster. Still an
+    # equality of whole names, so "Thor: The Deviants Saga" is no nearer "Saga".
+    plain_wanted = _without_inner_articles(_without_leading_article(series_title))
+    if bool(plain_wanted) and _without_inner_articles(_without_leading_article(trimmed)) == plain_wanted:
+        return True
     return _lead_extends_series(trimmed, series_title)
+
+
+def _without_inner_articles(value: Any) -> str:
+    """A name normalised with its articles gone, for comparing two spellings of one name."""
+    return normalized_title(re.sub(r"\b(?:the|a|an)\b", " ", str(value or ""), flags=re.I))
 
 
 def _title_words(value: Any) -> list[str]:

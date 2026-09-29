@@ -558,7 +558,7 @@ class FilenameParserTests(unittest.TestCase):
             "error": "Aborted, cannot be completed - https://sabnzbd.org/not-complete",
         }]
         releases = [
-            {"guid": "a", "title": "009-Flashpoint -Secret Seven 01 2011 noads DangerAngel-CPS", "protocol": "usenet",
+            {"guid": "a", "title": "Secret Seven 01 2011 noads DangerAngel-CPS", "protocol": "usenet",
              "downloadUrl": "http://prowlarr/a", "indexer": "One", "size": 1, "categories": [{"id": 7030}]},
             {"guid": "b", "title": "Flashpoint - Secret Seven 001 (2011) (noads)", "protocol": "usenet",
              "downloadUrl": "http://prowlarr/b", "indexer": "One", "size": 1, "categories": [{"id": 7030}]},
@@ -571,7 +571,7 @@ class FilenameParserTests(unittest.TestCase):
             result = search_prowlarr_releases(12)
         self.assertEqual(result["candidateCount"], 0)
         by_title = {miss["title"]: miss for miss in result["nearMisses"]}
-        aside = by_title["009-Flashpoint -Secret Seven 01 2011 noads DangerAngel-CPS"]
+        aside = by_title["Secret Seven 01 2011 noads DangerAngel-CPS"]
         self.assertEqual((aside["setAside"], aside["refused"], aside["reason"], aside["source"]),
                          (True, False, "Not this series", "usenet"))
         refused = by_title["Flashpoint - Secret Seven 001 (2011) (noads)"]
@@ -4940,6 +4940,9 @@ class ReleaseSeriesMatchTests(unittest.TestCase):
         ("Hulk and Power Pack 001 (2007) (Digital)", "Hulk", "1"),
         # A wanted name of one or two words is never extended by "and …".
         ("Batman and Robin 001 (2011) (Digital)", "Batman", "1"),
+        # A name that starts with a number keeps it: it is not a batch counter.
+        ("100 Bullets 012 (2000) (Digital)", "Bullets", "12"),
+        ("2000 AD 045 (1978)", "AD", "45"),
         ("Green Lantern and the Sinestro Corps War 001 (2008)", "Green Lantern", "1"),
         ("Green Lantern-Sinestro Corps - Secret Files and Origins and Other Stories Collected 01", "Green Lantern / Sinestro Corps: Secret Files", "1"),
     ]
@@ -4970,6 +4973,17 @@ class ReleaseSeriesMatchTests(unittest.TestCase):
         ("Fables.Vol.1.No.129.Jul.2013.SCAN.Comic.eBook-iNTENSiTY", "Fables", "129"),
         ("Fables.095.(2010).(Digital).(NahgaEmpire)", "Fables", "95"),
         ("Absolute Flash 002 (2025) (Digital) (Shan-Empire)", "Absolute Flash", "2"),
+        # Flashpoint tie-ins under a poster's batch counter or reading order
+        # (13 open jobs, 2026-09-29), and an article that comes and goes.
+        ("010-Flashpoint -Abin Sur -The Green Lantern 01 (2011) (c2c) (DangerAngel-CPS)",
+         "Flashpoint: Abin Sur - The Green Lantern", "1"),
+        ("Flashpoint. 02.03 Flashpoint - Abin Sur - The Green Lantern V2011 #001 (cbz)",
+         "Flashpoint: Abin Sur - The Green Lantern", "1"),
+        ("25.Flashpoint-Secret.Seven.01", "Flashpoint: Secret Seven", "1"),
+        ("009-Flashpoint -Secret Seven 01 2011 noads DangerAngel-CPS", "Flashpoint: Secret Seven", "1"),
+        ("Convergence - The Titans 002 (2015) (Digital) (ThatGuy-Empire)", "Convergence Titans", "2"),
+        ("100 Bullets 012 (2000) (Digital)", "100 Bullets", "12"),
+        ("2000 AD 045 (1978)", "2000 AD", "45"),
         ("The Department of Truth 012 (2021) (Digital) (Zone-Empire)",
          "The Department of Truth", "12"),
     ]
@@ -4979,6 +4993,13 @@ class ReleaseSeriesMatchTests(unittest.TestCase):
             {"title": title, "categories": [{"id": "7030"}]},
             {"seriesTitle": series, "issueNumber": issue},
         )[0]
+
+    def test_a_reading_order_label_is_not_an_issue_number(self):
+        title = "Flashpoint. 02.03 Flashpoint - Abin Sur - The Green Lantern V2011 #001 (cbz)"
+        self.assertFalse(app._release_issue_matches(title, "3"), "the 03 is the poster's order, not #3")
+        self.assertFalse(app._release_issue_matches(title, "2"))
+        self.assertTrue(app._release_issue_matches(title, "1"))
+        self.assertLess(self.score(title, "Flashpoint: Abin Sur - The Green Lantern", "3"), 85)
 
     def test_another_series_carrying_the_name_never_reaches_a_strong_match(self):
         for title, series, issue in self.WRONG_SERIES:
