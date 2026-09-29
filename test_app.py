@@ -7947,6 +7947,13 @@ class ReadingListTests(unittest.TestCase):
             self.assertEqual([(g["title"], g["missing"]) for g in saved["series"]], [("Batman", 1), ("Batman: Gotham Knights", 0)])
             self.assertEqual(saved["resume"]["state"], "unstarted")
             self.assertEqual(saved["resume"]["fileId"], str(batman[1]["608"][0]))
+            # Opening an arc never builds the catalog: the run drawer does not, and the arc's must not lag it.
+            with patch.object(app, "_library_relevance", side_effect=AssertionError("the catalog was built")):
+                again_detail = app.reading_list_detail(int(saved["id"]), user_id=ADMIN_USER_ID)
+            self.assertEqual([i["owned"] for i in again_detail["items"]], [True, False, True, True])
+            # "On the way" comes from the requests themselves.
+            missing_issue = next(int(i["issueId"]) for i in again_detail["items"] if i["number"] == "609" and i["issueId"]) if any(i["number"] == "609" and i["issueId"] for i in again_detail["items"]) else None
+            self.assertIsNone(missing_issue, "#609 is no issue the library knows, so nothing can be queued for it yet")
             self.assertEqual(saved["items"][0]["fileCover"], f"/api/v1/files/{batman[1]['608'][0]}/pages/0")
             again = app.save_story_arc("482", user_id=ADMIN_USER_ID)
             self.assertEqual((again["id"], again["existed"]), (saved["id"], True))

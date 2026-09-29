@@ -11089,7 +11089,7 @@ def series_backdrop(series_run_id: int) -> dict[str, Any]:
         # A chosen page stands until it is changed; an automatic one is looked
         # for again when its file changes underneath it.
         if signature and (preference["source"] == "chosen" or preference["fileSignature"] == signature):
-            pages = archive_page_members(path)
+            pages = cached_page_members(path)
             if preference["member"] in pages:
                 index = pages.index(preference["member"])
                 return {
@@ -11108,7 +11108,7 @@ def series_backdrop(series_run_id: int) -> dict[str, Any]:
         if not member:
             continue
         store.set_series_backdrop(series_run_id, int(item["id"]), member, "auto", signature)
-        index = archive_page_members(path).index(member)
+        index = cached_page_members(path).index(member)
         return {
             "url": _page_url(item["id"], index, path, "backdrop"),
             "source": "auto", "fileId": item["id"], "page": index,
@@ -12266,10 +12266,29 @@ def _resolve_reading_list_items(
     return resolved
 
 
-def _reading_list_resolved(list_id: int, relevance: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """The arc with its items resolved again and any change written back."""
+def _light_relevance() -> dict[str, dict[str, Any]]:
+    """What `_library_run_for` needs to place a provider's run -- title, year,
+    id -- from one cheap query rather than the whole catalog, which
+    `_library_relevance` builds and an arc's drawer must not wait for."""
+    relevance: dict[str, dict[str, Any]] = {}
+    for run in catalog_store().run_title_index():
+        entry = {"runId": run["id"], "year": _provider_year(run["year"]), "following": False,
+                 "publisher": None, "owned": set(), "queued": set()}
+        title = normalized_title(run["title"])
+        relevance.setdefault(title, entry)
+        relevance[f"{title}|{run['year'] or ''}"] = entry
+    return relevance
+
+
+def _reading_list_resolved(list_id: int, relevance: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The arc, with any item that has no issue yet resolved again and the
+    change written back. Items already placed are left alone: opening an
+    arc is not the moment to re-derive what a scan already settled."""
     store = catalog_store()
     data = store.reading_list(list_id)
+    if all(item["issueId"] for item in data["items"]):
+        return data
+    relevance = _light_relevance() if relevance is None else relevance
     resolved = _resolve_reading_list_items(data["items"], relevance)
     changed = {
         int(item["id"]): resolved.get(item["id"]) for item in data["items"]
@@ -12310,21 +12329,21 @@ def reading_list_detail(
     goes. Items of runs the profile may not see are left out, and an arc with
     nothing left to show is not there for it."""
     store = catalog_store()
-    relevance = _library_relevance()
-    data = _reading_list_resolved(list_id, relevance)
-    by_run = {entry["runId"]: entry for entry in relevance.values()}
+    data = _reading_list_resolved(list_id)
+    # "On the way" for the issues here that are not: one scoped query, not
+    # the catalog's every request.
+    queued = store.queued_issue_ids([int(item["issueId"]) for item in data["items"] if item["issueId"] and not item["fileId"]])
     progress = store.reading_progress_by_list(user_id=user_id).get(str(list_id), {})
     items = []
     for item in data["items"]:
         if not _arc_item_visible(item["runId"], may_see, may_see_unrated):
             continue
-        entry = by_run.get(item["runId"]) if item["runId"] else None
         path = Path(item["path"]) if item.get("path") else None
         record = progress.get(item["fileId"] or "") or {}
         items.append({
             **{key: value for key, value in item.items() if key != "path"},
             "owned": bool(item["fileId"]),
-            "queued": bool(entry and not item["fileId"] and _issue_key(item["number"]) in entry["queued"]),
+            "queued": bool(item["issueId"] and not item["fileId"] and int(item["issueId"]) in queued),
             "readable": bool(path and path.is_file() and archive_kind(path) is not None),
             "fileCover": f"/api/v1/files/{item['fileId']}/pages/0" if item["fileId"] else None,
             "page": record.get("page", 0), "pageCount": record.get("pageCount", 0),
@@ -12464,7 +12483,7 @@ def reading_list_backdrop(list_id: int) -> dict[str, Any]:
         except OSError:
             signature = None
         if signature and (preference["source"] == "chosen" or preference["fileSignature"] == signature):
-            pages = archive_page_members(path)
+            pages = cached_page_members(path)
             if preference["member"] in pages:
                 index = pages.index(preference["member"])
                 return {"url": _page_url(preference["fileId"], index, path, "backdrop"),
@@ -12481,7 +12500,7 @@ def reading_list_backdrop(list_id: int) -> dict[str, Any]:
         if not member:
             continue
         store.set_reading_list_backdrop(list_id, int(item["id"]), member, "auto", signature)
-        index = archive_page_members(path).index(member)
+        index = cached_page_members(path).index(member)
         return {"url": _page_url(item["id"], index, path, "backdrop"), "source": "auto", "fileId": item["id"], "page": index}
     return {"url": None, "source": "none", "fileId": None, "page": None}
 
@@ -12494,7 +12513,7 @@ def choose_reading_list_backdrop(list_id: int, file_id: str, page: int) -> dict[
     path = Path(files[str(file_id)]["path"])
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("That comic cannot be opened")
-    pages = archive_page_members(path)
+    pages = cached_page_members(path)
     if not 0 <= int(page) < len(pages):
         raise ValueError("That page is not in this comic")
     catalog_store().set_reading_list_backdrop(list_id, int(file_id), pages[int(page)], "chosen", _file_signature(path))
@@ -12510,7 +12529,7 @@ def heal_reading_lists() -> int:
     waiting = [entry for entry in store.reading_lists_overview() if any(item["issueId"] is None for item in entry["items"])]
     if not waiting:
         return 0
-    relevance = _library_relevance()
+    relevance = _light_relevance()
     healed = 0
     for entry in waiting:
         try:

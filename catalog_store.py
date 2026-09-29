@@ -4123,6 +4123,34 @@ class CatalogStore:
                 """UPDATE reading_lists SET backdrop_file_id=NULL, backdrop_member=NULL, backdrop_source=NULL,
                        backdrop_signature=NULL, updated_at=? WHERE id=?""", (_utc_now(), int(list_id)))
 
+    def queued_issue_ids(self, issue_ids: list[int]) -> set[int]:
+        """Which of these issues are on their way: a job still open for
+        them, or an open request that names them before it has a job."""
+        ids = sorted({int(value) for value in issue_ids if str(value).isdigit()})
+        if not ids:
+            return set()
+        marks = ",".join("?" * len(ids))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT issue_id FROM acquisition_jobs
+                     WHERE issue_id IN ({marks}) AND status NOT IN ('fulfilled', 'cancelled')
+                    UNION
+                    SELECT ari.issue_id FROM acquisition_request_issues AS ari
+                      JOIN acquisition_requests AS r ON r.id=ari.request_id
+                     WHERE r.status='open' AND ari.issue_id IN ({marks})""",
+                (*ids, *ids),
+            ).fetchall()
+        return {int(row[0]) for row in rows}
+
+    def run_title_index(self) -> list[dict[str, Any]]:
+        """Every run's id, title and year -- enough to tell which run a
+        provider's series is, without building the catalog."""
+        with self._connect() as connection:
+            return [
+                {"id": str(row["id"]), "title": row["canonical_title"], "year": row["start_year"]}
+                for row in connection.execute("SELECT id, canonical_title, start_year FROM series_runs")
+            ]
+
     def issue_ids_by_provider(self, provider: str, provider_ids: list[str]) -> dict[str, int]:
         """Local issues already linked to these provider issue ids."""
         ids = [str(value) for value in provider_ids if value]
