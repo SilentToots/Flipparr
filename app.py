@@ -3582,17 +3582,76 @@ def solver_fetch_html(url: str) -> str:
     return html_text
 
 
-def direct_site_download_link(post_url: str) -> str:
-    """The direct link a DirectSite post offers.
+_DIRECT_SITE_HOST_WORDS = re.compile(
+    r"\b(?:Main Server|Google Drive|YanDisk|Mega|Mediafire|Zippyshare|Read Online|Download Now)\b|\|", re.I,
+)
+_DIRECT_SITE_RANGE = re.compile(r"#\s*(\d+)(?:\s*[\u2013\u2014-]\s*#?\s*(\d+))?")
+
+
+def direct_site_download_links(page: str) -> list[dict[str, Any]]:
+    """Every direct link a post offers, each with the part it belongs to.
+
+    A run's post is in parts -- "The Woods #1 – 12 (474 MB) : :" and its
+    buttons, then "#13 – 23", "#24 – 33", "#34 – 36", then the trades -- and
+    each part's label sits in the text before its first button, ending in
+    " : :". A button with no label of its own belongs to the part before it.
+    `first`/`last` are the issues a part says it holds, None for a trade or
+    a post with no parts.
+    """
+    links: list[dict[str, Any]] = []
+    last_end = 0
+    label = ""
+    for match in _DIRECT_SITE_LINK.finditer(page or ""):
+        between = re.sub(r"<[^>]+>", " ", page[last_end:match.start()])
+        between = html.unescape(re.sub(r"\s+", " ", between)).strip()
+        last_end = match.end()
+        # The text of the previous part's buttons is host names; what is left
+        # after them, up to the " : :" the label ends in, is the new label.
+        if ":" in between:
+            head = between.rsplit(":", 2)[0] if between.rstrip().endswith(":") else between.rsplit(":", 1)[0]
+            cleaned = re.sub(r"\s+", " ", _DIRECT_SITE_HOST_WORDS.sub(" ", head)).strip(" :|-")
+            if cleaned:
+                # The page's own title and facts ("Size : 3.6 GB") come before
+                # the first part's label: the part is the last range named,
+                # and its label starts after the last colon before it.
+                spans = list(_DIRECT_SITE_RANGE.finditer(cleaned))
+                if spans:
+                    start = cleaned.rfind(":", 0, spans[-1].start()) + 1
+                    label = cleaned[start:].strip(" :|-")[-160:]
+                else:
+                    label = cleaned[-160:]
+        span = _DIRECT_SITE_RANGE.search(label)
+        first = int(span.group(1)) if span else None
+        last = int(span.group(2)) if span and span.group(2) else first
+        links.append({"url": match.group(1), "label": label, "first": first, "last": last})
+    return links
+
+
+def direct_site_download_link(post_url: str, issue_number: Any = None) -> str:
+    """The direct link a DirectSite post offers -- for a post in parts, the
+    part whose issues include the one wanted.
 
     The post page is what Cloudflare protects, so the solver reads it; the link
     it carries is then an ordinary URL that redirects to a file host, which
-    plain HTTP can fetch (measured 2026-09-15).
+    plain HTTP can fetch (measured 2026-09-15). Taking the first link of a
+    post in parts fetched "#1 – 12" for a wanted #21 (The Woods, 2026-09-28).
     """
-    match = _DIRECT_SITE_LINK.search(solver_fetch_html(post_url))
-    if not match:
+    links = direct_site_download_links(solver_fetch_html(post_url))
+    if not links:
         raise ValueError("That DirectSite post offers no direct download link")
-    return match.group(1)
+    wanted = _issue_number(issue_number)
+    parts = [link for link in links if link["first"] is not None]
+    # No parts, or one part: the post is the download, and the importer
+    # judges what it holds. Only a post in several parts has a choice.
+    if wanted is None or len({link["label"] for link in parts}) < 2:
+        return links[0]["url"]
+    for link in parts:
+        if link["first"] <= wanted <= (link["last"] if link["last"] is not None else link["first"]):
+            return link["url"]
+    labels = list(dict.fromkeys(link["label"] for link in parts))
+    raise ValueError(
+        f"That DirectSite post is in parts, and none says it holds #{issue_number}: " + "; ".join(labels[:6])
+    )
 
 
 def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
@@ -4830,7 +4889,12 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
         stop = _DIRECT_FETCHES.setdefault(int(download_id), threading.Event())
     try:
         store.update_acquisition_download(download_id, "downloading")
-        link = direct_site_download_link(post_url)
+        # The wanted issue decides which part of a post in parts is taken.
+        try:
+            wanted = store.get_acquisition_job_context(int(job_id)).get("issueNumber")
+        except Exception:  # noqa: BLE001 -- a job with no context still gets the post's first link
+            wanted = None
+        link = direct_site_download_link(post_url, wanted)
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)
         request = urllib.request.Request(link, headers={"User-Agent": f"Flipparr/{APP_VERSION}"})

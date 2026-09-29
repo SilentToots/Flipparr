@@ -8173,6 +8173,46 @@ class ReadingListImportTests(ReadingListTests):
         self.assertEqual(app._reading_list_link("https://x.invalid/a%20b.cbl"), "https://x.invalid/a%20b.cbl", "already encoded stays so")
 
 
+class DirectSitePartsTests(unittest.TestCase):
+    """A DirectSite post in parts: the part that holds the wanted issue is the
+    one taken, not the first button on the page."""
+
+    PAGE = (
+        '<p><strong>The Woods #1 &#8211; 36 + TPB Vol. 1 &#8211; 9</strong></p><p>Language : English | Year : 2014-2018 | Size : 3.6 GB</p>'
+        '<p><a href="https://comics.example/read/1">Read Online</a></p>'
+        '<p><strong>The Woods #1 &#8211; 12 (2014-2015) (474 MB) : :</strong> <a href="https://comics.example/dls/a1">Main Server</a> | '
+        '<a href="https://comics.example/dls/a2">Google Drive</a> | <a href="https://mega.nz/x">Mega</a></p>'
+        '<p><strong>The Woods #13 &#8211; 23 (2015-2016) (470 MB) : :</strong> <a href="https://comics.example/dls/b1">Main Server</a> | '
+        '<a href="https://comics.example/dls/b2">Google Drive</a> | <a href="https://mega.nz/y">Mega</a> | <span>Mediafire</span> | <span>Zippyshare</span></p>'
+        '<p><strong>The Woods #34 &#8211; 36 (2017) (262 MB) : :</strong> <a href="https://comics.example/dls/d1">Main Server</a></p>'
+        '<p><strong>TPBs</strong></p><p><strong>The Woods Vol. 1 &#8211; The Arrow (2014) (181 MB) : :</strong> <a href="https://comics.example/dls/t1">Main Server</a></p>'
+    )
+
+    def test_each_link_knows_its_part(self):
+        links = app.direct_site_download_links(self.PAGE)
+        self.assertEqual([(l["url"][-2:], l["first"], l["last"]) for l in links],
+                         [("a1", 1, 12), ("a2", 1, 12), ("b1", 13, 23), ("b2", 13, 23), ("d1", 34, 36), ("t1", None, None)])
+        self.assertIn("#13 – 23", links[2]["label"])
+        self.assertNotIn("Google Drive", links[3]["label"], "the buttons' host names are not the label")
+
+    def test_the_part_holding_the_wanted_issue_is_taken(self):
+        with patch.object(app, "solver_fetch_html", return_value=self.PAGE):
+            self.assertEqual(app.direct_site_download_link("https://comics.example/other-comics/the-woods-1-12/", "21"), "https://comics.example/dls/b1")
+            self.assertEqual(app.direct_site_download_link("https://comics.example/other-comics/the-woods-1-12/", "034"), "https://comics.example/dls/d1")
+            self.assertEqual(app.direct_site_download_link("https://comics.example/other-comics/the-woods-1-12/", "5"), "https://comics.example/dls/a1")
+            self.assertEqual(app.direct_site_download_link("https://comics.example/other-comics/the-woods-1-12/", None), "https://comics.example/dls/a1", "no issue asked: the first")
+            with self.assertRaisesRegex(ValueError, "in parts, and none says it holds #30"):
+                app.direct_site_download_link("https://comics.example/other-comics/the-woods-1-12/", "30")
+        single = '<p><strong>Saga #61 (2022) : :</strong> <a href="https://comics.example/dls/s1">Main Server</a></p>'
+        with patch.object(app, "solver_fetch_html", return_value=single):
+            self.assertEqual(app.direct_site_download_link("https://comics.example/saga-61/", "61"), "https://comics.example/dls/s1")
+            self.assertEqual(app.direct_site_download_link("https://comics.example/saga-61/", "3"), "https://comics.example/dls/s1",
+                             "one part is the post; the importer judges what it holds")
+        with patch.object(app, "solver_fetch_html", return_value="<p>nothing here</p>"):
+            with self.assertRaisesRegex(ValueError, "no direct download link"):
+                app.direct_site_download_link("https://comics.example/x/", "1")
+
+
 class NotificationViewTests(unittest.TestCase):
     def test_an_arrival_shows_the_comics_own_first_page(self):
         viewer = Viewer(id=1, name="Admin", role="admin")
