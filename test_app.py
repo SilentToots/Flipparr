@@ -3611,6 +3611,41 @@ class DirectSiteSearchTests(unittest.TestCase):
         self.assertEqual(app._direct_site_queries({"seriesTitle": "Farmhand", "issueNumber": "3"}, "farmhand deluxe"),
                          ["farmhand deluxe"])
 
+    def test_a_collection_posts_part_stands_in_for_the_post(self):
+        # R.E.B.E.L.S. #12 was on DirectSite only inside "R.E.B.E.L.S. Vol. 1 – 2
+        # (Collection) (1994-2011)", whose title names no issue (2026-09-29).
+        context = {"seriesTitle": "R.E.B.E.L.S.", "seriesYear": 2009, "issueNumber": "12", "publicationYear": 2010,
+                   "publisher": "DC Comics", "runIssueCount": 28, "requestId": "3"}
+        feed = ("<rss><channel><item><title>R.E.B.E.L.S. Vol. 1 &#8211; 2 (Collection) (1994-2011)</title>"
+                "<link>https://comics.example/dc/r-e-b-e-l-s-vol-1-2-collection/</link><description>Size : 1.5 GB</description></item>"
+                "<item><title>Legion of Super-Heroes Vol. 1 &#8211; 7 (Collection)</title>"
+                "<link>https://comics.example/dc/legion-collection/</link><description>Size : 9 GB</description></item>"
+                "</channel></rss>").encode()
+        app._DIRECT_SITE_PARTS.clear()
+        self.addCleanup(app._DIRECT_SITE_PARTS.clear)
+        with patch("app.fetch_bytes_with_headers", return_value=feed) as fetch, \
+             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app.solver_fetch_html", return_value=DirectSitePartsTests.COLLECTION) as solver:
+            candidates = app._direct_site_candidates(3, context, "R.E.B.E.L.S.")
+            again = app._direct_site_candidates(3, context, "R.E.B.E.L.S.")
+        asked = [urllib.parse.parse_qs(urllib.parse.urlsplit(c.args[0]).query)["s"][0] for c in fetch.call_args_list[:3]]
+        self.assertEqual(asked, ["R.E.B.E.L.S. #12", "R.E.B.E.L.S.", "R.E.B.E.L.S. 2009"], "the dotted name is asked as written")
+        self.assertEqual(len(candidates), 1, candidates)
+        part = candidates[0]
+        self.assertEqual(part["title"], "R.E.B.E.L.S. Vol. 2 #1 – 28 + Annual (2009-2011) (943 MB)", "the 1994 run's part is not offered")
+        self.assertEqual(part["postTitle"], "R.E.B.E.L.S. Vol. 1 – 2 (Collection) (1994-2011)")
+        self.assertEqual(part["pack"], {"first": 1, "last": 28})
+        self.assertEqual(part["matchStrength"], "Pack, #1-#28")
+        self.assertEqual(part["sizeBytes"], 943 * 1024 ** 2, "the part's size, not the post's")
+        self.assertTrue(part["grabbable"])
+        self.assertEqual(solver.call_count, 1, "only the post naming the series is read, and once")
+        self.assertEqual([item["title"] for item in again], [part["title"]])
+        with patch("app.fetch_bytes_with_headers", return_value=feed), \
+             patch("app.solver_fetch_html", return_value=DirectSitePartsTests.COLLECTION) as solver:
+            self.assertEqual(app._direct_site_candidates(3, context, "R.E.B.E.L.S."), [],
+                             "without a solver the post cannot be read, so it is not offered")
+            solver.assert_not_called()
+
     def test_a_search_that_fails_leaves_usenet_results_alone(self):
         with patch("app.fetch_bytes_with_headers", side_effect=TimeoutError("slow")):
             self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl"), [])
@@ -3721,6 +3756,17 @@ class DirectSiteDownloadTests(unittest.TestCase):
         final = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "completed"]
         self.assertEqual(len(final), 1)
         self.assertTrue(str(final[0].kwargs["sab_storage"]).endswith("/11"))
+
+    def test_the_part_is_chosen_by_the_jobs_issue_and_years(self):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {"issueNumber": "12", "seriesYear": 2009, "publicationYear": 2010}
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.acquisition_staging_dir", return_value=Path(folder) / "direct_site"), \
+                 patch("app.direct_site_download_link", return_value="https://comics.example/dls/token") as choose, \
+                 patch("app._safe_urlopen", return_value=self._response(b"comic-bytes" * 1000)):
+                app._fetch_direct_site_download(5, 11, "https://comics.example/dc/rebels/", "R.E.B.E.L.S. Vol. 2 #1 – 28")
+        choose.assert_called_once_with("https://comics.example/dc/rebels/", "12", (2009, 2010))
 
     def test_a_failed_fetch_leaves_the_issue_wanted_and_says_why(self):
         store = Mock()
@@ -4861,6 +4907,16 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
         self.assertEqual(app._direct_site_queries({"seriesTitle": "The Woods", "issueNumber": "21", "seriesYear": 2014}, "The Woods"),
                          ["The Woods #21", "The Woods", "The Woods 2014"],
                          "the run's year reaches a pack the title alone buries under newer posts")
+
+    def test_a_dotted_acronym_is_one_word(self):
+        # "R E B E L S" found nothing anywhere; the dotted name found the run (2026-09-29).
+        self.assertEqual(app._plain_query_title("R.E.B.E.L.S."), "R.E.B.E.L.S.")
+        self.assertEqual(app._plain_query_title("S.H.I.E.L.D.: Agents", cut_at_apostrophe=True), "S.H.I.E.L.D. Agents")
+        self.assertEqual(app._plain_query_title("Mr. Miracle"), "Mr Miracle", "an abbreviation is not an acronym")
+        self.assertEqual(app._prowlarr_query_forms({"seriesTitle": "R.E.B.E.L.S.", "issueNumber": "12"}),
+                         ["R.E.B.E.L.S. 012", "R.E.B.E.L.S. 12", "R.E.B.E.L.S."])
+        self.assertEqual(app._direct_site_queries({"seriesTitle": "R.E.B.E.L.S.", "issueNumber": "12", "seriesYear": 2009}, "R.E.B.E.L.S."),
+                         ["R.E.B.E.L.S. #12", "R.E.B.E.L.S.", "R.E.B.E.L.S. 2009"])
 
     def test_a_half_issue_is_asked_for_as_releases_write_it(self):
         self.assertEqual(
@@ -8212,6 +8268,37 @@ class DirectSitePartsTests(unittest.TestCase):
         with patch.object(app, "solver_fetch_html", return_value="<p>nothing here</p>"):
             with self.assertRaisesRegex(ValueError, "no direct download link"):
                 app.direct_site_download_link("https://comics.example/x/", "1")
+
+    # A name's runs collected in one post: both parts hold a #12.
+    COLLECTION = (
+        '<p><strong>R.E.B.E.L.S. Vol. 1 &#8211; 2 (Collection) (1994-2011)</strong></p>'
+        '<p>Language : English | Year : 1994-2011 | Size : 1.5 GB</p>'
+        '<p><strong>R.E.B.E.L.S. Vol. 1 #0 &#8211; 17 (1994-1996) (517 MB) : :</strong> <a href="https://comics.example/dls/v1a">Main Server</a> | '
+        '<a href="https://comics.example/dls/v1b">Mega</a></p>'
+        '<p><strong>R.E.B.E.L.S. Vol. 2 #1 &#8211; 28 + Annual (2009-2011) (943 MB) : :</strong> <a href="https://comics.example/dls/v2a">Main Server</a> | '
+        '<a href="https://comics.example/dls/v2b">Mega</a></p>'
+    )
+
+    def test_a_part_knows_its_years_and_size_and_not_the_posts(self):
+        links = app.direct_site_download_links(self.COLLECTION)
+        self.assertEqual(links[0]["label"], "R.E.B.E.L.S. Vol. 1 #0 – 17 (1994-1996) (517 MB)",
+                         "the post's size fact does not lead the first label")
+        self.assertEqual([(l["first"], l["last"], l["years"]) for l in links],
+                         [(0, 17, (1994, 1996)), (0, 17, (1994, 1996)), (1, 28, (2009, 2011)), (1, 28, (2009, 2011))])
+        self.assertEqual(links[2]["sizeBytes"], 943 * 1024 ** 2)
+
+    def test_the_part_from_this_runs_years_is_taken(self):
+        # The first part holding #12 was the 1994 run's (R.E.B.E.L.S., 2026-09-29).
+        with patch.object(app, "solver_fetch_html", return_value=self.COLLECTION):
+            self.assertEqual(app.direct_site_download_link("https://comics.example/dc/rebels/", "12", (2009, 2010)), "https://comics.example/dls/v2a")
+            self.assertEqual(app.direct_site_download_link("https://comics.example/dc/rebels/", "12", (1995, None)), "https://comics.example/dls/v1a")
+            self.assertEqual(app.direct_site_download_link("https://comics.example/dc/rebels/", "12", None), "https://comics.example/dls/v1a",
+                             "no year known: the first part holding it")
+            with self.assertRaisesRegex(ValueError, "holding #0 is from other years"):
+                app.direct_site_download_link("https://comics.example/dc/rebels/", "0", (2009,))
+            with self.assertRaisesRegex(ValueError, "from other years than this run: R.E.B.E.L.S. Vol. 1"):
+                app.direct_site_download_link("https://comics.example/dc/rebels/", "12", (2020,))
+        self.assertTrue(app._direct_site_part_fits_years("The Woods #13 – 23 (470 MB)", (2014,)), "a part naming no years is not doubted")
 
 
 class DirectSiteGrabIdentityTests(unittest.TestCase):

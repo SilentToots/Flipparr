@@ -3586,6 +3586,33 @@ _DIRECT_SITE_HOST_WORDS = re.compile(
     r"\b(?:Main Server|Google Drive|YanDisk|Mega|Mediafire|Zippyshare|Read Online|Download Now)\b|\|", re.I,
 )
 _DIRECT_SITE_RANGE = re.compile(r"#\s*(\d+)(?:\s*[\u2013\u2014-]\s*#?\s*(\d+))?")
+# A part says when its issues ran, "(1994-1996)", and how big it is, "(517 MB)".
+_DIRECT_SITE_PART_YEARS = re.compile(r"\(\s*((?:19|20)\d{2})(?:\s*[\u2013\u2014-]\s*((?:19|20)\d{2}))?\s*\)")
+_DIRECT_SITE_PART_SIZE = re.compile(r"\(\s*([0-9.]+)\s*(kb|mb|gb)\s*\)", re.I)
+
+
+def _direct_site_part_years(label: Any) -> tuple[int, int] | None:
+    """The years a part says its issues ran, or None when it names none."""
+    match = _DIRECT_SITE_PART_YEARS.search(str(label or ""))
+    if not match:
+        return None
+    first = int(match.group(1))
+    return (first, int(match.group(2)) if match.group(2) else first)
+
+
+def _direct_site_part_fits_years(label: Any, years: Any) -> bool:
+    """Whether a part's stated years can be this run's.
+
+    A collection post holds every run of a name in turn -- "R.E.B.E.L.S.
+    Vol. 1 #0 – 17 (1994-1996)" and "Vol. 2 #1 – 28 + Annual (2009-2011)" --
+    and both hold a #12. The years tell them apart; a part that names none,
+    or a run whose year is unknown, is given the benefit of the doubt.
+    """
+    stated = _direct_site_part_years(label)
+    known = {int(year) for year in (years or ()) if _provider_year(year)}
+    if not stated or not known:
+        return True
+    return any(stated[0] - 1 <= year <= stated[1] + 1 for year in known)
 
 
 def direct_site_download_links(page: str) -> list[dict[str, Any]]:
@@ -3623,21 +3650,31 @@ def direct_site_download_links(page: str) -> list[dict[str, Any]]:
                     label = cleaned[start:].strip(" :|-")[-160:]
                 else:
                     label = cleaned[-160:]
+        # The post's size fact, "Size : 1.5 GB", ends just before the first
+        # part's label and would otherwise lead it.
+        label = re.sub(r"^\s*[0-9.]+\s*(?:kb|mb|gb)\b\s*", "", label, flags=re.I)
         span = _DIRECT_SITE_RANGE.search(label)
         first = int(span.group(1)) if span else None
         last = int(span.group(2)) if span and span.group(2) else first
-        links.append({"url": match.group(1), "label": label, "first": first, "last": last})
+        size = _DIRECT_SITE_PART_SIZE.search(label)
+        links.append({
+            "url": match.group(1), "label": label, "first": first, "last": last,
+            "years": _direct_site_part_years(label),
+            "sizeBytes": int(float(size.group(1)) * _SIZE_SCALE[size.group(2).lower()]) if size else 0,
+        })
     return links
 
 
-def direct_site_download_link(post_url: str, issue_number: Any = None) -> str:
+def direct_site_download_link(post_url: str, issue_number: Any = None, years: Any = None) -> str:
     """The direct link a DirectSite post offers -- for a post in parts, the
-    part whose issues include the one wanted.
+    part whose issues include the one wanted, from this run's years.
 
     The post page is what Cloudflare protects, so the solver reads it; the link
     it carries is then an ordinary URL that redirects to a file host, which
     plain HTTP can fetch (measured 2026-09-15). Taking the first link of a
-    post in parts fetched "#1 – 12" for a wanted #21 (The Woods, 2026-09-28).
+    post in parts fetched "#1 – 12" for a wanted #21 (The Woods, 2026-09-28),
+    and the first part holding a #12 of R.E.B.E.L.S. was the 1994 run's
+    (2026-09-29).
     """
     links = direct_site_download_links(solver_fetch_html(post_url))
     if not links:
@@ -3648,13 +3685,90 @@ def direct_site_download_link(post_url: str, issue_number: Any = None) -> str:
     # judges what it holds. Only a post in several parts has a choice.
     if wanted is None or len({link["label"] for link in parts}) < 2:
         return links[0]["url"]
-    for link in parts:
-        if link["first"] <= wanted <= (link["last"] if link["last"] is not None else link["first"]):
+    holding = [
+        link for link in parts
+        if link["first"] <= wanted <= (link["last"] if link["last"] is not None else link["first"])
+    ]
+    for link in holding:
+        if _direct_site_part_fits_years(link["label"], years):
             return link["url"]
+    if holding:
+        labels = list(dict.fromkeys(link["label"] for link in holding))
+        raise ValueError(
+            f"The part of that DirectSite post holding #{issue_number} is from other years than this run: "
+            + "; ".join(labels[:3])
+        )
     labels = list(dict.fromkeys(link["label"] for link in parts))
     raise ValueError(
         f"That DirectSite post is in parts, and none says it holds #{issue_number}: " + "; ".join(labels[:6])
     )
+
+
+# A post that collects a name's runs: "R.E.B.E.L.S. Vol. 1 – 2 (Collection)
+# (1994-2011)". Its title names no issue; its parts do.
+_DIRECT_SITE_COLLECTION = re.compile(
+    r"\bcollection\b|\bv(?:ol(?:ume)?)?\.?\s*\d{1,3}\s*-\s*(?:v(?:ol(?:ume)?)?\.?\s*)?\d{1,3}\b", re.I
+)
+_DIRECT_SITE_PARTS_TTL_SECONDS = 30 * 60
+_DIRECT_SITE_PARTS_LOCK = threading.Lock()
+_DIRECT_SITE_PARTS: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _direct_site_names_series(title: str, context: dict[str, Any]) -> bool:
+    """Whether a post's title begins with the wanted series' words."""
+    wanted = _title_words(_without_leading_article(context.get("seriesTitle")))
+    words = _title_words(_without_leading_article(_plain_dashes(title)))
+    return bool(wanted) and words[:len(wanted)] == wanted
+
+
+def _direct_site_post_parts(post_url: str) -> list[dict[str, Any]]:
+    """A post's parts, read once per half hour: the solver is slow and a
+    person searches the same issue more than once."""
+    now = time.time()
+    with _DIRECT_SITE_PARTS_LOCK:
+        cached = _DIRECT_SITE_PARTS.get(post_url)
+        if cached and cached[0] > now:
+            return cached[1]
+    parts = direct_site_download_links(solver_fetch_html(post_url))
+    with _DIRECT_SITE_PARTS_LOCK:
+        for key in [key for key, (expires, _) in _DIRECT_SITE_PARTS.items() if expires <= now]:
+            _DIRECT_SITE_PARTS.pop(key, None)
+        _DIRECT_SITE_PARTS[post_url] = (now + _DIRECT_SITE_PARTS_TTL_SECONDS, parts)
+    return parts
+
+
+def _direct_site_collection_part(post_url: str, title: str, context: dict[str, Any]) -> dict[str, Any] | None:
+    """The part of a collection post that holds this issue, judged as a
+    release in its own right, or None.
+
+    R.E.B.E.L.S. #12 was on DirectSite only inside "R.E.B.E.L.S. Vol. 1 – 2
+    (Collection) (1994-2011)", a title that names no issue and so scored
+    nothing -- while its part "R.E.B.E.L.S. Vol. 2 #1 – 28 + Annual
+    (2009-2011)" is exactly the release wanted (2026-09-29). Reading the post
+    is what a person does by hand; it is done only for a post that says it is
+    a collection of the wanted series, since each read is a solver round trip.
+    """
+    if not _DIRECT_SITE_COLLECTION.search(_plain_dashes(title)) or not _direct_site_names_series(title, context):
+        return None
+    parts = _direct_site_post_parts(post_url)
+    years = (context.get("seriesYear"), context.get("publicationYear"))
+    seen: set[str] = set()
+    for part in parts:
+        label = str(part.get("label") or "")
+        if part.get("first") is None or label in seen:
+            continue
+        seen.add(label)
+        plain = _plain_dashes(label)
+        score, reasons = _release_candidate_score({"title": plain}, context)
+        pack = _release_pack_coverage(plain, context)
+        if not pack or score < 70 or not _direct_site_part_fits_years(label, years):
+            continue
+        return {
+            "label": label, "score": score, "pack": pack,
+            "reasons": reasons + [f"A part of the post {title}"],
+            "sizeBytes": int(part.get("sizeBytes") or 0),
+        }
+    return None
 
 
 def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
@@ -3717,29 +3831,45 @@ def _direct_site_candidates(job_id: int, context: dict[str, Any], query: str) ->
         solver_ready = False
     now = time.time()
     candidates: list[dict[str, Any]] = []
+    reads = 0
     for item in found:
         title = _plain_dashes(item["title"])
         score, reasons = _release_candidate_score({"title": title}, context)
         pack = _release_pack_coverage(title, context)
+        shown = item["title"]
+        size = int(item.get("sizeBytes") or 0)
         if score < 85 and not (pack and score >= 70):
-            continue
+            # A collection of the series names its issues in its parts, not
+            # its title. Read at most a few posts a search: each is a solver
+            # round trip, and without a solver the post cannot be read at all.
+            if not solver_ready or reads >= 3:
+                continue
+            try:
+                reads += 1
+                part = _direct_site_collection_part(item["url"], item["title"], context)
+            except Exception as exc:  # noqa: BLE001 -- an unreadable post is not a search failure
+                log_event("direct_site_post_unreadable", level="info", job_id=job_id, url=item["url"], error=str(exc)[:160])
+                continue
+            if not part:
+                continue
+            shown, score, reasons, pack, size = part["label"], part["score"], part["reasons"], part["pack"], part["sizeBytes"]
         candidate_id = hashlib.sha256(f"gc:{job_id}:{item['url']}:{now}".encode()).hexdigest()[:24]
         with _RELEASE_CANDIDATE_LOCK:
             _RELEASE_CANDIDATES[candidate_id] = {
                 "jobId": int(job_id), "source": "direct_site", "postUrl": item["url"],
-                "title": item["title"], "releaseKey": item["url"],
+                "title": shown, "releaseKey": item["url"],
                 "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
             }
         candidates.append({
-            "id": candidate_id, "title": item["title"],
-            "indexer": "DirectSite", "sizeBytes": int(item.get("sizeBytes") or 0),
+            "id": candidate_id, "title": shown, "postTitle": item["title"],
+            "indexer": "DirectSite", "sizeBytes": size,
             "publishDate": item.get("publishDate"), "protocol": "Direct download",
             "matchScore": score, "matchReasons": reasons,
             "matchStrength": (
                 "Strong match" if score >= 85
                 else f"Pack, #{pack[0]}-#{pack[1]}" if pack else "Possible match"
             ),
-            "formatTags": _release_format_tags(item["title"]),
+            "formatTags": _release_format_tags(shown),
             "source": "direct_site", "postUrl": item["url"],
             # Without a solver this is a sighting rather than an offer: the page
             # the link lives on cannot be read at all.
@@ -4465,17 +4595,26 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     return score, reasons
 
 
+# "R.E.B.E.L.S.", "S.H.I.E.L.D.": letters that are one word only with their dots.
+_DOTTED_ACRONYM = re.compile(r"\b(?:[A-Za-z]\.){2,}")
+
+
 def _plain_query_title(title: str, *, cut_at_apostrophe: bool = False) -> str:
     """A title as a search wants it: no punctuation. A release drops an
     apostrophe ("World's" -> "Worlds", the way a scene name must), so that is
     what an indexer is asked; a site that matches words as substrings is
     asked for the stem alone ("World", which "World's" and "World’s" both
-    contain). A hyphen inside a name stays ("Spider-Man"); every other mark
-    is a space, one space between words."""
+    contain). A hyphen inside a name stays ("Spider-Man"), and so does a
+    dotted acronym: split at its dots "R.E.B.E.L.S." is six letters no search
+    can use -- DirectSite listed nothing for "R E B E L S" and the run's
+    collection at once for the dotted name (2026-09-29). Every other mark is
+    a space, one space between words."""
     text = str(title or "")
     text = re.sub(r"['’]\w*", "", text) if cut_at_apostrophe else re.sub(r"['’]", "", text)
-    text = re.sub(r"[^\w\s-]", " ", text)
+    text = _DOTTED_ACRONYM.sub(lambda match: match.group(0).replace(".", "\x00"), text)
+    text = re.sub(r"[^-\w\s\x00]", " ", text)
     text = re.sub(r"(?<!\w)-|-(?!\w)", " ", text)
+    text = text.replace("\x00", ".")
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -4895,12 +5034,15 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
         stop = _DIRECT_FETCHES.setdefault(int(download_id), threading.Event())
     try:
         store.update_acquisition_download(download_id, "downloading")
-        # The wanted issue decides which part of a post in parts is taken.
+        # The wanted issue, and the run's years, decide which part of a post
+        # in parts is taken.
         try:
-            wanted = store.get_acquisition_job_context(int(job_id)).get("issueNumber")
+            context = store.get_acquisition_job_context(int(job_id))
+            wanted = context.get("issueNumber")
+            years = (context.get("seriesYear"), context.get("publicationYear"))
         except Exception:  # noqa: BLE001 -- a job with no context still gets the post's first link
-            wanted = None
-        link = direct_site_download_link(post_url, wanted)
+            wanted, years = None, None
+        link = direct_site_download_link(post_url, wanted, years)
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)
         request = urllib.request.Request(link, headers={"User-Agent": f"Flipparr/{APP_VERSION}"})
