@@ -834,7 +834,12 @@ function useGlassIndicator(selector, deps, quietRef = null) {
       });
       const previous = placedRef.current;
       placedRef.current = next;
-      if (container.dataset.glassPlaced && previous) {
+      // Only a pill that moves is animated. Re-placing it where it already
+      // is -- a label beside it changed -- ran a no-op animation on a
+      // backdrop-filter layer, and Safari left the glyph next to it
+      // unpainted (the "I" of Issues, 2026-09-28).
+      const moved = previous && ["left", "top", "width", "height"].some((key) => previous[key] !== next[key]);
+      if (container.dataset.glassPlaced && moved) {
         animateGlassIndicator(container.querySelector(".glass-indicator"), previous, next);
       }
       if (!container.dataset.glassPlaced) requestAnimationFrame(() => { container.dataset.glassPlaced = "true"; });
@@ -7121,7 +7126,9 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
     ...(admin ? [["files", `Files (${files.length})`]] : []),
     ...(admin ? [["advanced", "Advanced"]] : []),
   ];
-  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, list.id, edit, detail.state]);
+  // Placed when the tab strip mounts (once the detail is in) and on every
+  // tab change; the labels themselves never change after that.
+  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, list.id, edit, Boolean(data)]);
   const shownTab = useRef(tab);
   const tabMove = useRef("");
   if (shownTab.current !== tab) {
@@ -7273,15 +7280,16 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
             </div>)}
           </div>
         </> : null}
-      </div> : detail.state !== "error" ? <>
+      </div> : detail.state === "loading" ? <div className="comic-drawer-body" role="status" aria-busy="true">
+        {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}><i /><span className="discover-cover" /><span><i /><i /></span></div>)}
+      </div> : data ? <>
         <div className="comic-drawer-actions">
-          {data ? <ReadRunButton reading={data} title={name} medium="comic" onRead={(target) => onRead({ ...target, ...context })} /> : null}
+          <ReadRunButton reading={data} title={name} medium="comic" onRead={(target) => onRead({ ...target, ...context })} />
         </div>
+        {/* Mounted once the detail is in, as a run's tabs are: labels that
+            settle under the glass pill made Safari drop a glyph beside it. */}
         <nav className="drawer-tabs comic-drawer-tabs" aria-label="Story arc details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
         <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
-          {detail.state === "loading" ? <div role="status" aria-busy="true">
-            {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}><i /><span className="discover-cover" /><span><i /><i /></span></div>)}
-          </div> : null}
           {data && tab === "overview" ? <>
             {data.description ? <RunSynopsis text={data.description} source={data.source === "cbl" ? (data.sourceName || "the reading list") : "Metron"} /> : null}
             <ComicDrawerRow title="Reading order" count={issues.length}>{issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium="comic" onOpen={() => setTab("issues")} onRead={onRead ? (target) => onRead({ ...target, ...context }) : undefined} readingFiles={readingFiles} key={issue.id} />)}</ComicDrawerRow>
