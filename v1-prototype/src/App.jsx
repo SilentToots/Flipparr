@@ -989,13 +989,8 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
         </span>
       </div>
       <div className="sidebar-session">
-        {/* Who is reading, once there is more than one person it could be: a
-            tap opens their profile, where switching and signing out live. */}
-        {viewer && (authStatus?.household || authStatus?.method === "forms")
-          ? <button type="button" className="sidebar-profile" onClick={() => onNavigate("profile")}>
-            <ProfileAvatar profile={viewer} /><span>{viewer.name}</span>
-          </button>
-          : null}
+        {/* Who is reading is the header's avatar, which opens the profile;
+            the sidebar no longer repeats it (the owner, 2026-09-29). */}
         {authStatus?.method === "forms" && authStatus?.authenticated && !authStatus?.household
           ? <button type="button" className="sign-out-button" onClick={() => onSignOut()}><SignOut size={16} /> Sign out</button>
           : null}
