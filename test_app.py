@@ -8214,6 +8214,26 @@ class DirectSitePartsTests(unittest.TestCase):
                 app.direct_site_download_link("https://comics.example/x/", "1")
 
 
+class DirectSiteGrabIdentityTests(unittest.TestCase):
+    def test_two_jobs_may_take_parts_of_one_post(self):
+        """The download identity was the post alone, so the second job taking
+        another part of the same post hit the table's UNIQUE (The Woods #34
+        after #21, 2026-09-28)."""
+        store = Mock()
+        store.record_acquisition_download.side_effect = lambda job_id, key, *a, **k: {"id": job_id, "sab_nzo_id": key}
+        post = "https://comics.example/other-comics/the-woods-1-12/"
+        far = time.time() + 600
+        with patch.object(app, "catalog_store", return_value=store), patch.object(app, "_enabled_acquisition_service"), \
+             patch.object(app, "_start_direct_fetch"), patch.dict(app._RELEASE_CANDIDATES, {
+                 "c21": {"jobId": 1714, "postUrl": post, "title": "The Woods pack", "expiresAt": far},
+                 "c34": {"jobId": 1715, "postUrl": post, "title": "The Woods pack", "expiresAt": far}}):
+            app.grab_direct_site_release(1714, "c21")
+            app.grab_direct_site_release(1715, "c34")
+        keys = [call.args[1] for call in store.record_acquisition_download.call_args_list]
+        self.assertEqual(len(set(keys)), 2, keys)
+        self.assertTrue(keys[0].startswith("direct_site:") and keys[0].endswith(":1714") and keys[1].endswith(":1715"), keys)
+
+
 class NotificationViewTests(unittest.TestCase):
     def test_an_arrival_shows_the_comics_own_first_page(self):
         viewer = Viewer(id=1, name="Admin", role="admin")

@@ -4790,7 +4790,10 @@ def grab_direct_site_release(job_id: int, candidate_id: str) -> dict[str, Any]:
     title = str(candidate.get("title") or "DirectSite download")
     store = catalog_store()
     download = store.record_acquisition_download(
-        job_id, f"direct_site:{hashlib.sha256(post_url.encode()).hexdigest()[:20]}",
+        # Per job as well as per post: a post in parts serves one job with
+        # "#13 – 23" and another with "#34 – 36", and the download identity
+        # is unique across the table.
+        job_id, f"direct_site:{hashlib.sha256(post_url.encode()).hexdigest()[:20]}:{int(job_id)}",
         title, release_key=post_url, source="direct_site",
     )
     store.update_acquisition_job(job_id, "grabbed", f"Downloading from DirectSite: {title}")
