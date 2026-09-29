@@ -8193,6 +8193,7 @@ class DirectSitePartsTests(unittest.TestCase):
         self.assertEqual([(l["url"][-2:], l["first"], l["last"]) for l in links],
                          [("a1", 1, 12), ("a2", 1, 12), ("b1", 13, 23), ("b2", 13, 23), ("d1", 34, 36), ("t1", None, None)])
         self.assertIn("#13 – 23", links[2]["label"])
+        self.assertTrue(links[2]["label"].startswith("The Woods #13"), links[2]["label"])
         self.assertNotIn("Google Drive", links[3]["label"], "the buttons' host names are not the label")
 
     def test_the_part_holding_the_wanted_issue_is_taken(self):

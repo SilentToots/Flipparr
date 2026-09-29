@@ -3602,8 +3602,11 @@ def direct_site_download_links(page: str) -> list[dict[str, Any]]:
     last_end = 0
     label = ""
     for match in _DIRECT_SITE_LINK.finditer(page or ""):
-        between = re.sub(r"<[^>]+>", " ", page[last_end:match.start()])
-        between = html.unescape(re.sub(r"\s+", " ", between)).strip()
+        raw = page[last_end:match.start()]
+        # The match ends inside the previous button's tag; the rest of that
+        # tag is not text.
+        raw = raw[raw.find(">") + 1:] if ">" in raw else raw
+        between = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw))).strip()
         last_end = match.end()
         # The text of the previous part's buttons is host names; what is left
         # after them, up to the " : :" the label ends in, is the new label.
