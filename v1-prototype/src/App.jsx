@@ -1998,7 +1998,11 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
       </fieldset>
       {scope === "runs" ? <FollowSwitch following={followingOnly} label="Following only" onChange={onFollowingOnly} /> : null}
       {scope !== "collections" ? <FollowSwitch following={inProgressOnly} label="In progress only" onChange={onInProgressOnly} /> : null}
-      {scope === "runs" && onGroupArcRuns ? <FollowSwitch following={groupArcRuns} label="Group arc-only runs under their arc" onChange={onGroupArcRuns} /> : null}
+      {scope === "runs" && onGroupArcRuns ? <fieldset>
+        <legend>Story arcs</legend>
+        <FollowSwitch following={groupArcRuns} label="Collect story arc issues" onChange={onGroupArcRuns} />
+        <p className="library-sheet-hint">Issues only associated with a story arc will be collected and not displayed as a separate run.</p>
+      </fieldset> : null}
       <button type="button" className="library-sheet-done" onClick={phone ? onClose : requestClose}>Done</button>
   </>;
   if (phone) {

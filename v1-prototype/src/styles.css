@@ -2769,6 +2769,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .library-sheet-options button[aria-checked="true"] { background: var(--nav-active-bg); font-weight: var(--weight-bold); }
 .library-sheet-options button svg { color: var(--violet-text); }
 .library-sheet .follow-switch { width: 100%; min-height: 48px; margin-top: var(--space-16); box-sizing: border-box; padding: 0 var(--space-12); flex-direction: row-reverse; justify-content: space-between; border-color: var(--line); color: var(--text); font-size: var(--text-md); }
+.library-sheet fieldset .follow-switch { margin-top: 0; }
+.library-sheet-hint { margin: var(--space-8) var(--space-4) 0; color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
 .library-sheet-done { width: 100%; min-height: 48px; margin-top: var(--space-16); border: 0; border-radius: var(--radius-8); background: var(--violet); color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); cursor: pointer; }
 .library-sheet :is(.library-sheet-close, .library-sheet-options button, .library-sheet-done):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 

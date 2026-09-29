@@ -412,8 +412,8 @@ Motion tokens:
   saying whether it is here, on the way or missing, and whether it is read.
   On the Runs shelf a run kept only for an arc -- not followed, every owned
   issue an arc's -- is folded into the arc's card ("N runs inside"), as a
-  confirmed collection folds its runs; View & sort's "Group arc-only runs
-  under their arc" turns it off, per profile. A search looks through
+  confirmed collection folds its runs; View & sort's *Story arcs* switch,
+  "Collect story arc issues", turns it off, per profile. A search looks through
   everything, folded or not.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
