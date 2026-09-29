@@ -77,7 +77,7 @@ class FakeStorage {
 test("what was chosen last time comes back", () => {
   const storage = new FakeStorage();
   saveLibraryPrefs({ sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true }, storage);
-  assert.deepEqual(loadLibraryPrefs(storage), { sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true });
+  assert.deepEqual(loadLibraryPrefs(storage), { sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true, groupArcRuns: true });
 });
 
 test("nothing remembered means the defaults", () => {
@@ -105,4 +105,12 @@ test("the story arcs scope is remembered, and an unknown scope falls back to run
   assert.deepEqual([...SCOPES], ["runs", "collections", "arcs"]);
   saveLibraryPrefs({ sort: "recent", view: "grid", scope: "shelves", followingOnly: false, inProgressOnly: false }, memory);
   assert.equal(loadLibraryPrefs(memory).scope, "runs");
+});
+
+test("arc grouping is on unless it was switched off", () => {
+  const storage = new Map();
+  const memory = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  assert.equal(loadLibraryPrefs(memory).groupArcRuns, true);
+  saveLibraryPrefs({ ...LIBRARY_DEFAULTS, groupArcRuns: false }, memory);
+  assert.equal(loadLibraryPrefs(memory).groupArcRuns, false);
 });

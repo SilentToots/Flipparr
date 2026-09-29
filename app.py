@@ -12361,6 +12361,10 @@ def reading_lists(
             "issueCount": len(items), "owned": sum(1 for item in items if item["fileId"]),
             "missing": sum(1 for item in items if not item["fileId"]),
             "seriesTitles": titles, "seriesCount": len(titles),
+            # The library's own issues and runs in it, so the Comics grid can
+            # fold a run kept only for this arc into the arc's card.
+            "issueIds": [item["issueId"] for item in items if item["issueId"]],
+            "runIds": list(dict.fromkeys(item["runId"] for item in items if item["runId"])),
         })
     return {"lists": lists}
 

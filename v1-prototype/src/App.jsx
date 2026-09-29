@@ -51,7 +51,7 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
-import { listCard, arcMatches, nextInList, skippedLine } from "./reading-list.js";
+import { listCard, arcMatches, nextInList, skippedLine, foldArcRuns } from "./reading-list.js";
 import { jobsNeedingAttention } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
@@ -1533,7 +1533,9 @@ function SeriesList({ series, onOpen, onRead, reading, view }) {
   // itself: Read has to be its own target, and a button inside a button is
   // not a thing a browser will render. `.pull-card` has always been built
   // this way, so the hover and press rules are shared with it.
-  if (view === "grid") return <div className="series-grid">{series.map((item, index) => <article className="series-card" style={{ "--card-index": Math.min(index, 11) }} key={item.id}>
+  if (view === "grid") return <div className="series-grid">{series.map((item, index) => item.kind === "arc"
+    ? <ArcCard list={item} index={index} reading={reading} onOpen={onOpen} onRead={onRead} key={item.id} />
+    : <article className="series-card" style={{ "--card-index": Math.min(index, 11) }} key={item.id}>
     <span className="series-card-art">
       <SeriesCover series={item} />
       <ReadRunOverlay run={item} reading={reading} onRead={onRead} />
@@ -1550,7 +1552,10 @@ function SeriesList({ series, onOpen, onRead, reading, view }) {
   return (
     <div className="series-table">
       <div className="series-table-head"><span>Series</span><span>Ownership</span><span>Format</span><span>Last updated</span><span /></div>
-      {series.map((item) => (
+      {series.map((item) => item.kind === "arc" ? <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
+          <div className="series-identity"><CoverArt id={`arc-${item.listId}`} title={item.name} cover={item.cover} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Story arc · {item.seriesCount} series · {item.issueCount} issue{item.issueCount === 1 ? "" : "s"}{item.foldedRunCount ? ` · ${item.foldedRunCount} run${item.foldedRunCount === 1 ? "" : "s"} inside` : ""}</small><div className="mobile-list-ownership"><Ownership series={arcOwnership(item)} compact /></div></div></div>
+          <Ownership series={arcOwnership(item)} /><span className="table-copy">Story arc</span><span className="table-copy" /><DotsThree size={22} />
+        </button> : (
         <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
           <div className="series-identity"><SeriesCover series={item} decorative /><div className="series-identity-copy"><strong>{item.title} <em>({item.year})</em></strong><small>{item.isCollectionSeries ? `${item.publisher} · ${item.run}` : item.publisher}</small><span className="tag-line"><PublicationStatus series={item} /><MonitoringStatus series={item} /></span><div className="mobile-list-ownership"><Ownership series={item} compact /></div></div></div>
           <Ownership series={item} /><span className="table-copy">{item.format}</span><span className="table-copy">{item.updated}<small>{item.time}</small></span><DotsThree size={22} />
@@ -1955,7 +1960,7 @@ function ImportReadingListModal({ onClose, onImported }) {
   </div>;
 }
 
-function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowingOnly, inProgressOnly, onInProgressOnly, scopeItems = [], scope, onScope, onClose }) {
+function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowingOnly, inProgressOnly, onInProgressOnly, groupArcRuns = true, onGroupArcRuns = null, scopeItems = [], scope, onScope, onClose }) {
   const dialogRef = useDialog(onClose);
   return <div className="modal-backdrop library-sheet-backdrop" onMouseDown={onClose}>
     <section className="library-sheet" role="dialog" aria-modal="true" aria-labelledby="library-sheet-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
@@ -1986,6 +1991,7 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
       </fieldset>
       {scope === "runs" ? <FollowSwitch following={followingOnly} label="Following only" onChange={onFollowingOnly} /> : null}
       {scope !== "collections" ? <FollowSwitch following={inProgressOnly} label="In progress only" onChange={onInProgressOnly} /> : null}
+      {scope === "runs" && onGroupArcRuns ? <FollowSwitch following={groupArcRuns} label="Group arc-only runs under their arc" onChange={onGroupArcRuns} /> : null}
       <button type="button" className="library-sheet-done" onClick={onClose}>Done</button>
     </section>
   </div>;
@@ -2114,9 +2120,10 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
   const [sort, setSort] = useState(prefs.sort);
   const [followingOnly, setFollowingOnly] = useState(prefs.followingOnly);
   const [inProgressOnly, setInProgressOnly] = useState(prefs.inProgressOnly);
+  const [groupArcRuns, setGroupArcRuns] = useState(prefs.groupArcRuns);
   useEffect(() => {
-    saveLibraryPrefs({ view, scope, sort, followingOnly, inProgressOnly });
-  }, [view, scope, sort, followingOnly, inProgressOnly]);
+    saveLibraryPrefs({ view, scope, sort, followingOnly, inProgressOnly, groupArcRuns });
+  }, [view, scope, sort, followingOnly, inProgressOnly, groupArcRuns]);
   const fallbackSeries = backendStatus === "offline" ? DEMO_SERIES : [];
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
@@ -2126,7 +2133,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
   // Nothing is drawn until what decides its order is in: the catalog, and
   // for Recent and In progress the reading map as well.
   const initialLoading = (backendStatus === "loading" && !catalog) || (runReading === null && (sort === "recent" || inProgressOnly))
-    || (readingLists === null && scope === "arcs");
+    || (readingLists === null && (scope === "arcs" || groupArcRuns));
   // The server has always reported this; nothing read it, so arriving during a
   // scan showed the "no comics yet" empty state on a library that was filling.
   const activeScan = catalog?.activeScan || null;
@@ -2141,14 +2148,24 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
     ...(arcsOn ? [{ id: "arcs", label: "Story arcs", icon: <ListNumbers size={17} /> }] : []),
   ];
   const scopedSeries = useMemo(() => editionsOn ? series : series.filter((item) => !item.isCollectionSeries), [editionsOn, series]);
+  // A run kept only for a story arc -- not followed, every owned issue an
+  // arc's -- is the arc's card, as a confirmed collection's runs are the
+  // collection's. A search looks at everything, folded or not.
+  const folded = useMemo(() => groupArcRuns && !searching ? foldArcRuns(scopedSeries, readingLists || []) : null, [groupArcRuns, searching, scopedSeries, readingLists]);
+  const gridSeries = folded ? folded.series : scopedSeries;
+  const gridArcs = folded ? folded.arcs : [];
+  // One reading map for the mixed shelf: runs by their id, arcs by the card's.
+  const gridReading = useMemo(() => ({
+    ...(runReading || {}), ...Object.fromEntries(gridArcs.map((arc) => [arc.id, listReading?.[arc.listId]]).filter(([, place]) => place)),
+  }), [runReading, listReading, gridArcs]);
   // Fetched before the filters and the sort need it: In progress and Recent
   // both read from where each run was left, which is this map's to know.
-  const followedSeries = useMemo(() => followingOnly ? scopedSeries.filter((item) => item.monitoringStatus === "monitored") : scopedSeries, [followingOnly, scopedSeries]);
-  const readingSeries = useMemo(() => inProgressOnly ? followedSeries.filter((item) => inProgress(runReading?.[String(item.id)])) : followedSeries, [inProgressOnly, followedSeries, runReading]);
+  const followedSeries = useMemo(() => followingOnly ? gridSeries.filter((item) => item.monitoringStatus === "monitored") : [...gridSeries, ...gridArcs], [followingOnly, gridSeries, gridArcs]);
+  const readingSeries = useMemo(() => inProgressOnly ? followedSeries.filter((item) => inProgress(gridReading?.[String(item.id)])) : followedSeries, [inProgressOnly, followedSeries, gridReading]);
   const filteredSeries = useMemo(() => searching ? readingSeries.filter((item) => libraryRunMatches(item, queryParts)) : readingSeries, [readingSeries, searching, queryParts]);
-  const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort, runReading), [filteredSeries, sort, runReading]);
+  const displayedSeries = useMemo(() => sortLibrary(filteredSeries, sort, gridReading), [filteredSeries, sort, gridReading]);
   // The View & sort button marks when the library isn't showing its default.
-  const viewCustomized = view !== LIBRARY_DEFAULTS.view || sort !== LIBRARY_DEFAULTS.sort || followingOnly || inProgressOnly || effectiveScope !== "runs";
+  const viewCustomized = view !== LIBRARY_DEFAULTS.view || sort !== LIBRARY_DEFAULTS.sort || followingOnly || inProgressOnly || effectiveScope !== "runs" || !groupArcRuns;
   const sortedFamilies = useMemo(() => {
     const needle = queryParts.title.toLowerCase();
     const matching = searching ? families.filter((family) => String(family.name || "").toLowerCase().includes(needle)) : families;
@@ -2196,6 +2213,11 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
             {effectiveScope === "runs" ? <>
               <span className="glass-capsule-divider" aria-hidden="true" />
               <button type="button" className={`glass-capsule-segment filter-button${followingOnly ? " active" : ""}`} aria-pressed={followingOnly} onClick={() => setFollowingOnly((value) => !value)}><FollowingIcon /> Following</button>
+              {(readingLists?.length || 0) > 0 ? <>
+                <span className="glass-capsule-divider" aria-hidden="true" />
+                <button type="button" className={`glass-capsule-segment filter-button${groupArcRuns ? " active" : ""}`} aria-pressed={groupArcRuns}
+                  title="Runs kept only for a story arc are shown as the arc" onClick={() => setGroupArcRuns((value) => !value)}><ListNumbers size={17} /> Group arcs</button>
+              </> : null}
             </> : null}
             {effectiveScope !== "collections" ? <>
               <span className="glass-capsule-divider" aria-hidden="true" />
@@ -2209,6 +2231,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
         view={view} onView={setView} sort={sort} onSort={setSort}
         followingOnly={followingOnly} onFollowingOnly={setFollowingOnly}
         inProgressOnly={inProgressOnly} onInProgressOnly={setInProgressOnly}
+        groupArcRuns={groupArcRuns} onGroupArcRuns={(readingLists?.length || 0) > 0 ? setGroupArcRuns : null}
         scopeItems={scopeItems} scope={effectiveScope} onScope={setScope}
         onClose={() => setViewSheetOpen(false)}
       /> : null}
@@ -2226,7 +2249,7 @@ function LibraryView({ onNavigate, onOpenSeries, onOpenCollection, onOpenList, o
         : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>No story arcs in progress</strong><span>Start one and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all story arcs</button></div>
         : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong><span>A story arc is a crossover read in order across its runs. Save one from Discover, or import a reading list you have.</span>{libraryAdmin ? <button className="ghost-button" onClick={onImportList}><UploadSimple size={17} /> Import reading list</button> : null}{can(libraryViewer, "discover.search") ? <button className="ghost-button" onClick={() => onSearch("")}>Find one in Discover</button> : null}</div>}
       </>
-      : effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={runReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>{can(libraryViewer, "discover.search") ? "The comic catalogs may have it." : "Try another title or creator."}</span>{can(libraryViewer, "discover.search") ? <button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button> : null}</div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>{libraryAdmin ? "Open any run and choose Follow run to monitor future issues." : "Open any run and choose Request follow to ask for its new issues."}</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
+      : effectiveScope === "collections" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : displayedSeries.length ? <SeriesList series={displayedSeries} onOpen={(item) => item.kind === "arc" ? onOpenList({ id: item.listId, name: item.name, cover: item.cover }) : item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={gridReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>{can(libraryViewer, "discover.search") ? "The comic catalogs may have it." : "Try another title or creator."}</span>{can(libraryViewer, "discover.search") ? <button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button> : null}</div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>{libraryAdmin ? "Open any run and choose Follow run to monitor future issues." : "Open any run and choose Request follow to ask for its new issues."}</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </div>
     </>
@@ -6376,7 +6399,7 @@ function ReadListOverlay({ list, reading, onRead }) {
   const started = place?.state === "continue" && place.pageCount;
   const verb = started ? "Continue" : place?.state === "next" ? "Begin" : place?.state === "finished" ? "Restart" : "Read";
   const label = started ? `Continue ${list.name}, page ${place.page + 1} of ${place.pageCount}` : `${verb} ${list.name}`;
-  const context = { listId: list.id, listName: list.name };
+  const context = { listId: list.listId || list.id, listName: list.name };
   return <>
     <ReadingMark place={place} />
     <button type="button" className="series-card-read" title={verb}
@@ -6387,20 +6410,30 @@ function ReadListOverlay({ list, reading, onRead }) {
   </>;
 }
 
-// Story arcs as cards, built as the run cards are so the two scopes read
-// the same: cover, name, how many series and issues, and how much is here.
-function ArcGrid({ lists, reading, onOpen, onRead }) {
-  return <div className="series-grid">{lists.map((list, index) => <article className="series-card" style={{ "--card-index": Math.min(index, 11) }} key={list.id}>
+// What an arc's ownership bar reads from: how many of its issues are here.
+function arcOwnership(list) {
+  return { owned: list.owned, total: list.issueCount, status: "arc", catalogKnown: true, releaseSummary: { upcoming: 0, releasedMissing: list.missing } };
+}
+
+// A story arc as a card, built as the run cards are so the two read the
+// same: cover, name, how many series and issues, and how much is here. On
+// the Runs shelf it also says how many runs it stands in for.
+function ArcCard({ list, index, reading, onOpen, onRead }) {
+  return <article className="series-card" style={{ "--card-index": Math.min(index, 11) }}>
     <span className="series-card-art">
-      <CoverArt id={`arc-${list.id}`} title={list.name} cover={list.cover} />
+      <CoverArt id={`arc-${list.listId || list.id}`} title={list.name} cover={list.cover} />
       <ReadListOverlay list={list} reading={reading} onRead={onRead} />
     </span>
     <span className="series-card-identity"><strong>{list.name}</strong><span className="series-card-byline">{list.seriesCount} series • {list.issueCount} issue{list.issueCount === 1 ? "" : "s"}</span></span>
-    <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge>{list.missing ? <StatusBadge tone="muted">{list.missing} missing</StatusBadge> : null}</span>
+    <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge>{list.foldedRunCount ? <StatusBadge tone="muted">{list.foldedRunCount} run{list.foldedRunCount === 1 ? "" : "s"} inside</StatusBadge> : list.missing ? <StatusBadge tone="muted">{list.missing} missing</StatusBadge> : null}</span>
     <span className="series-card-rule" />
-    <Ownership series={{ owned: list.owned, total: list.issueCount, status: "arc", catalogKnown: true, releaseSummary: { upcoming: 0, releasedMissing: list.missing } }} compact />
+    <Ownership series={arcOwnership(list)} compact />
     <button type="button" className="discover-open series-card-open" onClick={() => onOpen(list)} aria-label={`${list.name}. Show details`} />
-  </article>)}</div>;
+  </article>;
+}
+
+function ArcGrid({ lists, reading, onOpen, onRead }) {
+  return <div className="series-grid">{lists.map((list, index) => <ArcCard list={list} index={index} reading={reading} onOpen={onOpen} onRead={onRead} key={list.id} />)}</div>;
 }
 
 /**

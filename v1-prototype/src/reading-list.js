@@ -52,3 +52,45 @@ export function skippedLine(skipped) {
   if (items.length === 2) return `${name(items[0])} and ${name(items[1])} are ${state}`;
   return `${name(items[0])} and ${items.length - 1} more are ${state}`;
 }
+
+/**
+ * The runs that exist only because of a story arc: not followed, and every
+ * issue they own is an issue of some saved arc. An arc pull leaves a shelf
+ * of one- and two-issue runs nobody asked to follow -- Wonder Woman #11-13,
+ * Green Arrow #14-16 -- and those are the arc's, not runs of their own. A
+ * run comes back as itself the moment it is followed or gains an issue no
+ * arc claims. Returns a Map of run id -> the arc that stands for it (the
+ * first, in the arcs' order, that holds one of its issues).
+ */
+export function arcOnlyRuns(series, lists) {
+  const arcs = (lists || []).filter((list) => (list.issueIds || []).length);
+  const claimed = new Map();
+  for (const list of arcs) for (const id of list.issueIds) if (!claimed.has(String(id))) claimed.set(String(id), list);
+  const folded = new Map();
+  for (const run of series || []) {
+    if (run.isCollectionSeries || run.monitoringStatus === "monitored") continue;
+    const owned = (run.issues || []).filter((issue) => issue.ownership && issue.ownership !== "unowned").map((issue) => String(issue.id));
+    if (!owned.length || !owned.every((id) => claimed.has(id))) continue;
+    folded.set(String(run.id), claimed.get(owned[0]));
+  }
+  return folded;
+}
+
+/**
+ * The Comics grid with arc-only runs folded into their arcs: the runs kept,
+ * and one card per arc that absorbed at least one run. An arc card carries
+ * `kind: "arc"`, an id that cannot collide with a run's, and the arc's own
+ * `listId` for the drawer and the reading map.
+ */
+export function foldArcRuns(series, lists) {
+  const folded = arcOnlyRuns(series, lists);
+  if (!folded.size) return { series: series || [], arcs: [] };
+  const kept = (series || []).filter((run) => !folded.has(String(run.id)));
+  const counts = new Map();
+  for (const list of folded.values()) counts.set(String(list.id), (counts.get(String(list.id)) || 0) + 1);
+  const arcs = (lists || []).filter((list) => counts.has(String(list.id))).map((list) => ({
+    ...listCard(list), id: `arc-${list.id}`, listId: String(list.id), kind: "arc",
+    foldedRunCount: counts.get(String(list.id)),
+  }));
+  return { series: kept, arcs };
+}

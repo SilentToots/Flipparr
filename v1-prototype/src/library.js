@@ -19,6 +19,9 @@ export const SORT_OPTIONS = [
 
 export const LIBRARY_DEFAULTS = Object.freeze({
   sort: "recent", view: "grid", scope: "runs", followingOnly: false, inProgressOnly: false,
+  // A run kept only for a story arc -- not followed, every owned issue in an
+  // arc -- is shown as the arc's card rather than as a run of its own.
+  groupArcRuns: true,
 });
 
 // What the grid can show: runs, collections (with editions on), or the story
@@ -94,6 +97,7 @@ export function loadLibraryPrefs(storage = profileStorage()) {
     scope: SCOPES.has(saved.scope) ? saved.scope : LIBRARY_DEFAULTS.scope,
     followingOnly: saved.followingOnly === true,
     inProgressOnly: saved.inProgressOnly === true,
+    groupArcRuns: saved.groupArcRuns !== false,
   };
 }
 
@@ -102,7 +106,7 @@ export function saveLibraryPrefs(prefs, storage = profileStorage()) {
   try {
     storage?.setItem(PREFS_KEY, JSON.stringify({
       sort: prefs.sort, view: prefs.view, scope: prefs.scope, followingOnly: Boolean(prefs.followingOnly),
-      inProgressOnly: Boolean(prefs.inProgressOnly),
+      inProgressOnly: Boolean(prefs.inProgressOnly), groupArcRuns: prefs.groupArcRuns !== false,
     }));
   } catch {
     // Nothing to do: the grid still works, it just forgets.

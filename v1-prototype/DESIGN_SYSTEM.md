@@ -403,9 +403,14 @@ Motion tokens:
   issue is, nothing before (a bare count of what was left said nothing). The
   drawer's hero repeats it as a status badge, with how many are read. A
   story arc -- issues saved to read in order across runs -- is a card in the
-  Comics grid's *Story arcs* scope (shown once an arc exists) with the same
-  badge, and its drawer lists the issues in order, each saying whether it is
-  here, on the way or missing, and whether it is read.
+  Comics grid's *Story arcs* scope (shown once an arc exists, always for the
+  admin) with the same badge, and its drawer lists the issues in order, each
+  saying whether it is here, on the way or missing, and whether it is read.
+  On the Runs shelf a run kept only for an arc -- not followed, every owned
+  issue an arc's -- is folded into the arc's card ("N runs inside"), as a
+  confirmed collection folds its runs; *Group arcs* in the refine capsule
+  (the sheet's "Group arc-only runs under their arc") turns it off, per
+  profile. A search looks through everything, folded or not.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every
