@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listCard, arcMatches, nextInList, skippedLine, arcOnlyRuns, foldArcRuns } from "../src/reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns } from "../src/reading-list.js";
+
+test("an arc's years read as one year or a span, and nothing when unknown", () => {
+  assert.equal(arcYears({ year: 2002, yearEnd: 2003 }), "2002\u20132003");
+  assert.equal(arcYears({ year: 2024, yearEnd: 2024 }), "2024");
+  assert.equal(arcYears({ year: 2024 }), "2024");
+  assert.equal(arcYears({ year: null, yearEnd: null }), "");
+  assert.equal(arcYears(undefined), "");
+});
 
 const item = (n, over = {}) => ({ id: String(n), seriesTitle: "Batman", number: String(n), fileId: `f${n}`, readable: true, page: 0, finishedAt: null, ...over });
 

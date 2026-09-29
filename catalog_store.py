@@ -3932,7 +3932,7 @@ class CatalogStore:
         for row in rows:
             item = self._reading_list_item(row)
             by_list.setdefault(str(row["reading_list_id"]), []).append({
-                key: item[key] for key in ("id", "seriesTitle", "seriesYear", "number", "issueId", "runId", "fileId")
+                key: item[key] for key in ("id", "seriesTitle", "seriesYear", "number", "coverDate", "issueId", "runId", "fileId")
             })
         for entry in lists:
             entry["items"] = by_list.get(entry["id"], [])

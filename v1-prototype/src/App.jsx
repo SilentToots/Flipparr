@@ -51,7 +51,7 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
-import { listCard, arcMatches, nextInList, skippedLine, foldArcRuns } from "./reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns } from "./reading-list.js";
 import { jobsNeedingAttention } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
@@ -1553,7 +1553,7 @@ function SeriesList({ series, onOpen, onRead, reading, view }) {
     <div className="series-table">
       <div className="series-table-head"><span>Series</span><span>Ownership</span><span>Format</span><span>Last updated</span><span /></div>
       {series.map((item) => item.kind === "arc" ? <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
-          <div className="series-identity"><CoverArt id={`arc-${item.listId}`} title={item.name} cover={item.cover} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Story arc · {item.seriesCount} series · {item.issueCount} issue{item.issueCount === 1 ? "" : "s"}{item.foldedRunCount ? ` · ${item.foldedRunCount} run${item.foldedRunCount === 1 ? "" : "s"} inside` : ""}</small><div className="mobile-list-ownership"><Ownership series={arcOwnership(item)} compact /></div></div></div>
+          <div className="series-identity"><CoverArt id={`arc-${item.listId}`} title={item.name} cover={item.cover} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Story arc · {arcYears(item) ? `${arcYears(item)} · ` : ""}{item.seriesCount} series · {item.issueCount} issue{item.issueCount === 1 ? "" : "s"}{item.foldedRunCount ? ` · ${item.foldedRunCount} run${item.foldedRunCount === 1 ? "" : "s"} inside` : ""}</small><div className="mobile-list-ownership"><Ownership series={arcOwnership(item)} compact /></div></div></div>
           <Ownership series={arcOwnership(item)} /><span className="table-copy">Story arc</span><span className="table-copy" /><DotsThree size={22} />
         </button> : (
         <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
@@ -6352,7 +6352,7 @@ function ArcCard({ list, index, reading, onOpen, onRead }) {
       <CoverArt id={`arc-${list.listId || list.id}`} title={list.name} cover={list.cover} />
       <ReadListOverlay list={list} reading={reading} onRead={onRead} />
     </span>
-    <span className="series-card-identity"><strong>{list.name}</strong><span className="series-card-byline">{list.seriesCount} series • {list.issueCount} issue{list.issueCount === 1 ? "" : "s"}</span></span>
+    <span className="series-card-identity"><strong>{list.name}</strong><span className="series-card-byline">{[arcYears(list), `${list.seriesCount} series`, `${list.issueCount} issue${list.issueCount === 1 ? "" : "s"}`].filter(Boolean).join(" • ")}</span></span>
     <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge>{list.foldedRunCount ? <StatusBadge tone="muted">{list.foldedRunCount} run{list.foldedRunCount === 1 ? "" : "s"} inside</StatusBadge> : list.missing ? <StatusBadge tone="muted">{list.missing} missing</StatusBadge> : null}</span>
     <span className="series-card-rule" />
     <Ownership series={arcOwnership(list)} compact />
@@ -7183,7 +7183,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, onClose, 
           <div className="comic-drawer-copy">
             <div className="comic-drawer-titles">
               <h2 id="reading-list-title">{name}</h2>
-              <p>{["Story arc", `${counts.issues} issue${counts.issues === 1 ? "" : "s"}`, seriesNames.slice(0, 2).join(", "), origin].filter(Boolean).join(" • ")}</p>
+              <p>{["Story arc", arcYears(data || list), `${counts.issues} issue${counts.issues === 1 ? "" : "s"}`, seriesNames.slice(0, 2).join(", "), origin].filter(Boolean).join(" • ")}</p>
             </div>
             <div className="comic-drawer-statuses">
               <StatusBadge tone="muted">{counts.owned} of {counts.issues} in library</StatusBadge>

@@ -12527,6 +12527,15 @@ def _arc_item_visible(run_id: Any, may_see: "Callable[[int], bool] | None", may_
     return may_see(int(run_id))
 
 
+def _arc_years(items: list[dict[str, Any]]) -> dict[str, int | None]:
+    """When the arc ran, from its issues' cover dates: the first and last
+    year. A run's own start year is not the arc's -- Hush is 2002, not
+    Batman's 1940 -- so only the items' dates count."""
+    years = sorted({int(str(item.get("coverDate"))[:4]) for item in items
+                    if re.match(r"^\d{4}", str(item.get("coverDate") or ""))})
+    return {"year": years[0] if years else None, "yearEnd": years[-1] if years else None}
+
+
 def _arc_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, Any], dict[str, Any]] = {}
     for item in items:
@@ -12579,6 +12588,7 @@ def reading_list_detail(
         "queued": sum(1 for item in items if item["queued"]),
         "missing": sum(1 for item in items if not (item["owned"] or item["queued"])),
         "series": _arc_series(items), "resume": reading_target(comics, [], progress), "items": items,
+        **_arc_years(items),
     }
 
 
@@ -12598,7 +12608,7 @@ def reading_lists(
             **{key: value for key, value in entry.items() if key != "items"},
             "issueCount": len(items), "owned": sum(1 for item in items if item["fileId"]),
             "missing": sum(1 for item in items if not item["fileId"]),
-            "seriesTitles": titles, "seriesCount": len(titles),
+            "seriesTitles": titles, "seriesCount": len(titles), **_arc_years(items),
             # The library's own issues and runs in it, so the Comics grid can
             # fold a run kept only for this arc into the arc's card.
             "issueIds": [item["issueId"] for item in items if item["issueId"]],

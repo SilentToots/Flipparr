@@ -8020,6 +8020,8 @@ class ReadingListTests(unittest.TestCase):
             listed = app.reading_lists()["lists"]
             self.assertEqual([(l["name"], l["issueCount"], l["owned"], l["missing"], l["seriesTitles"]) for l in listed],
                              [("Hush", 4, 3, 1, ["Batman", "Batman: Gotham Knights"])])
+            self.assertEqual((listed[0]["year"], listed[0]["yearEnd"]), (2002, 2003), "the arc's years are its issues' cover dates, not Batman's 1940")
+            self.assertEqual((again_detail["year"], again_detail["yearEnd"]), (2002, 2003))
             with self.assertRaises(ValueError):
                 app.save_story_arc("hush", user_id=ADMIN_USER_ID)
 

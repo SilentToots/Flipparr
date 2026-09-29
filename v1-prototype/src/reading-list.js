@@ -11,6 +11,14 @@ export function listCard(list) {
   return { ...list, title: list.name, addedAt: list.createdAt };
 }
 
+/** When the arc ran, as a card says it: "2002", "2002–2003", or nothing known. */
+export function arcYears(list) {
+  const first = Number(list?.year) || 0;
+  const last = Number(list?.yearEnd) || first;
+  if (!first) return "";
+  return last > first ? `${first}\u2013${last}` : String(first);
+}
+
 /** Whether an arc answers the Comics search: by its name, or a series in it. */
 export function arcMatches(list, needle) {
   const query = String(needle || "").trim().toLowerCase();
