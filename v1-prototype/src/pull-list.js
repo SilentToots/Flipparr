@@ -109,15 +109,22 @@ export function jobsForTab(request, tab) {
  */
 export function releaseSearchSummary(result, label) {
   const returned = Number(result?.resultCount || 0);
-  if (!returned) {
+  const misses = Array.isArray(result?.nearMisses) ? result.nearMisses : [];
+  if (!returned && !misses.length) {
     return { headline: "Nothing came back", setAside: [],
       detail: "Your indexers returned no Usenet results for this search. Try other wording." };
   }
-  const setAside = (result?.nearMisses || []).map((miss) => ({
-    title: miss.title, copies: miss.copies || 1, reason: setAsideReason(miss),
+  // Each row carries the id the server registered it under, so the person
+  // who can see the right file under a name the matcher did not read can
+  // take it anyway (the owner, 2026-09-29).
+  const setAside = misses.map((miss) => ({
+    id: miss.id || null, title: miss.title, copies: miss.copies || 1,
+    score: miss.score ?? null, refused: miss.score == null,
+    source: miss.source || "usenet", grabbable: miss.grabbable !== false,
+    reason: setAsideReason(miss),
   }));
   return {
-    headline: `${returned} result${returned === 1 ? "" : "s"}, none a usable ${label}`,
+    headline: returned ? `${returned} result${returned === 1 ? "" : "s"}, none a usable ${label}` : `Nothing usable came back for ${label}`,
     detail: setAside.length ? "The closest, and why each was set aside:" : "None of them named this series and issue.",
     setAside,
   };
@@ -125,6 +132,9 @@ export function releaseSearchSummary(result, label) {
 
 /** Why one release was not offered: its refusal, or what it failed to match. */
 function setAsideReason(miss) {
+  // The server words it the same way, and its wording is what a grab that
+  // is refused quotes back; when it is there it wins.
+  if (miss?.reason) return miss.reason;
   const reasons = miss?.reasons || [];
   // Refused before, or refused outright (a foreign edition, a wrong year).
   if (miss?.score == null || (miss.score === 0 && reasons.length)) return reasons[0] || "Set aside";
@@ -136,6 +146,15 @@ function setAsideReason(miss) {
   if (!issue) return "Not this issue";
   if (!series) return "Not this series";
   return `Too weak a match (${miss.score} of the 85 needed)`;
+}
+
+/** What taking a set-aside release means, said before the person does it. */
+export function takeAnywayCopy(item, seriesTitle, issueNumber) {
+  const label = `${seriesTitle} #${issueNumber}`;
+  const lead = item?.refused
+    ? `${item.reason}. Taking it tries this release again and imports it as ${label}.`
+    : `Set aside: ${item?.reason || "not a match"}. Taking it imports it as ${label}.`;
+  return `${lead} The file still has to be a readable comic.`;
 }
 
 /** Only a pull by name is deleted; a followed run is stopped by unfollowing. */

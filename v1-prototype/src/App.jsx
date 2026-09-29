@@ -54,7 +54,7 @@ import { StatusBadge } from "./components/StatusBadge";
 import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns } from "./reading-list.js";
 import { jobsNeedingAttention } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
-import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS } from "./pull-list.js";
+import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy } from "./pull-list.js";
 import {
   needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, bellCount, timeAgo,
 } from "./notifications.js";
@@ -4018,8 +4018,39 @@ function formatReleaseSize(bytes) {
   return `${Math.max(1, Math.round(value / (1024 ** 2)))} MB`;
 }
 
+/**
+ * One release the matcher set aside, with the way through for the person who
+ * can see it is the right file: "Take anyway" asks once, in the row, saying
+ * what taking it means (the owner, 2026-09-29). The server refuses the same id
+ * without "anyway", so nothing here can grab by accident.
+ */
+function SetAsideRow({ item, job, admin, busy, onTake }) {
+  const [confirming, setConfirming] = useState(false);
+  const confirmRef = useRef(null);
+  useEffect(() => { if (confirming) confirmRef.current?.focus(); }, [confirming]);
+  const takeable = admin && item.id;
+  return <li className={takeable ? "release-set-aside-row" : undefined}>
+    <b>{item.title}</b>
+    <small>{item.reason}{item.copies > 1 ? ` · listed by ${item.copies} indexers` : ""}</small>
+    {takeable && confirming ? <div className="release-take-confirm" role="group" aria-label={`Take ${item.title}`} ref={confirmRef} tabIndex={-1}>
+      <p aria-live="polite">{takeAnywayCopy(item, job.seriesTitle, job.issueNumber)}</p>
+      <span>
+        <button type="button" className="ghost-button" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button>
+        <button type="button" className={`primary-button ${busy ? "loading" : ""}`} aria-busy={busy} disabled={busy} onClick={() => onTake(item)}>{busy ? <LoadingSpinner size={14} /> : <CloudArrowDown size={14} />} {busy ? "Sending…" : "Take it"}</button>
+      </span>
+    </div> : takeable ? <span className="release-set-aside-actions">
+      <button type="button" className="ghost-button" disabled={!item.grabbable} title={item.grabbable ? undefined : "Downloading from DirectSite needs a Cloudflare solver; add one in Settings."} onClick={() => setConfirming(true)}>{item.grabbable ? "Take anyway" : "Not fetchable yet"}</button>
+    </span> : null}
+  </li>;
+}
+
+function SetAsideList({ items, job, admin, grabbingId, onTake }) {
+  return <ul className="release-set-aside">{items.map((item) => <SetAsideRow key={item.id || item.title} item={item} job={job} admin={admin} busy={grabbingId === item.id} onTake={onTake} />)}</ul>;
+}
+
 function ReleaseSearchModal({ job, onClose, onGrabbed }) {
   const dialogRef = useDialog(onClose);
+  const admin = isAdmin(useViewer());
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -4047,12 +4078,12 @@ function ReleaseSearchModal({ job, onClose, onGrabbed }) {
     }
   }
   useEffect(() => { setEdited(false); setQuery(""); search(); }, [job.id]);
-  async function grab(candidate) {
+  async function grab(candidate, anyway = false) {
     setGrabbingId(candidate.id); setError("");
     try {
       await apiRequest(`/api/v1/acquisition-jobs/${job.id}/grab`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidateId: candidate.id }),
+        body: JSON.stringify(anyway ? { candidateId: candidate.id, anyway: true } : { candidateId: candidate.id }),
       });
       await onGrabbed?.();
     } catch (grabError) {
@@ -4063,7 +4094,7 @@ function ReleaseSearchModal({ job, onClose, onGrabbed }) {
   const candidates = result?.candidates || [];
   // Nothing offered is not the same as nothing found: say which, and why.
   const summary = releaseSearchSummary(result, `#${job.issueNumber}`);
-  return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}><section className="modal release-search-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-search-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close release search" /><span className="eyebrow">Find one missing issue</span><h2 id="release-search-title">{job.seriesTitle} #{job.issueNumber}</h2><p className="workbench-intro">Compare the results below. Nothing is downloaded until you choose a release.</p><form className="release-query" onSubmit={(event) => { event.preventDefault(); search(query); }}><MagnifyingGlass size={16} /><input value={query} onChange={(event) => { setQuery(event.target.value); setEdited(true); }} aria-label="Search terms" placeholder="Series and issue to search for…" disabled={loading} /><button type="submit" className="secondary-button" disabled={loading || query.trim().length < 2}>{loading ? <LoadingSpinner size={16} /> : null} Search</button></form>{edited ? null : <p className="release-query-note">Flipparr widens this automatically when a narrower wording finds nothing. Edit it to search for something else.</p>}{loading ? <div className="release-loading"><LoadingSpinner size={24} /><div><strong>Searching your indexers…</strong><span>This can take a few seconds.</span></div></div> : null}{error ? <div className="release-error"><WarningCircle size={19} weight="fill" /><span><strong>Release search needs attention</strong>{error}</span><button type="button" onClick={() => search(query)}>Try again</button></div> : null}{!loading && !error && !candidates.length ? <div className="release-empty"><MagnifyingGlass size={28} /><strong>{summary.headline}</strong><span>{summary.detail}</span>{summary.setAside.length ? <ul className="release-set-aside">{summary.setAside.map((item) => <li key={item.title}><b title={item.title}>{item.title}</b><small>{item.reason}{item.copies > 1 ? ` · listed by ${item.copies} indexers` : ""}</small></li>)}</ul> : null}<button type="button" className="secondary-button" onClick={() => search(query)}>Search again</button></div> : null}{candidates.length ? <div className="release-candidates"><header><div><strong>{candidates.length} candidate{candidates.length === 1 ? "" : "s"}</strong><span>Best matches appear first. Confirm the title, issue, language, and format.</span></div></header>{candidates.map((candidate) => { const isGrabbing = grabbingId === candidate.id; return <article className="release-candidate" key={candidate.id}><div className="release-candidate-main"><StatusBadge tone={candidate.matchScore >= 85 ? "green" : "amber"}>{candidate.matchStrength}</StatusBadge><h3>{candidate.title}</h3><p>{candidate.indexer} · {candidate.protocol} · {formatReleaseSize(candidate.sizeBytes)}{candidate.publishDate ? ` · ${new Date(candidate.publishDate).toLocaleDateString()}` : ""}</p>{candidate.formatTags?.length ? <div className="release-tags">{candidate.formatTags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}</div><div className="release-match"><strong>{candidate.matchScore}</strong><span>match score</span></div><ul>{candidate.matchReasons.map((reason) => <li key={reason}><CheckCircle size={14} weight="fill" />{reason}</li>)}{candidate.grabbable === false && candidate.grabHint ? <li className="release-candidate-hint"><WarningCircle size={14} />{candidate.grabHint}</li> : null}</ul><button type="button" className={`primary-button ${isGrabbing ? "loading" : ""}`} aria-busy={isGrabbing} disabled={Boolean(grabbingId) || candidate.grabbable === false} title={candidate.grabbable === false ? candidate.grabHint : undefined} onClick={() => grab(candidate)}>{isGrabbing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />}{isGrabbing ? "Sending…" : candidate.grabbable === false ? "Not fetchable yet" : "Send to SABnzbd"}</button></article>; })}</div> : null}<footer className="release-modal-footer"><ShieldCheck size={17} weight="fill" /> Prowlarr download links stay on the server and are never exposed in this page.</footer></section></div>;
+  return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}><section className="modal release-search-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-search-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close release search" /><span className="eyebrow">Find one missing issue</span><h2 id="release-search-title">{job.seriesTitle} #{job.issueNumber}</h2><p className="workbench-intro">Compare the results below. Nothing is downloaded until you choose a release.</p><form className="release-query" onSubmit={(event) => { event.preventDefault(); search(query); }}><MagnifyingGlass size={16} /><input value={query} onChange={(event) => { setQuery(event.target.value); setEdited(true); }} aria-label="Search terms" placeholder="Series and issue to search for…" disabled={loading} /><button type="submit" className="secondary-button" disabled={loading || query.trim().length < 2}>{loading ? <LoadingSpinner size={16} /> : null} Search</button></form>{edited ? null : <p className="release-query-note">Flipparr widens this automatically when a narrower wording finds nothing. Edit it to search for something else.</p>}{loading ? <div className="release-loading"><LoadingSpinner size={24} /><div><strong>Searching your indexers…</strong><span>This can take a few seconds.</span></div></div> : null}{error ? <div className="release-error"><WarningCircle size={19} weight="fill" /><span><strong>Release search needs attention</strong>{error}</span><button type="button" onClick={() => search(query)}>Try again</button></div> : null}{!loading && !error && !candidates.length ? <div className="release-empty"><MagnifyingGlass size={28} /><strong>{summary.headline}</strong><span>{summary.detail}</span>{summary.setAside.length ? <SetAsideList items={summary.setAside} job={job} admin={admin} grabbingId={grabbingId} onTake={(item) => grab(item, true)} /> : null}<button type="button" className="secondary-button" onClick={() => search(query)}>Search again</button></div> : null}{candidates.length ? <div className="release-candidates"><header><div><strong>{candidates.length} candidate{candidates.length === 1 ? "" : "s"}</strong><span>Best matches appear first. Confirm the title, issue, language, and format.</span></div></header>{candidates.map((candidate) => { const isGrabbing = grabbingId === candidate.id; return <article className="release-candidate" key={candidate.id}><div className="release-candidate-main"><StatusBadge tone={candidate.matchScore >= 85 ? "green" : "amber"}>{candidate.matchStrength}</StatusBadge><h3>{candidate.title}</h3><p>{candidate.indexer} · {candidate.protocol} · {formatReleaseSize(candidate.sizeBytes)}{candidate.publishDate ? ` · ${new Date(candidate.publishDate).toLocaleDateString()}` : ""}</p>{candidate.formatTags?.length ? <div className="release-tags">{candidate.formatTags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}</div><div className="release-match"><strong>{candidate.matchScore}</strong><span>match score</span></div><ul>{candidate.matchReasons.map((reason) => <li key={reason}><CheckCircle size={14} weight="fill" />{reason}</li>)}{candidate.grabbable === false && candidate.grabHint ? <li className="release-candidate-hint"><WarningCircle size={14} />{candidate.grabHint}</li> : null}</ul><button type="button" className={`primary-button ${isGrabbing ? "loading" : ""}`} aria-busy={isGrabbing} disabled={Boolean(grabbingId) || candidate.grabbable === false} title={candidate.grabbable === false ? candidate.grabHint : undefined} onClick={() => grab(candidate)}>{isGrabbing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />}{isGrabbing ? "Sending…" : candidate.grabbable === false ? "Not fetchable yet" : "Send to SABnzbd"}</button></article>; })}</div> : null}{candidates.length && summary.setAside.length ? <details className="release-set-aside-more"><summary>{summary.setAside.length} more {summary.setAside.length === 1 ? "was" : "were"} set aside</summary><SetAsideList items={summary.setAside} job={job} admin={admin} grabbingId={grabbingId} onTake={(item) => grab(item, true)} /></details> : null}<footer className="release-modal-footer"><ShieldCheck size={17} weight="fill" /> Prowlarr download links stay on the server and are never exposed in this page.</footer></section></div>;
 }
 
 function MetadataView({ items, loading = false, focus, backendStatus, onResolve, onReplace }) {

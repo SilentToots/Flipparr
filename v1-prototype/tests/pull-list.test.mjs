@@ -257,3 +257,31 @@ test("an empty release search says what came back and why none was offered", asy
   assert.equal(releaseSearchSummary({ resultCount: 0 }, "#2").headline, "Nothing came back");
   assert.equal(releaseSearchSummary(null, "#2").setAside.length, 0);
 });
+
+test("a set-aside row keeps the id it can be taken by, and the server's wording", async () => {
+  const { releaseSearchSummary, takeAnywayCopy } = await import("../src/pull-list.js");
+  const summary = releaseSearchSummary({
+    resultCount: 2,
+    nearMisses: [
+      { id: "aside-1", title: "009-Flashpoint -Secret Seven 01 2011", score: 50, reasons: ["Issue #1 matches"],
+        reason: "Not this series", source: "usenet", setAside: true, refused: false },
+      { id: "aside-2", title: "Flashpoint - Secret Seven 001 (2011)", score: null, reasons: ["Refused before: Aborted"],
+        reason: "Refused before: Aborted", source: "usenet" },
+      { id: "gc-1", title: "Flashpoint Vol. 1 (Collection)", score: 10, reasons: [], reason: "Not this issue",
+        source: "direct_site", grabbable: false },
+    ],
+  }, "#1");
+  assert.deepEqual(summary.setAside.map((item) => [item.id, item.reason, item.refused, item.grabbable, item.source]), [
+    ["aside-1", "Not this series", false, true, "usenet"],
+    ["aside-2", "Refused before: Aborted", true, true, "usenet"],
+    ["gc-1", "Not this issue", false, false, "direct_site"],
+  ]);
+  assert.equal(takeAnywayCopy(summary.setAside[0], "Flashpoint: Secret Seven", "1"),
+    "Set aside: Not this series. Taking it imports it as Flashpoint: Secret Seven #1. The file still has to be a readable comic.");
+  assert.equal(takeAnywayCopy(summary.setAside[1], "Flashpoint: Secret Seven", "1"),
+    "Refused before: Aborted. Taking it tries this release again and imports it as Flashpoint: Secret Seven #1. The file still has to be a readable comic.");
+  // DirectSite alone: nothing from Usenet, still something to show.
+  const only = releaseSearchSummary({ resultCount: 0, nearMisses: [{ id: "gc-1", title: "X", score: 10, reason: "Not this issue" }] }, "#1");
+  assert.equal(only.headline, "Nothing usable came back for #1");
+  assert.equal(only.setAside.length, 1);
+});

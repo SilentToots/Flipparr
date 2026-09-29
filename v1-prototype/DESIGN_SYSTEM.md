@@ -307,6 +307,18 @@ Motion tokens:
   a follow and a pull are different asks, and the words say which. The admin's queue is the Pull List's first
   tab while any request exists; a reader's tab bar names the same place
   "Requests".
+- **Find release's set-aside rows are takeable** (since 2026-09-29). Under
+  the candidates, a `<details>` (`.release-set-aside-more`, "3 more were set
+  aside") folds the releases the matcher refused, each row
+  (`.release-set-aside li`) the whole name wrapped, its reason, and for the
+  admin a ghost "Take anyway". That button never sends anything: it opens an
+  inline confirm in the row (`.release-take-confirm`, focus moved to it, the
+  copy `aria-live`) that says what taking it means -- "Set aside: Not this
+  series. Taking it imports it as Saga #4. The file still has to be a
+  readable comic." -- with Cancel and the primary "Take it". With no
+  candidates the same list stands open inside the empty state, as before. A
+  DirectSite row without a solver reads "Not fetchable yet", disabled, as its
+  candidates do.
 - **Age ratings** (since 2026-09-27) are one scale everywhere -- Everyone,
   Teen, Teen+, Mature -- whatever the source said. A run's shows in its drawer
   as a badge in the rating colours; its Edit sheet has an "Age rating" card

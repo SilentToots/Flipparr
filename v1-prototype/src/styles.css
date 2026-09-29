@@ -1068,8 +1068,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* What came back and was set aside, when nothing could be offered. */
 .release-set-aside { width: 100%; max-width: 640px; margin: var(--space-6) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-6); text-align: left; }
 .release-set-aside li { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-8) var(--space-10); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface-raised); }
-.release-set-aside b { overflow: hidden; color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+/* The whole name, wrapped: a person deciding to take a release by hand reads it to the end. */
+.release-set-aside b { color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .release-set-aside small { color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.release-set-aside-actions { display: flex; justify-content: flex-end; margin-top: var(--space-4); }
+.release-set-aside-actions .ghost-button { min-height: var(--control-height-sm); padding: 0 var(--space-10); font-size: var(--text-xs); }
+/* "Take anyway" asks once, in the row, before anything is sent. */
+.release-take-confirm { margin-top: var(--space-6); padding: var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-4); background: var(--surface); display: grid; gap: var(--space-8); }
+.release-take-confirm:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.release-take-confirm p { margin: 0; color: var(--text); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.release-take-confirm span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8); }
+.release-take-confirm .primary-button, .release-take-confirm .ghost-button { min-height: var(--control-height-sm); padding: 0 var(--space-12); font-size: var(--text-xs); }
+/* Under a list of candidates the set-aside releases fold away; with none they stand open. */
+.release-set-aside-more { margin-top: var(--space-12); }
+.release-set-aside-more summary { width: fit-content; color: var(--muted); font-size: var(--text-sm); cursor: pointer; }
+.release-set-aside-more .release-set-aside { max-width: none; margin-top: var(--space-8); }
 .release-error { margin: var(--space-16) 0; padding: var(--space-12); border: 1px solid var(--red-border); border-radius: var(--radius-8); background: var(--red-soft); color: var(--red-text); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-10); font-size: var(--text-sm); }
 .release-error span { display: grid; gap: var(--space-4); }
 .release-error button { min-height: 32px; border: 1px solid var(--red-border); border-radius: var(--radius-8); background: var(--surface-soft); color: var(--red-text); padding: 0 var(--space-10); cursor: pointer; }
