@@ -3615,6 +3615,13 @@ def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
         queries = [plain]
         if number:
             queries.insert(0, f"{plain} #{number.group(1)}")
+        # A pack's post is titled with the run's years -- "The Woods #1 – 36
+        # (2014-2018)" -- and the title alone lists only the dozen newest
+        # posts that contain the words, which for "The Woods" were a dozen
+        # newer comics with "Wood" in them. The year reaches past them.
+        year = _provider_year(context.get("seriesYear"))
+        if year:
+            queries.append(f"{plain} {year}")
     return [text for text in queries if text]
 
 

@@ -4858,6 +4858,9 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
                          ["Batman Superman World Finest #32", "Batman Superman World Finest"])
         self.assertEqual(app._direct_site_queries({"seriesTitle": "Saga", "issueNumber": "3"}, "saga vol 1"), ["saga vol 1"],
                          "a query someone typed is theirs")
+        self.assertEqual(app._direct_site_queries({"seriesTitle": "The Woods", "issueNumber": "21", "seriesYear": 2014}, "The Woods"),
+                         ["The Woods #21", "The Woods", "The Woods 2014"],
+                         "the run's year reaches a pack the title alone buries under newer posts")
 
     def test_a_half_issue_is_asked_for_as_releases_write_it(self):
         self.assertEqual(
