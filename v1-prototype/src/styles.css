@@ -2581,6 +2581,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    squeezed the sentence beside them down to one word a line. It stacks. */
 .edit-direction { grid-template-columns: minmax(0, 1fr); }
 .edit-direction .direction-toggle { justify-self: start; }
+/* The card's button rules size its own actions -- 148px, the full width on
+   a phone -- and reached the segments of the control inside it, which on a
+   phone left "Auto" alone in a pill 150px wide and scrolled the arrows out
+   of sight. A segment keeps its own size. */
+.advanced-card .segmented-tabs .segmented-tab { width: auto; min-height: 36px; padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-weight: var(--weight-semibold); }
+.advanced-card .segmented-tabs .segmented-tab--icon { width: 36px; padding: 0; }
+.advanced-card .segmented-tabs .segmented-tab.active { color: var(--text); }
 .edit-heading h3 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .edit-index { display: grid; gap: var(--space-16); }
 .edit-section { display: grid; gap: var(--space-16); }
