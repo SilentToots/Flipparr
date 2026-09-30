@@ -301,3 +301,39 @@ test("a release says which client takes it and how it travels", async () => {
   assert.equal(downloadStateLabel({ downloadStatus: "downloading", downloadSource: "qbittorrent" }, labels), "Downloading");
   assert.equal(downloadStateLabel({}, labels), undefined);
 });
+
+test("the download order is each source once, moved a step at a time", async () => {
+  const { sourceOrder, moveSource, sourceRows, DEFAULT_SOURCE_ORDER } = await import("../src/pull-list.js");
+  assert.deepEqual(DEFAULT_SOURCE_ORDER, ["usenet", "torrent", "direct_site"]);
+  assert.deepEqual(sourceOrder(["direct_site", "usenet", "torrent"]), ["direct_site", "usenet", "torrent"]);
+  assert.deepEqual(sourceOrder(["usenet"]), DEFAULT_SOURCE_ORDER, "a broken list is the default");
+  assert.deepEqual(sourceOrder(undefined), DEFAULT_SOURCE_ORDER);
+  assert.deepEqual(moveSource(DEFAULT_SOURCE_ORDER, "torrent", -1), ["torrent", "usenet", "direct_site"]);
+  assert.deepEqual(moveSource(DEFAULT_SOURCE_ORDER, "usenet", -1), DEFAULT_SOURCE_ORDER, "the first cannot go higher");
+  assert.deepEqual(moveSource(DEFAULT_SOURCE_ORDER, "direct_site", 1), DEFAULT_SOURCE_ORDER);
+  const services = [{ id: "sabnzbd", enabled: true }, { id: "qbittorrent", enabled: false },
+    { id: "direct_site", enabled: true }, { id: "flaresolverr", enabled: false }];
+  assert.deepEqual(sourceRows(DEFAULT_SOURCE_ORDER, services).map((row) => [row.id, row.ready]),
+    [["usenet", true], ["torrent", false], ["direct_site", false]], "DirectSite needs its solver too");
+});
+
+test("services are grouped by what they do", async () => {
+  const { groupServices } = await import("../src/pull-list.js");
+  const groups = groupServices([
+    { id: "prowlarr", group: "search" }, { id: "sabnzbd", group: "clients" }, { id: "qbittorrent", group: "clients" },
+    { id: "flaresolverr", group: "direct" }, { id: "direct_site", group: "direct" },
+  ]);
+  assert.deepEqual(groups.map((group) => [group.title, group.services.map((service) => service.id)]), [
+    ["Search", ["prowlarr"]], ["Download clients", ["sabnzbd", "qbittorrent"]], ["Direct downloads", ["direct_site", "flaresolverr"]],
+  ]);
+  assert.deepEqual(groupServices([{ id: "prowlarr" }]).map((group) => group.id), ["search"], "an ungrouped service is a search one");
+});
+
+test("a dragged source lands where it is dropped", async () => {
+  const { reorderTo, DEFAULT_SOURCE_ORDER } = await import("../src/pull-list.js");
+  assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "direct_site", 0), ["direct_site", "usenet", "torrent"]);
+  assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "usenet", 2), ["torrent", "direct_site", "usenet"]);
+  assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "torrent", 1), DEFAULT_SOURCE_ORDER, "dropped where it was");
+  assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "torrent", 9), ["usenet", "direct_site", "torrent"]);
+  assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "ftp", 0), DEFAULT_SOURCE_ORDER);
+});

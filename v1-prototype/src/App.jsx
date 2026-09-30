@@ -31,6 +31,7 @@ import {
   Copy,
   ClockCounterClockwise,
   CloudArrowDown,
+  DotsSixVertical,
   Database,
   DotsThree,
   Eye,
@@ -54,7 +55,7 @@ import { StatusBadge } from "./components/StatusBadge";
 import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns } from "./reading-list.js";
 import { jobsNeedingAttention } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
-import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel } from "./pull-list.js";
+import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel, sourceOrder, moveSource, reorderTo, sourceRows, groupServices } from "./pull-list.js";
 import {
   needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, bellCount, timeAgo,
 } from "./notifications.js";
@@ -5324,6 +5325,9 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   const [savingCollectedEditions, setSavingCollectedEditions] = useState(false);
   const [language, setLanguage] = useState(settingsLast?.preferredLanguage ?? "en");
   const [savingLanguage, setSavingLanguage] = useState(false);
+  // Where releases are taken from first; each move saves at once.
+  const [releaseOrder, setReleaseOrder] = useState(() => sourceOrder(settingsLast?.sourcePriority));
+  const [orderStatus, setOrderStatus] = useState("");
   const [autoScan, setAutoScan] = useState(settingsLast?.autoScanEnabled ?? true);
   const [autoScanInterval, setAutoScanInterval] = useState(Number(settingsLast?.autoScanIntervalMinutes) || 60);
   const [savingAutoScan, setSavingAutoScan] = useState(false);
@@ -5359,6 +5363,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       const result = await apiRequest("/api/v1/settings");
       setCollectedEditions(Boolean(result?.collectedEditionsEnabled));
       setLanguage(result?.preferredLanguage ?? "en");
+      setReleaseOrder(sourceOrder(result?.sourcePriority));
       setAutoScan(result?.autoScanEnabled ?? true);
       setAutoScanInterval(Number(result?.autoScanIntervalMinutes) || 60);
       setEveryPage(result?.visionReadsEveryPage ?? true);
@@ -5429,6 +5434,25 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
       setLanguage(previous);
     } finally {
       setSavingLanguage(false);
+    }
+  }
+  async function saveReleaseOrder(next) {
+    const previous = releaseOrder;
+    if (next.join() === previous.join()) return;
+    setReleaseOrder(next);
+    setOrderStatus("");
+    try {
+      const result = await apiRequest("/api/v1/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourcePriority: next }),
+      });
+      const saved = sourceOrder(result?.sourcePriority);
+      setReleaseOrder(saved);
+      const first = sourceRows(saved, services)[0];
+      setOrderStatus(`Saved. ${first.name} is tried first.`);
+    } catch (error) {
+      setReleaseOrder(previous);
+      setOrderStatus(error.message || "The order could not be saved");
     }
   }
   // Background scans: whether, and how often. Shown at once, put back if the
@@ -5527,11 +5551,16 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         </> : null}
         {current === "security" ? <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} /> : null}
         {current === "acquisition" ? <>
-          <SettingsCard title="Services" className="metadata-source-settings">
-            <p className="settings-card-lead">Connect Prowlarr to find releases, and SABnzbd or qBittorrent to download the one you choose.</p>
-            {services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}
-            {serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}
+          <SettingsCard title="Download order" className="metadata-source-settings">
+            <p className="settings-card-lead">Flipparr takes a release from the first source here that has one good enough. Pulling a whole run, a pack still comes first; pulling one issue, a single does.</p>
+            <SourceOrderList rows={sourceRows(releaseOrder, services)} onReorder={saveReleaseOrder} />
+            <p className="source-order-status" aria-live="polite">{orderStatus}</p>
           </SettingsCard>
+          {groupServices(services).map((group) => <SettingsCard title={group.title} className="metadata-source-settings" key={group.id}>
+            <p className="settings-card-lead">{group.lead}</p>
+            {group.services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}
+          </SettingsCard>)}
+          {serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}
           <SettingsCard title="Language">
             <div className="form-field settings-language"><span>Language wanted</span><GlassSelect label="Language wanted" value={language} disabled={savingLanguage} onChange={changeLanguage}
               options={languageOptions.map(([value, label]) => ({ value, label }))} /><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></div>
@@ -5719,6 +5748,85 @@ function Provider({ provider, onConfigure, concise = false }) {
   // the pill only once it reports something the button does not.
   const showState = !concise || provider.builtIn || provider.configured || provider.enabled;
   return <div className={`provider-row ${provider.enabled ? "enabled" : ""}`}><Database size={23} weight="duotone" /><span><span className="provider-title-line"><strong>{provider.name}</strong>{showState ? <b className={`provider-state ${provider.enabled ? "connected" : provider.configured ? "paused" : "optional"}`}>{status}</b> : null}</span><small>{concise ? provider.setupSummary || provider.description : provider.description}</small><em>{provider.capabilities.join(" · ")}</em></span>{provider.builtIn ? <b className="provider-priority">Priority {provider.priority}</b> : <button onClick={onConfigure}>{provider.configured ? "Manage" : "Configure"}</button>}</div>;
+}
+
+/**
+ * The download order, dragged into shape by each row's handle. The handle
+ * alone starts a drag, so a touch on the row still scrolls the page; on it,
+ * the arrow keys move the source a place at a time, because dragging must
+ * never be the only way (WCAG 2.5.7). The order is saved once, on drop.
+ */
+function SourceOrderList({ rows, onReorder }) {
+  const saved = rows.map((row) => row.id);
+  const [order, setOrder] = useState(saved);
+  const [drag, setDrag] = useState(null);
+  const rowRefs = useRef({});
+  const handleRefs = useRef({});
+  const refocus = useRef(null);
+  const savedKey = saved.join();
+  useEffect(() => { if (!drag) setOrder(savedKey.split(",")); }, [savedKey, drag]);
+  useEffect(() => {
+    if (refocus.current) { handleRefs.current[refocus.current]?.focus(); refocus.current = null; }
+  });
+  const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+  function start(event, id) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({ id, startY: event.clientY, offset: 0, before: order.join() });
+  }
+  function follow(event) {
+    if (!drag) return;
+    let { startY } = drag;
+    let offset = event.clientY - startY;
+    let current = order;
+    const index = current.indexOf(drag.id);
+    const below = rowRefs.current[current[index + 1]];
+    const above = rowRefs.current[current[index - 1]];
+    // Past half a neighbour, the two trade places and the pointer's origin
+    // moves with the row, so it stays under the finger.
+    if (below && offset > below.offsetHeight / 2) {
+      current = reorderTo(current, drag.id, index + 1);
+      startY += below.offsetHeight; offset -= below.offsetHeight;
+    } else if (above && offset < -above.offsetHeight / 2) {
+      current = reorderTo(current, drag.id, index - 1);
+      startY -= above.offsetHeight; offset += above.offsetHeight;
+    }
+    if (current !== order) setOrder(current);
+    setDrag({ ...drag, startY, offset });
+  }
+  function drop() {
+    if (!drag) return;
+    const changed = order.join() !== drag.before;
+    setDrag(null);
+    if (changed) onReorder(order);
+  }
+  function key(event, id) {
+    const delta = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    const next = moveSource(order, id, delta);
+    if (next.join() === order.join()) return;
+    refocus.current = id;
+    setOrder(next);
+    onReorder(next);
+  }
+  return <ol className="source-order-list">
+    {order.map((id, index) => {
+      const source = byId[id];
+      if (!source) return null;
+      const dragging = drag?.id === id;
+      return <li className={`source-order-row ${source.ready ? "" : "source-order-row--off"} ${dragging ? "source-order-row--dragging" : ""}`}
+        key={id} ref={(node) => { rowRefs.current[id] = node; }} style={dragging ? { transform: `translateY(${drag.offset}px)` } : undefined}>
+        <button type="button" className="source-order-handle" ref={(node) => { handleRefs.current[id] = node; }}
+          aria-label={`${source.name}, ${index + 1} of ${order.length}. Drag, or press the up and down arrow keys, to reorder.`}
+          onPointerDown={(event) => start(event, id)} onPointerMove={follow} onPointerUp={drop} onPointerCancel={drop}
+          onKeyDown={(event) => key(event, id)}><DotsSixVertical size={20} weight="bold" /></button>
+        <b className="source-order-position" aria-hidden="true">{index + 1}</b>
+        <span><span className="provider-title-line"><strong>{source.name}</strong><b className={`provider-state ${source.ready ? "connected" : "optional"}`}>{source.ready ? "Ready" : "Not connected"}</b></span><small>{source.ready ? `Downloaded through ${source.via}.` : `Skipped until ${source.id === "direct_site" ? "DirectSite and FlareSolverr are" : `${source.via} is`} connected below.`}</small></span>
+      </li>;
+    })}
+  </ol>;
 }
 
 function AcquisitionService({ service, onConfigure, concise = false }) {

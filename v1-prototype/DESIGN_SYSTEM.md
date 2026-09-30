@@ -188,6 +188,19 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   rows of an icon tile, the name, what is set and a chevron), and each
   section opens as its own page with a back button; tapping the Settings tab
   inside a section returns to the list.
+- **Acquisition services** (since 2026-09-30) are grouped by what they do:
+  the **Download order** first, then **Search** (Prowlarr), **Download
+  clients** (SABnzbd, qBittorrent) and **Direct downloads** (DirectSite, then
+  FlareSolverr, which only serves it). The order is a numbered list, one row
+  per source with its client's Ready / Not connected pill; a source whose
+  client is missing stays in the list, muted, and is skipped. Rows are
+  dragged by a `DotsSixVertical` handle at their start: only the handle
+  takes the touch (`touch-action: none`), so a swipe on the row still
+  scrolls, and the lifted row gets a surface and the glass shadow ringed in
+  `--line-strong` rather than a border, so nothing shifts. On the focused
+  handle the arrow keys move a source a place at a time, since a drag must
+  never be the only way (WCAG 2.5.7). The order saves on drop, and an
+  `aria-live` line says which source is tried first.
 - **The frame above 640px** (since 2026-09-19) follows the Apple TV app's
   sidebar. There is no top bar: each page's header carries its bell.
   - The **sidebar** is a Liquid Glass panel floating the full height of the

@@ -276,3 +276,67 @@ export function groupPullList(catalog, now = new Date()) {
 }
 
 export const tabCount = (bucket) => bucket.length;
+
+/** The places a release can come from, in the words Settings uses. */
+export const RELEASE_SOURCES = [
+  { id: "usenet", name: "Usenet", via: "SABnzbd", needs: ["sabnzbd"] },
+  { id: "torrent", name: "Torrents", via: "qBittorrent", needs: ["qbittorrent"] },
+  { id: "direct_site", name: "DirectSite", via: "direct download", needs: ["direct_site", "flaresolverr"] },
+];
+export const DEFAULT_SOURCE_ORDER = RELEASE_SOURCES.map((source) => source.id);
+
+/** A valid saved order, or the default: each source once. */
+export function sourceOrder(saved) {
+  const list = Array.isArray(saved) ? saved.map(String) : [];
+  const valid = list.length === DEFAULT_SOURCE_ORDER.length && DEFAULT_SOURCE_ORDER.every((id) => list.includes(id));
+  return valid ? list : [...DEFAULT_SOURCE_ORDER];
+}
+
+/** The order with one source moved up (-1) or down (+1); unchanged at an end. */
+export function moveSource(order, id, delta) {
+  const list = sourceOrder(order);
+  const from = list.indexOf(id);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= list.length) return list;
+  const next = [...list];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}
+
+/** The order with one source taken out and put at `toIndex` -- where a drag
+ * drops it. Out-of-range indexes land at the nearest end. */
+export function reorderTo(order, id, toIndex) {
+  const list = sourceOrder(order);
+  if (!list.includes(id)) return list;
+  const rest = list.filter((entry) => entry !== id);
+  const at = Math.max(0, Math.min(rest.length, Number(toIndex) || 0));
+  return [...rest.slice(0, at), id, ...rest.slice(at)];
+}
+
+/** The order as rows for Settings, each saying whether it can be used now:
+ * a source is ready only when every service it needs is. */
+export function sourceRows(order, services) {
+  const enabled = new Set((services || []).filter((service) => service.enabled).map((service) => service.id));
+  return sourceOrder(order).map((id) => {
+    const source = RELEASE_SOURCES.find((entry) => entry.id === id);
+    return { ...source, ready: source.needs.every((need) => enabled.has(need)) };
+  });
+}
+
+/** Services by what they do: finding releases, downloading them, and
+ * DirectSite with the solver it needs. */
+export const SERVICE_GROUPS = [
+  { id: "search", title: "Search", lead: "Finds releases on your Usenet and torrent indexers." },
+  { id: "clients", title: "Download clients", lead: "Download what is chosen and report back while they work." },
+  { id: "direct", title: "Direct downloads", lead: "DirectSite, for what the indexers do not carry. Downloading from it needs FlareSolverr." },
+];
+const DIRECT_ORDER = ["direct_site", "flaresolverr"];
+
+export function groupServices(services) {
+  return SERVICE_GROUPS.map((group) => ({
+    ...group,
+    services: (services || [])
+      .filter((service) => (service.group || "search") === group.id)
+      .sort((a, b) => (group.id === "direct" ? DIRECT_ORDER.indexOf(a.id) - DIRECT_ORDER.indexOf(b.id) : 0)),
+  })).filter((group) => group.services.length);
+}

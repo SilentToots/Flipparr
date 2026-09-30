@@ -1280,6 +1280,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .provider-row > span > em { color: var(--muted-weak); font-style: normal; font-size: var(--text-sm); }
 .provider-title-line { display: flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
 .provider-priority { color: var(--muted-weak); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
+/* Download order: a numbered row per source, dragged by its handle. A row of
+   its own, not a service row: the phone rule stacks those and restyles every
+   button in them. */
+.source-order-list { margin: 0; padding: 0; list-style: none; }
+.source-order-row { position: relative; display: flex; align-items: center; gap: var(--space-10); padding: var(--space-14) 0; border-top: 1px solid var(--line); }
+.source-order-row > span { display: grid; gap: var(--space-4); flex: 1; min-width: 0; }
+.source-order-row small { color: var(--muted); line-height: var(--leading-normal); }
+.source-order-position { flex: 0 0 auto; width: var(--space-16); color: var(--muted-weak); font-size: var(--text-md); font-weight: var(--weight-semibold); text-align: center; }
+.source-order-row--off strong { color: var(--muted-strong); }
+/* The handle alone starts a drag, so it takes the touch; the row does not. */
+.source-order-handle { flex: 0 0 auto; width: var(--control-height-md); height: var(--control-height-md); display: grid; place-items: center; border: 0; border-radius: var(--radius-8); background: transparent; color: var(--muted); cursor: grab; touch-action: none; }
+.source-order-handle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (hover: hover) { .source-order-handle:hover { background: var(--surface-hover); color: var(--text); } }
+/* Lifted: opaque over its neighbours, ringed with a shadow rather than a border so nothing shifts. */
+.source-order-row--dragging { z-index: 1; border-radius: var(--radius-8); background: var(--surface-raised); box-shadow: var(--glass-shadow), 0 0 0 1px var(--line-strong); }
+.source-order-row--dragging .source-order-handle { cursor: grabbing; color: var(--text); }
+.source-order-status { min-height: var(--space-16); margin: var(--space-8) 0 0; color: var(--muted); font-size: var(--text-xs); }
+.source-order-status:empty { display: none; }
 .provider-policy-note { margin-top: var(--space-16); padding: var(--space-12) var(--space-14); border: 1px solid var(--green-border); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--green); display: flex; gap: var(--space-12); align-items: flex-start; }
 .provider-policy-note span { display: grid; gap: var(--space-4); }
 .provider-policy-note strong { font-size: var(--text-sm); }
