@@ -941,6 +941,15 @@ Keep the transport seam, and reconsider only after a representative read-only
 cohort demonstrates material exact-match gain. See
 `docs/evidence/torrent-coverage-20260902-p39.json`.
 
+That cohort was run for manga on 2026-09-29 with PublicTracker added to Prowlarr: of
+23 missing manga volumes, 19 already had exact Usenet matches and were simply
+unrequested, and the other four exist on PublicTracker only inside multi-volume packs the
+manga matcher refuses. No volume is found only by a single-volume torrent, so
+the adapter alone is still not justified; the open question is a client with
+manga pack handling and per-file selection. See
+`docs/evidence/torrent-coverage-20260929-manga.json` and
+`docs/ACQUISITION_INTENT_V2.md`.
+
 Product decision 2026-09-02: the two bounded live-Volume source checks establish
 that automatic collected-edition acquisition cannot be a credible first-release
 promise. Volume and collection files remain supported for local intake, grouping,
