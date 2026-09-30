@@ -5722,7 +5722,7 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
             store.update_acquisition_job(job_id, "queued", message)
         except Exception as inner:  # noqa: BLE001
             log_exception("direct_site_failure_not_recorded", inner, level="warning")
-        _resume_run_after_pack_failure(job_id, title)
+        _resume_run_after_pack(job_id, title)
     finally:
         with _DIRECT_FETCHES_LOCK:
             _DIRECT_FETCHES.pop(int(download_id), None)
@@ -7051,8 +7051,9 @@ def _direct_site_single_to_take(job_id: int, context: dict[str, Any]) -> dict[st
     return None
 
 
-def _resume_run_after_pack_failure(job_id: int, release_title: str) -> None:
-    """A run pack that did not arrive hands the run straight to its single issues.
+def _resume_run_after_pack(job_id: int, release_title: str) -> None:
+    """A run pack that did not arrive, or arrived holding less than it said,
+    hands what it did not bring straight to single issues.
 
     Grabbing a pack stops the per-issue searches -- the rest of the run rides
     on it -- so a pack that fails left every other issue waiting for the next
@@ -7176,7 +7177,119 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
             release=str(candidate.get("title") or ""), error=str(exc),
         )
         return None
-    return {"title": str(candidate.get("title") or ""), "covers": -covered, "jobId": lead_job}
+    parts = 0
+    if candidate.get("source") == "direct_site":
+        parts = _grab_other_direct_site_parts(store, candidate, lead, wanted, context)
+    return {"title": str(candidate.get("title") or ""), "covers": -covered, "jobId": lead_job, "parts": 1 + parts}
+
+
+def _grab_other_direct_site_parts(
+    store: Any, candidate: dict[str, Any], lead: dict[str, Any],
+    wanted: list[dict[str, Any]], context: dict[str, Any],
+) -> int:
+    """The rest of a DirectSite run pack posted in parts, one download a part.
+
+    A grab fetches the part holding its own issue, so "Descender #1 – 32 +
+    TPBs" brought "#1 – 8" and nothing else: #9 to #32 were left to singles
+    (2026-09-30). Each other part holding wanted issues is fetched against the
+    first of them, and the rest of that part rides on its download. Returns
+    how many parts were started.
+    """
+    post_url = str(candidate.get("postUrl") or "")
+    lead_number = _issue_number(lead.get("issueNumber"))
+    try:
+        links = _direct_site_post_parts(post_url)
+    except Exception as exc:  # noqa: BLE001 -- the lead's part is on its way regardless
+        log_event("direct_site_parts_unread", level="warning", release=str(candidate.get("title") or ""),
+                  error=str(exc)[:160])
+        return 0
+    parts: dict[str, dict[str, Any]] = {}
+    for link in links:
+        if link.get("first") is not None:
+            parts.setdefault(str(link.get("label") or ""), link)
+    started = 0
+    for label, part in parts.items():
+        first = int(part["first"])
+        last = int(part["last"] if part.get("last") is not None else first)
+        if lead_number is not None and first <= lead_number <= last:
+            continue
+        inside = sorted(
+            (item for item in wanted
+             if (number := _issue_number(item.get("issueNumber"))) is not None and first <= number <= last),
+            key=lambda item: _issue_number(item.get("issueNumber")) or 0,
+        )
+        if not inside:
+            continue
+        job_id = int(inside[0]["jobId"])
+        try:
+            # Judged by its own issue's years, as its fetch will be: a run's
+            # later parts are later years than its #1.
+            part_context = store.get_acquisition_job_context(job_id)
+            if not _direct_site_part_fits_years(label, (part_context.get("seriesYear"), part_context.get("publicationYear"))):
+                continue
+        except Exception:  # noqa: BLE001 -- unjudged is not fetched
+            continue
+        # Named for the part, so the issues it holds are the ones held for it;
+        # its size is the post's business, not the row's.
+        named = re.sub(r"\s*\(\s*[0-9.]+\s*(?:kb|mb|gb)\s*\)\s*$", "", label, flags=re.I).strip()
+        title = named if _direct_site_names_series(named, context) else f"{context.get('seriesTitle')} {named}"
+        try:
+            download = store.record_acquisition_download(
+                job_id, f"direct_site:{hashlib.sha256(post_url.encode()).hexdigest()[:20]}:{job_id}",
+                title, release_key=post_url, source="direct_site",
+            )
+            store.update_acquisition_job(job_id, "grabbed", f"Downloading from DirectSite: {title}")
+            _start_direct_fetch(int(download["id"]), job_id, post_url, title)
+            started += 1
+        except Exception as exc:  # noqa: BLE001 -- its issues fall to singles
+            log_event("direct_site_part_not_started", level="warning", job_id=job_id, part=label[:120],
+                      error=str(exc)[:160])
+    if started:
+        log_event("direct_site_parts_grabbed", release=str(candidate.get("title") or ""), parts=started)
+    return started
+
+
+def _stated_pack_range(title: Any, context: dict[str, Any]) -> tuple[int, int] | None:
+    """The issues a release says it holds, whichever issue is asked about."""
+    if context.get("format") == "manga":
+        return _manga_pack_range(title)
+    return _release_issue_range(title, context.get("runIssueCount"))
+
+
+def _issues_awaiting_a_pack(store: Any) -> set[int]:
+    """The jobs a pack still on its way will bring, so no pass searches them.
+
+    Only the request's own pass knew a run pack had been grabbed; the backlog
+    sweep every quarter hour saw issues nothing had been sent for and searched
+    them. Descender's pack landed a minute before the sweep came round, which
+    was luck: a minute the other way and #2 to #8 would have come twice.
+    A torrent's issues each have their own download row already.
+    """
+    try:
+        live = store.live_downloads_with_requests()
+    except Exception as exc:  # noqa: BLE001 -- unknown means nothing is held
+        log_exception("pack_holds_unavailable", exc, level="warning")
+        return set()
+    held: set[int] = set()
+    wanted_by_request: dict[int, list[dict[str, Any]]] = {}
+    for row in live if isinstance(live, list) else []:
+        if row.get("source") == "qbittorrent":
+            continue
+        try:
+            context = store.get_acquisition_job_context(int(row["job_id"]))
+            stated = _stated_pack_range(row.get("release_title"), context)
+            if not stated:
+                continue
+            request_id = int(row["request_id"])
+            if request_id not in wanted_by_request:
+                wanted_by_request[request_id] = list(store.wanted_run_issues(request_id))
+            for item in _same_run(wanted_by_request[request_id], context):
+                number = _issue_number(item.get("issueNumber"))
+                if number is not None and stated[0] <= number <= stated[1] and int(item["jobId"]) != int(row["job_id"]):
+                    held.add(int(item["jobId"]))
+        except Exception as exc:  # noqa: BLE001 -- one unreadable row holds nothing
+            log_event("pack_hold_unread", level="warning", download_id=row.get("id"), error=str(exc)[:160])
+    return held
 
 
 def _automatic_grab_order(
@@ -7302,6 +7415,9 @@ def _automatic_release_grabs(
         log_exception("automatic_grab_lookup_failed", exc, level="warning")
         return
     job_ids = [job_id for job_id in job_ids if job_id not in exclude]
+    if job_ids:
+        held = _issues_awaiting_a_pack(store)
+        job_ids = [job_id for job_id in job_ids if job_id not in held]
     if not job_ids:
         return
     # A run that is mostly missing is one question -- "who has this run?" --
@@ -7459,7 +7575,7 @@ def _fallback_after_sab_failure(
     # A torrent's other issues have rows of their own and fall back each by
     # itself; handing the run to singles as well would search them twice.
     if not _rides_with_others(store, download):
-        _resume_run_after_pack_failure(job_id, release_title)
+        _resume_run_after_pack(job_id, release_title)
     failure_count = int(failure.get("failureCount") or 0)
     if failure_count >= MAX_AUTOMATIC_RELEASE_FAILURES:
         detail = (
@@ -8060,6 +8176,10 @@ def _import_completed_download(
     else:
         # Nothing in SABnzbd to forget; the staging folder is ours to clear.
         shutil.rmtree(Path(storage), ignore_errors=True)
+    # A pack held its run's issues back while it came. What it turned out not
+    # to hold goes to singles now, not at the next sweep a quarter hour away.
+    if download.get("source") != "qbittorrent" and _stated_pack_range(download.get("release_title"), context):
+        _resume_run_after_pack(int(download["job_id"]), str(download.get("release_title") or ""))
     # Refused downloads of this issue were kept as evidence; it is here now.
     _discard_kept_downloads(store, job_id=int(download["job_id"]))
     replacement = store.replacement_for_job(int(download["job_id"]))

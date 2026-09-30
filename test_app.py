@@ -4280,12 +4280,12 @@ class RunPackPassTests(unittest.TestCase):
                 pass
         with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread), \
              patch("app._acquisition_services_ready", return_value=False):
-            app._resume_run_after_pack_failure(101, "Batman 001-100 (Digital)")
+            app._resume_run_after_pack(101, "Batman 001-100 (Digital)")
         self.assertEqual(started, [], "no indexer or downloader: the same check every automatic search makes")
         with patch("app.catalog_store", return_value=store), patch("app.threading.Thread", Thread), \
              patch("app._acquisition_services_ready", return_value=True):
-            app._resume_run_after_pack_failure(101, "Batman 001-100 (Digital)")
-            app._resume_run_after_pack_failure(101, "Batman 001 (2016) (Digital)")
+            app._resume_run_after_pack(101, "Batman 001-100 (Digital)")
+            app._resume_run_after_pack(101, "Batman 001 (2016) (Digital)")
         self.assertEqual(len(started), 1, "a single issue failing is its own fallback's business")
         target, args, kwargs = started[0]
         self.assertEqual((target, args, kwargs), (app._automatic_release_grabs, (48,),
@@ -7672,6 +7672,78 @@ def _image_epub(path, pages, *, text_pages=0):
             spine.append(f'<itemref idref="t{index}"/>')
         book.writestr("OEBPS/content.opf",
                       f"<package><manifest>{''.join(items)}</manifest><spine>{''.join(spine)}</spine></package>")
+
+
+class RunPackInPartsTests(unittest.TestCase):
+    """Descender (2026-09-30): a DirectSite run pack in five parts brought only
+    its first, and the backlog sweep searched the rest one by one without
+    knowing a pack was on its way."""
+
+    LABELS = [
+        ("Descender #1 – 8 (2015-2016) (490 MB)", 1, 8), ("Descender #9 – 16 (2016) (460 MB)", 9, 16),
+        ("Descender #17 – 23 (2016-2017) (481 MB)", 17, 23), ("Descender #24 – 28 (2017-2018) (457 MB)", 24, 28),
+        ("Descender #29 – 32 (2018) (250 MB)", 29, 32),
+        ("Descender Vol. 2 – Machine Moon (2016) (372 MB)", None, None),
+    ]
+    YEARS = {1: 2015, 9: 2016, 17: 2016, 24: 2017, 29: 2018}
+
+    def wanted(self, numbers):
+        return [{"jobId": 100 + n, "issueNumber": str(n), "issueId": 500 + n, "status": "queued", "seriesId": "7"}
+                for n in numbers]
+
+    def context(self, job_id=101):
+        number = job_id - 100
+        year = max(year for first, year in self.YEARS.items() if first <= number)
+        return {"seriesTitle": "Descender", "seriesId": "7", "issueNumber": str(number), "seriesYear": 2015,
+                "publicationYear": year, "requestId": "181"}
+
+    def test_each_part_holding_wanted_issues_is_fetched_against_its_first(self):
+        store = Mock()
+        store.get_acquisition_job_context.side_effect = self.context
+        store.record_acquisition_download.side_effect = lambda job, *a, **k: {"id": 9000 + job}
+        links = [{"url": f"https://files.example/{i}", "label": label, "first": first, "last": last}
+                 for i, (label, first, last) in enumerate(self.LABELS)]
+        wanted = self.wanted([n for n in range(1, 33) if n not in (9, 10)])  # #9 and #10 already owned
+        candidate = {"postUrl": "https://comics.example/other-comics/descender-1-9-tpb/", "source": "direct_site",
+                     "title": "Descender #1 – 32 + TPBs (2015-2018)"}
+        with patch("app._direct_site_post_parts", return_value=links), \
+             patch("app._start_direct_fetch") as fetch:
+            started = app._grab_other_direct_site_parts(store, candidate, wanted[0], wanted, self.context())
+        self.assertEqual(started, 4, "every part but the lead's")
+        self.assertEqual([call.args[1] for call in fetch.call_args_list], [111, 117, 124, 129],
+                         "each against the first issue wanted in it; #9 is owned, so #11 leads its part")
+        self.assertEqual([call.args[2] for call in store.record_acquisition_download.call_args_list],
+                         ["Descender #9 – 16 (2016)", "Descender #17 – 23 (2016-2017)",
+                          "Descender #24 – 28 (2017-2018)", "Descender #29 – 32 (2018)"])
+        self.assertTrue(all(call.kwargs["release_key"] == candidate["postUrl"]
+                            for call in store.record_acquisition_download.call_args_list))
+
+    def test_issues_a_pack_in_flight_will_bring_are_held(self):
+        store = Mock()
+        store.get_acquisition_job_context.side_effect = self.context
+        store.wanted_run_issues.return_value = self.wanted(range(1, 33))
+        store.live_downloads_with_requests.return_value = [
+            {"id": 1, "job_id": 101, "request_id": 181, "release_title": "Descender #1 – 32 + TPBs (2015-2018)",
+             "source": "direct_site"},
+        ]
+        self.assertEqual(app._issues_awaiting_a_pack(store), set(range(102, 133)))
+        store.live_downloads_with_requests.return_value = [
+            {"id": 2, "job_id": 117, "request_id": 181, "release_title": "Descender #17 – 23 (2016-2017)",
+             "source": "direct_site"},
+            {"id": 3, "job_id": 109, "request_id": 181, "release_title": "Descender 009 (2016) (Digital) (Zone-Empire)",
+             "source": "sabnzbd"},
+        ]
+        self.assertEqual(app._issues_awaiting_a_pack(store), set(range(118, 124)),
+                         "a part holds its own issues; a single holds nothing")
+
+    def test_no_pass_searches_an_issue_a_pack_will_bring(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [102, 140]
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._issues_awaiting_a_pack", return_value={102}), \
+             patch("app._auto_grab_release", return_value=True) as grab:
+            app._automatic_release_grabs(None, backoff=True)
+        self.assertEqual([call.args[0] for call in grab.call_args_list], [140])
 
 
 class ComicProseEbookTests(unittest.TestCase):

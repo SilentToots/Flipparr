@@ -7814,6 +7814,22 @@ class CatalogStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def live_downloads_with_requests(self) -> list[dict[str, Any]]:
+        """Every download still under way, with the request its issue is for:
+        a pack's issues wait on it rather than being searched for one by one."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT acquisition_downloads.id AS id, acquisition_downloads.job_id AS job_id,
+                          acquisition_jobs.request_id AS request_id,
+                          acquisition_downloads.release_title AS release_title,
+                          acquisition_downloads.source AS source
+                     FROM acquisition_downloads
+                     JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
+                    WHERE {self._LIVE_DOWNLOAD}
+                    ORDER BY acquisition_downloads.id"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # A torrent download's identity is `torrent:<hash>:<job>`; one torrent
     # serves every issue of a pack, each with its own row.
     _LIVE_DOWNLOAD = (
