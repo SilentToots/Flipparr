@@ -3591,9 +3591,15 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
         str(category.get("id") if isinstance(category, dict) else category)
         for category in (release.get("categories") or [])
     }
+    # EBook counts as much as Comics: a graphic novel with no issues is filed
+    # there as a matter of course (The Adventure Zone, the owner, 2026-09-30).
+    # What rules out a novel of the same name is the import's look inside.
     if "7030" in category_ids:
         score += 5
         reasons.append("Listed as a comic")
+    elif "7020" in category_ids:
+        score += 5
+        reasons.append("Listed as an ebook")
     return min(score, 100), reasons
 
 

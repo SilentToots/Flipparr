@@ -5085,6 +5085,14 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
         self.assertEqual(app._prowlarr_query_forms({"seriesTitle": "Fables", "issueNumber": "29"}),
                          ["Fables 029", "Fables 29", "Fables"], "two digits already is the two-digit form")
 
+    def test_an_ebook_listing_counts_as_much_as_a_comic_listing(self):
+        context = {"seriesTitle": "The Adventure Zone", "issueNumber": "4", "publicationYear": 2021}
+        title = "The Adventure Zone 04 - The Crystal Kingdom (2021)"
+        as_comic = app._release_candidate_score({"title": title, "categories": [{"id": 7030}]}, context)
+        as_ebook = app._release_candidate_score({"title": title, "categories": [{"id": 7000}, {"id": 7020}]}, context)
+        self.assertEqual(as_comic[0], as_ebook[0])
+        self.assertIn("Listed as an ebook", as_ebook[1])
+
     def test_comics_are_searched_in_comics_and_ebooks(self):
         # A book publisher's graphic novels are filed as ebooks.
         with patch("app.fetch_json_with_headers", return_value=[]) as fetch:
