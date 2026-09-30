@@ -7501,10 +7501,12 @@ class CatalogStore:
                 {
                     "jobId": int(row["id"]), "issueId": int(row["issue_id"]),
                     "issueNumber": row["issue_number"], "status": str(row["status"]),
+                    # A collection's request spans several runs; a pack is one.
+                    "seriesId": str(row["series_run_id"]) if row["series_run_id"] is not None else None,
                 }
                 for row in connection.execute(
                     """SELECT acquisition_jobs.id, acquisition_jobs.issue_id,
-                              acquisition_jobs.status, issues.issue_number
+                              acquisition_jobs.status, issues.issue_number, issues.series_run_id
                        FROM acquisition_jobs
                        JOIN issues ON issues.id=acquisition_jobs.issue_id
                        WHERE acquisition_jobs.request_id=?
@@ -7801,13 +7803,65 @@ class CatalogStore:
     def direct_downloads_in_flight(self) -> list[dict[str, Any]]:
         """Downloads Flipparr fetches itself that say they are still going.
         Nothing outside the process knows about them, so after a restart the
-        rows are all that is left of them."""
+        rows are all that is left of them. A download client's rows are its
+        own to answer for: a torrent's "fetch" restarted here would treat its
+        release key as a DirectSite post and refuse it."""
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT id, job_id, source, status, release_key, release_title FROM acquisition_downloads
-                    WHERE source != 'sabnzbd' AND status IN ('queued', 'downloading') ORDER BY id"""
+                    WHERE source NOT IN ('sabnzbd', 'qbittorrent') AND status IN ('queued', 'downloading')
+                    ORDER BY id"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # A torrent download's identity is `torrent:<hash>:<job>`; one torrent
+    # serves every issue of a pack, each with its own row.
+    _LIVE_DOWNLOAD = (
+        "acquisition_downloads.status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files')"
+        " AND acquisition_jobs.status NOT IN ('fulfilled', 'cancelled')"
+    )
+
+    def torrent_references(self, info_hash: str) -> dict[str, int]:
+        """What still uses one torrent: downloads in flight, and refused
+        downloads kept as evidence."""
+        pattern = f"torrent:{str(info_hash).casefold()}:%"
+        with self._connect() as connection:
+            live = connection.execute(
+                f"""SELECT COUNT(*) FROM acquisition_downloads
+                     JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
+                    WHERE acquisition_downloads.sab_nzo_id LIKE ? AND {self._LIVE_DOWNLOAD}""",
+                (pattern,),
+            ).fetchone()[0]
+            kept = connection.execute(
+                """SELECT COUNT(*) FROM acquisition_release_failures
+                    WHERE sab_nzo_id LIKE ? AND sab_storage IS NOT NULL""",
+                (pattern,),
+            ).fetchone()[0]
+        return {"live": int(live), "kept": int(kept)}
+
+    def torrent_hashes_in_use(self) -> set[str]:
+        """Every torrent something still uses, for the seeding sweep."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT acquisition_downloads.sab_nzo_id FROM acquisition_downloads
+                     JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
+                    WHERE acquisition_downloads.sab_nzo_id LIKE 'torrent:%' AND {self._LIVE_DOWNLOAD}
+                    UNION
+                    SELECT sab_nzo_id FROM acquisition_release_failures
+                    WHERE sab_nzo_id LIKE 'torrent:%' AND sab_storage IS NOT NULL"""
+            ).fetchall()
+        return {str(row[0]).split(":")[1].casefold() for row in rows if str(row[0]).count(":") >= 2}
+
+    def torrent_jobs(self, info_hash: str) -> list[int]:
+        """The issues downloading from one torrent right now."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT acquisition_downloads.job_id FROM acquisition_downloads
+                     JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
+                    WHERE acquisition_downloads.sab_nzo_id LIKE ? AND {self._LIVE_DOWNLOAD}""",
+                (f"torrent:{str(info_hash).casefold()}:%",),
+            ).fetchall()
+        return [int(row[0]) for row in rows]
 
     def acquisition_download_for_job(self, job_id: int) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -10483,6 +10537,7 @@ class CatalogStore:
                 "downloadError": download["error"] if download else None,
                 "downloadFailureStage": download["failure_stage"] if download else None,
                 "downloadTakenByHand": bool(download["taken_by_hand"]) if download else False,
+                "downloadSource": download["source"] if download else None,
                 # When the issue actually landed, which is not the same as when
                 # the job was last touched: unfollowing a run rewrites every
                 # job's updated_at, so "what arrived lately" read off that would

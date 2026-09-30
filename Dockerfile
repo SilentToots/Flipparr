@@ -59,7 +59,7 @@ COPY catalog_core_v2/ ./catalog_core_v2/
 COPY --from=web-build /build/v1-prototype/dist/client ./web
 
 EXPOSE 8787
-VOLUME ["/config", "/comics", "/downloads/complete/comics"]
+VOLUME ["/config", "/comics", "/downloads/complete/comics", "/downloads/torrents/complete/comics"]
 
 # Default to a non-root user so the image is not privileged when run without an
 # explicit `user:`. compose still overrides this with PUID/PGID. Matters because

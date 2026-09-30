@@ -2325,6 +2325,28 @@ class CatalogStoreTests(unittest.TestCase):
             store.reconcile_acquisition_jobs()
             self.assertEqual(self._job(root, job_id)["status"], "cancelled")
 
+    def test_a_torrent_is_in_use_while_an_issue_downloads_from_it_or_keeps_it_as_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id, job_id = self._one_wanted_job(root)
+            info_hash = "ab" * 20
+            row = store.record_acquisition_download(job_id, f"torrent:{info_hash}:{job_id}", "Example 002", "k1",
+                                                    source="qbittorrent")
+            self.assertEqual(store.torrent_references(info_hash), {"live": 1, "kept": 0})
+            self.assertEqual(store.torrent_hashes_in_use(), {info_hash})
+            self.assertEqual(store.torrent_jobs(info_hash), [job_id])
+            self.assertEqual(store.direct_downloads_in_flight(), [],
+                             "a restart must not refetch a torrent as if Flipparr were downloading it")
+            wanted = store.wanted_run_issues(int(store.get_acquisition_job_context(job_id)["requestId"]))
+            self.assertEqual(wanted[0]["seriesId"], str(series_id), "a pack is matched within one run")
+            store.update_acquisition_download(int(row["id"]), "failed", error="refused", failure_stage="content")
+            self.assertEqual(store.torrent_references(info_hash), {"live": 0, "kept": 0})
+            store.record_acquisition_release_failure(job_id, "k1", "Example 002", "refused", kind="contradiction",
+                                                     sab_nzo_id=f"torrent:{info_hash}:{job_id}", sab_storage="/x")
+            self.assertEqual(store.torrent_references(info_hash), {"live": 0, "kept": 1})
+            self.assertEqual(store.torrent_hashes_in_use(), {info_hash})
+            self.assertEqual(store.torrent_references("cd" * 20), {"live": 0, "kept": 0})
+
     def test_a_download_taken_by_hand_is_marked_until_the_next_grab(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

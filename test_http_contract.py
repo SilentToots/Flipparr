@@ -171,6 +171,26 @@ class HttpContractTests(unittest.TestCase):
             for secret in ("apikey\":", "token\":", "password"):
                 self.assertNotIn(secret, body, f"{path} leaked a credential field")
 
+    def test_a_torrent_clients_sign_in_is_saved_and_never_sent_back(self):
+        config = Path(os.environ["COMICARR_ACQUISITION_CONFIG"])
+        before = config.read_text() if config.exists() else None
+        try:
+            response = self.post("/api/v1/acquisition-services/qbittorrent", {
+                "url": "http://vpn:8080", "username": "admin", "password": "hunter2", "category": "comics",
+            })
+            self.assertEqual(response.status, 200)
+            body = response.body.decode()
+            self.assertNotIn("hunter2", body)
+            self.assertNotIn("password", body.lower())
+            listed = json.loads(self.get("/api/v1/acquisition-services").body)
+            qbt = next(service for service in listed["services"] if service["id"] == "qbittorrent")
+            self.assertEqual((qbt["username"], qbt["category"], qbt["credentialHint"]), ("admin", "comics", "Saved locally"))
+        finally:
+            if before is None:
+                config.unlink(missing_ok=True)
+            else:
+                config.write_text(before)
+
     def test_unknown_scan_id_is_not_found(self):
         self.assertEqual(self.get("/api/v1/scans/999999").status, 404)
 

@@ -49,6 +49,7 @@ services:
       FLIPPARR_WEB_ROOT: /app/web
       FLIPPARR_LIBRARY_ROOT: /comics
       FLIPPARR_SAB_COMPLETE_ROOT: /downloads/complete/comics
+      FLIPPARR_TORRENT_COMPLETE_ROOT: /downloads/torrents/complete/comics
       FLIPPARR_IMPORT_POLL_SECONDS: "${IMPORT_POLL_SECONDS:-15}"
       FLIPPARR_MIN_FREE_SPACE_MB: "${MIN_FREE_SPACE_MB:-100}"
     volumes:
@@ -59,6 +60,11 @@ services:
       # files. Flipparr deletes only the one folder SABnzbd reported for that
       # job, never the category folder itself.
       - "${SAB_COMPLETE_PATH:?Set SAB_COMPLETE_PATH to SABnzbd's completed comics directory}:/downloads/complete/comics:rw"
+      # Read-only: a torrent keeps seeding from here after its comic is copied
+      # into the library, and only qBittorrent removes anything -- when its
+      # own ratio or time limit stops the torrent. Optional; without
+      # qBittorrent it is an empty folder.
+      - "${TORRENT_COMPLETE_PATH:-./docker-data/torrents-complete}:/downloads/torrents/complete/comics:ro"
     networks:
       - proxy
     read_only: true

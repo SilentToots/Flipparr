@@ -18,7 +18,7 @@ import traceback
 import time
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import app
 from access_policy import Viewer
@@ -8843,3 +8843,557 @@ class ProfileTokenTests(unittest.TestCase):
                 app.check_profile_switch(store, self.config, 2, pin="0000")
         with self.assertRaises(app.Throttled, msg="after that, even the right PIN waits its turn"):
             app.check_profile_switch(store, self.config, 2, pin="2468")
+
+
+class FakeQbittorrent:
+    """An in-memory qBittorrent: torrents by hash, each with state, tags and files."""
+
+    def __init__(self, selective=True):
+        self.torrents = {}
+        self.selective = selective
+        self.added = []
+        self.deleted = []
+        self.paused = []
+        self.started = []
+
+    def put(self, info_hash, *, state="stoppedDL", tags=(), files=(), save_path="/data/torrents/complete/comics",
+            content_path=None, added_on=None, **extra):
+        self.torrents[info_hash] = {
+            "hash": info_hash, "state": state, "tags": ", ".join(tags), "save_path": save_path,
+            "content_path": content_path or f"{save_path}/Pack", "added_on": added_on or int(time.time()) - 3600,
+            "num_seeds": 5, "progress": 0.0, "amount_left": 0, "eta": 8640000, **extra,
+        }
+        self.torrents[info_hash]["files"] = [
+            {"index": index, "name": name, "size": size, "priority": 1, "progress": 0}
+            for index, (name, size) in enumerate(files)
+        ]
+        return self.torrents[info_hash]
+
+    def supports_selection(self):
+        return self.selective
+
+    def version(self):
+        return "v5.0.2" if self.selective else "v4.4.5"
+
+    def info(self, *, hashes=None, tag=None, category=None, filter=None):  # noqa: A002
+        found = [dict(t) for t in self.torrents.values()]
+        if hashes is not None:
+            found = [t for t in found if t["hash"] in hashes]
+        if tag is not None:
+            found = [t for t in found if tag in app.torrent_client.tags_of(t)]
+        return found
+
+    def files(self, info_hash):
+        return [dict(f) for f in self.torrents.get(info_hash, {}).get("files", [])]
+
+    def set_file_priority(self, info_hash, indexes, priority):
+        for entry in self.torrents[info_hash]["files"]:
+            if entry["index"] in indexes:
+                entry["priority"] = priority
+
+    def add_tags(self, hashes, tags):
+        for info_hash in hashes:
+            current = app.torrent_client.tags_of(self.torrents[info_hash])
+            self.torrents[info_hash]["tags"] = ", ".join(sorted(current | set(tags)))
+
+    def start(self, hashes):
+        self.started.extend(hashes)
+
+    def pause(self, hashes):
+        self.paused.extend(hashes)
+
+    def delete(self, hashes, *, delete_files):
+        for info_hash in hashes:
+            self.deleted.append((info_hash, delete_files))
+            self.torrents.pop(info_hash, None)
+
+    def add_torrent(self, **kwargs):
+        self.added.append(kwargs)
+        return []
+
+
+class TorrentAcquisitionTests(unittest.TestCase):
+    """qBittorrent beside SABnzbd: torrents for manga and for whole runs as
+    packs, which DirectSite kept losing (the owner, 2026-09-30). Only the wanted
+    files of a pack are downloaded, the run's other issues ride along on rows
+    of their own, and a torrent seeds on after import until the client stops
+    it."""
+
+    HASH = "ab" * 20
+    CONTEXT = {"requestId": "48", "seriesId": "7", "seriesTitle": "The Woods", "issueNumber": "21",
+               "runIssueCount": 36, "format": "comic", "publicationYear": 2016, "seriesYear": 2014}
+
+    def setUp(self):
+        _RELEASE_CANDIDATES.clear()
+        self.addCleanup(_RELEASE_CANDIDATES.clear)
+
+    # ---- settings -----------------------------------------------------------
+
+    def test_qbittorrent_is_a_download_client_whose_secret_never_leaves(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(
+            "app.os.environ", {"COMICARR_ACQUISITION_CONFIG": str(Path(folder) / "services.json")},
+        ):
+            public = save_acquisition_service_config("qbittorrent", {
+                "url": "http://vpn:8080/", "username": "admin", "password": "hunter2",
+                "category": "comics", "enabled": True,
+            })
+            qbt = next(service for service in public["services"] if service["id"] == "qbittorrent")
+            self.assertEqual((qbt["url"], qbt["username"], qbt["category"], qbt["credentialHint"]),
+                             ("http://vpn:8080", "admin", "comics", "Saved locally"))
+            self.assertTrue(qbt["configured"] and qbt["enabled"], "credentials are optional")
+            self.assertNotIn("hunter2", str(public))
+            self.assertNotIn("password", json.dumps(public).lower(), "the word itself never reaches the page")
+            save_acquisition_service_config("qbittorrent", {"password": ""})
+            self.assertEqual(app.load_acquisition_service_config()["qbittorrent"]["password"], "hunter2",
+                             "an empty field keeps the saved one")
+            with self.assertRaisesRegex(ValueError, "Enter a qBittorrent category"):
+                save_acquisition_service_config("qbittorrent", {"category": " "})
+            save_acquisition_service_config("qbittorrent", {"clearCredentials": True})
+            saved = app.load_acquisition_service_config()["qbittorrent"]
+            self.assertNotIn("password", saved)
+            self.assertNotIn("username", saved)
+            self.assertEqual(app._enabled_download_clients(), ["qbittorrent"])
+
+    def test_the_connection_test_names_the_category_and_its_folder(self):
+        client = Mock()
+        client.version.return_value = "v5.0.2"
+        client.default_save_path.return_value = "/data/torrents/complete"
+        client.ensure_category.return_value = "/data/torrents/complete/comics"
+        client.supports_selection.return_value = True
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://vpn:8080", "category": "comics"}}), \
+             patch("app.torrent_client.QBittorrent", return_value=client):
+            result = test_acquisition_service_connection("qbittorrent", {"username": "admin", "password": "x"})
+        client.ensure_category.assert_called_once_with("comics", "/data/torrents/complete/comics")
+        self.assertIn("Connected to qBittorrent v5.0.2", result["detail"])
+        self.assertIn("saves to /data/torrents/complete/comics", result["detail"])
+        client.ensure_category.return_value = "/data/torrents/complete/manga"
+        client.supports_selection.return_value = False
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://vpn:8080"}}), \
+             patch("app.torrent_client.QBittorrent", return_value=client):
+            detail = test_acquisition_service_connection("qbittorrent")["detail"]
+        self.assertIn("has to end in that name", detail)
+        self.assertIn("downloads a pack whole", detail)
+        client.version.side_effect = app.torrent_client.TorrentAuthError("qBittorrent rejected this username and password")
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://vpn:8080"}}), \
+             patch("app.torrent_client.QBittorrent", return_value=client):
+            with self.assertRaisesRegex(ValueError, "rejected this username"):
+                test_acquisition_service_connection("qbittorrent")
+
+    def test_automatic_search_runs_with_either_download_client(self):
+        def enabled(service):
+            if service in ("prowlarr", "qbittorrent"):
+                return {"url": "http://x"}
+            raise ValueError("not configured")
+        with patch("app._enabled_acquisition_service", side_effect=enabled):
+            self.assertTrue(app._acquisition_services_ready(1))
+        with patch("app._enabled_acquisition_service", side_effect=lambda s: {"url": "x"} if s == "prowlarr" else (_ for _ in ()).throw(ValueError())):
+            self.assertFalse(app._acquisition_services_ready(1))
+
+    # ---- search ---------------------------------------------------------------
+
+    def search(self, releases, *, qbittorrent=True, context=None):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = dict(context or {
+            "id": "12", "requestId": "4", "issueNumber": "34", "seriesTitle": "Blue Lock", "seriesYear": 2021,
+            "publicationYear": 2025, "publisher": "Kodansha Comics USA", "format": "manga", "runIssueCount": 40,
+        })
+        store.rejected_acquisition_releases.return_value = []
+        services = {"prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"}}
+        if qbittorrent:
+            services["qbittorrent"] = {"enabled": True, "url": "http://vpn:8080"}
+        with patch("app.catalog_store", return_value=store), \
+             patch("app.load_acquisition_service_config", return_value=services), \
+             patch("app.fetch_json_with_headers", return_value=releases) as fetch:
+            return search_prowlarr_releases(12), fetch
+
+    def test_a_magnet_only_torrent_is_a_candidate_with_its_swarm(self):
+        releases = [
+            {"guid": "publictracker-1", "title": "Blue Lock v34 (2025) (Digital) (Stick)", "protocol": "torrent",
+             "magnetUrl": "http://prowlarr/16/download?apikey=secret&link=abc&file=Blue+Lock", "infoHash": "AB" * 20,
+             "seeders": 12, "leechers": 3, "indexer": "PublicTracker", "size": 400_000_000, "categories": [{"id": 7000}]},
+            {"guid": "usenet-1", "title": "Blue Lock v34 (2025) (Digital) (1r0n)", "protocol": "usenet",
+             "downloadUrl": "http://prowlarr/9/download?id=1", "indexer": "One", "size": 400_000_000,
+             "categories": [{"id": 7030}]},
+        ]
+        result, fetch = self.search(releases)
+        self.assertIn(("categories", "7000"), urllib.parse.parse_qsl(urllib.parse.urlsplit(fetch.call_args.args[0]).query),
+                      "manga is asked of Books too, where PublicTracker files it")
+        usenet, torrent = result["candidates"]
+        self.assertEqual((usenet["source"], usenet["protocol"]), ("usenet", "Usenet"), "Usenet first at an equal score")
+        self.assertEqual((torrent["source"], torrent["protocol"], torrent["seeders"], torrent["grabbable"]),
+                         ("torrent", "Torrent", 12, True))
+        cached = _RELEASE_CANDIDATES[torrent["id"]]
+        self.assertEqual((cached["source"], cached["infoHash"], cached["seeders"]), ("torrent", "ab" * 20, 12))
+        self.assertNotIn("apikey", cached["downloadPath"])
+        result, _fetch = self.search(releases, qbittorrent=False)
+        torrent = next(item for item in result["candidates"] if item["source"] == "torrent")
+        self.assertFalse(torrent["grabbable"])
+        self.assertIn("Connect qBittorrent", torrent["grabHint"])
+
+    def test_a_manga_pack_holding_the_volume_is_listed_as_a_pack(self):
+        context = {"seriesTitle": "Blue Lock", "issueNumber": "34", "format": "manga", "publicationYear": 2025,
+                   "publisher": "Kodansha Comics USA"}
+        score, reasons = app._release_candidate_score(
+            {"title": "Blue Lock v01-39 (2021-2026) (Digital) (Stick)", "categories": [{"id": 7000}]}, context)
+        self.assertEqual((score, reasons), (77, ["Series title matches", "Volumes 1-39 include 34", "Listed as a comic or book"]))
+        self.assertEqual(app._release_pack_coverage("Blue Lock v01-39 (2021-2026) (Digital) (Stick)", context), (1, 39))
+        self.assertEqual(app._release_candidate_score({"title": "Blue Lock v01-28 (2021-2024)"}, context),
+                         (0, ["A pack of volumes 1-28, without volume 34"]))
+        self.assertLess(app._release_candidate_score({"title": "Blue Lock - Episode Nagi v01-07 (2024-2026)"}, context)[0], 70,
+                        "a spin-off's pack is not this series")
+        self.assertEqual(app._release_candidate_score({"title": "Chainsaw Man Ch. 150 (2024) (Digital)"},
+                                                      {**context, "seriesTitle": "Chainsaw Man", "issueNumber": "13"})[1],
+                         ["A pack, not one volume"], "a chapter is still not a volume")
+        self.assertIsNone(app._manga_file_volume("Blue Lock v01-39.cbz"), "a file still names one volume or none")
+        result, _fetch = self.search([
+            {"guid": "pack", "title": "Blue Lock v01-39 (2021-2026) (Digital) (Stick)", "protocol": "torrent",
+             "magnetUrl": "http://prowlarr/16/download?link=x", "seeders": 30, "size": 16_000_000_000,
+             "categories": [{"id": 7000}]},
+        ])
+        pack = result["candidates"][0]
+        self.assertEqual((pack["pack"], pack["matchStrength"]), ({"first": 1, "last": 39}, "Pack, Vol. 1-39"))
+
+    # ---- what the automatic grabs may take ------------------------------------
+
+    @staticmethod
+    def candidate(cid, *, source="usenet", score=95, pack=None, seeders=None, size=50_000_000, grabbable=True):
+        item = {"id": cid, "title": cid, "source": source, "matchScore": score, "sizeBytes": size, "grabbable": grabbable}
+        if pack:
+            item["pack"] = {"first": pack[0], "last": pack[1]}
+        if source == "torrent":
+            item["seeders"] = seeders if seeders is not None else 4
+        return item
+
+    def order(self, candidates, wanted=(21,)):
+        store = Mock()
+        store.wanted_run_issues.return_value = [
+            {"jobId": 100 + n, "issueId": 200 + n, "issueNumber": str(n), "status": "queued", "seriesId": "7"}
+            for n in wanted
+        ]
+        with patch("app.catalog_store", return_value=store):
+            return app._automatic_grab_order(self.CONTEXT, candidates)
+
+    def test_a_torrent_nobody_shares_is_left_for_a_person(self):
+        taken, note = self.order([self.candidate("dead", source="torrent", seeders=0)])
+        self.assertEqual(taken, [])
+        self.assertIn("nobody is sharing it right now", note)
+        taken, _note = self.order([self.candidate("dead", source="torrent", seeders=0), self.candidate("usenet")])
+        self.assertEqual([item["id"] for item in taken], ["usenet"])
+        taken, _note = self.order([self.candidate("unconnected", source="torrent", grabbable=False)])
+        self.assertEqual(taken, [], "a torrent with no client connected cannot be sent anywhere")
+
+    def test_pulling_one_issue_a_torrent_pack_is_the_last_resort(self):
+        pack = self.candidate("pack", source="torrent", score=72, pack=(1, 36), size=3_000_000_000)
+        taken, _note = self.order([pack, self.candidate("single", source="torrent")])
+        self.assertEqual([item["id"] for item in taken], ["single"], "any single first")
+        taken, _note = self.order([pack])
+        self.assertEqual([(item["id"], item.get("lastResort")) for item in taken], [("pack", True)])
+        usenet_pack = self.candidate("usenet-pack", score=72, pack=(1, 36), size=3_000_000_000)
+        taken, note = self.order([usenet_pack])
+        self.assertEqual(taken, [], "a Usenet pack cannot be fetched for one issue alone")
+        self.assertIn("only 1 issue wanted", note)
+
+    def test_a_run_mostly_missing_takes_a_torrent_pack_whatever_its_whole_size(self):
+        pack = self.candidate("pack", source="torrent", score=72, pack=(1, 36), size=16_000_000_000)
+        taken, _note = self.order([pack], wanted=range(1, 9))
+        self.assertEqual([(item["id"], item.get("lastResort")) for item in taken], [("pack", None)],
+                         "only the wanted issues are fetched; the whole-size rule is for packs that cannot be split")
+        usenet_pack = self.candidate("usenet-pack", score=72, pack=(1, 36), size=16_000_000_000)
+        taken, _note = self.order([usenet_pack], wanted=range(1, 9))
+        self.assertEqual(taken, [], "16 GB for 8 issues from Usenet is still too much")
+
+    def test_a_last_resort_pack_waits_for_a_direct_site_single(self):
+        pack = self.candidate("pack", source="torrent", score=72, pack=(1, 36))
+        store = Mock()
+        store.wanted_run_issues.return_value = [{"jobId": 121, "issueId": 221, "issueNumber": "21", "status": "queued"}]
+        with patch("app._issue_year_gate", return_value=None), patch("app.catalog_store", return_value=store), \
+             patch("app.search_prowlarr_releases", return_value={"candidates": [pack], "job": self.CONTEXT}), \
+             patch("app._direct_site_single_to_take", return_value={"id": "gc", "title": "The Woods #21 (2016)"}), \
+             patch("app.grab_release_candidate", return_value={"status": "grabbed"}) as grab:
+            app._auto_grab_release(121)
+        grab.assert_called_once_with(121, "gc")
+        with patch("app._issue_year_gate", return_value=None), patch("app.catalog_store", return_value=store), \
+             patch("app.search_prowlarr_releases", return_value={"candidates": [pack], "job": self.CONTEXT}), \
+             patch("app._direct_site_single_to_take", return_value=None), \
+             patch("app.grab_release_candidate", return_value={"status": "grabbed"}) as grab:
+            app._auto_grab_release(121)
+        grab.assert_called_once_with(121, "pack")
+
+    def test_between_packs_of_equal_reach_usenet_then_torrent_then_direct_site(self):
+        store = Mock()
+        store.wanted_run_issues.return_value = [
+            {"jobId": 100 + n, "issueId": 200 + n, "issueNumber": str(n), "status": "queued", "seriesId": "7"}
+            for n in range(1, 37)
+        ] + [{"jobId": 999, "issueId": 999, "issueNumber": "4", "status": "queued", "seriesId": "8"}]
+        store.get_acquisition_job_context.return_value = self.CONTEXT
+        store.rejected_release_keys_for_jobs.return_value = set()
+        offers = [
+            {**self.candidate("gc", source="direct_site", score=72, pack=(1, 36), size=1_000_000_000)},
+            self.candidate("tor", source="torrent", score=72, pack=(1, 36), size=9_000_000_000),
+            self.candidate("dead", source="torrent", score=72, pack=(1, 36), seeders=0),
+        ]
+        jobs = [100 + n for n in range(1, 37)] + [999]
+        with patch("app.search_prowlarr_releases", return_value={"candidates": offers[1:]}), \
+             patch("app._direct_site_candidates", return_value=offers[:1]), \
+             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app.grab_release_candidate", return_value={"status": "grabbed"}) as grab:
+            grabbed = app._grab_run_pack(store, 48, jobs)
+        grab.assert_called_once_with(101, "tor")
+        self.assertEqual(grabbed["covers"], 36, "the other run's #4 is not counted")
+
+    # ---- the grab -----------------------------------------------------------------
+
+    def register(self, **extra):
+        _RELEASE_CANDIDATES["c"] = {"jobId": 12, "title": "The Woods #1 - 36 (2014-2018)", "source": "torrent",
+                                    "downloadPath": "/16/download?link=x", "releaseKey": "key-1",
+                                    "expiresAt": time.time() + 600, **extra}
+
+    def grab(self, fake, fetched=(b"", None)):
+        store = Mock()
+        with patch("app._qbittorrent_client", return_value=fake), patch("app.catalog_store", return_value=store), \
+             patch("app._enabled_acquisition_service", return_value={"category": "comics"}), \
+             patch("app._fetch_selected_torrent", return_value=fetched) as fetch:
+            result = app.grab_release_candidate(12, "c")
+        return result, store, fetch
+
+    def test_a_torrent_is_added_to_wait_for_its_file_list_and_recorded_by_hash(self):
+        from test_torrent_client import TORRENT, HASH
+        fake = FakeQbittorrent()
+        self.register(pack={"first": 1, "last": 36})
+        result, store, fetch = self.grab(fake, (TORRENT, None))
+        self.assertEqual((result["source"], result["detail"]), ("qbittorrent", "Release sent to qBittorrent."))
+        added = fake.added[0]
+        self.assertEqual((added["category"], added["tags"], added["wait_for_files"], added["torrent"]),
+                         ("comics", ["flipparr", "job-12"], True, TORRENT))
+        store.record_acquisition_download.assert_called_once_with(
+            12, f"torrent:{HASH}:12", "The Woods #1 - 36 (2014-2018)", "key-1", source="qbittorrent")
+        self.assertEqual(store.update_acquisition_job.call_args.args, (12, "grabbed", "Sent to qBittorrent: The Woods #1 - 36 (2014-2018)"))
+        fetch.assert_called_once()
+
+    def test_a_torrent_already_in_the_client_is_joined_not_added_again(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, tags=["flipparr", "job-7", "flipparr-selected"])
+        self.register(infoHash=self.HASH)
+        _result, store, fetch = self.grab(fake)
+        fetch.assert_not_called()
+        self.assertEqual(fake.added, [])
+        self.assertIn("job-12", app.torrent_client.tags_of(fake.torrents[self.HASH]))
+        self.assertEqual(store.record_acquisition_download.call_args.args[1], f"torrent:{self.HASH}:12")
+
+    def test_an_old_client_is_not_sent_a_pack_it_would_fetch_whole(self):
+        fake = FakeQbittorrent(selective=False)
+        self.register(pack={"first": 1, "last": 36}, infoHash=self.HASH)
+        with self.assertRaisesRegex(app.TorrentSubmissionError, "would download the whole pack"):
+            self.grab(fake, (None, f"magnet:?xt=urn:btih:{self.HASH}"))
+        self.assertTrue(issubclass(app.TorrentSubmissionError, SABSubmissionError),
+                        "a client refusing stops the automatic loop, as SABnzbd refusing does")
+
+    def test_prowlarrs_link_is_read_as_a_torrent_or_a_magnet_never_a_page(self):
+        from test_torrent_client import TORRENT
+        prowlarr = {"url": "http://prowlarr:9696", "apiKey": "secret"}
+        opener = MagicMock()
+        with patch("app._enabled_acquisition_service", return_value=prowlarr), \
+             patch("app.urllib.request.build_opener", return_value=opener):
+            opener.open.return_value.__enter__.return_value.read.return_value = TORRENT
+            self.assertEqual(app._fetch_selected_torrent({"downloadPath": "/16/download?link=x"}), (TORRENT, None))
+            request = opener.open.call_args.args[0]
+            self.assertEqual(request.full_url, "http://prowlarr:9696/16/download?link=x")
+            headers = email.message.Message()
+            headers["Location"] = "magnet:?xt=urn:btih:" + "cd" * 20
+            opener.open.side_effect = urllib.error.HTTPError("x", 301, "Moved", headers, None)
+            self.assertEqual(app._fetch_selected_torrent({"downloadPath": "/16/download?link=x"}),
+                             (None, "magnet:?xt=urn:btih:" + "cd" * 20))
+            opener.open.side_effect = None
+            opener.open.return_value.__enter__.return_value.read.return_value = b"<!DOCTYPE html><html>"
+            with self.assertRaisesRegex(ReleaseDownloadError, "not a torrent"):
+                app._fetch_selected_torrent({"downloadPath": "/16/download?link=x"})
+
+    # ---- choosing the files --------------------------------------------------
+
+    WOODS = [(f"The Woods #1 - 36/The Woods {n:03d} (2016) (Digital) (Zone-Empire).cbr", 60_000_000) for n in range(1, 37)]
+
+    def choose(self, fake, *, wanted=(21, 22, 30), statuses=None, release="The Woods #1 - 36 (2014-2018)"):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = self.CONTEXT
+        store.wanted_run_issues.return_value = [
+            {"jobId": 100 + n, "issueId": 200 + n, "issueNumber": str(n),
+             "status": (statuses or {}).get(n, "queued"), "seriesId": "7"} for n in wanted
+        ]
+        store.record_acquisition_download.side_effect = lambda job, *a, **k: {"id": 5000 + job}
+        store.torrent_references.return_value = {"live": 0, "kept": 0}
+        store.torrent_jobs.return_value = []
+        download = {"id": 1, "job_id": 121, "sab_nzo_id": f"torrent:{self.HASH}:121", "status": "queued",
+                    "source": "qbittorrent", "release_title": release, "release_key": "key-1",
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+        with patch("app._qbittorrent_client", return_value=fake), patch("app.catalog_store", return_value=store), \
+             patch("app._fallback_after_sab_failure", return_value={"status": "fallback_queued"}) as fallback:
+            result = app.reconcile_acquisition_download(download)
+        return result, store, fallback
+
+    def test_only_the_wanted_issues_are_fetched_and_the_others_ride_along(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, tags=["flipparr", "job-121"], files=self.WOODS)
+        result, store, _fallback = self.choose(fake, statuses={30: "searching"})
+        self.assertEqual((result["selected"], result["riders"]), (2, 1))
+        chosen = sorted(f["name"].rsplit("/", 1)[1][:13] for f in fake.torrents[self.HASH]["files"] if f["priority"])
+        self.assertEqual(chosen, ["The Woods 021", "The Woods 022"], "#30 is being searched already")
+        self.assertIn("flipparr-selected", app.torrent_client.tags_of(fake.torrents[self.HASH]))
+        self.assertEqual(fake.started, [self.HASH])
+        store.record_acquisition_download.assert_called_once_with(
+            122, f"torrent:{self.HASH}:122", "The Woods #1 - 36 (2014-2018)", "key-1", source="qbittorrent")
+        self.assertIn(call(122, "grabbed", "Coming in the same download as The Woods #21: The Woods #1 - 36 (2014-2018)"),
+                      store.update_acquisition_job.call_args_list)
+        self.assertIn(call(1, "downloading"), store.update_acquisition_download.call_args_list)
+
+    def test_a_pack_without_the_issue_is_refused_saying_what_it_holds(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, tags=["flipparr"], files=self.WOODS[:12])
+        _result, store, fallback = self.choose(fake)
+        message = fallback.call_args.args[2]
+        self.assertTrue(message.startswith("The pack does not hold The Woods #21: it holds The Woods 001"), message)
+        self.assertEqual(fallback.call_args.kwargs, {"kind": "contradiction"})
+        self.assertEqual(fake.deleted, [(self.HASH, True)], "nothing else uses it, so it goes")
+
+    def test_a_single_release_in_several_files_keeps_them_all(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, files=[("Woods/swot.cbr", 50_000_000), ("Woods/extra.cbz", 20_000_000), ("Woods/info.nfo", 1)])
+        result, _store, _fallback = self.choose(fake, release="The Woods 021 (2016) (Digital)")
+        self.assertEqual(result["selected"], 2)
+        self.assertEqual([f["priority"] for f in fake.torrents[self.HASH]["files"]], [1, 1, 0])
+
+    def test_an_issue_joining_a_chosen_torrent_turns_its_own_file_on(self):
+        fake = FakeQbittorrent()
+        torrent = fake.put(self.HASH, tags=["flipparr", "flipparr-selected"], files=self.WOODS)
+        for entry in torrent["files"]:
+            entry["priority"] = 0
+        result, _store, _fallback = self.choose(fake)
+        self.assertEqual(result["status"], "downloading")
+        self.assertEqual([f["index"] for f in fake.torrents[self.HASH]["files"] if f["priority"]], [20])
+        self.assertEqual(fake.started, [self.HASH])
+
+    # ---- following it --------------------------------------------------------
+
+    def follow(self, fake, status="downloading", created=None):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = self.CONTEXT
+        store.torrent_references.return_value = {"live": 0, "kept": 0}
+        store.torrent_jobs.return_value = []
+        download = {"id": 1, "job_id": 121, "sab_nzo_id": f"torrent:{self.HASH}:121", "status": status,
+                    "source": "qbittorrent", "release_title": "The Woods #1 - 36", "release_key": "key-1",
+                    "created_at": created or "2026-09-01T00:00:00+00:00"}
+        with patch("app._qbittorrent_client", return_value=fake), patch("app.catalog_store", return_value=store), \
+             patch("app._fallback_after_sab_failure", return_value={"status": "fallback_queued"}) as fallback, \
+             patch("app._import_completed_download", return_value={"status": "imported"}) as imported:
+            result = app.reconcile_acquisition_download(download)
+        return result, store, fallback, imported
+
+    def test_a_finished_file_is_imported_from_the_torrents_folder(self):
+        fake = FakeQbittorrent()
+        torrent = fake.put(self.HASH, state="uploading", files=self.WOODS)
+        for entry in torrent["files"]:
+            entry["priority"] = 1 if entry["index"] in (20, 21) else 0
+        result, store, _fallback, imported = self.follow(fake)
+        self.assertEqual(result["status"], "imported")
+        storage = imported.call_args.args[2]
+        self.assertEqual(storage, str(app.TORRENT_COMPLETE_ROOT / "The Woods #1 - 36" / "The Woods 021 (2016) (Digital) (Zone-Empire).cbr"))
+        self.assertIn(call(1, "completed", sab_storage=storage), store.update_acquisition_download.call_args_list)
+
+    def test_a_torrent_saved_outside_the_comics_folder_waits_and_says_where(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, state="stalledUP", files=self.WOODS[20:21], save_path="/data/torrents/complete/prowlarr")
+        result, _store, _fallback, imported = self.follow(fake)
+        self.assertEqual(result["status"], "waiting_for_files")
+        self.assertIn("“prowlarr”, not in the “comics” folder", result["detail"])
+        imported.assert_not_called()
+
+    def test_a_broken_gone_or_unshared_torrent_hands_the_issue_on(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, state="missingFiles")
+        _result, _store, fallback, _imported = self.follow(fake)
+        self.assertEqual(fallback.call_args.args[2], "qBittorrent could not finish the torrent (missingFiles)")
+        _result, _store, fallback, _imported = self.follow(FakeQbittorrent())
+        self.assertEqual((fallback.call_args.args[2], fallback.call_args.kwargs), ("qBittorrent no longer has this torrent", {"kind": "lost"}))
+        result, _store, fallback, _imported = self.follow(FakeQbittorrent(), created=dt.datetime.now(dt.timezone.utc).isoformat())
+        self.assertEqual(result["status"], "downloading", "just sent: the client may not list it yet")
+        fallback.assert_not_called()
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, state="stalledDL", num_seeds=0, last_activity=int(time.time()) - 13 * 3600)
+        _result, _store, fallback, _imported = self.follow(fake)
+        self.assertEqual(fallback.call_args.kwargs, {"kind": "lost"})
+        self.assertEqual(fake.deleted, [(self.HASH, True)])
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, state="downloading")
+        result, _store, fallback, _imported = self.follow(fake)
+        self.assertEqual(result["status"], "downloading")
+        fallback.assert_not_called()
+
+    def test_a_torrent_seeds_on_after_import_and_is_not_swept_for_other_issues(self):
+        store = Mock()
+        store.get_acquisition_job_context.return_value = self.CONTEXT
+        store.replacement_for_job.return_value = None
+        store.kept_refused_downloads.return_value = []
+        download = {"id": 1, "job_id": 121, "source": "qbittorrent", "release_title": "The Woods #1 - 36"}
+        with patch("app.import_downloaded_comic", return_value={"destination": "/comics/The Woods 021.cbr", "source": "x",
+                                                                 "size": 1, "sha256": "y"}), \
+             patch("app._catalog_imported_issue", return_value=9), \
+             patch("app._sab_remove_job") as sab_remove, patch("app.shutil.rmtree") as rmtree:
+            result = app._import_completed_download(store, download, "/downloads/torrents/complete/comics/x.cbr")
+        self.assertEqual(result["status"], "imported")
+        sab_remove.assert_not_called()
+        rmtree.assert_not_called()
+        store.wanted_run_issues.assert_not_called()
+
+    # ---- letting go -----------------------------------------------------------
+
+    def test_the_client_stops_a_torrent_at_its_limit_and_then_it_goes(self):
+        fake = FakeQbittorrent()
+        old = int(time.time()) - 7200
+        fake.put("11" * 20, state="stoppedUP", tags=["flipparr"], added_on=old)
+        fake.put("22" * 20, state="uploading", tags=["flipparr"], added_on=old)
+        fake.put("33" * 20, state="stoppedUP", tags=["flipparr"], added_on=old)
+        fake.put("44" * 20, state="stoppedUP", tags=["someone-else"], added_on=old)
+        fake.put("55" * 20, state="metaDL", tags=["flipparr"], added_on=int(time.time()))
+        fake.put("66" * 20, state="downloading", tags=["flipparr"], added_on=old)
+        store = Mock()
+        store.torrent_hashes_in_use.return_value = {"33" * 20}
+        with patch("app._qbittorrent_client", return_value=fake):
+            removed = app._release_seeded_torrents(store)
+        self.assertEqual(removed, 2)
+        self.assertEqual(sorted(fake.deleted), [("11" * 20, True), ("66" * 20, True)],
+                         "stopped by the client, or wanted by nothing: not seeding, not in use, not someone else's, not just added")
+
+    def test_a_stopped_issue_leaves_the_rest_of_its_pack_coming(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, files=self.WOODS)
+        store = Mock()
+        store.get_acquisition_job_context.return_value = self.CONTEXT
+        store.torrent_references.return_value = {"live": 1, "kept": 0}
+        with patch("app._qbittorrent_client", return_value=fake):
+            app._stop_torrent_for_job(store, {"job_id": 121, "sab_nzo_id": f"torrent:{self.HASH}:121"})
+        self.assertEqual([f["index"] for f in fake.torrents[self.HASH]["files"] if not f["priority"]], [20])
+        self.assertEqual(fake.deleted, [])
+        store.torrent_references.return_value = {"live": 0, "kept": 0}
+        with patch("app._qbittorrent_client", return_value=fake):
+            app._stop_torrent_for_job(store, {"job_id": 121, "sab_nzo_id": f"torrent:{self.HASH}:121"})
+        self.assertEqual(fake.deleted, [(self.HASH, True)])
+
+    def test_kept_evidence_of_a_torrent_goes_through_the_client(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH)
+        store = Mock()
+        store.kept_refused_downloads.return_value = [{"id": 3, "sab_nzo_id": f"torrent:{self.HASH}:121", "sab_storage": "/x"}]
+        store.torrent_references.return_value = {"live": 0, "kept": 0}
+        with patch("app._qbittorrent_client", return_value=fake), patch("app._sab_remove_job") as sab_remove:
+            self.assertEqual(app._discard_kept_downloads(store, job_id=121), 1)
+        sab_remove.assert_not_called()
+        store.forget_kept_download.assert_called_once_with(3)
+        self.assertEqual(fake.deleted, [(self.HASH, True)])
+
+    def test_progress_is_of_the_wanted_files(self):
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, state="downloading", progress=0.5, amount_left=60_000_000, eta=754)
+        rows = [{"job_id": 121, "sab_nzo_id": f"torrent:{self.HASH}:121"}, {"job_id": 122, "sab_nzo_id": f"torrent:{self.HASH}:122"}]
+        with patch("app._qbittorrent_client", return_value=fake):
+            progress = app._torrent_progress(rows)
+        self.assertEqual(progress["121"], {"percent": 50.0, "sizeLeft": "60 MB", "timeLeft": "0:12:34", "state": "downloading"})
+        self.assertEqual(set(progress), {"121", "122"})

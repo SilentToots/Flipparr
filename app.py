@@ -45,6 +45,7 @@ import urllib.parse
 import urllib.request
 
 from reading_list_formats import parse_reading_list
+import torrent_client
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
@@ -2065,6 +2066,15 @@ COMIC_LIBRARY_ROOT = Path(_env("LIBRARY_ROOT", "/comics"))
 SAB_COMPLETE_ROOT = Path(
     _env("SAB_COMPLETE_ROOT", "/downloads/complete/comics")
 )
+# qBittorrent's comics category folder, mounted read-only: a torrent keeps
+# seeding from it after its files are copied into the library, and only the
+# client itself removes anything there.
+TORRENT_COMPLETE_ROOT = Path(
+    _env("TORRENT_COMPLETE_ROOT", "/downloads/torrents/complete/comics")
+)
+# A magnet whose file list never arrives, and a torrent nobody shares.
+TORRENT_METADATA_GRACE_SECONDS = 2 * 3600
+TORRENT_STALLED_SECONDS = 12 * 3600
 IMPORT_POLL_SECONDS = max(5, int(_env("IMPORT_POLL_SECONDS", "15")))
 # The sweep itself is cheap; the backoff decides how often any given issue is
 # actually searched, so this only sets how promptly a due one is picked up.
@@ -2238,6 +2248,19 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "setupSummary": "Downloads what you pick and reports progress back.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
         "needsApiKey": True,
+    },
+    # Torrents, for what Usenet does not carry: manga volumes, and whole runs
+    # as packs -- which DirectSite loses to file-host pages and corrupt archives
+    # (the owner, 2026-09-30). It signs in with a username rather than a key,
+    # and neither is required: a client that lets its own network in needs
+    # no sign-in at all.
+    "qbittorrent": {
+        "name": "qBittorrent", "kind": "Download client",
+        "capabilities": ["Torrent downloads", "Only the wanted files of a pack", "Imports while it seeds"],
+        "description": "Download selected torrents -- only the issues you want from a pack -- and import them while they seed.",
+        "setupSummary": "Downloads torrents, including just the issues you want from a pack.",
+        "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
+        "needsApiKey": False,
     },
     # A public site rather than a service of yours: nothing to authenticate to,
     # which is why `needsApiKey` exists. Searching it is open; fetching from it
@@ -2863,12 +2886,18 @@ def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = 
     return {"provider": provider_id, "status": "connected", "detail": detail}
 
 
+# Download clients file Flipparr's downloads under a category of their own.
+_CATEGORY_SERVICES = ("sabnzbd", "qbittorrent")
+# Every client that can take a release; automatic search needs one of them.
+DOWNLOAD_CLIENTS = ("sabnzbd", "qbittorrent")
+
+
 def _acquisition_service_defaults() -> dict[str, dict[str, Any]]:
     return {
         service_id: {
             "enabled": bool(definition["defaultEnabled"]),
             "url": str(definition["defaultUrl"]),
-            **({"category": "comics"} if service_id == "sabnzbd" else {}),
+            **({"category": "comics"} if service_id in _CATEGORY_SERVICES else {}),
         }
         for service_id, definition in ACQUISITION_SERVICE_DEFINITIONS.items()
     }
@@ -2911,6 +2940,13 @@ def load_acquisition_service_config() -> dict[str, dict[str, Any]]:
         sab_category = str(os.environ.get("SABNZBD_CATEGORY") or "").strip()
         if sab_category:
             config["sabnzbd"]["category"] = sab_category
+        for key, variable in (("url", "QBITTORRENT_URL"), ("username", "QBITTORRENT_USERNAME"),
+                              ("password", "QBITTORRENT_PASSWORD"), ("category", "QBITTORRENT_CATEGORY")):
+            value = str(os.environ.get(variable) or "").strip()
+            if value:
+                config["qbittorrent"][key] = value.rstrip("/") if key == "url" else value
+        if str(os.environ.get("QBITTORRENT_URL") or "").strip():
+            config["qbittorrent"]["enabled"] = True
         return config
 
 
@@ -2931,8 +2967,11 @@ def public_acquisition_service_config() -> dict[str, Any]:
             "url": _redacted_upstream_url(
                 str(values.get("url") or definition["defaultUrl"])
             ).split("?", 1)[0],
-            "category": str(values.get("category") or "comics") if service_id == "sabnzbd" else None,
-            "credentialHint": "Saved locally" if values.get("apiKey") else None,
+            "category": str(values.get("category") or "comics") if service_id in _CATEGORY_SERVICES else None,
+            # A sign-in name is not a secret -- the settings form shows it back
+            # -- but its companion never leaves the server.
+            **({"username": str(values.get("username") or "")} if service_id == "qbittorrent" else {}),
+            "credentialHint": "Saved locally" if values.get("apiKey") or values.get("password") else None,
         })
     return {"services": services, "credentialStorage": "local-file"}
 
@@ -2956,14 +2995,22 @@ def save_acquisition_service_config(service_id: str, payload: dict[str, Any]) ->
         supplied_key = str(payload.get("apiKey") or "").strip()
         if supplied_key:
             current["apiKey"] = supplied_key
+        if service_id == "qbittorrent":
+            if "username" in payload:
+                current["username"] = str(payload.get("username") or "").strip()
+            # An empty field keeps the saved one, as the API key field does.
+            supplied = str(payload.get("password") or "")
+            if supplied:
+                current["password"] = supplied
         if bool(payload.get("clearCredentials")):
-            current.pop("apiKey", None)
+            for credential in ("apiKey", "username", "password"):
+                current.pop(credential, None)
         if "enabled" in payload:
             current["enabled"] = bool(payload["enabled"])
-        if service_id == "sabnzbd" and "category" in payload:
+        if service_id in _CATEGORY_SERVICES and "category" in payload:
             category = str(payload.get("category") or "").strip()
             if not category:
-                raise ValueError("Enter a SABnzbd category")
+                raise ValueError(f"Enter a {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} category")
             current["category"] = category
         config_path = acquisition_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2995,6 +3042,29 @@ def test_acquisition_service_connection(
             # Saying so now rather than letting every grab fail in silence,
             # which is the shape of mylar3's #1815.
             detail += " Its API lives at /v1, so that is the address Flipparr will use."
+        return {"service": service_id, "status": "connected", "detail": detail}
+    if service_id == "qbittorrent":
+        username = str(payload.get("username") if payload.get("username") is not None else config.get("username") or "")
+        password = str(payload.get("password") or config.get("password") or "")
+        category = str(payload.get("category") or config.get("category") or "comics").strip() or "comics"
+        client = torrent_client.QBittorrent(url, username, password, user_agent=f"Flipparr/{APP_VERSION}")
+        try:
+            version = client.version()
+            default = client.default_save_path().rstrip("/")
+            # Created beside the client's own folder when it is not there yet,
+            # so its downloads sit in a folder Flipparr can be given.
+            saves_to = client.ensure_category(category, f"{default}/{category}" if default else "")
+            selective = client.supports_selection()
+        except torrent_client.TorrentClientError as exc:
+            raise ValueError(str(exc)) from None
+        detail = f"Connected to qBittorrent {version}; downloads will use the “{category}” category"
+        detail += f", which saves to {saves_to}." if saves_to else "."
+        if saves_to and Path(saves_to.rstrip("/")).name.casefold() != TORRENT_COMPLETE_ROOT.name.casefold():
+            detail += (f" Flipparr reads finished torrents from a folder named “{TORRENT_COMPLETE_ROOT.name}”,"
+                       " so that category's folder has to end in that name.")
+        if not selective:
+            detail += (" This version downloads a pack whole, so packs are not taken from it;"
+                       " qBittorrent 4.5.5 or later downloads only the issues wanted.")
         return {"service": service_id, "status": "connected", "detail": detail}
     if service_id == "direct_site":
         found = direct_site_search("batman", limit=3, base_url=url)
@@ -3028,6 +3098,39 @@ def _enabled_acquisition_service(service_id: str) -> dict[str, Any]:
         name = ACQUISITION_SERVICE_DEFINITIONS[service_id]["name"]
         raise ValueError(f"Connect and enable {name} in Settings first")
     return {**config, "url": _normalize_service_url(config.get("url"))}
+
+
+def _enabled_download_clients() -> list[str]:
+    """The download clients that can take a release right now."""
+    ready = []
+    for service in DOWNLOAD_CLIENTS:
+        try:
+            _enabled_acquisition_service(service)
+        except Exception:  # noqa: BLE001 -- not configured is an answer
+            continue
+        ready.append(service)
+    return ready
+
+
+# One session per client configuration: qBittorrent signs in with a cookie,
+# and a fresh client per call would sign in on every question.
+_QBITTORRENT_CLIENTS: dict[tuple[str, str, str], torrent_client.QBittorrent] = {}
+_QBITTORRENT_CLIENTS_LOCK = threading.Lock()
+
+
+def _qbittorrent_client() -> torrent_client.QBittorrent:
+    config = _enabled_acquisition_service("qbittorrent")
+    key = (str(config["url"]), str(config.get("username") or ""),
+           hashlib.sha256(str(config.get("password") or "").encode()).hexdigest())
+    with _QBITTORRENT_CLIENTS_LOCK:
+        client = _QBITTORRENT_CLIENTS.get(key)
+        if client is None:
+            _QBITTORRENT_CLIENTS.clear()
+            client = torrent_client.QBittorrent(
+                key[0], key[1], str(config.get("password") or ""), user_agent=f"Flipparr/{APP_VERSION}",
+            )
+            _QBITTORRENT_CLIENTS[key] = client
+    return client
 
 
 def preferred_language() -> str:
@@ -3487,9 +3590,31 @@ def _pack_worth_taking(
         return False, f"covers {len(covered)} of the {len(wanted)} wanted"
     size = int(candidate.get("sizeBytes") or 0)
     cap = PACK_BYTES_PER_COVERED_ISSUE * len(covered)
-    if size and size > cap:
+    # A torrent pack is fetched a file at a time: only the wanted issues are
+    # downloaded, and their size is judged when the file list is known.
+    if size and size > cap and candidate.get("source") != "torrent":
         return False, f"{size / 1_000_000_000:.1f} GB for {len(covered)} issues"
     return True, f"covers {len(covered)} wanted issues"
+
+
+def _automatically_takeable(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    """The candidates an automatic grab may try, and why a torrent was not.
+
+    A torrent nobody shares never finishes, and one with no client connected
+    cannot be sent anywhere; both stay in Find release."""
+    takeable, unshared = [], []
+    for item in candidates:
+        if item.get("grabbable") is False:
+            continue
+        if item.get("source") == "torrent" and not int(item.get("seeders") or 0):
+            unshared.append(item)
+            continue
+        takeable.append(item)
+    note = ""
+    if unshared and not takeable:
+        note = (f"Found {unshared[0].get('title') or 'a torrent'} but nobody is sharing it right now. "
+                "Find release lists it if you want it.")
+    return takeable, note
 
 
 # A feed of search results, not a download: small, and capped so a redirect to
@@ -3988,7 +4113,12 @@ def _release_pack_coverage(title: Any, context: dict[str, Any]) -> tuple[int, in
     wanted = re.match(r"^\s*#?\s*(\d+)", str(context.get("issueNumber") or ""))
     if not wanted:
         return None
-    stated = _release_issue_range(title, context.get("runIssueCount"))
+    # A manga volume range is the pack; for a comic it is collected editions,
+    # which `_release_issue_range` sets aside.
+    if context.get("format") == "manga":
+        stated = _manga_pack_range(title)
+    else:
+        stated = _release_issue_range(title, context.get("runIssueCount"))
     if not stated:
         return None
     number = int(wanted.group(1))
@@ -4028,6 +4158,25 @@ class ReleaseDownloadError(RuntimeError):
 
 class SABSubmissionError(RuntimeError):
     """SABnzbd could not accept an NZB that Flipparr already retrieved."""
+
+
+class TorrentSubmissionError(SABSubmissionError):
+    """qBittorrent could not take a torrent. A download client refusing, like
+    SABnzbd refusing: the next release would meet the same answer."""
+
+
+def _release_seeders(release: dict[str, Any]) -> int:
+    try:
+        return max(0, int(release.get("seeders") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pack_label(pack: tuple[int, int], context: dict[str, Any]) -> str:
+    """ "Pack, #1-#36", or for manga "Pack, Vol. 1-39"."""
+    if context.get("format") == "manga":
+        return f"Pack, Vol. {pack[0]}-{pack[1]}"
+    return f"Pack, #{pack[0]}-#{pack[1]}"
 
 
 def _prowlarr_download_reference(download_url: Any) -> str:
@@ -4219,8 +4368,9 @@ def manga_edition(publisher: Any) -> str | None:
 
 # Manga is posted in Comics and in EBook, where comics are only in Comics --
 # and some of it under TV/Anime: Blue Lock v02 and v24 exist only there, and
-# every other volume was found, so those two looked unposted.
-MANGA_CATEGORIES = ("7030", "7020", "5070")
+# every other volume was found, so those two looked unposted. PublicTracker files its
+# English volumes under Books as a whole (7000), not under a child of it.
+MANGA_CATEGORIES = ("7030", "7020", "5070", "7000")
 # CBZ and CBR only: the library reads comic archives, and an EPUB would sit
 # there looking like the volume without being one it can show.
 MANGA_FILE_TYPES = frozenset({".cbz", ".cbr"})
@@ -4231,6 +4381,11 @@ _MANGA_VOLUME = re.compile(
 )
 _MANGA_RANGE = re.compile(
     r"(?<![A-Za-z0-9])(?:v|vol(?:ume)?)\.?\s*\d{1,4}\s*[-–~]\s*(?:v|vol(?:ume)?)?\.?\s*\d{1,4}(?![\dA-Za-z])",
+    re.I,
+)
+# The bounds of that range, as numbers: "v01-39" is volumes 1 to 39.
+_MANGA_RANGE_BOUNDS = re.compile(
+    r"(?<![A-Za-z0-9])(?:v|vol(?:ume)?)\.?\s*0*(\d{1,4})\s*[-–~]\s*(?:v|vol(?:ume)?)?\.?\s*0*(\d{1,4})(?![\dA-Za-z])",
     re.I,
 )
 _MANGA_CHAPTER = re.compile(r"(?<![A-Za-z0-9])(?:c|ch|chapter)\.?\s*\d{1,4}(?![\dA-Za-z])", re.I)
@@ -4291,6 +4446,28 @@ def _strip_manga_publisher(value: Any, publisher: Any = None) -> str:
 
 def _manga_volumes(name: Any) -> set[int]:
     return {int(found.group(1)) for found in _MANGA_VOLUME.finditer(str(name or ""))}
+
+
+def _manga_pack_range(title: Any) -> tuple[int, int] | None:
+    """The volumes a manga pack says it holds -- "Blue Lock v01-39" is 1 to
+    39 -- or None for one volume, a chapter run, or no range at all."""
+    match = _MANGA_RANGE_BOUNDS.search(_manga_release_name(title))
+    if not match:
+        return None
+    first, last = int(match.group(1)), int(match.group(2))
+    return (first, last) if first < last else None
+
+
+def _manga_names_series(lead: str, context: dict[str, Any]) -> bool:
+    """Whether the text before a volume marker is this series, by equality:
+    "One Piece - Heroines v01" is a spin-off, and a title that merely
+    contains the series is how specials got through."""
+    bare_wanted = normalized_title(_without_leading_article(context.get("seriesTitle")))
+    leads = {lead, _strip_manga_publisher(lead, context.get("publisher"))}
+    return bool(bare_wanted) and any(
+        normalized_title(_without_leading_article(re.sub(r"[-–—:]+", " ", form))) == bare_wanted
+        for form in leads
+    )
 
 
 def _manga_file_volume(name: Any) -> str | None:
@@ -4625,31 +4802,39 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     # "Blue.Lock.Vol.2.2022.ANiME.DUAL.COMPLETE.BLURAY" scored as volume 2.
     if _MANGA_VIDEO.search(name):
         return 0, ["A video release, not a book"]
-    # "Chainsaw Man - 13 (cbz)", 974 MB, is thirteen chapters' worth of
-    # something, not volume 13; "v01-v11" is eleven volumes in one file.
-    if _MANGA_RANGE.search(name) or _MANGA_CHAPTER.search(name):
-        return 0, ["A pack, not one volume"]
-    volumes = _manga_volumes(name)
     wanted = str(context.get("issueNumber") or "").strip()
-    marker = _MANGA_VOLUME.search(name)
-    if len(volumes) != 1 or not wanted.isdigit() or not marker:
-        return 0, ["No single volume number"]
     score = 0
     reasons: list[str] = []
-    lead = name[: marker.start()]
-    bare_wanted = normalized_title(_without_leading_article(context.get("seriesTitle")))
-    # Equality, as for comics: "One Piece - Heroines v01" is a spin-off, and
-    # a title that merely contains the series is how specials got through.
-    leads = {lead, _strip_manga_publisher(lead, context.get("publisher"))}
-    if bare_wanted and any(
-        normalized_title(_without_leading_article(re.sub(r"[-–—:]+", " ", form))) == bare_wanted
-        for form in leads
-    ):
-        score += 50
-        reasons.append("Series title matches")
-    if volumes == {int(wanted)}:
-        score += 35
-        reasons.append(f"Volume {int(wanted)} matches")
+    # "Blue Lock v01-39" is thirty-nine volumes. It is never this volume --
+    # it scores below one -- but it holds it, and for a volume nobody posts on
+    # its own, or a run pulled whole, a pack holding it is the answer
+    # (the owner, 2026-09-30). The torrent client then fetches only the wanted
+    # volumes out of it. A chapter run is still not a volume.
+    span = _manga_pack_range(name)
+    if span:
+        if not wanted.isdigit() or not span[0] <= int(wanted) <= span[1]:
+            return 0, [f"A pack of volumes {span[0]}-{span[1]}, without volume {wanted}"]
+        range_marker = _MANGA_RANGE.search(name)
+        if range_marker and _manga_names_series(name[: range_marker.start()], context):
+            score += 50
+            reasons.append("Series title matches")
+        score += 22
+        reasons.append(f"Volumes {span[0]}-{span[1]} include {int(wanted)}")
+    else:
+        # "Chainsaw Man - 13 (cbz)", 974 MB, is thirteen chapters' worth of
+        # something, not volume 13.
+        if _MANGA_RANGE.search(name) or _MANGA_CHAPTER.search(name):
+            return 0, ["A pack, not one volume"]
+        volumes = _manga_volumes(name)
+        marker = _MANGA_VOLUME.search(name)
+        if len(volumes) != 1 or not wanted.isdigit() or not marker:
+            return 0, ["No single volume number"]
+        if _manga_names_series(name[: marker.start()], context):
+            score += 50
+            reasons.append("Series title matches")
+        if volumes == {int(wanted)}:
+            score += 35
+            reasons.append(f"Volume {int(wanted)} matches")
     year = str(context.get("publicationYear") or context.get("seriesYear") or "").strip()
     if year and year in name:
         score += 10
@@ -4857,6 +5042,13 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     # each brings back the same releases again.
     results_seen: set[str] = set()
     near_misses: list[dict[str, Any]] = []
+    # A torrent can be offered either way, but taken only by a client that
+    # speaks it. Usenet results stay takeable as they always were.
+    try:
+        _enabled_acquisition_service("qbittorrent")
+        torrents_ready = True
+    except ValueError:
+        torrents_ready = False
 
     def candidates_for(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -4865,8 +5057,12 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 continue
             protocol = str(release.get("protocol") or "").casefold()
             title = str(release.get("title") or "").strip()
-            download_url = str(release.get("downloadUrl") or "").strip()
-            if protocol != "usenet" or not title or not download_url:
+            # PublicTracker's default is a magnet link only, so a torrent with no
+            # download link is still one -- through Prowlarr's magnet proxy.
+            download_url = str(release.get("downloadUrl") or "").strip() or (
+                str(release.get("magnetUrl") or "").strip() if protocol == "torrent" else ""
+            )
+            if protocol not in ("usenet", "torrent") or not title or not download_url:
                 continue
             try:
                 download_path = _prowlarr_download_reference(download_url)
@@ -4874,11 +5070,18 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 continue
             release_key = _release_candidate_key(release, download_path)
             results_seen.add(release_key)
+            source = "torrent" if protocol == "torrent" else "usenet"
+            seeders = _release_seeders(release) if source == "torrent" else None
+            about = {
+                "source": source, "seeders": seeders,
+                "infoHash": str(release.get("infoHash") or "").strip().casefold() or None,
+            }
             normalized_title = re.sub(r"\s+", " ", title).strip().casefold()
             if release_key in rejected_keys or normalized_title in rejected_titles:
                 reason = refusal_reasons.get(release_key) or refusal_reasons.get(normalized_title)
                 near_misses.append({"title": title, "score": None, "key": release_key, "downloadPath": download_path,
-                                    "reasons": [f"Refused before: {reason}" if reason else "Refused before for this issue"]})
+                                    "reasons": [f"Refused before: {reason}" if reason else "Refused before for this issue"],
+                                    **about})
                 continue
             score, reasons = _release_candidate_score(release, context)
             # A pack scores below an exact single by design, so it would never
@@ -4887,7 +5090,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             pack = _release_pack_coverage(title, context)
             if score < 85 and not (pack and score >= 70):
                 near_misses.append({"title": title, "score": score, "reasons": reasons, "key": release_key,
-                                    "downloadPath": download_path})
+                                    "downloadPath": download_path, **about})
                 continue
             seed = f"{job_id}:{release.get('guid')}:{title}:{now}"
             candidate_id = hashlib.sha256(seed.encode()).hexdigest()[:24]
@@ -4898,19 +5101,25 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                     "title": title,
                     "releaseKey": release_key,
                     "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
+                    **about,
+                    **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
                 }
+            takeable = source == "usenet" or torrents_ready
             candidates.append({
                 "id": candidate_id, "title": title,
                 "indexer": str(release.get("indexer") or "Unknown indexer"),
                 "sizeBytes": int(release.get("size") or 0),
-                "publishDate": release.get("publishDate"), "protocol": "Usenet",
+                "publishDate": release.get("publishDate"),
+                "protocol": "Torrent" if source == "torrent" else "Usenet",
                 "matchScore": score, "matchReasons": reasons,
                 "matchStrength": (
                     "Strong match" if score >= 85
-                    else f"Pack, #{pack[0]}-#{pack[1]}" if pack else "Possible match"
+                    else _pack_label(pack, context) if pack else "Possible match"
                 ),
                 "formatTags": _release_format_tags(title),
-                "source": "usenet", "grabbable": True,
+                "source": source, "grabbable": takeable, "releaseKey": release_key,
+                **({"seeders": seeders} if source == "torrent" else {}),
+                **({} if takeable else {"grabHint": "Connect qBittorrent in Settings to download torrents."}),
                 **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
             })
         return candidates
@@ -4944,7 +5153,11 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             job_id, "queued", f"Search did not finish ({exc}); it will be tried again"
         )
         raise
-    candidates.sort(key=lambda item: (-item["matchScore"], -item["sizeBytes"], item["title"]))
+    # Usenet first at an equal score, then the healthiest swarm.
+    candidates.sort(key=lambda item: (
+        -item["matchScore"], 0 if item.get("source") != "torrent" else 1,
+        -int(item.get("seeders") or 0), -item["sizeBytes"], item["title"],
+    ))
     candidates = candidates[:24]
     # Nothing found is a finding. Reporting it as "0 release candidates found"
     # and then letting reconcile stamp the boilerplate back over it left an
@@ -4973,16 +5186,20 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     for entry in ordered:
         reason = _set_aside_reason(entry["score"], entry["reasons"])
         aside_id = hashlib.sha256(f"{job_id}:aside:{entry['key']}:{now}".encode()).hexdigest()[:24]
+        source = str(entry.get("source") or "usenet")
+        takeable = source == "usenet" or torrents_ready
         with _RELEASE_CANDIDATE_LOCK:
             _RELEASE_CANDIDATES[aside_id] = {
                 "jobId": int(job_id), "downloadPath": entry["downloadPath"], "title": entry["title"],
                 "releaseKey": entry["key"], "expiresAt": now + _RELEASE_CANDIDATE_TTL_SECONDS,
-                "source": "usenet", "setAside": True, "setAsideReason": reason,
+                "source": source, "seeders": entry.get("seeders"), "infoHash": entry.get("infoHash"),
+                "setAside": True, "setAsideReason": reason,
             }
         set_aside.append({
             "id": aside_id, "title": entry["title"], "score": entry["score"], "reasons": entry["reasons"],
             "copies": len(entry["listings"]), "setAside": True, "refused": entry["score"] is None,
-            "reason": reason, "source": "usenet", "grabbable": True,
+            "reason": reason, "source": source, "grabbable": takeable,
+            **({"seeders": entry.get("seeders")} if source == "torrent" else {}),
         })
     return {
         "job": context, "query": query, "candidateCount": len(candidates),
@@ -5026,6 +5243,9 @@ def _lift_release_refusal(store: Any, job_id: int, release_key: str, title: str)
             if not isinstance(row, dict):
                 continue
             if re.sub(r"\s+", " ", str(row.get("release_title") or "")).strip().casefold() == wanted:
+                if str(row.get("sab_nzo_id") or "").startswith("torrent:"):
+                    # The same torrent is being taken again: it is kept.
+                    continue
                 _sab_remove_job({"sab_nzo_id": row.get("sab_nzo_id"), "sab_storage": row.get("sab_storage")})
         store.forget_release_refusal(int(job_id), release_key, title)
     except Exception as exc:  # noqa: BLE001 -- the grab is the point; a refusal left behind only sets it aside again
@@ -5047,7 +5267,121 @@ def grab_release_candidate(job_id: int, candidate_id: str, *, anyway: bool = Fal
     by_hand = {"anyway": True} if anyway else {}
     if candidate and source == "direct_site":
         return grab_direct_site_release(job_id, candidate_id, **by_hand)
+    if candidate and source == "torrent":
+        return send_release_to_qbittorrent(job_id, candidate_id, **by_hand)
     return send_release_to_sabnzbd(job_id, candidate_id, **by_hand)
+
+
+def _fetch_selected_torrent(candidate: dict[str, Any]) -> tuple[bytes | None, str | None]:
+    """The torrent Prowlarr's link stands for: a .torrent file, or a magnet
+    link -- Prowlarr answers a magnet with a redirect to it, which is read
+    rather than followed. A redirect to an ordinary address is fetched once,
+    without Prowlarr's key."""
+    prowlarr = _enabled_acquisition_service("prowlarr")
+    reference = urllib.parse.urlsplit(str(candidate.get("downloadPath") or ""))
+    base = urllib.parse.urlsplit(str(prowlarr["url"]))
+    endpoint = urllib.parse.urlunsplit((base.scheme, base.netloc, reference.path, reference.query, ""))
+    request = urllib.request.Request(endpoint, headers={
+        "Accept": "application/x-bittorrent, */*;q=0.1", "X-Api-Key": str(prowlarr["apiKey"]),
+        "User-Agent": f"Flipparr/{APP_VERSION}",
+    })
+    try:
+        with urllib.request.build_opener(_ReportRedirect).open(request, timeout=45.0) as response:
+            payload = response.read(NZB_MAX_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        if exc.code in _UPLOAD_REDIRECT_CODES:
+            location = str(exc.headers.get("Location") or "").strip()
+            if location.casefold().startswith("magnet:"):
+                return None, location
+            if urllib.parse.urlsplit(location).scheme in ("http", "https"):
+                try:
+                    payload = fetch_bytes_with_headers(
+                        location, {"Accept": "application/x-bittorrent, */*;q=0.1",
+                                   "User-Agent": f"Flipparr/{APP_VERSION}"},
+                        timeout=45.0, max_bytes=NZB_MAX_BYTES,
+                    )
+                except Exception:  # noqa: BLE001 -- said as one failure below
+                    raise ReleaseDownloadError("The indexer's torrent link did not answer") from None
+            else:
+                raise ReleaseDownloadError("Prowlarr's torrent link leads nowhere Flipparr can follow") from None
+        else:
+            raise ReleaseDownloadError(
+                "Prowlarr rejected the torrent request" if exc.code in {401, 403}
+                else f"Prowlarr could not fetch the torrent ({exc.code})"
+            ) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ReleaseDownloadError("Flipparr could not retrieve the torrent from Prowlarr") from None
+    if len(payload) > NZB_MAX_BYTES:
+        raise ReleaseDownloadError("Prowlarr's answer is too large to be a torrent file")
+    text = payload.strip()
+    if text[:7].lower() == b"magnet:":
+        return None, text.decode("utf-8", "replace")
+    if not torrent_client.looks_like_torrent(payload):
+        raise ReleaseDownloadError("Prowlarr returned something that is not a torrent")
+    return payload, None
+
+
+def send_release_to_qbittorrent(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
+    """Hand a torrent to qBittorrent, to wait for its file list.
+
+    It is added to stop as soon as its files are known, so that only the ones
+    wanted are fetched: one volume out of "Blue Lock v01-39" is 400 MB, not
+    16 GB. The choosing happens when the import worker next looks at it
+    (`_choose_torrent_files`). A torrent qBittorrent already has -- a pack
+    another issue took -- is joined rather than added again.
+    """
+    candidate = _claim_release_candidate(job_id, candidate_id, anyway=anyway)
+    if str(candidate.get("source") or "") != "torrent":
+        raise ValueError("That result is not a torrent, so qBittorrent cannot take it")
+    client = _qbittorrent_client()
+    title = str(candidate.get("title") or "Torrent")
+    release_key = str(candidate.get("releaseKey") or "").strip() or hashlib.sha256(
+        f"candidate|{title}|{candidate.get('downloadPath')}".encode()
+    ).hexdigest()
+    config = _enabled_acquisition_service("qbittorrent")
+    tags = ["flipparr", f"job-{int(job_id)}"]
+    try:
+        info_hash_ = str(candidate.get("infoHash") or "").strip().casefold() or None
+        present = client.info(hashes=[info_hash_]) if info_hash_ else []
+        torrent = magnet = None
+        if not present:
+            torrent, magnet = _fetch_selected_torrent(candidate)
+            if not info_hash_:
+                info_hash_ = torrent_client.info_hash(torrent) if torrent else torrent_client.magnet_hash(magnet)
+            if not info_hash_:
+                raise ReleaseDownloadError("Prowlarr's link names no torrent Flipparr can follow")
+            present = client.info(hashes=[info_hash_])
+        if present:
+            client.add_tags([info_hash_], tags)
+        else:
+            selective = client.supports_selection()
+            if candidate.get("pack") and not selective:
+                raise TorrentSubmissionError(
+                    f"qBittorrent {client.version()} would download the whole pack; "
+                    "4.5.5 or later downloads only the issues wanted"
+                )
+            client.add_torrent(
+                torrent=torrent, magnet=magnet, category=str(config.get("category") or "comics"),
+                tags=tags, name=title, wait_for_files=selective,
+            )
+    except torrent_client.TorrentClientError as exc:
+        raise TorrentSubmissionError(str(exc)) from None
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        raise TorrentSubmissionError(f"Flipparr could not reach qBittorrent: {exc}") from None
+    store = catalog_store()
+    if anyway:
+        _lift_release_refusal(store, job_id, release_key, title)
+    store.record_acquisition_download(
+        job_id, f"torrent:{info_hash_}:{int(job_id)}", title, release_key, source="qbittorrent",
+        **({"taken_by_hand": True} if anyway else {}),
+    )
+    job = store.update_acquisition_job(
+        job_id, "grabbed", f"Taken by hand: {title}" if anyway else f"Sent to qBittorrent: {title}",
+    )
+    with _RELEASE_CANDIDATE_LOCK:
+        _RELEASE_CANDIDATES.pop(candidate_id, None)
+    return {"status": "grabbed", "source": "qbittorrent", "job": job, "release": {"title": title},
+            "detail": "Release sent to qBittorrent.", "takenByHand": bool(anyway)}
 
 
 def grab_direct_site_release(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
@@ -5139,6 +5473,8 @@ def stop_acquisition_download(job_id: int) -> dict[str, Any]:
             _sab_remove_job(download)
         except Exception as exc:  # noqa: BLE001 -- SABnzbd keeping the files is not a reason to fail the stop
             log_event("sab_stop_failed", level="info", job_id=job_id, error=str(exc)[:160])
+    elif download.get("source") == "qbittorrent":
+        _stop_torrent_for_job(store, download)
     else:
         with _DIRECT_FETCHES_LOCK:
             flag = _DIRECT_FETCHES.get(int(download["id"]))
@@ -5153,6 +5489,23 @@ def stop_acquisition_download(job_id: int) -> dict[str, Any]:
         pass
     log_event("download_stopped", job_id=job_id, release=str(download.get("release_title") or "")[:200])
     return result
+
+
+def _stop_torrent_for_job(store: Any, download: dict[str, Any]) -> None:
+    """A stopped issue's torrent goes when nothing else uses it; while other
+    issues are still coming in it, only this issue's file is left out."""
+    info_hash_ = _torrent_hash(download)
+    if not info_hash_ or _release_torrent(store, info_hash_):
+        return
+    try:
+        client = _qbittorrent_client()
+        files = _torrent_comics(client.files(info_hash_))
+        context = store.get_acquisition_job_context(int(download["job_id"]))
+        mine = _torrent_file_matching(files, context)
+        if mine is not None and len(files) > 1:
+            client.set_file_priority(info_hash_, [int(mine["index"])], 0)
+    except Exception as exc:  # noqa: BLE001 -- the stop itself stands
+        log_event("torrent_stop_failed", level="info", job_id=int(download["job_id"]), error=str(exc)[:160])
 
 
 def _looks_like_a_page(content_type: str, first_bytes: bytes) -> bool:
@@ -5790,7 +6143,15 @@ def _choose_downloaded_comic(
     if not (score >= 180 and selected.get("issueMatch") and selected.get("titleRatio", 0) >= 0.55):
         judged = [(info, _download_contradiction(info, context)) for info in readable]
         uncontradicted = [info for info, contradiction in judged if not contradiction]
-        if release_matches and len(uncontradicted) == 1:
+        # A pack's title never scores as the issue itself, but a pack of this
+        # series that holds it vouches for one file that names the issue.
+        # Never for a file that names nothing: that is taken on a matching
+        # release's word alone.
+        pack_vouches = False
+        if not release_matches and release_title and len(uncontradicted) == 1 and uncontradicted[0].get("issueMatch"):
+            _pack_score, said = _release_candidate_score({"title": release_title}, context)
+            pack_vouches = bool(_release_pack_coverage(release_title, context)) and "Series title matches" in said
+        if (release_matches or pack_vouches) and len(uncontradicted) == 1:
             selected = {**uncontradicted[0], "acceptedOn": "release"}
         elif not uncontradicted:
             raise refuse(judged[0][1], "contradiction")
@@ -5993,7 +6354,17 @@ def import_downloaded_comic(
 ) -> dict[str, Any]:
     store = catalog_store()
     context = store.get_acquisition_job_context(int(download["job_id"]))
-    if str(download.get("source") or "sabnzbd") != "sabnzbd":
+    source = str(download.get("source") or "sabnzbd")
+    if source == "qbittorrent":
+        # The file qBittorrent finished, already translated into the mount of
+        # its comics folder; read in place, and never removed from there.
+        completed_root = TORRENT_COMPLETE_ROOT
+        source_container = Path(str(download.get("sab_storage") or ""))
+        if not source_container.exists():
+            raise CompletedDownloadNotVisible(
+                "The finished torrent is not visible in Flipparr's torrents folder yet"
+            )
+    elif source != "sabnzbd":
         # Flipparr fetched this one into its own staging folder, so there is no
         # SABnzbd path to translate and the containment root is staging's.
         completed_root = acquisition_staging_dir("direct_site")
@@ -6271,8 +6642,11 @@ def acquisition_download_progress() -> dict[str, Any]:
     # A download Flipparr is fetching itself keeps its own figures: there is no
     # queue elsewhere to ask, and the row is written as the bytes arrive.
     ours: dict[str, Any] = {}
+    torrents = [row for row in active if row.get("source") == "qbittorrent"]
+    if torrents:
+        ours.update(_torrent_progress(torrents))
     for row in active:
-        if str(row.get("source") or "sabnzbd") == "sabnzbd":
+        if str(row.get("source") or "sabnzbd") in ("sabnzbd", "qbittorrent"):
             continue
         fetched, total = int(row.get("bytes_fetched") or 0), int(row.get("bytes_total") or 0)
         ours[str(row["job_id"])] = {
@@ -6319,6 +6693,34 @@ def acquisition_download_progress() -> dict[str, Any]:
             "state": str(slot.get("status") or "").strip().casefold(),
         }
     return {"downloads": {**ours, **downloads}, "paused": bool((queue or {}).get("paused"))}
+
+
+def _torrent_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """How far each torrent row's download is, asked of qBittorrent once.
+    With only some files wanted, its progress is of those files."""
+    try:
+        client = _qbittorrent_client()
+        hashes = sorted({info for info in (_torrent_hash(row) for row in rows) if info})
+        found = {str(entry.get("hash") or "").casefold(): entry for entry in client.info(hashes=hashes)}
+    except Exception:  # noqa: BLE001 -- no progress to show, not a page that fails
+        log_event("qbittorrent_progress_unavailable", level="warning")
+        return {}
+    progress: dict[str, Any] = {}
+    for row in rows:
+        entry = found.get(_torrent_hash(row) or "")
+        if not entry:
+            continue
+        left = int(entry.get("amount_left") or 0)
+        eta = int(entry.get("eta") or 0)
+        kind = torrent_client.state_class(entry.get("state"))
+        progress[str(row["job_id"])] = {
+            "percent": round(max(0.0, min(1.0, float(entry.get("progress") or 0))) * 100, 1),
+            "sizeLeft": f"{left / 1_000_000:.0f} MB" if left else "",
+            # 8640000 is qBittorrent's "no idea".
+            "timeLeft": f"{eta // 3600}:{eta % 3600 // 60:02d}:{eta % 60:02d}" if 0 < eta < 8640000 else "",
+            "state": "downloading" if kind == "downloading" else kind,
+        }
+    return progress
 
 
 # Runs already asked about in this sweep. A run whose catalogs simply have no
@@ -6430,25 +6832,27 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
         return None
     candidates = search.get("candidates") if isinstance(search, dict) else []
     context = (search.get("job") if isinstance(search, dict) else None) or {}
-    if not isinstance(candidates, list) or not candidates:
-        # Usenet has nothing. DirectSite may: a strong match for the very
-        # issue is taken the way a run's pack from there already is -- when
-        # it can be downloaded from at all. Usenet stays first; this is the
-        # answer when there is none. World's Finest #32 sat at "No release
-        # found yet" while Find release showed the issue, confidently, from
+    if not isinstance(candidates, list):
+        candidates = []
+    candidates, held_back = _automatic_grab_order(context, candidates) if candidates else ([], "")
+    if not any(not item.get("lastResort") for item in candidates):
+        # The indexers have no single for it. DirectSite may: a strong match
+        # for the very issue is taken the way a run's pack from there already
+        # is -- when it can be downloaded from at all. Usenet stays first;
+        # this is the answer when there is none, and it comes before settling
+        # for a torrent pack. World's Finest #32 sat at "No release found
+        # yet" while Find release showed the issue, confidently, from
         # DirectSite -- a list a person had to go and act on.
         fallback = _direct_site_single_to_take(job_id, context)
-        if fallback is None:
-            return None
-        try:
-            grabbed = grab_release_candidate(job_id, str(fallback["id"]))
-        except Exception as exc:  # noqa: BLE001 -- the row says; the next pass tries again
-            log_event("direct_site_single_grab_failed", level="warning", job_id=job_id,
-                      release=str(fallback.get("title") or ""), error=str(exc)[:200])
-            _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on DirectSite but could not fetch it: {exc}")
-            return None
-        return {**grabbed, "release": fallback}
-    candidates, held_back = _automatic_grab_order(context, candidates)
+        if fallback is not None:
+            try:
+                grabbed = grab_release_candidate(job_id, str(fallback["id"]))
+            except Exception as exc:  # noqa: BLE001 -- the row says; the next pass tries again
+                log_event("direct_site_single_grab_failed", level="warning", job_id=job_id,
+                          release=str(fallback.get("title") or ""), error=str(exc)[:200])
+                _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on DirectSite but could not fetch it: {exc}")
+                return None
+            return {**grabbed, "release": fallback}
     if not candidates:
         if held_back:
             _say_on_the_row(job_id, held_back)
@@ -6462,7 +6866,8 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     problems: list[str] = []
     for candidate in candidates[:MAX_AUTOMATIC_RELEASE_FAILURES]:
         try:
-            grabbed = send_release_to_sabnzbd(job_id, str(candidate["id"]))
+            # SABnzbd for Usenet, qBittorrent for a torrent.
+            grabbed = grab_release_candidate(job_id, str(candidate["id"]))
         except ReleaseDownloadError as exc:
             problems.append(f"{candidate.get('indexer') or 'an indexer'}: {exc}")
             log_event(
@@ -6472,13 +6877,13 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
             )
             continue
         except Exception as exc:
-            # SABnzbd itself refusing is not the release's fault, and the next
-            # candidate would meet the same refusal.
+            # The download client itself refusing is not the release's fault,
+            # and the next candidate would meet the same refusal.
             log_event(
                 "retry_release_send_failed", level="warning",
                 job_id=job_id, release=str(candidate.get("title") or ""), error=str(exc),
             )
-            _say_on_the_row(job_id, f"Found a release but could not send it to SABnzbd: {exc}")
+            _say_on_the_row(job_id, f"Found a release but could not send it to {_client_name(candidate)}: {exc}")
             return None
         return {**grabbed, "release": candidate}
     # Said on the row, so "4 release candidates found" no longer stands for a
@@ -6489,6 +6894,10 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
         f"could be fetched ({problems[0]}); it will be tried again",
     )
     return None
+
+
+def _client_name(candidate: dict[str, Any]) -> str:
+    return "qBittorrent" if str((candidate or {}).get("source") or "") == "torrent" else "SABnzbd"
 
 
 def _direct_site_single_to_take(job_id: int, context: dict[str, Any]) -> dict[str, Any] | None:
@@ -6570,6 +6979,12 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         lead = min(wanted, key=lambda item: _issue_number(item["issueNumber"]) or 10_000)
         lead_job = int(lead["jobId"])
         context = store.get_acquisition_job_context(lead_job)
+        # One run's issues: a collection's request spans several.
+        wanted = _same_run(wanted, context)
+        numbers = [number for number in (_issue_number(item["issueNumber"]) for item in wanted)
+                   if number is not None]
+        if len(numbers) < PACK_MINIMUM_WANTED:
+            return None
         title = str(context.get("seriesTitle") or "").strip()
         if not title:
             return None
@@ -6599,7 +7014,8 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         refused = set(store.rejected_release_keys_for_jobs(job_ids))
     except Exception:  # noqa: BLE001
         refused = set()
-    offers: list[tuple[int, int, dict[str, Any]]] = []
+    candidates, _unshared = _automatically_takeable(candidates)
+    offers: list[tuple[int, int, int, dict[str, Any]]] = []
     for candidate in candidates:
         if not candidate.get("pack"):
             continue
@@ -6616,14 +7032,18 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
             continue
         pack = candidate["pack"]
         covered = sum(1 for number in numbers if pack["first"] <= number <= pack["last"])
-        # Most of the run first, then the smaller download of two equals.
-        offers.append((-covered, int(candidate.get("sizeBytes") or 0), candidate))
+        # Most of the run first; between equals Usenet, then a torrent, then
+        # DirectSite, whose packs are the likeliest to fail (the owner,
+        # 2026-09-30); then the smaller download.
+        rank = {"usenet": 0, "torrent": 1}.get(str(candidate.get("source") or "usenet"), 2)
+        offers.append((-covered, rank, int(candidate.get("sizeBytes") or 0), candidate))
     if not offers:
         return None
-    offers.sort(key=lambda item: (item[0], item[1]))
-    covered, _size, candidate = offers[0]
+    offers.sort(key=lambda item: (item[0], item[1], item[2]))
+    covered, _rank, _size, candidate = offers[0]
     try:
-        # SABnzbd for Usenet, Flipparr's own download for DirectSite.
+        # SABnzbd for Usenet, qBittorrent for a torrent, Flipparr's own
+        # download for DirectSite.
         grab_release_candidate(lead_job, str(candidate["id"]))
     except Exception as exc:  # noqa: BLE001 -- a pack that cannot be sent is not a reason to stop
         log_event(
@@ -6643,6 +7063,9 @@ def _automatic_grab_order(
     answers most of what the run is missing; otherwise it stays in the list a
     person chooses from, and the row says why it was not taken.
     """
+    candidates, unshared = _automatically_takeable(candidates)
+    if not candidates:
+        return [], unshared
     singles = [item for item in candidates if not item.get("pack")]
     packs = [item for item in candidates if item.get("pack")]
     oversized = [item for item in singles if int(item.get("sizeBytes") or 0) > SINGLE_RELEASE_MAX_BYTES]
@@ -6661,7 +7084,9 @@ def _automatic_grab_order(
         wanted = [
             number for number in (
                 _issue_number(item.get("issueNumber"))
-                for item in (catalog_store().wanted_run_issues(request_id) if request_id else [])
+                for item in _same_run(
+                    catalog_store().wanted_run_issues(request_id) if request_id else [], context,
+                )
             ) if number is not None
         ]
     except Exception as exc:  # noqa: BLE001 -- unknown demand means singles only
@@ -6675,13 +7100,29 @@ def _automatic_grab_order(
             eligible.append(candidate)
         elif not refused:
             refused = f"{candidate.get('title') or 'A pack'} — {why}"
+    # Pulling one issue, a pack is the last resort -- taken only when nothing
+    # else has the issue at all -- and then only a torrent, the one pack that
+    # can be fetched for that issue alone (the owner, 2026-09-30). Marked, so
+    # the caller asks DirectSite for a single before settling for it.
+    last_resort = [] if singles or eligible else [
+        {**candidate, "lastResort": True} for candidate in packs if candidate.get("source") == "torrent"
+    ]
     note = ""
-    if not singles and not eligible and refused:
+    if not singles and not eligible and not last_resort and refused:
         note = (
             f"Found a pack but did not take it automatically: {refused}. "
             "Find release lists it if you want it."
         )
-    return singles + eligible, note
+    return singles + eligible + last_resort, note
+
+
+def _same_run(wanted: list[dict[str, Any]], context: dict[str, Any]) -> list[dict[str, Any]]:
+    """The wanted issues of this job's run only. A collection's request spans
+    several runs, and Batman #4's file must never answer Detective #4."""
+    series = str(context.get("seriesId") or "").strip()
+    if not series:
+        return list(wanted)
+    return [item for item in wanted if str(item.get("seriesId") or series) == series]
 
 
 def _say_on_the_row(job_id: int, reason: str) -> None:
@@ -6782,15 +7223,16 @@ def _acquisition_services_ready(request_id: int) -> bool:
     """Whether automatic searching can do anything: no indexer or no download
     client means every search would fail in a loop and say nothing useful,
     so the jobs are left for the list."""
-    for service in ("prowlarr", "sabnzbd"):
-        try:
-            _enabled_acquisition_service(service)
-        except Exception:
-            log_event(
-                "automatic_release_grabs_skipped", level="info",
-                request_id=request_id, reason=f"{service} is not configured",
-            )
-            return False
+    try:
+        _enabled_acquisition_service("prowlarr")
+    except Exception:
+        log_event("automatic_release_grabs_skipped", level="info",
+                  request_id=request_id, reason="prowlarr is not configured")
+        return False
+    if not _enabled_download_clients():
+        log_event("automatic_release_grabs_skipped", level="info",
+                  request_id=request_id, reason="no download client is configured")
+        return False
     return True
 
 
@@ -6841,14 +7283,12 @@ def start_missing_release_search(confirmed: bool = False) -> dict[str, Any]:
     job_ids = store.acquisition_jobs_awaiting_release()
     if not job_ids:
         return {"status": "idle", "searching": 0, "detail": "Nothing is waiting on a release."}
-    for service in ("prowlarr", "sabnzbd"):
-        try:
-            _enabled_acquisition_service(service)
-        except Exception:
-            name = ACQUISITION_SERVICE_DEFINITIONS[service]["name"]
-            raise ValueError(
-                f"{name} is not configured, so there is nothing to search with"
-            ) from None
+    try:
+        _enabled_acquisition_service("prowlarr")
+    except Exception:
+        raise ValueError("Prowlarr is not configured, so there is nothing to search with") from None
+    if not _enabled_download_clients():
+        raise ValueError("No download client is configured, so there is nothing to download with") from None
     plural = "" if len(job_ids) == 1 else "s"
     if not confirmed:
         # This spends real bandwidth on every issue at once, so the count is
@@ -6887,7 +7327,13 @@ def _fallback_after_sab_failure(
         job_id, release_key, release_title, message,
         kind=kind, sab_nzo_id=kept_nzo, sab_storage=storage or None,
     )
-    _resume_run_after_pack_failure(job_id, release_title)
+    if storage and str(download.get("source") or "") == "qbittorrent":
+        # Kept as evidence, not shared on: stopped until it is let go.
+        _pause_torrent_if_alone(store, download)
+    # A torrent's other issues have rows of their own and fall back each by
+    # itself; handing the run to singles as well would search them twice.
+    if not _rides_with_others(store, download):
+        _resume_run_after_pack_failure(job_id, release_title)
     failure_count = int(failure.get("failureCount") or 0)
     if failure_count >= MAX_AUTOMATIC_RELEASE_FAILURES:
         detail = (
@@ -6909,11 +7355,16 @@ def _fallback_after_sab_failure(
         store.update_acquisition_job(job_id, "failed", detail)
         return {"status": "failed", "error": detail, "automaticFallback": False}
 
+    candidates, _unshared = _automatically_takeable(candidates)
+    if not candidates:
+        detail = f"{message}. No unused strong Prowlarr match can be taken automatically."
+        store.update_acquisition_job(job_id, "failed", detail)
+        return {"status": "failed", "error": detail, "automaticFallback": False}
     candidate = candidates[0]
     try:
-        grabbed = send_release_to_sabnzbd(job_id, str(candidate["id"]))
+        grabbed = grab_release_candidate(job_id, str(candidate["id"]))
     except Exception as exc:
-        detail = f"{message}. The next release could not be sent to SABnzbd: {exc}"
+        detail = f"{message}. The next release could not be sent to {_client_name(candidate)}: {exc}"
         store.update_acquisition_job(job_id, "failed", detail)
         return {"status": "failed", "error": detail, "automaticFallback": False}
     return {
@@ -7029,6 +7480,14 @@ def _sab_lost_download(download: dict[str, Any]) -> bool:
 def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
     store = catalog_store()
     source = str(download.get("source") or "sabnzbd")
+    if source == "qbittorrent":
+        # Never the direct-download road below: that one restarts a "fetch"
+        # of the release key and deletes the folder after import, and this
+        # folder is seeding.
+        outcome = _qbt_download_storage(store, download)
+        if isinstance(outcome, dict):
+            return outcome
+        return _import_completed_download(store, download, outcome)
     if source != "sabnzbd":
         # Nobody to ask: Flipparr is fetching it, and the row says where it got
         # to. Everything from the import onwards is shared with SABnzbd's path.
@@ -7055,6 +7514,283 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
             return outcome
         storage = outcome
     return _import_completed_download(store, download, storage)
+
+
+def _torrent_hash(download: dict[str, Any]) -> str | None:
+    """The info hash in a torrent download's identity, `torrent:<hash>:<job>`."""
+    parts = str((download or {}).get("sab_nzo_id") or "").split(":")
+    return parts[1].casefold() if len(parts) >= 3 and parts[0] == "torrent" and parts[1] else None
+
+
+def _torrent_is_dead(torrent: dict[str, Any]) -> bool:
+    """A magnet whose file list never came, or a torrent nobody has shared
+    for half a day: waiting longer only holds the issue back."""
+    state = str(torrent.get("state") or "").casefold()
+    now = time.time()
+    added = int(torrent.get("added_on") or 0)
+    if state in ("metadl", "forcedmetadl"):
+        return bool(added) and now - added > TORRENT_METADATA_GRACE_SECONDS
+    if state == "stalleddl" and not int(torrent.get("num_seeds") or 0):
+        since = int(torrent.get("last_activity") or 0) or added
+        return bool(since) and now - since > TORRENT_STALLED_SECONDS
+    return False
+
+
+def _torrent_local(torrent: dict[str, Any], name: str) -> Path:
+    """Where Flipparr sees one of a torrent's files -- `name` relative to its
+    save folder, which is the comics category folder qBittorrent was given."""
+    save = posixpath.basename(str(torrent.get("save_path") or "").rstrip("/"))
+    if save.casefold() != TORRENT_COMPLETE_ROOT.name.casefold():
+        raise CompletedDownloadNotVisible(
+            f"qBittorrent saved this torrent in “{save or 'its default folder'}”, not in the "
+            f"“{TORRENT_COMPLETE_ROOT.name}” folder Flipparr reads finished torrents from"
+        )
+    return TORRENT_COMPLETE_ROOT.joinpath(*[part for part in str(name).split("/") if part not in ("", ".", "..")])
+
+
+def _torrent_comics(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [entry for entry in files
+            if Path(str(entry.get("name") or "")).suffix.lower() in SUPPORTED_EXTENSIONS]
+
+
+def _torrent_file_matching(files: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any] | None:
+    """The file in a torrent that is this issue, by its number and the
+    series' likeness together -- never the number alone."""
+    matches = [entry for entry in files
+               if _pack_member_matches(posixpath.basename(str(entry.get("name") or "")), context)]
+    return max(matches, key=lambda entry: int(entry.get("size") or 0)) if matches else None
+
+
+def _torrent_holdings(files: list[dict[str, Any]]) -> str:
+    names = [posixpath.basename(str(entry.get("name") or "")) for entry in files]
+    shown = ", ".join(names[:8])
+    return shown + (f", and {len(names) - 8} more" if len(names) > 8 else "")
+
+
+def _qbt_download_storage(store: Any, download: dict[str, Any]) -> str | dict[str, Any]:
+    """Where qBittorrent finished this issue's file, or the answer for a
+    torrent that has not: waiting for its file list, downloading, broken,
+    gone, or dead."""
+    info_hash_ = _torrent_hash(download)
+    status = str(download.get("status") or "")
+    try:
+        client = _qbittorrent_client()
+        found = client.info(hashes=[info_hash_]) if info_hash_ else []
+    except ValueError:
+        return {"status": status or "downloading", "detail": "qBittorrent is not connected"}
+    except torrent_client.TorrentClientError as exc:
+        log_event("qbittorrent_unavailable", level="warning", error=str(exc)[:160])
+        return {"status": status or "downloading"}
+    if not found:
+        if _sab_just_sent(download):
+            return {"status": "downloading"}
+        message = "qBittorrent no longer has this torrent"
+        store.update_acquisition_download(int(download["id"]), "failed", error=message, failure_stage="download")
+        return _fallback_after_sab_failure(store, download, message, kind="lost")
+    torrent = found[0]
+    if status == "queued":
+        return _choose_torrent_files(store, client, download, torrent)
+    state = str(torrent.get("state") or "")
+    kind = torrent_client.state_class(state)
+    if kind == "error":
+        message = f"qBittorrent could not finish the torrent ({state})"
+        store.update_acquisition_download(int(download["id"]), "failed", error=message, failure_stage="download")
+        return _fallback_after_sab_failure(store, download, message)
+    if kind == "downloading":
+        if _torrent_is_dead(torrent):
+            message = "Nobody is sharing this torrent, so it cannot finish"
+            store.update_acquisition_download(int(download["id"]), "failed", error=message, failure_stage="download")
+            _release_torrent(store, info_hash_)
+            return _fallback_after_sab_failure(store, download, message, kind="lost")
+        store.update_acquisition_download(int(download["id"]), "downloading")
+        return {"status": "downloading"}
+    # Its wanted files are all here: this issue's own, or -- for a release in
+    # several files that names none of them -- the torrent's folder, for the
+    # import to choose from.
+    files = _torrent_comics([entry for entry in client.files(info_hash_) if int(entry.get("priority") or 0) > 0])
+    context = store.get_acquisition_job_context(int(download["job_id"]))
+    mine = files[0] if len(files) == 1 else _torrent_file_matching(files, context)
+    try:
+        if mine is not None:
+            local = _torrent_local(torrent, str(mine.get("name") or ""))
+        else:
+            content = str(torrent.get("content_path") or "")
+            save = str(torrent.get("save_path") or "").rstrip("/")
+            relative = content[len(save):].lstrip("/") if content.startswith(save) else posixpath.basename(content)
+            local = _torrent_local(torrent, relative)
+    except CompletedDownloadNotVisible as exc:
+        message = str(exc)
+        store.update_acquisition_download(int(download["id"]), "waiting_for_files", error=message, failure_stage=None)
+        store.update_acquisition_job(int(download["job_id"]), "grabbed", message)
+        return {"status": "waiting_for_files", "detail": message}
+    store.update_acquisition_download(int(download["id"]), "completed", sab_storage=str(local))
+    return str(local)
+
+
+def _choose_torrent_files(store: Any, client: Any, download: dict[str, Any], torrent: dict[str, Any]) -> dict[str, Any]:
+    """Pick the wanted files out of a torrent whose file list has arrived.
+
+    Only this issue's file is fetched, and every other wanted issue of the
+    same run that the torrent holds rides along on a download row of its own
+    -- marked grabbed, so nothing searches for it singly while it comes. A
+    pack that does not hold the issue it was taken for is refused, naming
+    what it holds; a single release in several files keeps them all, and
+    the import chooses.
+    """
+    info_hash_ = _torrent_hash(download) or ""
+    job_id = int(download["job_id"])
+    title = str(download.get("release_title") or "the torrent")
+    if not client.supports_selection():
+        # An older client fetches the whole torrent; packs are not sent to it.
+        store.update_acquisition_download(int(download["id"]), "downloading")
+        return {"status": "downloading"}
+    files = client.files(info_hash_)
+    if not files:
+        if _torrent_is_dead(torrent):
+            message = "The torrent's file list never arrived; nobody is sharing it"
+            store.update_acquisition_download(int(download["id"]), "failed", error=message, failure_stage="download")
+            _release_torrent(store, info_hash_)
+            return _fallback_after_sab_failure(store, download, message, kind="lost")
+        return {"status": "downloading", "detail": "Waiting for the torrent's file list"}
+    context = store.get_acquisition_job_context(job_id)
+    label = f"{context.get('seriesTitle')} {_number_label(context)}"
+    comics = _torrent_comics(files)
+    if not comics:
+        return _refuse_torrent(store, download, f"The torrent holds no comic files: {_torrent_holdings(files)}", "format")
+    if "flipparr-selected" in torrent_client.tags_of(torrent):
+        # Another issue chose this torrent's files already; this one joins it.
+        mine = comics[0] if len(comics) == 1 else _torrent_file_matching(comics, context)
+        if mine is None:
+            return _refuse_torrent(store, download, f"The pack does not hold {label}: it holds {_torrent_holdings(comics)}",
+                                   "contradiction", release=False)
+        if not int(mine.get("priority") or 0):
+            client.set_file_priority(info_hash_, [int(mine["index"])], 1)
+        client.start([info_hash_])
+        store.update_acquisition_download(int(download["id"]), "downloading")
+        return {"status": "downloading"}
+    keep: dict[int, dict[str, Any]] = {}
+    riders: list[tuple[int, dict[str, Any]]] = []
+    if len(comics) == 1:
+        keep[int(comics[0]["index"])] = comics[0]
+    else:
+        mine = _torrent_file_matching(comics, context)
+        if mine is None:
+            if _release_pack_coverage(title, context):
+                return _refuse_torrent(
+                    store, download, f"The pack does not hold {label}: it holds {_torrent_holdings(comics)}",
+                    "contradiction",
+                )
+            # One release in several files: all of it, and the import chooses.
+            keep = {int(entry["index"]): entry for entry in comics}
+        else:
+            keep[int(mine["index"])] = mine
+            riders = _torrent_riders(store, context, job_id, comics, keep)
+    chosen = sum(int(entry.get("size") or 0) for entry in keep.values())
+    cap = (SINGLE_RELEASE_MAX_BYTES if not riders and len(keep) > 1 else PACK_BYTES_PER_COVERED_ISSUE * len(keep))
+    if chosen > cap:
+        return _refuse_torrent(
+            store, download,
+            f"The torrent's wanted files come to {chosen / 1_000_000_000:.1f} GB for {len(keep)} "
+            f"issue{'' if len(keep) == 1 else 's'}", "format",
+        )
+    client.set_file_priority(info_hash_, [int(entry["index"]) for entry in files if int(entry["index"]) not in keep], 0)
+    client.set_file_priority(info_hash_, sorted(keep), 1)
+    client.add_tags([info_hash_], ["flipparr-selected"])
+    client.start([info_hash_])
+    store.update_acquisition_download(int(download["id"]), "downloading")
+    for rider, _entry in riders:
+        try:
+            row = store.record_acquisition_download(
+                rider, f"torrent:{info_hash_}:{rider}", title, str(download.get("release_key") or "") or None,
+                source="qbittorrent",
+            )
+            store.update_acquisition_download(int(row["id"]), "downloading")
+            store.update_acquisition_job(rider, "grabbed", f"Coming in the same download as {label}: {title}")
+        except Exception as exc:  # noqa: BLE001 -- that issue stays wanted and is searched as usual
+            log_exception("torrent_rider_not_recorded", exc, level="warning")
+    log_event("torrent_files_chosen", job_id=job_id, release=title[:200], files=len(keep),
+              riders=len(riders), of_files=len(files))
+    return {"status": "downloading", "selected": len(keep), "riders": len(riders)}
+
+
+def _torrent_riders(
+    store: Any, context: dict[str, Any], lead_job: int, comics: list[dict[str, Any]], keep: dict[int, dict[str, Any]],
+) -> list[tuple[int, dict[str, Any]]]:
+    """The run's other wanted issues this torrent holds, each with its file.
+
+    Only issues nothing else is fetching: queued, not yet released, or failed
+    -- not one being searched this moment, and never another run's."""
+    try:
+        request_id = int(str(context.get("requestId") or "").strip() or 0)
+        wanted = _same_run(store.wanted_run_issues(request_id), context) if request_id else []
+    except Exception as exc:  # noqa: BLE001 -- the lead issue still comes
+        log_exception("torrent_riders_unavailable", exc, level="warning")
+        return []
+    riders = []
+    for item in wanted:
+        rider = int(item["jobId"])
+        if rider == lead_job or str(item.get("status") or "") not in ("queued", "waiting", "failed"):
+            continue
+        with _JOBS_IN_FLIGHT_LOCK:
+            if rider in _JOBS_IN_FLIGHT:
+                continue
+        entry = _torrent_file_matching(
+            [file for file in comics if int(file["index"]) not in keep], {**context, "issueNumber": item["issueNumber"]},
+        )
+        if entry is not None:
+            keep[int(entry["index"])] = entry
+            riders.append((rider, entry))
+    return riders
+
+
+def _refuse_torrent(store: Any, download: dict[str, Any], message: str, kind: str, *, release: bool = True) -> dict[str, Any]:
+    """A torrent that cannot be this issue: its row fails, the release is
+    refused for it, and -- when no other issue is using it -- it goes."""
+    store.update_acquisition_download(
+        int(download["id"]), "failed", error=message,
+        failure_stage="content" if kind in ("contradiction", "format") else "download",
+    )
+    if release:
+        _release_torrent(store, _torrent_hash(download))
+    return _fallback_after_sab_failure(store, download, message, kind=kind)
+
+
+def _release_torrent(store: Any, info_hash_: str | None) -> bool:
+    """Remove a torrent and its files once nothing of Flipparr's uses it: no
+    live download of any issue, and no refused download kept as evidence."""
+    if not info_hash_:
+        return False
+    try:
+        references = store.torrent_references(info_hash_)
+        if references.get("live") or references.get("kept"):
+            return False
+        _qbittorrent_client().delete([info_hash_], delete_files=True)
+    except Exception as exc:  # noqa: BLE001 -- the seeding sweep tries again
+        log_event("torrent_release_failed", level="warning", info_hash=info_hash_, error=str(exc)[:160])
+        return False
+    return True
+
+
+def _pause_torrent_if_alone(store: Any, download: dict[str, Any]) -> None:
+    """Stop a refused torrent kept as evidence, unless another issue's file
+    is still coming in it."""
+    info_hash_ = _torrent_hash(download)
+    try:
+        if info_hash_ and not store.torrent_references(info_hash_).get("live"):
+            _qbittorrent_client().pause([info_hash_])
+    except Exception as exc:  # noqa: BLE001 -- evidence seeding on is harmless
+        log_event("torrent_pause_failed", level="info", info_hash=info_hash_, error=str(exc)[:160])
+
+
+def _rides_with_others(store: Any, download: dict[str, Any]) -> bool:
+    """Whether other issues came in the same torrent, each with its own row."""
+    info_hash_ = _torrent_hash(download)
+    if not info_hash_:
+        return False
+    try:
+        return any(int(job) != int(download["job_id"]) for job in store.torrent_jobs(info_hash_))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _sab_download_storage(store: Any, download: dict[str, Any]) -> str | dict[str, Any]:
@@ -7117,7 +7853,8 @@ def _import_completed_download(
         )
         store.update_acquisition_job(
             int(download["job_id"]), "grabbed",
-            "SABnzbd finished; waiting for the completed file to appear in Flipparr",
+            f"{'qBittorrent' if download.get('source') == 'qbittorrent' else 'SABnzbd'} finished; "
+            "waiting for the completed file to appear in Flipparr",
         )
         return {"status": "waiting_for_files", "detail": message}
     except Exception as exc:
@@ -7189,6 +7926,10 @@ def _import_completed_download(
         )
     if str(download.get("source") or "sabnzbd") == "sabnzbd":
         _sab_remove_job({**download, "sab_storage": storage})
+    elif download.get("source") == "qbittorrent":
+        # It seeds on until qBittorrent's own ratio or time limit stops it;
+        # `_release_seeded_torrents` removes it then.
+        pass
     else:
         # Nothing in SABnzbd to forget; the staging folder is ours to clear.
         shutil.rmtree(Path(storage), ignore_errors=True)
@@ -7236,6 +7977,10 @@ def _sweep_download_for_other_issues(
     here may fail the import that already succeeded: the grabbing job keeps its
     comic and anything not found stays wanted for the next pass.
     """
+    if download.get("source") == "qbittorrent":
+        # A torrent's other issues were chosen with it and each has its own
+        # download row; the rest of its files were never fetched.
+        return []
     try:
         request_id = int(str(context.get("requestId") or "").strip() or 0)
         grabbing_job = int(download["job_id"])
@@ -7320,9 +8065,54 @@ def _discard_kept_downloads(
     if not isinstance(kept, list):
         return 0
     for row in kept:
+        identity = str(row.get("sab_nzo_id") or "")
+        if identity.startswith("torrent:"):
+            # Forgotten first, so this refusal no longer holds the torrent;
+            # it goes when nothing else does.
+            store.forget_kept_download(int(row["id"]))
+            _release_torrent(store, _torrent_hash({"sab_nzo_id": identity}))
+            continue
         _sab_remove_job({"sab_nzo_id": row.get("sab_nzo_id"), "sab_storage": row.get("sab_storage")})
         store.forget_kept_download(int(row["id"]))
     return len(kept)
+
+
+def _release_seeded_torrents(store: Any) -> int:
+    """Remove the torrents Flipparr has finished with, and their files.
+
+    Driven by qBittorrent's own list of what Flipparr added (the `flipparr`
+    tag), not by download rows: a row goes when its issue is fulfilled another
+    way, a request is cancelled or a retry clears it, and a torrent kept only
+    by its row would then seed for ever. A torrent still in use -- a download
+    in flight, a refusal kept as evidence -- stays; so does one still seeding,
+    until the client stops it at its ratio or time limit. A torrent Flipparr
+    did not tag is never touched.
+    """
+    try:
+        client = _qbittorrent_client()
+    except ValueError:
+        return 0
+    in_use = store.torrent_hashes_in_use()
+    removed = 0
+    now = time.time()
+    for torrent in client.info(tag="flipparr"):
+        info_hash_ = str(torrent.get("hash") or "").casefold()
+        if not info_hash_ or info_hash_ in in_use:
+            continue
+        # Just added: its download row may be a moment behind.
+        if now - int(torrent.get("added_on") or now) < 600:
+            continue
+        state = torrent.get("state")
+        if torrent_client.state_class(state) == "complete" and not torrent_client.stopped_after_seeding(state):
+            continue
+        try:
+            client.delete([info_hash_], delete_files=True)
+            removed += 1
+        except torrent_client.TorrentClientError as exc:
+            log_event("torrent_release_failed", level="warning", info_hash=info_hash_, error=str(exc)[:160])
+    if removed:
+        log_event("seeded_torrents_released", removed=removed)
+    return removed
 
 
 def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> None:
@@ -7333,6 +8123,10 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                 _discard_kept_downloads(catalog_store(), older_than_days=KEPT_REFUSED_DAYS)
             except Exception as exc:
                 log_exception("kept_download_sweep_failed", exc, level="warning")
+            try:
+                _release_seeded_torrents(catalog_store())
+            except Exception as exc:
+                log_exception("seeded_torrent_sweep_failed", exc, level="warning")
         try:
             downloads = catalog_store().pending_acquisition_downloads()
             imported_any = False
@@ -7393,8 +8187,9 @@ def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> Non
         if stop_event.is_set():
             break
         try:
-            for service in ("prowlarr", "sabnzbd"):
-                _enabled_acquisition_service(service)
+            _enabled_acquisition_service("prowlarr")
+            if not _enabled_download_clients():
+                raise ValueError("no download client")
         except Exception:
             # No indexer or no download client: every search would fail in a
             # loop and say nothing useful.
