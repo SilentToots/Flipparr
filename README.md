@@ -37,7 +37,7 @@ Initial setup is progressive. The first pass reads only local filenames, embedde
 
 ## Acquisition services
 
-Prowlarr and SABnzbd are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The the NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
+Prowlarr and SABnzbd (and optionally qBittorrent, for torrents) are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The the NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
 
 API keys are stored only in `.data/acquisition-services.json`, which is excluded from source control and written with owner-only permissions. They are never returned to the browser after saving. The equivalent environment variables are `PROWLARR_URL`, `PROWLARR_API_KEY`, `SABNZBD_URL`, `SABNZBD_API_KEY`, and the optional `SABNZBD_CATEGORY`.
 

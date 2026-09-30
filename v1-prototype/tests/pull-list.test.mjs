@@ -285,3 +285,19 @@ test("a set-aside row keeps the id it can be taken by, and the server's wording"
   assert.equal(only.headline, "Nothing usable came back for #1");
   assert.equal(only.setAside.length, 1);
 });
+
+test("a release says which client takes it and how it travels", async () => {
+  const { releaseSendLabel, releaseTransport, downloadStateLabel } = await import("../src/pull-list.js");
+  assert.equal(releaseSendLabel({ source: "usenet" }), "Send to SABnzbd");
+  assert.equal(releaseSendLabel({ source: "torrent" }), "Send to qBittorrent");
+  assert.equal(releaseSendLabel({ source: "direct_site" }), "Download");
+  assert.equal(releaseTransport({ source: "usenet", protocol: "Usenet" }), "Usenet");
+  assert.equal(releaseTransport({ source: "torrent", protocol: "Torrent", seeders: 12 }), "Torrent · 12 seeders");
+  assert.equal(releaseTransport({ source: "torrent", protocol: "Torrent", seeders: 1 }), "Torrent · 1 seeder");
+  assert.equal(releaseTransport({ source: "torrent", protocol: "Torrent", seeders: 0 }), "Torrent · no seeders");
+  const labels = { queued: "Waiting for SABnzbd", downloading: "Downloading" };
+  assert.equal(downloadStateLabel({ downloadStatus: "queued", downloadSource: "qbittorrent" }, labels), "Waiting for its file list");
+  assert.equal(downloadStateLabel({ downloadStatus: "queued", downloadSource: "sabnzbd" }, labels), "Waiting for SABnzbd");
+  assert.equal(downloadStateLabel({ downloadStatus: "downloading", downloadSource: "qbittorrent" }, labels), "Downloading");
+  assert.equal(downloadStateLabel({}, labels), undefined);
+});

@@ -121,6 +121,7 @@ export function releaseSearchSummary(result, label) {
     id: miss.id || null, title: miss.title, copies: miss.copies || 1,
     score: miss.score ?? null, refused: miss.score == null,
     source: miss.source || "usenet", grabbable: miss.grabbable !== false,
+    seeders: miss.seeders ?? null,
     reason: setAsideReason(miss),
   }));
   return {
@@ -155,6 +156,30 @@ export function takeAnywayCopy(item, seriesTitle, issueNumber) {
     ? `${item.reason}. Taking it tries this release again and imports it as ${label}.`
     : `Set aside: ${item?.reason || "not a match"}. Taking it imports it as ${label}.`;
   return `${lead} The file still has to be a readable comic.`;
+}
+
+/** What sends a release, said on its button: the client that takes it. */
+export function releaseSendLabel(candidate) {
+  if (candidate?.source === "torrent") return "Send to qBittorrent";
+  if (candidate?.source === "direct_site") return "Download";
+  return "Send to SABnzbd";
+}
+
+/** How a release travels, as its row says it: "Torrent · 12 seeders". */
+export function releaseTransport(candidate) {
+  const protocol = candidate?.protocol || (candidate?.source === "torrent" ? "Torrent" : "Usenet");
+  if (candidate?.source !== "torrent") return protocol;
+  const seeders = Number(candidate?.seeders || 0);
+  return seeders ? `${protocol} · ${seeders} seeder${seeders === 1 ? "" : "s"}` : `${protocol} · no seeders`;
+}
+
+/** A download's state, in words for the client carrying it. A torrent waits
+ * for its file list before any of it is fetched -- only the wanted files are. */
+export function downloadStateLabel(job, labels) {
+  const status = job?.downloadStatus;
+  if (status === "queued" && job?.downloadSource === "qbittorrent") return "Waiting for its file list";
+  if (status === "queued" && job?.downloadSource === "direct_site") return "Starting download";
+  return labels?.[status];
 }
 
 /** Only a pull by name is deleted; a followed run is stopped by unfollowing. */

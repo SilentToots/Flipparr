@@ -9052,6 +9052,8 @@ class TorrentAcquisitionTests(unittest.TestCase):
         ])
         pack = result["candidates"][0]
         self.assertEqual((pack["pack"], pack["matchStrength"]), ({"first": 1, "last": 39}, "Pack, Vol. 1-39"))
+        self.assertIn("Only the issues wanted are downloaded from it", pack["matchReasons"],
+                      "its size is the whole pack's; the row says what is actually fetched")
 
     # ---- what the automatic grabs may take ------------------------------------
 

@@ -319,6 +319,14 @@ Motion tokens:
   candidates the same list stands open inside the empty state, as before. A
   DirectSite row without a solver reads "Not fetchable yet", disabled, as its
   candidates do.
+- **A release row says how it travels** (since 2026-09-30): its fact line
+  reads "PublicTracker · Torrent · 30 seeders · 14.5 GB" (`releaseTransport`), and
+  its button names the client that takes it -- "Send to SABnzbd", "Send to
+  qBittorrent", or "Download" for DirectSite (`releaseSendLabel`). A torrent
+  pack adds "Only the issues wanted are downloaded from it" to its reasons,
+  because its size is the whole pack's. A torrent row with no client
+  connected reads "Not fetchable yet" with the reason in its hint, as a
+  DirectSite row without a solver does.
 - **Age ratings** (since 2026-09-27) are one scale everywhere -- Everyone,
   Teen, Teen+, Mature -- whatever the source said. A run's shows in its drawer
   as a badge in the rating colours; its Edit sheet has an "Age rating" card

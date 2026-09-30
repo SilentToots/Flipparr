@@ -37,6 +37,7 @@ If you are not running one, delete the `networks:` blocks from
 | `/config` | read-write | database, settings, credentials, caches. **This is the only thing you need to back up.** |
 | `/comics` | read-write | your library. Written to when a completed download is imported, and when replacing a file moves the original into `.flipparr/quarantine/`. Scanning only reads. |
 | `/downloads/complete/comics` | read-only | where the download client puts finished files |
+| `/downloads/torrents/complete/comics` | read-only | qBittorrent's comics category folder (optional; `TORRENT_COMPLETE_PATH`). Torrents keep seeding from it after import, so Flipparr never writes there; only qBittorrent removes anything. |
 
 ### Permissions
 
@@ -57,12 +58,13 @@ All settings have working defaults; you only need these if you are changing path
 | --- | --- | --- |
 | `FLIPPARR_DATABASE` | `/config/flipparr.db` | catalog database |
 | `FLIPPARR_PROVIDER_CONFIG` | `/config/metadata-providers.json` | metadata source credentials |
-| `FLIPPARR_ACQUISITION_CONFIG` | `/config/acquisition-services.json` | Prowlarr / SABnzbd credentials |
+| `FLIPPARR_ACQUISITION_CONFIG` | `/config/acquisition-services.json` | Prowlarr / SABnzbd / qBittorrent credentials |
 | `FLIPPARR_SETTINGS_CONFIG` | `/config/settings.json` | application preferences |
 | `FLIPPARR_AUTH_CONFIG` | `/config/auth.json` | sign-in configuration |
 | `FLIPPARR_TRUSTED_PROXIES` | *(empty)* | **See [Behind a reverse proxy](#behind-a-reverse-proxy).** |
 | `FLIPPARR_LIBRARY_ROOT` | `/comics` | library mount |
 | `FLIPPARR_SAB_COMPLETE_ROOT` | `/downloads/complete/comics` | completed-download mount |
+| `FLIPPARR_TORRENT_COMPLETE_ROOT` | `/downloads/torrents/complete/comics` | qBittorrent's comics folder, mounted read-only |
 | `FLIPPARR_IMPORT_POLL_SECONDS` | `15` | how often to look for completed downloads |
 | `FLIPPARR_MIN_FREE_SPACE_MB` | `100` | refuse to import below this free space |
 | `FLIPPARR_GCD_MIN_INTERVAL_SECONDS` | `1.5` | minimum gap between Grand Comics Database requests |
@@ -257,6 +259,44 @@ improves issue titles, dates and covers.
 **Settings → Acquisition services.** Prowlarr finds releases, SABnzbd downloads
 them. Both take a URL and an API key, and both have a **Test** button that
 checks the connection before you save.
+
+### Torrents (qBittorrent)
+
+qBittorrent is a second download client, for what Usenet does not carry:
+manga volumes, and whole runs as packs. Automatic search works with either
+client, and prefers Usenet when a Usenet and a torrent release match equally.
+
+1. **Indexers.** Add torrent indexers in Prowlarr. For English manga, PublicTracker
+   (public, no account) files volumes under *Books*; Flipparr asks that
+   category for manga runs.
+2. **qBittorrent 4.5.5 or later.** Older versions cannot stop a torrent until
+   its file list arrives, so they would download a whole pack; Flipparr still
+   uses them for single releases but never sends them a pack.
+3. **Connect it** under *Settings → Acquisition services → qBittorrent*: the
+   Web UI address, a username and password if it asks for one, and a
+   category (`comics`). **Test** creates the category beside qBittorrent's
+   own download folder and says where it saves.
+4. **Mount that folder** into Flipparr read-only: set `TORRENT_COMPLETE_PATH`
+   in `.env` to the category's folder on the host. Its last component must be
+   the category's name. Create the folder before starting the container, so
+   Docker does not create it as root and lock qBittorrent out.
+5. **Seeding limits.** Flipparr copies a finished comic into the library and
+   leaves the torrent seeding. When qBittorrent stops it at its own ratio or
+   seeding-time limit (*Tools → Options → BitTorrent → Seeding Limits*, action
+   *Stop torrent*), Flipparr removes the torrent and its files within the
+   hour. Without a limit, torrents seed until you remove them. Flipparr only
+   ever removes torrents it added (tagged `flipparr`).
+
+How packs are used: pulling a whole run, one pack answers it, and between packs
+of the same reach Usenet comes first, then a torrent, then DirectSite. Pulling a
+single issue, every single release from every source is tried first, and a
+torrent pack is the last resort. Either way only the wanted issues' files are
+downloaded from a torrent pack; the run's other wanted issues it holds come in
+the same download.
+
+If qBittorrent runs behind a VPN container, bind it to the tunnel interface in
+*Tools → Options → Advanced → Network interface*. Bound to the loopback, it
+reaches no tracker and every torrent sits at zero peers.
 
 Credentials are write-only: after saving, the API returns only whether a
 provider is configured, never the key itself. They are not baked into the image,

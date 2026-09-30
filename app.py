@@ -2235,7 +2235,7 @@ PROVIDER_DEFINITIONS = {
 ACQUISITION_SERVICE_DEFINITIONS = {
     "prowlarr": {
         "name": "Prowlarr", "kind": "Indexer manager",
-        "capabilities": ["Usenet indexer search", "Release candidates", "Indexer health"],
+        "capabilities": ["Usenet and torrent indexer search", "Release candidates", "Indexer health"],
         "description": "Search your configured indexers for wanted issues and volumes.",
         "setupSummary": "Searches your sources for issues you are missing.",
         "defaultUrl": "http://localhost:9696", "defaultEnabled": False,
@@ -2257,7 +2257,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
     "qbittorrent": {
         "name": "qBittorrent", "kind": "Download client",
         "capabilities": ["Torrent downloads", "Only the wanted files of a pack", "Imports while it seeds"],
-        "description": "Download selected torrents -- only the issues you want from a pack -- and import them while they seed.",
+        "description": "Download selected torrents, only the issues you want from a pack, and import them while they seed.",
         "setupSummary": "Downloads torrents, including just the issues you want from a pack.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
         "needsApiKey": False,
@@ -5105,6 +5105,9 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                     **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
                 }
             takeable = source == "usenet" or torrents_ready
+            if pack and source == "torrent":
+                # Its size is the whole pack; what is fetched is far less.
+                reasons = [*reasons, "Only the issues wanted are downloaded from it"]
             candidates.append({
                 "id": candidate_id, "title": title,
                 "indexer": str(release.get("indexer") or "Unknown indexer"),

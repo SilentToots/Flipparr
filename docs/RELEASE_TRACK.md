@@ -950,6 +950,13 @@ manga pack handling and per-file selection. See
 `docs/evidence/torrent-coverage-20260929-manga.json` and
 `docs/ACQUISITION_INTENT_V2.md`.
 
+Product decision 2026-09-30: the adapter was built with manga and run packs
+and per-file selection, on the grounds that whole-run packs had no reliable
+source (DirectSite packs failed four times in eight refusals). Release gates for
+it: provider-outage behaviour for qBittorrent (runbook), restart recovery (a
+torrent's download is never restarted as a direct fetch), and the read-only
+torrents mount in clean install and upgrade.
+
 Product decision 2026-09-02: the two bounded live-Volume source checks establish
 that automatic collected-edition acquisition cannot be a credible first-release
 promise. Volume and collection files remain supported for local intake, grouping,
