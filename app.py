@@ -4446,7 +4446,13 @@ def manga_edition(publisher: Any) -> str | None:
     return None
 
 
-# Manga is posted in Comics and in EBook, where comics are only in Comics --
+# Comics are asked for in Comics and in EBook: a book publisher's graphic
+# novels are filed as ebooks -- The Adventure Zone 04 (First Second) is posted
+# only there, and was found in Prowlarr by hand while Flipparr, asking Comics
+# alone, found nothing (2026-09-30). A novel of the same name is in EBook too,
+# so a download whose EPUB is a book of text is refused at import.
+COMIC_CATEGORIES = ("7030", "7020")
+# Manga is posted in Comics and in EBook --
 # and some of it under TV/Anime: Blue Lock v02 and v24 exist only there, and
 # every other volume was found, so those two looked unposted. PublicTracker files its
 # English volumes under Books as a whole (7000), not under a child of it.
@@ -4843,6 +4849,21 @@ def _pages_run_backwards(pages: list[bytes]) -> bool:
     return last >= _COVER_SATURATION and first <= _INTERIOR_SATURATION
 
 
+def _epub_is_prose(path: Path) -> bool:
+    """Whether an EPUB is a book of text rather than comic pages.
+
+    Only text says so: an EPUB built some other way than one picture a page
+    is still a comic, just not one that converts.
+    """
+    try:
+        _epub_page_images(path)
+    except EbookNotConvertible as exc:
+        return str(exc) == "The EPUB is text, not page images"
+    except Exception:  # noqa: BLE001 -- unreadable is the health check's to judge
+        return False
+    return False
+
+
 def convert_ebook_to_cbz(source: Path, destination: Path) -> int:
     """Copy an image-per-page PDF or EPUB into a CBZ, page for page. Returns pages."""
     import zipfile
@@ -5003,6 +5024,11 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
             forms.append(f"{title} {issue.zfill(3)}")
             if issue.lstrip("0") != issue.zfill(3):
                 forms.append(f"{title} {issue.lstrip('0') or '0'}")
+            # A book publisher's graphic novels are numbered in two: "The
+            # Adventure Zone 04 - The Crystal Kingdom" answered neither "004"
+            # nor "4", and was only found by hand (2026-09-30).
+            if len(issue.lstrip("0")) == 1:
+                forms.append(f"{title} {issue.zfill(2)}")
         elif _issue_key(issue) in ("0.5", "0.25", "0.75"):
             # A half issue: releases write "0.5", older indexes "1/2"; the
             # "½" the catalog keeps is a word no indexer has.
@@ -5060,7 +5086,7 @@ def _with_deadline(work: Any, seconds: float, what: str) -> Any:
 
 
 def _prowlarr_search(
-    prowlarr: dict[str, Any], query: str, categories: tuple[str, ...] = ("7030",)
+    prowlarr: dict[str, Any], query: str, categories: tuple[str, ...] = COMIC_CATEGORIES
 ) -> list[dict[str, Any]]:
     endpoint = f"{prowlarr['url']}/api/v1/search?" + urllib.parse.urlencode(
         [("query", query), ("type", "search"),
@@ -5984,7 +6010,7 @@ _PAGE_IMAGE_TYPES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"
 def _comic_pack_members(path: Path) -> list[zipfile.ZipInfo] | None:
     """The comics inside a file that is a pack of them, or None when it is a comic
     (it has pages of its own) or not a zip at all."""
-    if path.suffix.lower() not in {".cbz", ".zip"}:
+    if path.suffix.lower() not in {".cbz", ".cbr", ".zip"} or archive_kind(path) != "zip":
         return None
     try:
         with zipfile.ZipFile(path) as archive:
@@ -6124,6 +6150,14 @@ def _select_downloaded_comic(
                     ) from exc
                 archives.append(target)
         candidates = archives
+    else:
+        prose = [path for path in candidates if path.suffix.lower() == ".epub" and _epub_is_prose(path)]
+        if prose:
+            candidates = [path for path in candidates if path not in prose]
+            if not candidates:
+                raise DownloadContentMismatch(
+                    "The EPUB is a book of text, not comic pages", kind="format",
+                )
     try:
         selected = _choose_downloaded_comic(candidates, source, context, release_title, vouched=vouched)
     except Exception:
@@ -8600,6 +8634,7 @@ class ArchiveToolMissing(RuntimeError):
 
 
 _ARCHIVE_READ_TIMEOUT_SECONDS = 60
+COMIC_ARCHIVE_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7", ".cbt"})
 _EXTERNAL_ARCHIVE_SIGNATURES = (
     (b"Rar!\x1a\x07\x00", "rar"),        # RAR 4.x
     (b"Rar!\x1a\x07\x01\x00", "rar5"),  # RAR 5.x
@@ -8964,7 +8999,11 @@ def inspect_file_health(path: Path) -> dict[str, str]:
         return {"status": "error", "code": "empty_file", "message": "File is empty (0 bytes)."}
 
     extension = path.suffix.lower()
-    if extension in {".cbz", ".epub"}:
+    # A comic archive is judged by what it is, not what it is called: a .cbr
+    # that is really a zip is common (The Adventure Zone 05 on Usenet, twice),
+    # and the reader already opens it by its contents (`archive_kind`).
+    kind = archive_kind(path) if extension in COMIC_ARCHIVE_EXTENSIONS else None
+    if extension == ".epub" or kind == "zip" or (extension == ".cbz" and kind is None):
         try:
             with zipfile.ZipFile(path) as archive:
                 members = [info for info in archive.infolist() if not info.is_dir()]
@@ -8978,39 +9017,25 @@ def inspect_file_health(path: Path) -> dict[str, str]:
                 "status": "error", "code": "empty_archive",
                 "message": f"Archive is empty ({size} bytes) and contains no files or comic pages.",
             }
-        if extension == ".cbz" and not any(
+        if extension != ".epub" and not any(
             Path(info.filename).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS for info in members
         ):
             return {
                 "status": "error", "code": "no_image_pages",
-                "message": "CBZ is readable but contains no supported image pages.",
+                "message": f"{extension[1:].upper()} is readable but contains no supported image pages.",
             }
-    elif extension == ".cbr":
-        try:
-            with path.open("rb") as source:
-                header = source.read(8)
-        except OSError as exc:
-            return {"status": "error", "code": "unreadable", "message": f"File cannot be read: {exc}"}
-        if not header.startswith(b"Rar!\x1a\x07"):
-            return {
-                "status": "error", "code": "corrupt_archive",
-                "message": "CBR does not have a valid RAR archive header.",
-            }
-    elif extension == ".cb7":
-        try:
-            with path.open("rb") as source:
-                header = source.read(6)
-        except OSError as exc:
-            return {"status": "error", "code": "unreadable", "message": f"File cannot be read: {exc}"}
-        if header != b"7z\xbc\xaf'\x1c":
-            return {
-                "status": "error", "code": "corrupt_archive",
-                "message": "CB7 does not have a valid 7-Zip archive header.",
-            }
-    elif extension == ".cbt" and not tarfile.is_tarfile(path):
+    elif kind == "tar" and not tarfile.is_tarfile(path):
         return {
             "status": "error", "code": "corrupt_archive",
-            "message": "CBT is not a readable TAR archive.",
+            "message": f"{extension[1:].upper()} is not a readable TAR archive.",
+        }
+    elif extension in COMIC_ARCHIVE_EXTENSIONS and kind is None:
+        expected = {".cbr": "a valid RAR archive header", ".cb7": "a valid 7-Zip archive header",
+                    ".cbt": "a readable TAR archive"}[extension]
+        return {
+            "status": "error", "code": "corrupt_archive",
+            "message": f"{extension[1:].upper()} does not have {expected}."
+            if extension != ".cbt" else "CBT is not a readable TAR archive.",
         }
     elif extension == ".pdf":
         try:

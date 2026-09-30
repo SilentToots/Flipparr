@@ -3025,6 +3025,29 @@ class FilenameParserTests(unittest.TestCase):
                 archive.writestr("ComicInfo.xml", "<ComicInfo/>")
             self.assertEqual(inspect_file_health(pageless)["code"], "no_image_pages")
 
+    def test_a_comic_archive_is_judged_by_its_contents_not_its_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            # The Adventure Zone 05 came from Usenet twice as a zip named .cbr.
+            zipped = Path(folder) / "The Adventure Zone 05 - The Eleventh Hour.cbr"
+            with zipfile.ZipFile(zipped, "w") as archive:
+                archive.writestr("001.jpg", b"page")
+            self.assertEqual(inspect_file_health(zipped)["code"], "readable")
+
+            pageless = Path(folder) / "pageless.cbr"
+            with zipfile.ZipFile(pageless, "w") as archive:
+                archive.writestr("ComicInfo.xml", "<ComicInfo/>")
+            self.assertEqual(inspect_file_health(pageless)["code"], "no_image_pages")
+
+            rar_named_cbz = Path(folder) / "rar.cbz"
+            rar_named_cbz.write_bytes(b"Rar!\x1a\x07\x01\x00" + b"\x00" * 64)
+            self.assertEqual(inspect_file_health(rar_named_cbz)["code"], "readable")
+
+            neither = Path(folder) / "neither.cbr"
+            neither.write_bytes(b"not an archive at all")
+            health = inspect_file_health(neither)
+            self.assertEqual(health["code"], "corrupt_archive")
+            self.assertEqual(health["message"], "CBR does not have a valid RAR archive header.")
+
     def test_comicinfo_year_does_not_override_collection_filename(self):
         parsed = parse_filename(Path("southernbastards_vol2.cbz"))
         lookup = lookup_identity(parsed, {"source": "ComicInfo.xml", "series": "Southern Bastards", "year": "2026"})
@@ -5049,9 +5072,24 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
             [
                 "If Destruction Be Our Lot 002",
                 "If Destruction Be Our Lot 2",
+                "If Destruction Be Our Lot 02",
                 "If Destruction Be Our Lot",
             ],
         )
+
+    def test_a_single_digit_issue_is_also_asked_for_in_two_digits(self):
+        # "The Adventure Zone 04 - The Crystal Kingdom" answered neither
+        # "004" nor "4" (2026-09-30).
+        self.assertIn("The Adventure Zone 04",
+                      app._prowlarr_query_forms({"seriesTitle": "The Adventure Zone", "issueNumber": "4"}))
+        self.assertEqual(app._prowlarr_query_forms({"seriesTitle": "Fables", "issueNumber": "29"}),
+                         ["Fables 029", "Fables 29", "Fables"], "two digits already is the two-digit form")
+
+    def test_comics_are_searched_in_comics_and_ebooks(self):
+        # A book publisher's graphic novels are filed as ebooks.
+        with patch("app.fetch_json_with_headers", return_value=[]) as fetch:
+            app._prowlarr_search({"url": "http://p", "apiKey": "k"}, "The Adventure Zone 04")
+        self.assertIn("categories=7030&categories=7020", fetch.call_args.args[0])
 
     def test_a_three_digit_issue_has_no_bare_form_to_add(self):
         self.assertEqual(
@@ -5123,13 +5161,14 @@ class ProwlarrQueryFormsTests(unittest.TestCase):
         store.rejected_acquisition_releases.return_value = []
         with patch("app.catalog_store", return_value=store), patch(
             "app._enabled_acquisition_service", return_value={"url": "http://p", "apiKey": "k"}
-        ), patch("app._prowlarr_search", side_effect=[[], [], []]) as search:
+        ), patch("app._prowlarr_search", side_effect=[[], [], [], []]) as search:
             app.search_prowlarr_releases(7)
         self.assertEqual(
             [call.args[1] for call in search.call_args_list],
             [
                 "If Destruction Be Our Lot 002",
                 "If Destruction Be Our Lot 2",
+                "If Destruction Be Our Lot 02",
                 "If Destruction Be Our Lot",
             ],
         )
@@ -5861,11 +5900,11 @@ class ReleaseSearchFormTests(unittest.TestCase):
         self.assertIn("Department of Truth", forms)
 
     def test_a_title_with_no_article_is_unchanged(self):
-        self.assertEqual(self.forms("Saga", "3"), ["Saga 003", "Saga 3", "Saga"])
+        self.assertEqual(self.forms("Saga", "3"), ["Saga 003", "Saga 3", "Saga 03", "Saga"])
 
     def test_a_title_that_merely_starts_with_the_letters_is_left_alone(self):
         forms = self.forms("Thanos", "1")
-        self.assertEqual(forms, ["Thanos 001", "Thanos 1", "Thanos"])
+        self.assertEqual(forms, ["Thanos 001", "Thanos 1", "Thanos 01", "Thanos"])
 
     def _release(self, title):
         """Shaped like a real Prowlarr row, so the filter cannot drop it."""
@@ -5899,7 +5938,7 @@ class ReleaseSearchFormTests(unittest.TestCase):
         """Results alone are not an answer; a usable candidate is."""
         searched, result = self._search_for("Example")
         self.assertEqual(
-            searched, ["Example 004", "Example 4", "Example"],
+            searched, ["Example 004", "Example 4", "Example 04", "Example"],
             "every form must be tried until one produces a candidate",
         )
         self.assertEqual(result["candidateCount"], 1)
@@ -5941,7 +5980,7 @@ class ReleaseSearchFormTests(unittest.TestCase):
              patch("app._release_candidate_score", side_effect=score), \
              patch("app._prowlarr_download_reference", return_value="ref"):
             result = app.search_prowlarr_releases(1)
-        self.assertEqual(searched, ["Example 004", "Example 4", "Example"])
+        self.assertEqual(searched, ["Example 004", "Example 4", "Example 04", "Example"])
         self.assertEqual(result["candidateCount"], 1)
         self.assertIn("004", result["candidates"][0]["title"])
 
@@ -7451,7 +7490,7 @@ class MangaVolumeTests(unittest.TestCase):
         self.assertEqual(forms[:3], ["Chainsaw Man v18", "Chainsaw Man Vol 18", "Chainsaw Man v018"])
         self.assertEqual(forms[-1], "Chainsaw Man")
         self.assertEqual(app._prowlarr_query_forms({"seriesTitle": "Saga", "issueNumber": "3"}),
-                         ["Saga 003", "Saga 3", "Saga"], "comics are unchanged")
+                         ["Saga 003", "Saga 3", "Saga 03", "Saga"], "comics are asked for by issue")
         with patch("app.fetch_json_with_headers", return_value=[]) as fetch:
             app._prowlarr_search({"url": "http://p", "apiKey": "k"}, "Chainsaw Man v18",
                                  categories=app.MANGA_CATEGORIES)
@@ -7625,6 +7664,26 @@ def _image_epub(path, pages, *, text_pages=0):
             spine.append(f'<itemref idref="t{index}"/>')
         book.writestr("OEBPS/content.opf",
                       f"<package><manifest>{''.join(items)}</manifest><spine>{''.join(spine)}</spine></package>")
+
+
+class ComicProseEbookTests(unittest.TestCase):
+    """Comics are searched in EBook too, where a novel of the same name lives."""
+
+    def test_a_book_of_text_is_not_taken_as_a_comic(self):
+        with tempfile.TemporaryDirectory() as folder:
+            novel = Path(folder) / "The Adventure Zone 04.epub"
+            _image_epub(novel, [JPEG + b"cover"], text_pages=30)
+            comic = Path(folder) / "comic.epub"
+            _image_epub(comic, [JPEG + b"1", JPEG + b"2", JPEG + b"3"])
+            self.assertTrue(app._epub_is_prose(novel))
+            self.assertFalse(app._epub_is_prose(comic), "a comic EPUB is still a comic")
+            with self.assertRaises(app.DownloadContentMismatch) as caught:
+                app._select_downloaded_comic(
+                    [novel], Path(folder),
+                    {"format": "comic", "seriesTitle": "The Adventure Zone", "issueNumber": "4"},
+                    "The Adventure Zone 04 - The Crystal Kingdom (2021)",
+                )
+            self.assertIn("book of text", str(caught.exception))
 
 
 class MangaEbookConversionTests(unittest.TestCase):
