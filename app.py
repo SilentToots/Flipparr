@@ -2530,8 +2530,22 @@ def _provider_headers_exhausted(headers: dict[str, Any]) -> bool:
     return bool(remaining) and min(remaining) <= 0
 
 
+# Longer than any pacing gap: a wait this long is a pause the provider asked
+# for, not its turn coming round.
+PROVIDER_PAUSE_WAIT_LIMIT_SECONDS = 10.0
+
+
 def _wait_for_provider_slot(provider_id: str) -> None:
-    """Serialize one provider without blocking traffic to another provider."""
+    """Serialize one provider without blocking traffic to another provider.
+
+    A pacing gap -- a second or three -- is waited out. A pause the provider
+    asked for is not: the Grand Comics Database answered a burst of pulls with
+    "try again in 620 seconds", and every catalog search then slept ten
+    minutes on its GCD half while Metron and Comic Vine had long since
+    answered, the page stuck on its skeleton (the owner, 2026-09-30). The
+    request fails as rate-limited instead, and its caller answers without it
+    -- or with a cached copy, which `fetch_provider_json` falls back to.
+    """
     while True:
         with _PROVIDER_REQUEST_LOCK:
             now = time.monotonic()
@@ -2541,6 +2555,14 @@ def _wait_for_provider_slot(provider_id: str) -> None:
                     now + _PROVIDER_MIN_INTERVAL_SECONDS.get(provider_id, 1.0)
                 )
                 return
+        if wait_seconds > PROVIDER_PAUSE_WAIT_LIMIT_SECONDS:
+            name = PROVIDER_DEFINITIONS.get(provider_id, {}).get("name", provider_id)
+            minutes = max(1, math.ceil(wait_seconds / 60))
+            raise MetadataRateLimited(
+                provider_id, math.ceil(wait_seconds),
+                f"{name} asked Flipparr to pause; it is left out for about {minutes} "
+                f"more minute{'' if minutes == 1 else 's'}.",
+            )
         time.sleep(wait_seconds)
 
 

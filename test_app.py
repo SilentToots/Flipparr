@@ -9399,3 +9399,54 @@ class TorrentAcquisitionTests(unittest.TestCase):
             progress = app._torrent_progress(rows)
         self.assertEqual(progress["121"], {"percent": 50.0, "sizeLeft": "60 MB", "timeLeft": "0:12:34", "state": "downloading"})
         self.assertEqual(set(progress), {"121", "122"})
+
+
+class ProviderPauseTests(unittest.TestCase):
+    """A provider's pause is not waited out. GCD answered a burst of pulls
+    with "try again in 620 seconds", and every catalog search then slept ten
+    minutes on its GCD half, the page stuck on its skeleton (2026-09-30)."""
+
+    def setUp(self):
+        self.addCleanup(app._PROVIDER_JSON_CACHE.clear)
+        app._PROVIDER_JSON_CACHE.clear()
+
+    def test_a_pacing_gap_is_waited_out(self):
+        with patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {"gcd": time.monotonic() + 0.05}, clear=True), \
+             patch("app.time.sleep") as sleep:
+            sleep.side_effect = lambda seconds: app._PROVIDER_NEXT_REQUEST_AT.__setitem__("gcd", 0.0)
+            app._wait_for_provider_slot("gcd")
+        sleep.assert_called_once()
+
+    def test_a_pause_fails_at_once_as_rate_limited(self):
+        with patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {"gcd": time.monotonic() + 620}, clear=True), \
+             patch("app.time.sleep") as sleep:
+            with self.assertRaises(app.MetadataRateLimited) as raised:
+                app._wait_for_provider_slot("gcd")
+        sleep.assert_not_called()
+        self.assertEqual(raised.exception.provider, "gcd")
+        self.assertGreaterEqual(raised.exception.retry_after_seconds, 619)
+        self.assertIn("left out for about 11 more minutes", str(raised.exception))
+
+    def test_a_paused_provider_answers_from_its_cache_or_not_at_all(self):
+        url = "https://www.comics.org/api/series/name/saga/?format=json"
+        key = app._provider_cache_key("gcd", url, "")
+        with patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {"gcd": time.monotonic() + 620}, clear=True), \
+             patch("app.fetch_json_with_headers") as fetch:
+            with self.assertRaises(app.MetadataRateLimited):
+                app.fetch_provider_json("gcd", url, "")
+            app._PROVIDER_JSON_CACHE[key] = {"saved_at": time.time() - 10 * 24 * 3600, "status": 200, "data": {"results": ["cached"]}}
+            self.assertEqual(app.fetch_provider_json("gcd", url, ""), {"results": ["cached"]},
+                             "a stale copy is better than a ten-minute wait")
+        fetch.assert_not_called()
+
+    def test_a_search_answers_without_the_paused_provider(self):
+        config = {"metron": {"enabled": False}, "comic_vine": {"enabled": False}, "gcd": {"enabled": True}}
+        with patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {"gcd": time.monotonic() + 620}, clear=True), \
+             patch("app.load_provider_config", return_value=config), \
+             patch("app._discovery_library_view", return_value={}), \
+             patch("app.fetch_json_with_headers") as fetch:
+            started = time.monotonic()
+            with self.assertRaisesRegex(RuntimeError, "asked Flipparr to pause"):
+                app.discover_series("saga")
+        self.assertLess(time.monotonic() - started, 5, "no ten-minute wait")
+        fetch.assert_not_called()
