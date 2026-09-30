@@ -10445,6 +10445,24 @@ def _after_metron_title_searches(timeout: float = 10.0) -> None:
             _METRON_TITLE_TURNS.wait(remaining)
 
 
+def _discovery_found_title(
+    by_provider: dict[str, list[dict[str, Any]]], title_query: str, year_hint: int | None,
+) -> bool:
+    """Whether a catalog already answered with the title itself -- and, when
+    the search named a year, a run begun within a year of it."""
+    wanted = normalized_title(title_query)
+    if not wanted:
+        return False
+    for rows in by_provider.values():
+        for row in rows or []:
+            if normalized_title(row.get("title")) != wanted:
+                continue
+            began = _provider_year(row.get("yearBegan"))
+            if not year_hint or (began and abs(began - year_hint) <= 1):
+                return True
+    return False
+
+
 def _discover_series_with(
     cleaned: str, title_query: str, year_hint: int | None, config: dict[str, Any],
     turn: _MetronTitleTurn | None, extended: bool = False,
@@ -10464,8 +10482,14 @@ def _discover_series_with(
     if comic_vine.get("enabled") and comic_vine.get("apiKey"):
         searches.append(("comic_vine", "Comic Vine", functools.partial(
             discover_comic_vine_series, cleaned, str(comic_vine["apiKey"]), library)))
-    searches.append(("gcd", "Grand Comics Database", functools.partial(
-        discover_gcd_series, cleaned, library)))
+    # GCD is the fallback, asked only when the catalogs above do not find the
+    # title itself (the owner, 2026-09-30). It is the one used without an
+    # account and throttles hardest: asked on every search, a busy afternoon
+    # of pulls had it refusing Flipparr for ten minutes. Asking it whenever
+    # the others fail to find the exact title keeps why it was added -- a
+    # loose Metron answer ("Saga of the Swamp Thing" for Saga) still reaches
+    # GCD, the deepest catalog for older, indie and reprint runs.
+    fallback = ("gcd", "Grand Comics Database", functools.partial(discover_gcd_series, cleaned, library))
 
     # Asked at the same time as the titles, so one answer holds everything;
     # its Metron requests wait for the title search's own (_MetronTitleTurn).
@@ -10476,16 +10500,24 @@ def _discover_series_with(
 
     by_provider: dict[str, list[dict[str, Any]]] = {}
     errors: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(searches)) as pool:
-        futures = {
-            pool.submit(search): (provider_id, name) for provider_id, name, search in searches
-        }
-        for future in concurrent.futures.as_completed(futures):
-            provider_id, name = futures[future]
-            try:
-                by_provider[provider_id] = (future.result() or {}).get("results") or []
-            except Exception as exc:
-                errors.append({"provider": name, "error": str(exc)})
+    if searches:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(searches)) as pool:
+            futures = {
+                pool.submit(search): (provider_id, name) for provider_id, name, search in searches
+            }
+            for future in concurrent.futures.as_completed(futures):
+                provider_id, name = futures[future]
+                try:
+                    by_provider[provider_id] = (future.result() or {}).get("results") or []
+                except Exception as exc:
+                    errors.append({"provider": name, "error": str(exc)})
+    if not _discovery_found_title(by_provider, title_query, year_hint):
+        searches.append(fallback)
+        provider_id, name, search = fallback
+        try:
+            by_provider[provider_id] = (search() or {}).get("results") or []
+        except Exception as exc:
+            errors.append({"provider": name, "error": str(exc)})
 
     results = _merge_discovered_runs(by_provider, title_query, year_hint)
     people: dict[str, Any] = {}

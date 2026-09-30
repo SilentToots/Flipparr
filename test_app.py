@@ -797,7 +797,7 @@ class FilenameParserTests(unittest.TestCase):
             {"name": "Fiona Staples", "roles": ["Artist", "Colorist"]},
         ])
 
-    def test_discovery_prefers_configured_metron_over_gcd(self):
+    def test_discovery_prefers_configured_metron_and_leaves_gcd_out_when_it_has_the_title(self):
         metron_result = {
             "query": "Saga", "provider": "Metron", "providerId": "metron",
             "results": [{
@@ -838,12 +838,13 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(result["providerId"], "metron", "Metron's record is the one shown")
         self.assertEqual(run["cover"], "https://covers.test/saga.jpg")
         self.assertEqual(run["coverProvider"], "Comic Vine")
-        self.assertEqual(run["issueCount"], 72, "and GCD fills in what Metron left blank")
-        self.assertEqual(run["providerIds"], {"metron": "9", "comic_vine": "8", "gcd": "7"},
+        self.assertEqual(run["providerIds"], {"metron": "9", "comic_vine": "8"},
                          "every id is kept, because importing goes back to the source")
         metron.assert_called_once_with("Saga", "token", empty, hydrate=False)
         comic_vine.assert_called_once_with("Saga", "key", empty)
-        gcd.assert_called_once_with("Saga", empty)
+        gcd.assert_not_called()
+        self.assertEqual(result["providersChecked"], ["Metron", "Comic Vine"],
+                         "GCD is the fallback, asked only when the others lack the title (the owner, 2026-09-30)")
 
     def test_a_provider_that_fails_does_not_take_the_search_with_it(self):
         comic_result = {
@@ -863,8 +864,7 @@ class FilenameParserTests(unittest.TestCase):
             result = discover_series("Saga")
         self.assertEqual(result["providerId"], "comic_vine")
         self.assertEqual(result["fallbacks"][0]["provider"], "Metron")
-        # GCD found nothing, but it answered: it is not still "searching".
-        self.assertEqual(result["providersAnswered"], ["Comic Vine", "Grand Comics Database"])
+        self.assertEqual(result["providersAnswered"], ["Comic Vine"], "Comic Vine had the title; GCD was not needed")
         self.assertEqual(len(result["results"]), 1)
 
     def test_a_name_counts_only_when_the_catalog_knows_it_outright(self):
@@ -1100,14 +1100,9 @@ class FilenameParserTests(unittest.TestCase):
             "providerSeriesId": "7", "title": "Batman", "yearBegan": 2016,
             "yearEnded": 2026, "yearLabel": "2016–2026",
         }]}
-        with patch("app.load_provider_config", return_value={
-            "metron": {"enabled": True, "token": "token"},
-        }), patch("app._discovery_library_view",
-                  return_value={"keys": set(), "providerIds": set()}), patch(
-            "app.discover_metron_series", return_value=metron_result
-        ), patch("app.discover_gcd_series", return_value=gcd_result):
-            result = discover_series("Batman")
-        run = result["results"][0]
+        results = app._merge_discovered_runs(
+            {"metron": metron_result["results"], "gcd": gcd_result["results"]}, "Batman", None)
+        run = results[0]
         self.assertIsNone(run["yearEnded"])
         self.assertEqual(run["yearLabel"], "2016")
         self.assertEqual(run["status"], "Ongoing")
@@ -1121,6 +1116,25 @@ class FilenameParserTests(unittest.TestCase):
         ), patch("app.discover_gcd_series", side_effect=RuntimeError("throttled")):
             with self.assertRaises(RuntimeError):
                 discover_series("Saga")
+
+    def test_gcd_is_asked_when_the_others_lack_the_title_or_its_year(self):
+        config = {"metron": {"enabled": True, "token": "token"}}
+        saga_2012 = {"results": [{"provider": "metron", "providerName": "Metron", "providerSeriesId": "9",
+                                  "title": "Saga", "yearBegan": 2012}]}
+        with patch("app.load_provider_config", return_value=config), \
+             patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+             patch("app.discover_metron_series", return_value=saga_2012), \
+             patch("app.discover_gcd_series", return_value={"results": []}) as gcd:
+            discover_series("Saga")
+            gcd.assert_not_called()
+            discover_series("Saga 1985")
+            gcd.assert_called_once()
+        with patch("app.load_provider_config", return_value={}), \
+             patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+             patch("app.discover_gcd_series", return_value={"results": []}) as gcd:
+            result = discover_series("Saga")
+        gcd.assert_called_once()
+        self.assertEqual(result["providersChecked"], ["Grand Comics Database"], "with nothing else set up, GCD is the search")
 
     def test_gcd_is_reached_even_when_metron_answers_weakly(self):
         """The bug this replaced: two loose matches counted as success.
