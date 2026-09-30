@@ -161,6 +161,18 @@ class HttpContractTests(unittest.TestCase):
 
     def test_settings_rejects_unknown_keys_with_400(self):
         self.assertEqual(self.patch("/api/v1/settings", {"nope": True}).status, 400)
+
+    def test_the_download_order_round_trips_and_refuses_a_bad_list(self):
+        self.assertEqual(self.get("/api/v1/settings").json()["sourcePriority"], ["usenet", "torrent", "direct_site"])
+        try:
+            updated = self.patch("/api/v1/settings", {"sourcePriority": ["torrent", "direct_site", "usenet"]})
+            self.assertEqual(updated.status, 200)
+            self.assertEqual(self.get("/api/v1/settings").json()["sourcePriority"], ["torrent", "direct_site", "usenet"])
+            for bad in (["torrent", "usenet"], ["usenet", "usenet", "direct_site"], "usenet", ["usenet", "torrent", "ftp"]):
+                with self.subTest(bad=bad):
+                    self.assertEqual(self.patch("/api/v1/settings", {"sourcePriority": bad}).status, 400)
+        finally:
+            self.patch("/api/v1/settings", {"sourcePriority": ["usenet", "torrent", "direct_site"]})
         self.assertEqual(self.patch("/api/v1/settings", {"collectedEditionsEnabled": "yes"}).status, 400)
 
     def test_providers_and_services_list_without_credentials(self):

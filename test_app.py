@@ -9464,3 +9464,86 @@ class ProviderPauseTests(unittest.TestCase):
                 app.discover_series("saga")
         self.assertLess(time.monotonic() - started, 5, "no ten-minute wait")
         fetch.assert_not_called()
+
+
+class SourcePriorityTests(unittest.TestCase):
+    """Where releases are taken from first is the admin's to say (the owner,
+    2026-09-30), and among releases good enough to take the order decides."""
+
+    def test_the_order_is_a_setting_with_the_old_order_as_its_default(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(
+            "app.os.environ", {"COMICARR_SETTINGS_CONFIG": str(Path(folder) / "settings.json")},
+        ):
+            self.assertEqual(app.source_priority(), ["usenet", "torrent", "direct_site"])
+            app.save_app_settings({"sourcePriority": ["direct_site", "usenet", "torrent"]})
+            self.assertEqual(app.source_priority(), ["direct_site", "usenet", "torrent"])
+            with self.assertRaisesRegex(ValueError, "once each"):
+                app.save_app_settings({"sourcePriority": ["usenet", "usenet", "torrent"]})
+            (Path(folder) / "settings.json").write_text(json.dumps({"sourcePriority": ["usenet"]}))
+            self.assertEqual(app.source_priority(), ["usenet", "torrent", "direct_site"], "a broken list is the default")
+
+    def test_the_order_decides_among_strong_matches_and_never_lifts_a_weak_one(self):
+        key = app._release_order_key(["torrent", "usenet", "direct_site"])
+        items = [
+            {"id": "usenet-strong", "source": "usenet", "matchScore": 100},
+            {"id": "torrent-strong", "source": "torrent", "matchScore": 88, "seeders": 3},
+            {"id": "torrent-weak", "source": "torrent", "matchScore": 72},
+            {"id": "gc-strong", "source": "direct_site", "matchScore": 95},
+        ]
+        self.assertEqual([item["id"] for item in sorted(items, key=key)],
+                         ["torrent-strong", "usenet-strong", "gc-strong", "torrent-weak"])
+
+    def test_a_direct_site_single_is_asked_first_only_when_it_leads(self):
+        usenet = {"id": "usenet-1", "title": "Saga 061", "source": "usenet", "matchScore": 100, "sizeBytes": 1}
+        gc_single = {"id": "gc-1", "title": "Saga #61", "source": "direct_site", "matchScore": 95}
+        context = {"seriesTitle": "Saga", "issueNumber": "61", "requestId": "3"}
+
+        def run(order):
+            with patch("app.source_priority", return_value=order), patch("app._issue_year_gate", return_value=None), \
+                 patch("app.search_prowlarr_releases", return_value={"candidates": [usenet], "job": context}), \
+                 patch("app._direct_site_single_to_take", return_value=gc_single) as asked, \
+                 patch("app.grab_release_candidate", return_value={"status": "grabbed"}) as grab:
+                app._auto_grab_release(9)
+            return asked, grab
+
+        asked, grab = run(["direct_site", "usenet", "torrent"])
+        asked.assert_called_once()
+        grab.assert_called_once_with(9, "gc-1")
+        asked, grab = run(["usenet", "torrent", "direct_site"])
+        asked.assert_not_called()
+        grab.assert_called_once_with(9, "usenet-1")
+
+    def test_a_leading_direct_site_single_that_fails_hands_on_to_the_next_source(self):
+        usenet = {"id": "usenet-1", "title": "Saga 061", "source": "usenet", "matchScore": 100, "sizeBytes": 1}
+        with patch("app.source_priority", return_value=["direct_site", "usenet", "torrent"]), \
+             patch("app._issue_year_gate", return_value=None), \
+             patch("app.search_prowlarr_releases", return_value={"candidates": [usenet], "job": {"requestId": "3"}}), \
+             patch("app._direct_site_single_to_take", return_value={"id": "gc-1", "title": "Saga #61"}), \
+             patch("app.grab_release_candidate", side_effect=[ValueError("the link opened a page"), {"status": "grabbed"}]) as grab:
+            result = app._auto_grab_release(9)
+        self.assertEqual([c.args for c in grab.call_args_list], [(9, "gc-1"), (9, "usenet-1")])
+        self.assertEqual(result["release"]["id"], "usenet-1")
+
+    def test_between_packs_of_equal_reach_the_order_decides(self):
+        store = Mock()
+        store.wanted_run_issues.return_value = [
+            {"jobId": 100 + n, "issueId": 200 + n, "issueNumber": str(n), "status": "queued"} for n in range(1, 21)]
+        store.get_acquisition_job_context.return_value = {"requestId": "48", "seriesTitle": "Farmhand", "issueNumber": "1",
+                                                          "runIssueCount": 20}
+        store.rejected_release_keys_for_jobs.return_value = set()
+        usenet = {"id": "usenet-pack", "title": "Farmhand 001-020", "source": "usenet", "matchScore": 72,
+                  "sizeBytes": 900_000_000, "pack": {"first": 1, "last": 20}, "grabbable": True}
+        gc = {"id": "gc-pack", "title": "Farmhand #1 - 20", "source": "direct_site", "matchScore": 72,
+              "sizeBytes": 900_000_000, "pack": {"first": 1, "last": 20}, "grabbable": True}
+        with patch("app.source_priority", return_value=["direct_site", "torrent", "usenet"]), \
+             patch("app.search_prowlarr_releases", return_value={"candidates": [usenet]}), \
+             patch("app._direct_site_candidates", return_value=[gc]), \
+             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app.grab_release_candidate", return_value={"status": "grabbed"}) as grab:
+            app._grab_run_pack(store, 48, [100 + n for n in range(1, 21)])
+        grab.assert_called_once_with(101, "gc-pack")
+
+    def test_services_say_which_group_they_belong_to(self):
+        groups = {service["id"]: service["group"] for service in app.public_acquisition_service_config()["services"]}
+        self.assertEqual(groups, {"prowlarr": "search", "sabnzbd": "clients", "qbittorrent": "clients",
+                                  "flaresolverr": "direct", "direct_site": "direct"})

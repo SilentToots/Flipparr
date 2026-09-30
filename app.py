@@ -374,7 +374,14 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # connector for the rating printed there (DC's "13+ TEEN", Marvel's
     # "RATED T+"). One cover per run, on the admin's key; off until asked.
     "ratingsFromCovers": False,
+    # Where releases are taken from first (the owner, 2026-09-30). Among releases
+    # good enough to take on their own, the source earlier here wins even over
+    # a few more points of match elsewhere; score ranks within one source, and
+    # a weak match is never taken for its source. Packs keep their own rule:
+    # pulling a run they lead, pulling one issue a single does.
+    "sourcePriority": ["usenet", "torrent", "direct_site"],
 }
+RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
     "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
     "ratingsFromCovers",
@@ -402,9 +409,18 @@ def load_app_settings() -> dict[str, Any]:
                 elif key == "autoScanIntervalMinutes":
                     if isinstance(value, int) and not isinstance(value, bool) and value in AUTO_SCAN_INTERVALS:
                         settings[key] = value
+                elif key == "sourcePriority":
+                    if _is_source_order(value):
+                        settings[key] = list(value)
                 elif isinstance(value, str):
                     settings[key] = value
+        settings["sourcePriority"] = list(settings["sourcePriority"])
         return settings
+
+
+def _is_source_order(value: Any) -> bool:
+    return isinstance(value, list) and sorted(map(str, value)) == sorted(RELEASE_SOURCES) \
+        and all(isinstance(item, str) for item in value)
 
 
 def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
@@ -424,6 +440,10 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             not isinstance(value, int) or isinstance(value, bool) or value not in AUTO_SCAN_INTERVALS
         ):
             raise ValueError("Choose one of the scan intervals Flipparr offers")
+        if key == "sourcePriority":
+            if not _is_source_order(value):
+                raise ValueError("List Usenet, torrents and DirectSite once each")
+            value = list(value)
         clean[key] = value
     with _SETTINGS_CONFIG_LOCK:
         current = dict(_APP_SETTINGS_DEFAULTS)
@@ -2239,6 +2259,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "description": "Search your configured indexers for wanted issues and volumes.",
         "setupSummary": "Searches your sources for issues you are missing.",
         "defaultUrl": "http://localhost:9696", "defaultEnabled": False,
+        "group": "search",
         "needsApiKey": True,
     },
     "sabnzbd": {
@@ -2247,6 +2268,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "description": "Download selected NZBs and report their progress back to Flipparr.",
         "setupSummary": "Downloads what you pick and reports progress back.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
+        "group": "clients",
         "needsApiKey": True,
     },
     # Torrents, for what Usenet does not carry: manga volumes, and whole runs
@@ -2260,6 +2282,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "description": "Download selected torrents, only the issues you want from a pack, and import them while they seed.",
         "setupSummary": "Downloads torrents, including just the issues you want from a pack.",
         "defaultUrl": "http://localhost:8080", "defaultEnabled": False,
+        "group": "clients",
         "needsApiKey": False,
     },
     # A public site rather than a service of yours: nothing to authenticate to,
@@ -2271,9 +2294,10 @@ ACQUISITION_SERVICE_DEFINITIONS = {
     "flaresolverr": {
         "name": "FlareSolverr", "kind": "Cloudflare solver",
         "capabilities": ["Solves Cloudflare challenges", "Reads DirectSite post pages"],
-        "description": "Lets Flipparr read pages that block scripted requests.",
+        "description": "Needed to download from DirectSite: it reads the pages DirectSite protects.",
         "setupSummary": "Reads pages DirectSite protects, so links can be found.",
         "defaultUrl": "http://flaresolverr:8191/v1", "defaultEnabled": False,
+        "group": "direct",
         "needsApiKey": False,
     },
     "direct_site": {
@@ -2282,6 +2306,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "description": "Search DirectSite for issues your indexers do not carry.",
         "setupSummary": "Searches DirectSite and lists what it has.",
         "defaultUrl": "https://comics.example", "defaultEnabled": False,
+        "group": "direct",
         "needsApiKey": False,
     },
 }
@@ -2985,6 +3010,9 @@ def public_acquisition_service_config() -> dict[str, Any]:
             "description": definition["description"],
             "setupSummary": definition.get("setupSummary") or definition["description"],
             "capabilities": definition["capabilities"],
+            # Settings shows the services in what they do: finding releases,
+            # downloading them, and DirectSite with the solver it needs.
+            "group": definition.get("group") or "search",
             "configured": configured, "enabled": bool(values.get("enabled")) and configured,
             "url": _redacted_upstream_url(
                 str(values.get("url") or definition["defaultUrl"])
@@ -4117,7 +4145,7 @@ def search_release_candidates(job_id: int, query: str | None = None) -> dict[str
     if not extra:
         return result
     candidates = list(result.get("candidates") or []) + extra
-    candidates.sort(key=lambda item: (-item["matchScore"], -int(item.get("sizeBytes") or 0), item["title"]))
+    candidates.sort(key=_release_order_key(by_title=True))
     candidates = candidates[:24]
     # The row said how many Prowlarr found; it is now a different number.
     try:
@@ -4185,6 +4213,36 @@ class SABSubmissionError(RuntimeError):
 class TorrentSubmissionError(SABSubmissionError):
     """qBittorrent could not take a torrent. A download client refusing, like
     SABnzbd refusing: the next release would meet the same answer."""
+
+
+def source_priority() -> list[str]:
+    """Where releases are taken from first, as the admin ordered them."""
+    try:
+        order = load_app_settings().get("sourcePriority")
+    except Exception:  # noqa: BLE001 -- an unreadable setting is the default order
+        order = None
+    return list(order) if _is_source_order(order) else list(RELEASE_SOURCES)
+
+
+def _source_rank(source: Any, order: list[str] | None = None) -> int:
+    order = order if order is not None else source_priority()
+    value = str(source or "usenet")
+    return order.index(value) if value in order else len(order)
+
+
+def _release_order_key(order: list[str] | None = None, *, by_title: bool = False) -> Callable[[dict[str, Any]], tuple]:
+    """How releases are ranked: a strong match before a weak one, then the
+    admin's order of sources, then match score, the healthiest swarm and the
+    larger file. Without `by_title` a full tie keeps the order it came in,
+    so re-sorting a ranked list never reshuffles it."""
+    order = order if order is not None else source_priority()
+
+    def key(item: dict[str, Any]) -> tuple:
+        score = int(item.get("matchScore") or 0)
+        ranked = (0 if score >= 85 else 1, _source_rank(item.get("source"), order), -score,
+                  -int(item.get("seeders") or 0), -int(item.get("sizeBytes") or 0))
+        return (*ranked, str(item.get("title") or "")) if by_title else ranked
+    return key
 
 
 def _release_seeders(release: dict[str, Any]) -> int:
@@ -5178,11 +5236,8 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
             job_id, "queued", f"Search did not finish ({exc}); it will be tried again"
         )
         raise
-    # Usenet first at an equal score, then the healthiest swarm.
-    candidates.sort(key=lambda item: (
-        -item["matchScore"], 0 if item.get("source") != "torrent" else 1,
-        -int(item.get("seeders") or 0), -item["sizeBytes"], item["title"],
-    ))
+    # Strong matches first, in the admin's order of sources.
+    candidates.sort(key=_release_order_key(by_title=True))
     candidates = candidates[:24]
     # Nothing found is a finding. Reporting it as "0 release candidates found"
     # and then letting reconcile stamp the boilerplate back over it left an
@@ -6860,14 +6915,16 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     if not isinstance(candidates, list):
         candidates = []
     candidates, held_back = _automatic_grab_order(context, candidates) if candidates else ([], "")
-    if not any(not item.get("lastResort") for item in candidates):
-        # The indexers have no single for it. DirectSite may: a strong match
-        # for the very issue is taken the way a run's pack from there already
-        # is -- when it can be downloaded from at all. Usenet stays first;
-        # this is the answer when there is none, and it comes before settling
-        # for a torrent pack. World's Finest #32 sat at "No release found
-        # yet" while Find release showed the issue, confidently, from
-        # DirectSite -- a list a person had to go and act on.
+    # A DirectSite single is asked for when the indexers have no single or
+    # pack worth taking -- it comes before settling for a torrent pack -- and
+    # when DirectSite comes before the best single's source in the admin's
+    # order. Otherwise it is not asked: each ask is a solver round trip.
+    # World's Finest #32 sat at "No release found yet" while Find release
+    # showed the issue, confidently, from DirectSite -- a list a person had to
+    # go and act on.
+    firsts = [item for item in candidates if not item.get("lastResort")]
+    single_ranks = [_source_rank(item.get("source")) for item in firsts if not item.get("pack")]
+    if not firsts or (single_ranks and _source_rank("direct_site") < min(single_ranks)):
         fallback = _direct_site_single_to_take(job_id, context)
         if fallback is not None:
             try:
@@ -6875,9 +6932,11 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
             except Exception as exc:  # noqa: BLE001 -- the row says; the next pass tries again
                 log_event("direct_site_single_grab_failed", level="warning", job_id=job_id,
                           release=str(fallback.get("title") or ""), error=str(exc)[:200])
-                _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on DirectSite but could not fetch it: {exc}")
-                return None
-            return {**grabbed, "release": fallback}
+                if not firsts:
+                    _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on DirectSite but could not fetch it: {exc}")
+                    return None
+            else:
+                return {**grabbed, "release": fallback}
     if not candidates:
         if held_back:
             _say_on_the_row(job_id, held_back)
@@ -7040,6 +7099,7 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
     except Exception:  # noqa: BLE001
         refused = set()
     candidates, _unshared = _automatically_takeable(candidates)
+    order = source_priority()
     offers: list[tuple[int, int, int, dict[str, Any]]] = []
     for candidate in candidates:
         if not candidate.get("pack"):
@@ -7057,10 +7117,10 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
             continue
         pack = candidate["pack"]
         covered = sum(1 for number in numbers if pack["first"] <= number <= pack["last"])
-        # Most of the run first; between equals Usenet, then a torrent, then
-        # DirectSite, whose packs are the likeliest to fail (the owner,
-        # 2026-09-30); then the smaller download.
-        rank = {"usenet": 0, "torrent": 1}.get(str(candidate.get("source") or "usenet"), 2)
+        # Most of the run first; between equals the admin's order of sources
+        # (Usenet, a torrent, then DirectSite unless changed), then the smaller
+        # download.
+        rank = _source_rank(candidate.get("source"), order)
         offers.append((-covered, rank, int(candidate.get("sizeBytes") or 0), candidate))
     if not offers:
         return None
@@ -7091,6 +7151,7 @@ def _automatic_grab_order(
     candidates, unshared = _automatically_takeable(candidates)
     if not candidates:
         return [], unshared
+    candidates = sorted(candidates, key=_release_order_key())
     singles = [item for item in candidates if not item.get("pack")]
     packs = [item for item in candidates if item.get("pack")]
     oversized = [item for item in singles if int(item.get("sizeBytes") or 0) > SINGLE_RELEASE_MAX_BYTES]
@@ -7381,6 +7442,7 @@ def _fallback_after_sab_failure(
         return {"status": "failed", "error": detail, "automaticFallback": False}
 
     candidates, _unshared = _automatically_takeable(candidates)
+    candidates.sort(key=_release_order_key())
     if not candidates:
         detail = f"{message}. No unused strong Prowlarr match can be taken automatically."
         store.update_acquisition_job(job_id, "failed", detail)
