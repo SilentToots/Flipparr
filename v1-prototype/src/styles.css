@@ -1280,6 +1280,38 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .provider-row > span > em { color: var(--muted-weak); font-style: normal; font-size: var(--text-sm); }
 .provider-title-line { display: flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
 .provider-priority { color: var(--muted-weak); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
+/* Set ratings (Settings > Profiles > Ratings): filters, a list to tick, and
+   the action row held at the sheet's foot so Rate is always in reach. */
+.ratings-card-review { display: flex; align-items: center; gap: var(--space-14); padding-top: var(--space-14); margin-top: var(--space-14); border-top: 1px solid var(--line); }
+.ratings-card-review > span { display: grid; gap: var(--space-4); flex: 1; min-width: 0; }
+.ratings-card-review small { color: var(--muted); line-height: var(--leading-normal); }
+.modal.rating-review { width: min(760px, calc(100% - var(--space-32))); max-height: calc(100dvh - var(--space-48)); overflow: auto; padding-bottom: 0; }
+.rating-review h2 { margin-bottom: var(--space-8); }
+.rating-review-filters { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-10); }
+.rating-review-search { margin: 0; }
+.rating-review-all { margin: var(--space-16) 0 var(--space-8); }
+.rating-review-list { margin: 0; padding: 0; list-style: none; }
+.rating-review-row { display: flex; align-items: center; gap: var(--space-12); padding: var(--space-10) 0; border-top: 1px solid var(--line); cursor: pointer; }
+.rating-review-row input { flex: 0 0 auto; accent-color: var(--violet); }
+.rating-review-row > span:last-child { display: grid; gap: var(--space-4); min-width: 0; }
+.rating-review-row strong { font-size: var(--text-sm); }
+.rating-review-row small { color: var(--muted); line-height: var(--leading-normal); }
+.rating-review-cover { flex: 0 0 auto; width: var(--space-28); aspect-ratio: 2 / 3; border-radius: var(--radius-4); overflow: hidden; background: var(--surface); display: grid; place-items: center; }
+.rating-review-cover img { width: 100%; height: 100%; object-fit: cover; }
+.rating-review-empty { margin: var(--space-20) 0; color: var(--muted); font-size: var(--text-sm); }
+.rating-review-status { min-height: var(--space-16); margin: var(--space-12) 0 0; color: var(--muted); font-size: var(--text-xs); }
+.rating-review-status:empty { display: none; }
+.rating-review-actions { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: var(--space-12); margin: var(--space-12) calc(var(--space-28) * -1) 0; padding: var(--space-14) var(--space-28); background: var(--surface-raised); border-top: 1px solid var(--line); }
+.rating-review-actions > span { flex: 1; color: var(--muted); font-size: var(--text-sm); }
+@media (max-width: 640px) {
+  .modal.rating-review { width: 100%; padding-bottom: 0; }
+  .rating-review-filters { grid-template-columns: minmax(0, 1fr); }
+  .ratings-card-review { flex-wrap: wrap; }
+  /* The phone sheet's own inset is 16px, and the picker needs the width. */
+  .rating-review-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin: var(--space-12) calc(var(--space-16) * -1) 0; padding: var(--space-12) var(--space-16) calc(var(--space-12) + env(safe-area-inset-bottom)); }
+  .rating-review-actions > .glass-select { grid-column: 1 / -1; grid-row: 1; }
+}
+
 /* Download order: a numbered row per source, dragged by its handle. A row of
    its own, not a service row: the phone rule stacks those and restyles every
    button in them. */

@@ -201,6 +201,15 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   handle the arrow keys move a source a place at a time, since a drag must
   never be the only way (WCAG 2.5.7). The order saves on drop, and an
   `aria-live` line says which source is tried first.
+- **Set ratings** (since 2026-09-30) is the bulk tool behind Settings ›
+  Profiles › Ratings: a modal of filters (what has no rating, what one
+  limited profile can see now, or everything; a publisher, one per house
+  however it is spelled; a title), a list of runs to tick (a small cover,
+  the title and year, the publisher and where its rating came from), and an
+  action row held at the sheet's foot -- the count, a rating or "What was
+  found", Rate. On a phone the row stacks the picker over the count and
+  Rate, inside the sheet's 16px inset. After rating, an `aria-live` line
+  says who no longer sees the runs, or now does.
 - **The frame above 640px** (since 2026-09-19) follows the Apple TV app's
   sidebar. There is no top bar: each page's header carries its bell.
   - The **sidebar** is a Liquid Glass panel floating the full height of the
