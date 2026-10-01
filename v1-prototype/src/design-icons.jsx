@@ -27,8 +27,12 @@ import {
   Bars3Icon, BookOpenIcon, Squares2X2Icon, ChevronDownIcon,
 } from "@heroicons/react/20/solid";
 import {
-  BoltIcon, BookmarkIcon, CloudArrowDownIcon, ChevronLeftIcon, ChevronRightIcon,
+  BoltIcon, BookmarkIcon, CloudArrowDownIcon, ChevronLeftIcon, ChevronRightIcon, EyeIcon,
 } from "@heroicons/react/16/solid";
+// Collections' mark, which neither Heroicons nor Phosphor draws: Material
+// Design Icons' bookmark-box-multiple (Apache-2.0; the licence ships in
+// public/licenses). Only the path data is imported, so only it is bundled.
+import { mdiBookmarkBoxMultiple } from "@mdi/js";
 import { XMarkIcon } from "@heroicons/react/20/solid";
 
 // `size={null}` leaves the box to the stylesheet, for an icon whose size
@@ -71,7 +75,10 @@ export const FollowingIcon = sized(CheckCircleIcon, 20);        // heroicons-out
 
 // Card badges
 export const ActiveRunIcon = sized(BoltIcon, 12);   // heroicons-micro/bolt
-export const FollowedIcon = sized(BookmarkIcon, 12); // heroicons-micro/bookmark
+// Following is an eye, watching for new issues; the bookmark is the reading
+// list's, as Plex's watchlist is (the owner, 2026-10-01).
+export const FollowedIcon = sized(EyeIcon, 12);         // heroicons-micro/eye
+export const ReadingListIcon = sized(BookmarkIcon, 12); // heroicons-micro/bookmark
 
 // Discover
 export const PullIcon = sized(CloudArrowDownIcon, 16);      // heroicons-micro/cloud-arrow-down
@@ -81,3 +88,14 @@ export const ClearSearchIcon = sized(XMarkIcon, 20);        // heroicons-mini/x-
 
 // Comic drawer (node-id=72-1306)
 export const DrawerCloseIcon = sized(XMarkSolidIcon, 60);   // heroicons-solid/x-mark
+
+// An MDI icon from its published path, sized like the Heroicons above.
+function mdi(path, defaultSize) {
+  return function MdiIcon({ size = defaultSize, className = "", ...rest }) {
+    const box = size == null ? {} : { width: size, height: size };
+    return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"
+      className={className} {...box} {...rest}><path d={path} /></svg>;
+  };
+}
+
+export const CollectionIcon = mdi(mdiBookmarkBoxMultiple, 20); // mdi/bookmark-box-multiple

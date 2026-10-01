@@ -11,8 +11,8 @@ import {
   ArrowCounterClockwise,
   ArrowDown,
   ArrowUp,
-  BookmarkSimple,
   ListNumbers,
+  ListPlus,
   CaretRight,
   CaretUpDown,
   Heartbeat,
@@ -2996,7 +2996,7 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
             <button type="button" className="pull-button pull-button-md pull-button-idle"
               disabled={!data || busy || saving || Boolean(done)} onClick={saveOnly ? save : pull} aria-busy={busy || saving || undefined}>
               <span>{busy ? `${reader ? "Requesting" : "Pulling"}…` : saving ? "Saving…" : verb}</span>
-              {busy || saving ? <LoadingIndicator size={16} /> : saveOnly ? <BookmarkSimple size={16} /> : <PullIcon />}
+              {busy || saving ? <LoadingIndicator size={16} /> : saveOnly ? <ListPlus size={16} /> : <PullIcon />}
             </button>
           </div>
         </section>}
