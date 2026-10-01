@@ -44,6 +44,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .sidebar { background: var(--sidebar-glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
 .sidebar nav { display: grid; gap: var(--space-4); }
+/* Search (since 2026-10-01): one field at the top of the sidebar above 900px,
+   as Messages and Figma have it. A fill, not glass: a blur inside the
+   sidebar's own blur is a blur on a blur. At 900px and below the sidebar is
+   the rail or the phone's tab bar, so the field gives way to the rail's
+   Search item and the header's search button. */
+.sidebar-search { flex: 0 0 auto; width: 100%; margin-bottom: var(--space-4); background: var(--surface); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+@media (min-width: 901px) { .sidebar .nav-item[data-nav="search"] { display: none; } }
+@media (max-width: 900px) { .sidebar .sidebar-search { display: none; } }
 .nav-item > span { min-width: 0; overflow: hidden; color: inherit; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item {
   position: relative; width: 100%; min-height: 44px; box-sizing: border-box;
@@ -909,6 +917,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .arc-row-icon { display: grid; place-items: center; width: var(--control-height-sm); height: var(--control-height-sm); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--violet-text); }
 @media (hover: hover) { .arc-row:hover { background: var(--surface-hover); } }
 .arc-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Search's way on to the catalogs, under your library's matches: asked only on purpose. */
+.search-catalogs-row { margin-top: var(--space-20); }
+.search-hint { margin: var(--space-20) 0 0; color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.appbar-search > svg { opacity: .8; }
 .arc-issue-list .discover-issue-row { grid-template-columns: 36px minmax(0, 1fr); cursor: default; }
 /* A saved story arc's issues: their place in the order first, then the
    cover and the comic; a comic that is here opens on a tap, one that is

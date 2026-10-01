@@ -28,8 +28,9 @@ export const states = [
     name: "library-grid",
     path: "/library/all",
     require: [".series-card", ".page-header", ".sidebar"],
-    // A phone has no app bar; its header is part of the Comics screen.
-    phoneRequire: [".series-card", ".page-header-search", ".sidebar"],
+    // A phone has no app bar; its header is part of the Comics screen, with
+    // search a button by the bell (2026-10-01).
+    phoneRequire: [".series-card", ".appbar-search", ".sidebar"],
   },
   {
     name: "library-list",
@@ -185,7 +186,7 @@ export const states = [
       await settle(page, 800);
     },
   },
-  { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .glass-field", ".pull-card:not(.pull-card-skeleton)"] },
+  { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .appbar-search", ".pull-card:not(.pull-card-skeleton)"] },
   // Wanted is the first tab -- a request's row or the "All caught up" empty
   // state -- unless a reader's request is waiting, when the page opens on the
   // Requests tab instead: a queue row on desktop, a swipe card on a phone, and
@@ -194,6 +195,10 @@ export const states = [
   // README.md, "What the library needs").
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .request-queue-row, .request-swipe, .request-empty"] },
   // Comics' home (since 2026-10-01): shelves, or the empty library's state.
+  // Search: before a query (recents and the hint), and a library search as
+  // typed -- no catalogs, which are asked only on Enter (2026-10-01).
+  { name: "search-empty", path: "/search", require: [".search-hint"] },
+  { name: "search-results", path: "/search?q=saga", stub: ["search"], waitForCatalog: true, require: [".discover-results"] },
   { name: "library-recommended", path: "/library", waitForCatalog: true, require: [".library-shelf, .empty-state"] },
   { name: "library-collections", path: "/library/collections", waitForCatalog: true, require: [".collection-card, .empty-state"] },
   { name: "library-reading", path: "/library/reading", waitForCatalog: true, require: [".series-card, .empty-state"] },

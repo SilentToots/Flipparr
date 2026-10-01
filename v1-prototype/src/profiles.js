@@ -86,8 +86,9 @@ const READER_SURFACES = new Set([
 ]);
 
 // Discover and the catalogs' search show every new cover, rated or not, so a
-// profile the admin has kept out of Discover has neither.
-const DISCOVER_SURFACES = new Set(["nav.discover", "nav.search", "discover.search"]);
+// profile the admin has kept out of Discover has neither. Search itself is
+// everyone's: such a profile still searches its own library (2026-10-01).
+const DISCOVER_SURFACES = new Set(["nav.discover", "discover.search"]);
 
 export function can(viewer, surface) {
   if (!viewer) return true;

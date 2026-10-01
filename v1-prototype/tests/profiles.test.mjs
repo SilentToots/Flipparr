@@ -105,10 +105,10 @@ test("a new profile gets the first colour nobody has, as the server gives it", (
   assert.equal(nextProfileColour(all), "violet", "past eight, the palette again");
 });
 
-test("a profile kept out of Discover has neither Discover nor the catalogs' search", () => {
+test("a profile kept out of Discover has neither Discover nor the catalogs' search, but still searches its library", () => {
   const kept = { id: 2, role: "reader", canDiscover: false };
   assert.equal(can(kept, "nav.discover"), false);
-  assert.equal(can(kept, "nav.search"), false);
+  assert.equal(can(kept, "nav.search"), true, "search is everyone's since 2026-10-01");
   assert.equal(can(kept, "discover.search"), false);
   assert.equal(can(kept, "nav.library"), true);
   assert.equal(can({ id: 3, role: "reader" }, "discover.search"), true);

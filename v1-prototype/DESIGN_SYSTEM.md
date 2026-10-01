@@ -169,11 +169,11 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   seam. The tab bar's strip stops 4px short of the bottom edge for the same
   reason in reverse: sampled there, its transparency became an opaque black
   bar.
-  - `search="phone"`: the page's own field on a phone only, on a row of its
-    own. On Comics it filters your comics as you type, and a query with no
-    match offers the catalogs; on Discover it searches your library and the
-    catalogs. Above 640px the sidebar's Search page does both.
-  - `search="page"`: the field at every width -- the Search page's.
+  - `search="page"`: the Search page's own field, at 900px and below (above,
+    the sidebar's field is search's). No other page has a field: on a phone
+    every header carries a search button (`.appbar-search`, the bell's glass
+    circle, left of it) that opens Search; `searchButton={false}` leaves it
+    off Search itself.
   - `narrow`: a form page's column (`--page-narrow`, 920px), so the header
     stops where its content does.
   - `leading`: a back button, before the title in the same cell.
@@ -249,25 +249,32 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   - The **sidebar** is a Liquid Glass panel floating the full height of the
     window, inset `--sidebar-inset` from its edges, with 24px corners. Rows
     are 44px pills with an icon and a label; the open one is a filled violet
-    pill. It leads with **Search**, its own page (`/search?q=`): your library
-    and the catalogs, the results a phone sees on Discover. Before a search
-    the page is its field, centred between a heading and a hint and focused
-    on arrival, then **Recently Searched** (after the Apple TV app): cards
-    of the searches run (a magnifier where the cover goes; tapping runs it
-    again) and what was opened from results, newest first, kept in the viewer's
-    browser (`recent-searches.js`), with Clear. With results the field moves
-    to the header. Its foot holds the
-    F mark beside the library's size and the scan control. It does not fold.
-  - **Discover** above 640px is the week's releases only; its field and
-    results are a phone's. A search crosses over with the width: `/search`
-    on a phone opens as Discover's results, and Discover's results above
-    640px open as the Search page.
-  - A **phone** has no Search tab: its tab bar keeps four, and searches from
-    Discover.
+    pill. Above 900px it leads with **search's field** (since 2026-10-01, as
+    Messages and Figma have it): a filled field, not glass -- a blur in the
+    sidebar's blur -- on every page. `/` and Cmd/Ctrl-K focus it. Its foot
+    holds the F mark beside the library's size and the scan control. It does
+    not fold.
+  - **Search** is one page, `/search?q=`, at every width, for every profile.
+    Typing shows "In Your Library" as you go -- collections, runs and saved
+    story arcs, no network -- under a "Results for “x”" heading; Enter, or
+    the "Search the catalogs" row (the arc row's look), asks the catalogs
+    and lists Story Arcs and New Matches. A profile kept out of Discover
+    searches its library only. Before a query: a hint and **Recently
+    Searched** (after the Apple TV app): cards of the searches run (a
+    magnifier where the cover goes; tapping runs it again) and what was
+    opened from results, newest first, kept in the viewer's browser
+    (`recent-searches.js`), with Clear. Esc clears, then leaves the field;
+    clearing goes back to the page search was opened from.
+  - **Discover** is the week's releases at every width; it has no field.
+  - A **phone** has no Search tab: its tab bar keeps four, and every
+    header's search button opens Search full screen, its field focused and
+    a back button leading.
   - A **tablet** (641-900px) shows the rail instead: 76px, each icon over a
-    10px label, as YouTube's mini guide, without the foot.
-  - `layout:check` holds the sidebar's inset, Search first in the sidebar and
-    absent from a phone's tab bar, and a tablet's rail showing no F mark.
+    10px label, as YouTube's mini guide, without the foot. It leads with a
+    Search item, since a field has no room there.
+  - `layout:check` holds the sidebar's inset, its field first above 900px,
+    Search first on the rail, no search in a phone's tab bar but its button
+    in every header, and a tablet's rail showing no F mark.
 
 ## Glass and motion
 
