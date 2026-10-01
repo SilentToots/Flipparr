@@ -706,6 +706,17 @@ def _candidate_issue_provider_identity(
     }
 
 
+# What a download a person stopped says. It is not a failure: the issue goes
+# back to wanting a release and another is looked for.
+DOWNLOAD_STOPPED_ERROR = "Stopped by you"
+
+
+def _torrent_identity_hash(identity: Any) -> str | None:
+    """The info hash in a torrent download's identity, `torrent:<hash>:<job>`."""
+    parts = str(identity or "").split(":")
+    return parts[1].casefold() if len(parts) >= 3 and parts[0] == "torrent" and parts[1] else None
+
+
 class CatalogStore:
     """SQLite-backed catalog with one connection per operation/thread."""
 
@@ -8179,6 +8190,8 @@ class CatalogStore:
 
     # A torrent download's identity is `torrent:<hash>:<job>`; one torrent
     # serves every issue of a pack, each with its own row.
+    _LIVE_DOWNLOAD_STATUSES = ("queued", "downloading", "completed", "importing", "waiting_for_files")
+
     _LIVE_DOWNLOAD = (
         "acquisition_downloads.status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files')"
         " AND acquisition_jobs.status NOT IN ('fulfilled', 'cancelled')"
@@ -8242,9 +8255,9 @@ class CatalogStore:
             if not download or download["status"] in ("imported", "failed"):
                 raise ValueError("Nothing is downloading for this issue")
             connection.execute(
-                """UPDATE acquisition_downloads SET status='failed', error='Stopped by you', failure_stage='download',
+                """UPDATE acquisition_downloads SET status='failed', error=?, failure_stage='download',
                           updated_at=? WHERE id=?""",
-                (now, int(download["id"])),
+                (DOWNLOAD_STOPPED_ERROR, now, int(download["id"])),
             )
             connection.execute(
                 """UPDATE acquisition_jobs SET status='queued', queue_reason=?, error=NULL, updated_at=?
@@ -10900,6 +10913,16 @@ class CatalogStore:
             int(row["job_id"]): row for row in acquisition_download_rows
         }
         pack_delivery_counts = self.download_import_counts()
+        # How many issues are still coming in each torrent: a pack's issues
+        # each have a row of their own, and the Pull List offers to stop them
+        # together rather than one at a time.
+        job_statuses = {int(row["id"]): row["status"] for row in acquisition_job_rows}
+        live_in_torrent: dict[str, int] = {}
+        for row in acquisition_download_rows:
+            info_hash = _torrent_identity_hash(row["sab_nzo_id"])
+            if (info_hash and row["status"] in self._LIVE_DOWNLOAD_STATUSES
+                    and job_statuses.get(int(row["job_id"])) not in ("fulfilled", "cancelled")):
+                live_in_torrent[info_hash] = live_in_torrent.get(info_hash, 0) + 1
         for job_row in acquisition_job_rows:
             issue = request_issue_lookup.get(int(job_row["issue_id"]))
             if not issue:
@@ -10922,8 +10945,18 @@ class CatalogStore:
                     pack_delivery_counts.get(int(download["id"]), 0) if download else 0
                 ),
                 "downloadTitle": download["release_title"] if download else None,
+                # Issues coming in this one torrent, this one included, while
+                # it is still coming: more than one is a pack to stop as one.
+                "downloadPackCount": (
+                    live_in_torrent.get(_torrent_identity_hash(download["sab_nzo_id"]) or "", 0)
+                    if download and download["status"] in self._LIVE_DOWNLOAD_STATUSES else 0
+                ),
                 "downloadDestination": download["destination"] if download else None,
                 "downloadError": download["error"] if download else None,
+                # Stopped by a person rather than failed: the Pull List keeps
+                # it under Wanted, not Failed, and it needs no one's attention.
+                "downloadStopped": bool(download and download["status"] == "failed"
+                                        and download["error"] == DOWNLOAD_STOPPED_ERROR),
                 "downloadFailureStage": download["failure_stage"] if download else None,
                 "downloadTakenByHand": bool(download["taken_by_hand"]) if download else False,
                 "downloadSource": download["source"] if download else None,

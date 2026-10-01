@@ -8760,9 +8760,11 @@ class DirectDownloadRecoveryTests(unittest.TestCase):
         store.stop_acquisition_download.return_value = {"id": "1620", "status": "queued", "action": "research"}
         flag = threading.Event()
         app._DIRECT_FETCHES[1438] = flag
-        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job") as sab:
+        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job") as sab, \
+                patch("app._search_again_after_stop") as again:
             result = app.stop_acquisition_download(1620)
         self.assertEqual(result["status"], "queued")
+        again.assert_called_once_with([1620])
         self.assertTrue(flag.is_set(), "the fetch thread is told")
         sab.assert_not_called()
         store.record_acquisition_release_failure.assert_called_once_with(
@@ -8770,12 +8772,57 @@ class DirectDownloadRecoveryTests(unittest.TestCase):
         # A SABnzbd download is removed from SABnzbd instead.
         store.acquisition_download_for_job.return_value = {"id": 9, "job_id": 7, "source": "sabnzbd", "status": "downloading",
                                                            "release_key": "k", "release_title": "Saga 001"}
-        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job") as sab:
+        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job") as sab, \
+                patch("app._search_again_after_stop"):
             app.stop_acquisition_download(7)
         sab.assert_called_once()
         store.acquisition_download_for_job.return_value = None
         with patch("app.catalog_store", return_value=store), self.assertRaises(ValueError):
             app.stop_acquisition_download(8)
+
+
+    def test_stopping_a_torrent_pack_stops_every_issue_in_it_and_looks_again_once(self):
+        info_hash = "ab" * 20
+        rows = {job: {"id": 100 + job, "job_id": job, "source": "qbittorrent", "status": "downloading",
+                      "sab_nzo_id": f"torrent:{info_hash}:{job}", "release_key": "pack",
+                      "release_title": "Saga #1-54"} for job in (5, 6, 7)}
+        store = Mock()
+        store.acquisition_download_for_job.side_effect = lambda job: rows.get(int(job))
+        store.torrent_jobs.return_value = [5, 6, 7]
+        store.stop_acquisition_download.side_effect = lambda job: {"id": str(job), "status": "queued"}
+        with patch("app.catalog_store", return_value=store), patch("app._release_torrent") as release, \
+                patch("app._qbittorrent_client") as client, patch("app._search_again_after_stop") as again:
+            result = app.stop_acquisition_pack(6)
+        self.assertEqual(result["stopped"], ["5", "6", "7"])
+        self.assertEqual([call.args[0] for call in store.stop_acquisition_download.call_args_list], [5, 6, 7])
+        self.assertEqual([call.args[0] for call in store.record_acquisition_release_failure.call_args_list], [5, 6, 7],
+                         "the pack is set aside for every issue, so no lead takes it again")
+        release.assert_called_once_with(store, info_hash)
+        client.assert_not_called()
+        again.assert_called_once_with([5, 6, 7])
+        # Not a torrent: the one download is the pack, stopped as before.
+        store.acquisition_download_for_job.side_effect = None
+        store.acquisition_download_for_job.return_value = {"id": 9, "job_id": 4, "source": "sabnzbd", "status": "downloading",
+                                                           "release_key": "k", "release_title": "Saga #1-54"}
+        with patch("app.catalog_store", return_value=store), patch("app._sab_remove_job"), \
+                patch("app._search_again_after_stop") as again:
+            self.assertEqual(app.stop_acquisition_pack(4)["stopped"], ["4"])
+        again.assert_called_once_with([4])
+
+    def test_what_was_stopped_is_looked_for_again_at_once_a_run_together(self):
+        store = Mock()
+        store.get_acquisition_job_context.side_effect = lambda job: {"requestId": "3" if job < 10 else "4"}
+        started = []
+        class Thread:
+            def __init__(self, target, args=(), kwargs=None, **_):
+                started.append((args, kwargs))
+            def start(self):
+                pass
+        with patch("app.catalog_store", return_value=store), patch("app._acquisition_services_ready", return_value=True), \
+                patch("app.threading.Thread", Thread):
+            app._search_again_after_stop([5, 6, 11])
+        self.assertEqual(started, [((3,), {"skip_run_pack": False}), ((4,), {"skip_run_pack": True})],
+                         "a pack's issues may find another pack; one issue looks for itself")
 
 
 class DirectSiteSingleFallbackTests(unittest.TestCase):

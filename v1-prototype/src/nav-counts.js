@@ -9,8 +9,10 @@
 // someone retries it or picks a release by hand. Both request kinds carry
 // their jobs, and either the job or its download can be the part that failed.
 
+// A download the person stopped is not a failure: the issue is wanted again,
+// and another release is already being looked for.
 export const jobHasFailed = (job) =>
-  job?.status === "failed" || job?.downloadStatus === "failed";
+  job?.status === "failed" || (job?.downloadStatus === "failed" && !job?.downloadStopped);
 
 export function jobsNeedingAttention(catalog) {
   // A cancelled run is not waiting on anyone; unfollow is the ordinary route

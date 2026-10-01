@@ -337,3 +337,16 @@ test("a dragged source lands where it is dropped", async () => {
   assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "torrent", 9), ["usenet", "direct_site", "torrent"]);
   assert.deepEqual(reorderTo(DEFAULT_SOURCE_ORDER, "ftp", 0), DEFAULT_SOURCE_ORDER);
 });
+
+test("a download the person stopped is wanted again, not failed", async () => {
+  const { requestTabs, downloadStateLabel } = await import("../src/pull-list.js");
+  const { jobHasFailed, jobsNeedingAttention } = await import("../src/nav-counts.js");
+  const stopped = { id: "1", status: "queued", downloadStatus: "failed", downloadStopped: true, downloadError: "Stopped by you" };
+  const failed = { id: "2", status: "queued", downloadStatus: "failed", downloadStopped: false };
+  assert.equal(jobHasFailed(stopped), false);
+  assert.equal(jobHasFailed(failed), true);
+  assert.equal(downloadStateLabel(stopped, { failed: "Failed" }), undefined, "the issue's own state is shown");
+  const pack = { id: "9", status: "open", jobs: Array.from({ length: 37 }, (_, index) => ({ ...stopped, id: String(index) })) };
+  assert.deepEqual(requestTabs(pack), ["wanted"]);
+  assert.equal(jobsNeedingAttention({ requests: [pack] }), 0, "a stopped pack needs no one's attention");
+});

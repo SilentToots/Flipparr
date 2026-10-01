@@ -176,6 +176,8 @@ export function releaseTransport(candidate) {
 /** A download's state, in words for the client carrying it. A torrent waits
  * for its file list before any of it is fetched -- only the wanted files are. */
 export function downloadStateLabel(job, labels) {
+  // Stopped by a person: the issue's own state says what happens next.
+  if (job?.downloadStopped) return undefined;
   const status = job?.downloadStatus;
   if (status === "queued" && job?.downloadSource === "qbittorrent") return "Waiting for its file list";
   if (status === "queued" && job?.downloadSource === "direct_site") return "Starting download";

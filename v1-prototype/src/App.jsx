@@ -56,7 +56,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate, issuesInRange } from "./reading-list.js";
-import { jobsNeedingAttention } from "./nav-counts.js";
+import { jobsNeedingAttention, jobHasFailed } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel, sourceOrder, sourceRows, groupServices } from "./pull-list.js";
 import {
@@ -4450,7 +4450,7 @@ function acquisitionFailureDetails(job) {
 }
 
 function requestFailureStatus(jobs) {
-  const failedJobs = jobs.filter((job) => job.status === "failed" || job.downloadStatus === "failed");
+  const failedJobs = jobs.filter(jobHasFailed);
   if (!failedJobs.length) return null;
   if (failedJobs.length === 1) return acquisitionFailureDetails(failedJobs[0]).label;
   const allIncomplete = failedJobs.every((job) => acquisitionFailureDetails(job).label === "Incomplete release");
@@ -4477,7 +4477,7 @@ function ReplacementRequestRow({ request, progress = {}, openByDefault = false, 
   const [retryingJobId, setRetryingJobId] = useState(null);
   const [retryError, setRetryError] = useState(null);
   const jobs = request.jobs || [];
-  const failed = jobs.filter((job) => job.status === "failed" || job.downloadStatus === "failed").length;
+  const failed = jobs.filter(jobHasFailed).length;
   const importing = jobs.filter((job) => ["completed", "importing", "waiting_for_files"].includes(job.downloadStatus)).length;
   const downloading = jobs.filter((job) => ["queued", "downloading"].includes(job.downloadStatus)).length;
   const searching = jobs.filter((job) => job.status === "searching").length;
@@ -4489,11 +4489,12 @@ function ReplacementRequestRow({ request, progress = {}, openByDefault = false, 
   const title = request.seriesTitle || request.targetTitle;
   const scope = [preference, request.coverageTarget, request.reason, request.desiredLanguage ? `Wanted language: ${request.desiredLanguage}` : null].filter(Boolean).join(" · ");
   // Stopping is the answer to a download that is not going anywhere: the
-  // issue goes back to wanting a release and the next pass reaches for another.
-  async function stopJob(job) {
+  // issue goes back to wanting a release, and another is looked for at once;
+  // `pack` stops every issue coming in the same torrent.
+  async function stopJob(job, pack = false) {
     setRetryingJobId(job.id); setRetryError(null);
     try {
-      await apiRequest(`/api/v1/acquisition-jobs/${job.id}/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await apiRequest(`/api/v1/acquisition-jobs/${job.id}/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pack }) });
       await onRefresh?.();
     } catch (error) {
       setRetryError({ jobId: job.id, message: error.message || "This download could not be stopped" });
@@ -4509,7 +4510,28 @@ function ReplacementRequestRow({ request, progress = {}, openByDefault = false, 
       setRetryError({ jobId: job.id, message: error.message || "This replacement could not be retried" });
     } finally { setRetryingJobId(null); }
   }
-  return <article data-request={`replacement-${request.id}`} className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><button type="button" className="request-row" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span className="request-cover"><SeriesCover series={display} decorative /></span><span className="request-identity"><strong>{title}</strong><small>{scope}</small><small>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</small><span className="tag-line"><StatusBadge tone={tone}>{statusLabel}</StatusBadge></span></span><CaretDown className="request-caret" size={20} aria-hidden="true" /></button>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>{issueLabel(job.issueNumber, request.medium)}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{downloadStateLabel(job, DOWNLOAD_STATUS_LABELS) || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}{!imported && !failedJob && job.status === "grabbed" ? <button type="button" disabled={retryingJobId === job.id} onClick={() => stopJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <X size={14} />} Stop download</button> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
+  return <article data-request={`replacement-${request.id}`} className={`request-card replacement-request-card ${expanded ? "expanded" : ""}`}><button type="button" className="request-row" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span className="request-cover"><SeriesCover series={display} decorative /></span><span className="request-identity"><strong>{title}</strong><small>{scope}</small><small>{request.targetTitle !== title ? `${request.targetTitle} · ` : ""}{request.filename} · Added {request.requestedDate} {request.requestedTime}</small><span className="tag-line"><StatusBadge tone={tone}>{statusLabel}</StatusBadge></span></span><CaretDown className="request-caret" size={20} aria-hidden="true" /></button>{expanded ? <div className="request-job-panel"><header><div><strong>{request.status === "fulfilled" ? "Replacement complete" : "Comics needed for this replacement"}</strong><span>{request.status === "fulfilled" ? "The verified replacement is active and the original is held in recoverable quarantine." : "Flipparr searches and grabs the best match for each issue. The original stays active until every replacement passes validation."}</span></div>{!["fulfilled", "cancelled"].includes(request.status) ? <button className="ghost-button" onClick={() => onCancel(request)}>Cancel request</button> : null}</header>{jobs.length ? <div className="request-jobs">{jobs.map((job) => { const displayStatus = (job.downloadStopped ? null : job.downloadStatus) || job.status; const imported = job.downloadStatus === "imported"; const failedJob = jobHasFailed(job); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const detail = retryMessage || (!failedJob ? job.downloadTitle : null); return <div className="request-job" key={job.id}><b>{issueLabel(job.issueNumber, request.medium)}</b><div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : detail ? <span className={retryMessage ? "job-error" : ""}>{detail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div><span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{downloadStateLabel(job, DOWNLOAD_STATUS_LABELS) || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {job.downloadFailureStage === "import" ? "Retry import" : "Try next release"}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}{!imported && !failedJob && job.status === "grabbed" ? <StopDownloadButton job={job} busy={retryingJobId === job.id} onStop={(pack) => stopJob(job, pack)} /> : null}</span></div>; })}</div> : <div className="request-job-empty"><WarningCircle size={20} /><div><strong>No safe issue targets are available</strong><span>Confirm the comic’s issue contents before replacing it.</span></div></div>}</div> : <footer className="replacement-safety-note"><ShieldCheck size={16} weight="fill" /> The current comic stays in your library until all mapped replacements are downloaded and verified.</footer>}</article>;
+}
+
+// Stop on an issue that rides in a torrent pack: each of the pack's issues
+// has its own row, and stopping one only leaves its file out -- so a slow
+// pack of a long run took a Stop per issue (the owner, 2026-10-01). It asks
+// whether to stop the whole pack or this issue alone; either way what is
+// stopped is looked for again at once.
+function StopDownloadButton({ job, busy, onStop }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  const count = Number(job.downloadPackCount) || 0;
+  const icon = busy ? <LoadingSpinner size={14} /> : <X size={14} />;
+  if (count < 2) return <button type="button" disabled={busy} onClick={() => onStop(false)}>{icon} Stop download</button>;
+  return <>
+    <button type="button" ref={buttonRef} disabled={busy} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{icon} Stop download</button>
+    {open ? <ActionMenu anchor={buttonRef} label="Stop download" onClose={close} items={[
+      { key: "pack", label: `Stop the whole pack (${count} issues)`, icon: <X size={16} />, onSelect: () => onStop(true) },
+      { key: "one", label: "Stop just this issue", icon: <X size={16} />, onSelect: () => onStop(false) },
+    ]} /> : null}
+  </>;
 }
 
 function RequestRow({ request, tab, progress = {}, openByDefault = false, onFindRelease, onRefresh, onDelete }) {
@@ -4552,7 +4574,7 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
   const searching = counted.filter((job) => job.status === "searching").length;
   const downloading = counted.filter((job) => ["queued", "downloading"].includes(job.downloadStatus)).length;
   const importing = counted.filter((job) => ["completed", "importing", "waiting_for_files"].includes(job.downloadStatus)).length;
-  const failed = counted.filter((job) => job.status === "failed" || job.downloadStatus === "failed").length;
+  const failed = counted.filter(jobHasFailed).length;
   // A run reaches Acquired after it was unfollowed, so the row can no longer
   // assume it is being watched. Cancelled is the only status that means that;
   // a fulfilled request is still followed, which is what the Comics grid says.
@@ -4599,11 +4621,12 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
     return groups;
   }, {});
   // Stopping is the answer to a download that is not going anywhere: the
-  // issue goes back to wanting a release and the next pass reaches for another.
-  async function stopJob(job) {
+  // issue goes back to wanting a release, and another is looked for at once;
+  // `pack` stops every issue coming in the same torrent.
+  async function stopJob(job, pack = false) {
     setRetryingJobId(job.id); setRetryError(null);
     try {
-      await apiRequest(`/api/v1/acquisition-jobs/${job.id}/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await apiRequest(`/api/v1/acquisition-jobs/${job.id}/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pack }) });
       await onRefresh?.();
     } catch (error) {
       setRetryError({ jobId: job.id, message: error.message || "This download could not be stopped" });
@@ -4650,10 +4673,10 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
       </p> : null}
       {panelJobs.length || waiting.length ? <div className="request-jobs">{Object.values(jobGroups).map((group) => <section className="request-job-group" key={group.id}>
         <header><span>Series run</span><strong>{group.title}</strong><b>{group.jobs.length} issue{group.jobs.length === 1 ? "" : "s"}</b></header>
-        {group.jobs.map((job) => { const displayStatus = job.downloadStatus || job.status; const imported = job.downloadStatus === "imported"; const failedJob = job.status === "failed" || job.downloadStatus === "failed"; const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>
+        {group.jobs.map((job) => { const displayStatus = (job.downloadStopped ? null : job.downloadStatus) || job.status; const imported = job.downloadStatus === "imported"; const failedJob = jobHasFailed(job); const relativeDestination = job.downloadDestination?.split("/comics/").pop(); const retryMessage = retryError?.jobId === job.id ? retryError.message : null; const failure = failedJob ? acquisitionFailureDetails(job) : null; const displayDetail = retryMessage || (!failedJob ? (relativeDestination ? `Library: ${relativeDestination}` : job.downloadTitle) : null); const canSearch = !job.downloadStatus && !["grabbed", "fulfilled", "cancelled"].includes(job.status); const retryLabel = job.downloadFailureStage === "import" ? "Retry import" : "Try next release"; return <div className="request-job" key={job.id}>
           <b>{issueLabel(job.issueNumber, request.medium)}</b>
           <div><strong>{job.issueTitle || `Issue ${job.issueNumber}`}</strong>{imported ? null : <span>{job.reason}</span>}{job.deliveredWithCount > 0 ? <span className="job-pack-note">{job.deliveredWithCount} more issue{job.deliveredWithCount === 1 ? "" : "s"} came from this download</span> : null}{uploadError?.jobId === job.id ? <span className="job-error" role="alert">{uploadError.message}</span> : null}{failure ? <div className="job-failure-copy"><strong>{failure.label}</strong><small>{failure.message}</small>{failure.technical ? <details><summary>Technical details</summary><code>{failure.technical}</code></details> : null}</div> : displayDetail ? <span className={retryMessage ? "job-error" : ""}>{displayDetail}</span> : null}<JobProgress entry={progress[String(job.id)]} /></div>
-          <span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{downloadStateLabel(job, DOWNLOAD_STATUS_LABELS) || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {retryingJobId === job.id ? "Retrying…" : retryLabel}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}{!imported && !failedJob && job.status === "grabbed" ? <button type="button" disabled={retryingJobId === job.id} onClick={() => stopJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <X size={14} />} Stop download</button> : null}{!imported ? <label className={`job-upload ${uploadingJobId === job.id ? "busy" : ""}`}><input type="file" accept=".cbz,.cbr,.cbt,.cb7,.pdf,.epub" disabled={uploadingJobId === job.id} onChange={(event) => { const [file] = event.target.files || []; event.target.value = ""; uploadForJob(job, file); }} />{uploadingJobId === job.id ? <LoadingSpinner size={14} /> : <UploadSimple size={14} />} {uploadingJobId === job.id ? "Adding…" : "Upload a file"}</label> : null}{perIssueDelete && canDeleteJob(job) ? deleteButton({ id: job.issueId, number: job.issueNumber }) : null}</span>
+          <span className="request-job-actions"><span className={`job-state ${displayStatus}`}>{downloadStateLabel(job, DOWNLOAD_STATUS_LABELS) || JOB_STATUS_LABELS[job.status] || displayStatus}</span>{failedJob ? <><button type="button" disabled={retryingJobId === job.id} onClick={() => retryJob(job)}>{retryingJobId === job.id ? <LoadingSpinner size={14} /> : <ArrowsClockwise size={14} />} {retryingJobId === job.id ? "Retrying…" : retryLabel}</button><button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button></> : !imported && canSearch ? <button type="button" onClick={() => onFindRelease(job)}><MagnifyingGlass size={14} /> Find release</button> : null}{!imported && !failedJob && job.status === "grabbed" ? <StopDownloadButton job={job} busy={retryingJobId === job.id} onStop={(pack) => stopJob(job, pack)} /> : null}{!imported ? <label className={`job-upload ${uploadingJobId === job.id ? "busy" : ""}`}><input type="file" accept=".cbz,.cbr,.cbt,.cb7,.pdf,.epub" disabled={uploadingJobId === job.id} onChange={(event) => { const [file] = event.target.files || []; event.target.value = ""; uploadForJob(job, file); }} />{uploadingJobId === job.id ? <LoadingSpinner size={14} /> : <UploadSimple size={14} />} {uploadingJobId === job.id ? "Adding…" : "Upload a file"}</label> : null}{perIssueDelete && canDeleteJob(job) ? deleteButton({ id: job.issueId, number: job.issueNumber }) : null}</span>
         </div>; })}
       </section>)}{waiting.length ? <section className="request-job-group">
         <header><span>Not out yet</span><strong>{request.title}</strong><b>{waiting.length} issue{waiting.length === 1 ? "" : "s"}</b></header>

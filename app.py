@@ -5614,10 +5614,10 @@ def recover_interrupted_direct_downloads() -> int:
     return started
 
 
-def stop_acquisition_download(job_id: int) -> dict[str, Any]:
+def stop_acquisition_download(job_id: int, *, research: bool = True, release_torrent: bool = True) -> dict[str, Any]:
     """Stop what is downloading for an issue, whoever is fetching it, and put
     the issue back to wanting a release. The stopped release is set aside for
-    a day so the next automatic pass reaches for another."""
+    a day, and the issue is looked for again at once (`research`)."""
     store = catalog_store()
     download = store.acquisition_download_for_job(job_id)
     if not download or download.get("status") in ("imported", "failed"):
@@ -5629,7 +5629,8 @@ def stop_acquisition_download(job_id: int) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 -- SABnzbd keeping the files is not a reason to fail the stop
             log_event("sab_stop_failed", level="info", job_id=job_id, error=str(exc)[:160])
     elif download.get("source") == "qbittorrent":
-        _stop_torrent_for_job(store, download)
+        if release_torrent:
+            _stop_torrent_for_job(store, download)
     else:
         with _DIRECT_FETCHES_LOCK:
             flag = _DIRECT_FETCHES.get(int(download["id"]))
@@ -5643,7 +5644,67 @@ def stop_acquisition_download(job_id: int) -> dict[str, Any]:
     except ValueError:
         pass
     log_event("download_stopped", job_id=job_id, release=str(download.get("release_title") or "")[:200])
+    if research:
+        _search_again_after_stop([int(job_id)])
     return result
+
+
+def stop_acquisition_pack(job_id: int) -> dict[str, Any]:
+    """Stop a torrent pack as one: every issue still coming in it goes back
+    to wanting a release, the pack is set aside for each of them, and the
+    torrent goes from qBittorrent with what it had fetched. Then each is
+    looked for again at once -- another run pack first, else singles.
+
+    Stopping one issue of a pack only leaves its file out, so a slow pack of
+    a long run meant stopping every issue in turn (the owner, 2026-10-01).
+    """
+    store = catalog_store()
+    download = store.acquisition_download_for_job(job_id)
+    if not download or download.get("status") in ("imported", "failed"):
+        raise ValueError("Nothing is downloading for this issue")
+    info_hash_ = _torrent_hash(download)
+    if download.get("source") != "qbittorrent" or not info_hash_:
+        # Usenet and DirectSite packs are one download already.
+        return {**stop_acquisition_download(job_id), "stopped": [str(job_id)]}
+    job_ids = store.torrent_jobs(info_hash_)
+    stopped: list[str] = []
+    for member in job_ids:
+        try:
+            stop_acquisition_download(member, research=False, release_torrent=False)
+            stopped.append(str(member))
+        except ValueError:
+            continue
+    _release_torrent(store, info_hash_)
+    log_event("torrent_pack_stopped", info_hash=info_hash_, issues=len(stopped),
+              release=str(download.get("release_title") or "")[:200])
+    _search_again_after_stop([int(member) for member in stopped])
+    return {"id": str(job_id), "status": "queued", "stopped": stopped,
+            "detail": f"Stopped {len(stopped)} issue{'' if len(stopped) == 1 else 's'}; looking for another release"}
+
+
+def _search_again_after_stop(job_ids: list[int]) -> None:
+    """What a person stopped is looked for again now, not at the next sweep:
+    they stopped it to get it another way. A run's issues are asked about
+    together, so another run pack can answer them all; the stopped release
+    is set aside, so it is not taken again."""
+    by_request: dict[int, list[int]] = {}
+    for job_id in job_ids:
+        try:
+            context = catalog_store().get_acquisition_job_context(int(job_id))
+            request_id = int(str(context.get("requestId") or "").strip() or 0)
+        except Exception:  # noqa: BLE001 -- the scheduled sweep is still there
+            continue
+        if request_id:
+            by_request.setdefault(request_id, []).append(int(job_id))
+    for request_id, members in by_request.items():
+        if not _acquisition_services_ready(request_id):
+            continue
+        threading.Thread(
+            target=_automatic_release_grabs, args=(request_id,),
+            # One issue is one question; a pack's issues are a run's.
+            kwargs={"skip_run_pack": len(members) < 2},
+            name=f"flipparr-after-stop-{request_id}", daemon=True,
+        ).start()
 
 
 def _stop_torrent_for_job(store: Any, download: dict[str, Any]) -> None:
@@ -17290,7 +17351,9 @@ class Handler(BaseHTTPRequestHandler):
         acquisition_stop = re.fullmatch(r"/api/v1/acquisition-jobs/(\d+)/stop", parsed_url.path)
         if acquisition_stop:
             try:
-                self.send_json(stop_acquisition_download(int(acquisition_stop.group(1))))
+                # `pack`: every issue coming in the same torrent, at once.
+                stop = stop_acquisition_pack if payload.get("pack") is True else stop_acquisition_download
+                self.send_json(stop(int(acquisition_stop.group(1))))
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             return
