@@ -5192,6 +5192,27 @@ class CatalogStore:
             if cursor.rowcount == 0:
                 raise LookupError("That run is not in the catalog")
 
+    def set_run_rating_overrides(self, series_run_ids: list[int], rating: str | None) -> int:
+        """The admin's rating for many runs at once, or None to send them all
+        back to what was found. All or nothing: one unknown run refuses the lot,
+        so a stale list never rates half of what was chosen. Returns how many."""
+        if rating is not None and rating not in content_rating.RATINGS:
+            raise ValueError("Choose one of the ratings")
+        ids = sorted({int(run_id) for run_id in series_run_ids})
+        if not ids:
+            raise ValueError("Choose at least one run")
+        with self._write_lock, self._connect() as connection:
+            marks = ",".join("?" * len(ids))
+            found = {int(row["id"]) for row in connection.execute(
+                f"SELECT id FROM series_runs WHERE id IN ({marks})", ids)}
+            if len(found) != len(ids):
+                raise LookupError("Some of those runs are no longer in the catalog")
+            connection.execute(
+                f"UPDATE series_runs SET age_rating_override=?, updated_at=? WHERE id IN ({marks})",
+                (rating, _utc_now(), *ids),
+            )
+        return len(ids)
+
     def forget_unfound_ratings(self) -> int:
         """Look again at every run nothing was found for -- when a new way of
         finding ratings is turned on. Returns how many."""

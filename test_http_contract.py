@@ -2034,6 +2034,29 @@ class ReaderProfileHttpTests(unittest.TestCase):
         summary = self.call("GET", "/api/v1/ratings", cookies=admin).json()
         self.assertEqual((summary["runs"], summary["rated"]), (1, 0))
 
+    def test_the_admin_rates_many_runs_at_once_and_a_reader_cannot(self):
+        store, run = self._library_of_one_run()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone", "allowUnrated": True}, cookies=admin)
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(len(self.call("GET", "/api/v1/catalog", cookies=reader).json()["series"]), 1, "unrated, allowed")
+        saved = self.call("POST", "/api/v1/ratings/runs", {"seriesIds": [run], "rating": "mature"}, cookies=admin)
+        self.assertEqual((saved.status, saved.json()["count"]), (200, 1))
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=reader).json()["series"], [], "now above the limit")
+        self.assertEqual(self.call("POST", "/api/v1/ratings/runs", {"seriesIds": [run], "rating": None}, cookies=reader).status,
+                         403, "a reader cannot rate runs")
+        self.assertEqual(self.call("POST", "/api/v1/ratings/runs", {"seriesIds": [run, 99999], "rating": "everyone"},
+                                   cookies=admin).status, 409)
+        self.assertEqual(store.run_age_ratings()[run], "mature", "an unknown run refuses the lot")
+        for bad in ({"seriesIds": [run], "rating": "adults"}, {"seriesIds": [], "rating": "teen"}, {"seriesIds": "1"},
+                    {"seriesIds": ["one"], "rating": "teen"}):
+            self.assertEqual(self.call("POST", "/api/v1/ratings/runs", bad, cookies=admin).status, 400, bad)
+        self.assertEqual(self.call("POST", "/api/v1/ratings/runs", {"seriesIds": [str(run)], "rating": None},
+                                   cookies=admin).status, 200)
+        self.assertIsNone(store.run_age_ratings()[run], "back to what was found: nothing")
+        self.assertEqual(len(self.call("GET", "/api/v1/catalog", cookies=reader).json()["series"]), 1)
+
     def test_a_limited_reader_gets_no_trace_of_a_hidden_run(self):
         store, run = self._library_of_one_run()
         sam = self._household_with_a_reader()

@@ -16942,6 +16942,25 @@ class Handler(BaseHTTPRequestHandler):
             _start_automatic_release_grabs({"id": request.get("acquisitionRequestId")})
             self.send_json(request, 201)
             return
+        if parsed_url.path == "/api/v1/ratings/runs":
+            # Many runs rated at once (Settings > Profiles > Ratings); null
+            # sends them back to what was found. The admin's alone: unlisted.
+            body = payload if isinstance(payload, dict) else {}
+            ids = body.get("seriesIds")
+            if not isinstance(ids, list) or len(ids) > 5000 or not all(
+                    isinstance(item, (int, str)) and str(item).isdigit() for item in ids):
+                self.send_json({"error": "Choose the runs to rate"}, 400)
+                return
+            try:
+                count = catalog_store().set_run_rating_overrides([int(item) for item in ids], body.get("rating") or None)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 409)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"status": "saved", "count": count})
+            return
         series_age_rating = re.fullmatch(r"/api/v1/series/(\d+)/age-rating", parsed_url.path)
         if series_age_rating:
             # The admin's own rating for a run; null goes back to what was found.
