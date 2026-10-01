@@ -1373,15 +1373,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Collections (since 2026-10-01): a collection is a run card with its mark in
    the cover's corner; its drawer is the series drawer's frame. */
 .collection-card-mark { position: absolute; top: var(--space-8); left: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
-.run-collection-eyebrow { display: inline-flex; align-items: center; gap: var(--space-6); }
-.run-collection-drawer h2 { margin: var(--space-8) 0 var(--space-8); }
-.run-collection-summary { margin: 0 0 var(--space-8); color: var(--muted-strong); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
-.run-collection-facts { margin: 0 0 var(--space-16); color: var(--muted); font-size: var(--text-xs); }
-.run-collection-drawer > .drawer-actions { margin-bottom: var(--space-20); }
-.run-collection-edit, .run-collection-arrange { margin-bottom: var(--space-20); }
-.run-collection-arrange .settings-card-note { margin: 0 0 var(--space-8); }
 .source-order-row > span.rating-review-cover { flex: 0 0 auto; display: grid; }
 .run-collection-remove { flex: 0 0 auto; }
+/* A collection drawer's failed save, under its header. */
+.comic-drawer-error { margin: var(--space-12) var(--drawer-inset) 0; }
 .edit-collections .edit-collection-list { display: grid; gap: var(--space-4); margin-top: var(--space-12); }
 .edit-collections .check-row { margin: 0; padding: var(--space-6) 0; align-items: center; }
 .edit-collections .check-row input { margin-top: 0; }
@@ -1906,9 +1901,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .upload-cover-button:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* An arc's or a collection's own picture: Upload beside the choices. */
 .arc-cover-upload { display: grid; justify-items: start; gap: var(--space-8); }
-.run-collection-cover-field { display: flex; align-items: center; gap: var(--space-8); }
-.run-collection-cover-field > :first-child { flex: 1; min-width: 0; }
-.run-collection-cover-field > .upload-cover-button { flex: 0 0 auto; }
 .contents-workbench { width: min(860px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; }
 .contents-workbench h2 { margin-bottom: var(--space-8); overflow-wrap: anywhere; }
 .contents-summary { min-height: 62px; display: flex; align-items: center; gap: var(--space-8); padding: var(--space-12) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-4); background: var(--surface-raised); }

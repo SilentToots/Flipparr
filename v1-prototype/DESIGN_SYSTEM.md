@@ -230,12 +230,16 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   collection mark -- MDI's bookmark-box-multiple -- in the cover's corner on
   `--scrim-strong`, its years and run count for a byline, and a muted
   "Collection" badge. The cards fill the Collections tab and lead the Library
-  grid (View & sort: "Show collections in Library"). Its drawer is the series
-  drawer's frame: name, summary, facts, the runs as a grid; the admin's Add
-  runs (the Set ratings list, choosing), Edit (name, summary, Your order /
-  Title / Year, cover) and Arrange (the Download order drag list:
-  `DragOrderList`, with Remove per row). A run's drawer lists its
-  collections as an "In Collections" row, and its Edit sheet ticks them.
+  grid (View & sort: "Show collections in Library"). Its drawer is the comic
+  drawers' frame, as a run's and an arc's are (the owner, 2026-10-01): the top
+  bar (bookmark, and Edit for the admin), the cover over its own blurred art
+  with "Collection • years • N runs" and status badges, *Continue* (the run
+  left mid-issue) and *Add runs* (the Set ratings list, choosing), then
+  Overview (summary, a Runs shelf) / Runs (the grid) / Advanced (admin: edit,
+  add, delete). Edit is the arc's menu of sections: Name and summary, Cover
+  (upload, or a run's cover as tiles), Order (Your order / Title / Year, the
+  `DragOrderList` with Remove per row). A run's drawer lists its collections
+  as an "In Collections" row, and its Edit sheet ticks them.
 - **Reading list** (since 2026-10-01) is each profile's own: the runs, story
   arcs and collections it added to come back to -- nothing it is merely in
   the middle of, which is Recommended's Keep Reading. The bookmark is its
