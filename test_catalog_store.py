@@ -1058,6 +1058,30 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertEqual(int(runs[0]["year"]), 2014)
             self.assertEqual(len(runs[0]["fileDetails"]), 2)
 
+    def test_collections_hold_runs_many_to_many_and_follow_a_merge(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            keep = int(store.ensure_provider_series_run("gcd", "a", "Saga", 2012, "Image")["id"])
+            dupe = int(store.ensure_provider_series_run("gcd", "b", "Saga", 2019, "Image")["id"])
+            self.assertNotEqual(keep, dupe)
+            other = int(store.ensure_provider_series_run("gcd", "c", "Paper Girls", 2015, "Image")["id"])
+            both = store.create_run_collection("Image essentials", [dupe, keep, other])
+            mine = store.create_run_collection("Saga only", [dupe])
+            store.update_run_collection(int(mine["id"]), {"coverSeriesId": dupe})
+            self.assertEqual(both["runIds"], [str(dupe), str(keep), str(other)])
+            with self.assertRaises(LookupError):
+                store.update_run_collection(int(both["id"]), {"order": [keep, other]})
+            store.update_run_collection(int(both["id"]), {"remove": [other], "add": [other]})
+            self.assertEqual(store.run_collection(int(both["id"]))["runIds"][-1], str(other), "added back at the end")
+            store.merge_series(dupe, keep, allow_provider_conflicts=True)
+            collections = {item["name"]: item for item in store.run_collections()}
+            self.assertEqual(collections["Image essentials"]["runIds"], [str(keep), str(other)],
+                             "a collection that held both keeps one")
+            self.assertEqual(collections["Saga only"]["runIds"], [str(keep)])
+            self.assertEqual(collections["Saga only"]["coverSeriesId"], str(keep), "the cover follows the run")
+            store.remove_series_run(other)
+            self.assertEqual(store.run_collection(int(both["id"]))["runIds"], [str(keep)], "a removed run leaves")
+
     def test_duplicate_run_merge_preserves_issue_and_request_history(self):
         with tempfile.TemporaryDirectory() as folder:
             store = CatalogStore(Path(folder) / "catalog.db")
@@ -4772,10 +4796,23 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 59)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 60)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
+
+    def test_a_library_from_before_collections_gains_the_tables_on_opening(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("DROP TABLE run_collection_items")
+                connection.execute("DROP TABLE run_collections")
+                connection.execute("UPDATE schema_info SET version=59")
+            reopened = CatalogStore(store.database_path)
+            with sqlite3.connect(store.database_path) as connection:
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 60)
+            self.assertEqual(reopened.run_collections(), [])
+            self.assertEqual(reopened.catalog()["runCollections"], [])
 
     def test_a_library_from_before_hand_taken_releases_gains_the_column(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -4787,7 +4824,7 @@ class ReadingListTests(LibraryFixture):
             with sqlite3.connect(store.database_path) as connection:
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")}
                 self.assertIn("taken_by_hand", columns)
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 59)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 60)
 
     def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
         with tempfile.TemporaryDirectory() as folder:

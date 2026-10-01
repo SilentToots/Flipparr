@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from access_policy import ADMIN, HOUSEHOLD, Viewer, allows, route_access
-from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogStore, _issue_release_state, normalized_person
+from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogStore, CollectionNameTaken, _issue_release_state, normalized_person
 import page_panels as panel_finder
 import content_rating
 from catalog_core_v2.language import (
@@ -1154,6 +1154,17 @@ def reader_catalog(payload: dict[str, Any], viewer: "Viewer | None" = None) -> d
                 "specialGroupCount": sum(1 for arc in arcs if arc.get("type") == "specials"),
             })
         payload["families"] = families
+        # A collection is re-said from the runs this profile may see: a hidden
+        # run's id, or a cover that is one, would give it away, and a
+        # collection with nothing left is not there at all.
+        collections = []
+        for collection in payload.get("runCollections") or []:
+            run_ids = [run_id for run_id in collection.get("runIds") or [] if run_id in visible]
+            if not run_ids:
+                continue
+            cover = collection.get("coverSeriesId")
+            collections.append({**collection, "runIds": run_ids, "coverSeriesId": cover if cover in visible else None})
+        payload["runCollections"] = collections
         stats = payload.setdefault("stats", {})
         stats["series"] = len(payload["series"])
         stats["families"] = len(families)
@@ -1712,6 +1723,16 @@ def look_for_ratings_again() -> int:
     count = catalog_store().forget_unfound_ratings()
     _RATINGS_WAKE.set()
     return count
+
+
+def _run_id_list(value: Any, what: str = "runs") -> list[int]:
+    """A list of run ids from a request body, or a ValueError saying what is wrong."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 5000 or not all(
+            isinstance(item, (int, str)) and str(item).isdigit() for item in value):
+        raise ValueError(f"Say which {what} by their ids")
+    return [int(item) for item in value]
 
 
 def viewer_may_see_run(viewer: "Viewer | None", rating: str | None) -> bool:
@@ -16942,6 +16963,23 @@ class Handler(BaseHTTPRequestHandler):
             _start_automatic_release_grabs({"id": request.get("acquisitionRequestId")})
             self.send_json(request, 201)
             return
+        if parsed_url.path == "/api/v1/run-collections":
+            # A household collection; the admin's alone (unlisted).
+            body = payload if isinstance(payload, dict) else {}
+            try:
+                made = catalog_store().create_run_collection(
+                    body.get("name"), _run_id_list(body.get("seriesIds")),
+                    body.get("summary") if isinstance(body.get("summary"), str) else None,
+                    created_by=self._viewer_id(),
+                )
+            except (LookupError, CollectionNameTaken) as exc:
+                self.send_json({"error": str(exc)}, 409)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(made, 201)
+            return
         if parsed_url.path == "/api/v1/ratings/runs":
             # Many runs rated at once (Settings > Profiles > Ratings); null
             # sends them back to what was found. The admin's alone: unlisted.
@@ -17570,6 +17608,37 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
             return
+        collection_patch = re.fullmatch(r"/api/v1/run-collections/(\d+)", parsed_url.path)
+        if collection_patch:
+            body = payload if isinstance(payload, dict) else {}
+            try:
+                changes: dict[str, Any] = {}
+                for key in ("name", "summary", "sortMode"):
+                    if key in body:
+                        if body[key] is not None and not isinstance(body[key], str):
+                            raise ValueError(f"{key} is text")
+                        changes[key] = body[key]
+                if "coverSeriesId" in body:
+                    cover = body["coverSeriesId"]
+                    if cover is not None and not str(cover).isdigit():
+                        raise ValueError("Choose a cover from the collection's runs")
+                    changes["coverSeriesId"] = cover
+                for key in ("add", "remove", "order"):
+                    if key in body:
+                        changes[key] = _run_id_list(body[key])
+                updated = catalog_store().update_run_collection(int(collection_patch.group(1)), changes)
+            except CollectionNameTaken as exc:
+                self.send_json({"error": str(exc)}, 409)
+                return
+            except LookupError as exc:
+                missing = "not in the library" in str(exc) and "collection" in str(exc)
+                self.send_json({"error": str(exc)}, 404 if missing else 409)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(updated)
+            return
         reading_list_patch = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
         if reading_list_patch:
             list_id = int(reading_list_patch.group(1))
@@ -17684,6 +17753,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        collection_delete = re.fullmatch(r"/api/v1/run-collections/(\d+)", parsed_url.path)
+        if collection_delete:
+            try:
+                catalog_store().delete_run_collection(int(collection_delete.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json({"status": "removed"})
+            return
         reading_list_delete = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
         if reading_list_delete:
             try:

@@ -2034,6 +2034,61 @@ class ReaderProfileHttpTests(unittest.TestCase):
         summary = self.call("GET", "/api/v1/ratings", cookies=admin).json()
         self.assertEqual((summary["runs"], summary["rated"]), (1, 0))
 
+    def _two_runs(self):
+        """Two runs of one issue each: Example (unrated) and Other."""
+        from catalog_store import CatalogStore
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "two-runs"
+        root.mkdir(exist_ok=True)
+        parsed = []
+        for title in ("Example", "Other"):
+            (root / f"{title} 001.cbz").write_bytes(b"comic")
+            parsed.append(app.ParsedFile(str(root / f"{title} 001.cbz"), f"{title} 001.cbz", ".cbz", title, issue="1"))
+        store = CatalogStore(Path(os.environ["COMICARR_DATABASE"]))
+        store.perform_scan(store.begin_scan(str(root), True), lambda *_: parsed, lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {}, "file_health": {"status": "ok"},
+            "recommendation": {"title": p.series, "issue": p.issue, "record_type": "single_issue",
+                               "publisher": "Example Press", "source": "Test"},
+        })
+        ids = {item["title"]: int(item["id"]) for item in store.catalog()["series"]}
+        return store, ids["Example"], ids["Other"]
+
+    def test_collections_are_the_admins_and_a_reader_sees_only_what_they_may(self):
+        store, example, other = self._two_runs()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        made = self.call("POST", "/api/v1/run-collections", {"name": "Essentials", "seriesIds": [example, other]}, cookies=admin)
+        self.assertEqual(made.status, 201, made.body)
+        collection = made.json()
+        self.assertEqual(collection["runIds"], [str(example), str(other)])
+        second = self.call("POST", "/api/v1/run-collections", {"name": "Also", "seriesIds": [other]}, cookies=admin)
+        self.assertEqual(second.status, 201, "a run can be in several collections")
+        self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "essentials!"}, cookies=admin).status,
+                         409, "a name is taken however it is spelled")
+        self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "Ghosts", "seriesIds": [99999]}, cookies=admin).status, 409)
+        self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "x"}, cookies=admin).status, 400)
+        path = f"/api/v1/run-collections/{collection['id']}"
+        reordered = self.call("PATCH", path, {"order": [other, example], "coverSeriesId": example, "summary": "Start here"}, cookies=admin)
+        self.assertEqual((reordered.status, reordered.json()["runIds"], reordered.json()["coverSeriesId"]),
+                         (200, [str(other), str(example)], str(example)))
+        self.assertEqual(self.call("PATCH", path, {"order": [example]}, cookies=admin).status, 409, "an order must be every member")
+        self.assertEqual(self.call("PATCH", "/api/v1/run-collections/99999", {"name": "Nope"}, cookies=admin).status, 404)
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "Mine"}, cookies=reader).status, 403)
+        self.assertEqual(self.call("PATCH", path, {"name": "Mine"}, cookies=reader).status, 403)
+        self.assertEqual(self.call("DELETE", path, cookies=reader).status, 403)
+        # A reader limited to Everyone, unrated allowed, with Example rated Mature.
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone", "allowUnrated": True}, cookies=admin)
+        store.set_run_rating_override(example, "mature")
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        seen = {item["name"]: item for item in self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"]}
+        self.assertEqual(seen["Essentials"]["runIds"], [str(other)], "the Mature member is not there for them")
+        self.assertIsNone(seen["Essentials"]["coverSeriesId"], "nor is its cover")
+        store.set_run_rating_override(other, "mature")
+        self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"], [],
+                         "a collection with nothing they may see is not there at all")
+        self.assertEqual(self.call("DELETE", path, cookies=admin).status, 200)
+        self.assertEqual([item["name"] for item in store.run_collections()], ["Also"])
+
     def test_the_catalog_says_when_each_issue_and_run_first_arrived(self):
         """Comics' Recently Added shelves order by these."""
         store, run = self._library_of_one_run()

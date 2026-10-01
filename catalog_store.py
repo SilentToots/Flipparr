@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 59
+SCHEMA_VERSION = 60
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -271,6 +271,10 @@ def _load_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return fallback
+
+
+class CollectionNameTaken(ValueError):
+    """Another collection already has that name."""
 
 
 def _normalized(value: Any) -> str:
@@ -1420,6 +1424,30 @@ class CatalogStore:
                 CREATE INDEX IF NOT EXISTS reading_list_items_list
                     ON reading_list_items(reading_list_id, removed_at, position, id);
                 CREATE INDEX IF NOT EXISTS reading_list_items_issue ON reading_list_items(issue_id);
+                -- Collections (schema 60): the household's own groups of runs,
+                -- after Plex's. A run may be in any number of them, which is
+                -- what sets them apart from a series family (one per run, and
+                -- tied to monitoring). Made by the admin; a profile sees the
+                -- members its rating allows.
+                CREATE TABLE IF NOT EXISTS run_collections (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE,
+                    summary TEXT,
+                    sort_mode TEXT NOT NULL DEFAULT 'custom' CHECK(sort_mode IN ('custom', 'title', 'year')),
+                    cover_series_run_id INTEGER REFERENCES series_runs(id) ON DELETE SET NULL,
+                    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS run_collection_items (
+                    collection_id INTEGER NOT NULL REFERENCES run_collections(id) ON DELETE CASCADE,
+                    series_run_id INTEGER NOT NULL REFERENCES series_runs(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    added_at TEXT NOT NULL,
+                    PRIMARY KEY (collection_id, series_run_id)
+                );
+                CREATE INDEX IF NOT EXISTS run_collection_items_run ON run_collection_items(series_run_id);
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -6634,6 +6662,141 @@ class CatalogStore:
             self._delete_empty_series_families(connection, previous_family_ids - {family_id})
         return {"id": str(family_id), "name": name, "runIds": [str(value) for value in run_ids]}
 
+    # ---- Collections (schema 60) --------------------------------------------
+
+    COLLECTION_SORTS = ("custom", "title", "year")
+
+    @staticmethod
+    def _run_collections(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+        members: dict[int, list[str]] = {}
+        for row in connection.execute(
+            "SELECT collection_id, series_run_id FROM run_collection_items ORDER BY collection_id, position, added_at"
+        ):
+            members.setdefault(int(row["collection_id"]), []).append(str(row["series_run_id"]))
+        return [{
+            "id": str(row["id"]), "name": row["name"], "summary": row["summary"], "sortMode": row["sort_mode"],
+            "coverSeriesId": str(row["cover_series_run_id"]) if row["cover_series_run_id"] is not None else None,
+            "runIds": members.get(int(row["id"]), []),
+            "createdAt": row["created_at"], "updatedAt": row["updated_at"],
+        } for row in connection.execute("SELECT * FROM run_collections ORDER BY name COLLATE NOCASE, id")]
+
+    def run_collections(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            return self._run_collections(connection)
+
+    def run_collection(self, collection_id: int) -> dict[str, Any]:
+        found = next((item for item in self.run_collections() if item["id"] == str(int(collection_id))), None)
+        if found is None:
+            raise LookupError("That collection is not in the library")
+        return found
+
+    @staticmethod
+    def _collection_name(connection: sqlite3.Connection, name: Any, collection_id: int | None = None) -> tuple[str, str]:
+        cleaned = re.sub(r"\s+", " ", str(name or "")).strip()
+        normalized = _normalized(cleaned)
+        if len(normalized) < 2 or len(cleaned) > 80:
+            raise ValueError("Give the collection a name of 2 to 80 characters")
+        taken = connection.execute(
+            "SELECT id FROM run_collections WHERE normalized_name=? AND id IS NOT ?", (normalized, collection_id)
+        ).fetchone()
+        if taken:
+            raise CollectionNameTaken("A collection with that name already exists")
+        return cleaned, normalized
+
+    @staticmethod
+    def _existing_runs(connection: sqlite3.Connection, run_ids: list[int]) -> None:
+        if not run_ids:
+            return
+        found = {int(row["id"]) for row in connection.execute(
+            f"SELECT id FROM series_runs WHERE id IN ({','.join('?' for _ in run_ids)})", run_ids)}
+        if found != set(run_ids):
+            raise LookupError("Some of those runs are no longer in the library")
+
+    def create_run_collection(
+        self, name: str, series_run_ids: list[int] | None = None, summary: str | None = None,
+        created_by: int | None = None,
+    ) -> dict[str, Any]:
+        run_ids = list(dict.fromkeys(int(value) for value in (series_run_ids or [])))
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            cleaned, normalized = self._collection_name(connection, name)
+            self._existing_runs(connection, run_ids)
+            cursor = connection.execute(
+                """INSERT INTO run_collections(name, normalized_name, summary, created_by, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (cleaned, normalized, (str(summary).strip() or None) if summary else None, created_by, now, now),
+            )
+            collection_id = int(cursor.lastrowid)
+            connection.executemany(
+                "INSERT INTO run_collection_items(collection_id, series_run_id, position, added_at) VALUES (?, ?, ?, ?)",
+                [(collection_id, run_id, position, now) for position, run_id in enumerate(run_ids)],
+            )
+        return self.run_collection(collection_id)
+
+    def update_run_collection(self, collection_id: int, changes: dict[str, Any]) -> dict[str, Any]:
+        """Change a collection in one go: its name, summary, order mode, cover,
+        members added or removed, and the members' order. All or nothing."""
+        collection_id = int(collection_id)
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute("SELECT * FROM run_collections WHERE id=?", (collection_id,)).fetchone()
+            if not row:
+                raise LookupError("That collection is not in the library")
+            if "name" in changes:
+                cleaned, normalized = self._collection_name(connection, changes["name"], collection_id)
+                connection.execute("UPDATE run_collections SET name=?, normalized_name=? WHERE id=?",
+                                   (cleaned, normalized, collection_id))
+            if "summary" in changes:
+                summary = str(changes["summary"] or "").strip()
+                if len(summary) > 2000:
+                    raise ValueError("Keep the summary under 2,000 characters")
+                connection.execute("UPDATE run_collections SET summary=? WHERE id=?", (summary or None, collection_id))
+            if "sortMode" in changes:
+                if changes["sortMode"] not in self.COLLECTION_SORTS:
+                    raise ValueError("Order a collection by hand, by title or by year")
+                connection.execute("UPDATE run_collections SET sort_mode=? WHERE id=?", (changes["sortMode"], collection_id))
+            members = [int(item["series_run_id"]) for item in connection.execute(
+                "SELECT series_run_id FROM run_collection_items WHERE collection_id=? ORDER BY position, added_at",
+                (collection_id,))]
+            remove = {int(value) for value in changes.get("remove") or []}
+            if remove:
+                connection.execute(
+                    f"DELETE FROM run_collection_items WHERE collection_id=? AND series_run_id IN ({','.join('?' for _ in remove)})",
+                    (collection_id, *remove),
+                )
+                members = [run_id for run_id in members if run_id not in remove]
+            add = [int(value) for value in dict.fromkeys(changes.get("add") or []) if int(value) not in members]
+            if add:
+                self._existing_runs(connection, add)
+                connection.executemany(
+                    "INSERT INTO run_collection_items(collection_id, series_run_id, position, added_at) VALUES (?, ?, ?, ?)",
+                    [(collection_id, run_id, len(members) + index, now) for index, run_id in enumerate(add)],
+                )
+                members += add
+            if "order" in changes:
+                order = [int(value) for value in changes["order"] or []]
+                if sorted(order) != sorted(members) or len(set(order)) != len(order):
+                    raise LookupError("The collection changed while you were ordering it; try again")
+                connection.executemany(
+                    "UPDATE run_collection_items SET position=? WHERE collection_id=? AND series_run_id=?",
+                    [(position, collection_id, run_id) for position, run_id in enumerate(order)],
+                )
+            if "coverSeriesId" in changes:
+                cover = changes["coverSeriesId"]
+                cover = int(cover) if cover not in (None, "") else None
+                if cover is not None and cover not in members:
+                    raise ValueError("A collection's cover is one of its own runs")
+                connection.execute("UPDATE run_collections SET cover_series_run_id=? WHERE id=?", (cover, collection_id))
+            elif remove and row["cover_series_run_id"] in remove:
+                connection.execute("UPDATE run_collections SET cover_series_run_id=NULL WHERE id=?", (collection_id,))
+            connection.execute("UPDATE run_collections SET updated_at=? WHERE id=?", (now, collection_id))
+        return self.run_collection(collection_id)
+
+    def delete_run_collection(self, collection_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            if connection.execute("DELETE FROM run_collections WHERE id=?", (int(collection_id),)).rowcount == 0:
+                raise LookupError("That collection is not in the library")
+
     def set_series_run_family(self, series_run_id: int, series_family_id: int | None) -> dict[str, Any]:
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
@@ -8870,6 +9033,16 @@ class CatalogStore:
             target = connection.execute("SELECT * FROM series_runs WHERE id=?", (target_id,)).fetchone()
             if not source or not target:
                 raise ValueError("One of the canonical series was not found")
+            # Its collections follow it; a collection that held both keeps one.
+            connection.execute(
+                """INSERT OR IGNORE INTO run_collection_items(collection_id, series_run_id, position, added_at)
+                   SELECT collection_id, ?, position, added_at FROM run_collection_items WHERE series_run_id=?""",
+                (target_id, source_id),
+            )
+            connection.execute("DELETE FROM run_collection_items WHERE series_run_id=?", (source_id,))
+            connection.execute(
+                "UPDATE run_collections SET cover_series_run_id=? WHERE cover_series_run_id=?", (target_id, source_id)
+            )
             # Requests belong to the logical run. Move their complete history,
             # not only the currently open wanted list, before re-homing issues.
             connection.execute(
@@ -10667,6 +10840,7 @@ class CatalogStore:
             "schemaVersion": SCHEMA_VERSION,
             "series": series,
             "families": families,
+            "runCollections": self.run_collections(),
             "requests": requests,
             "replacementRequests": replacement_requests,
             "files": file_summaries,
