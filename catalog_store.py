@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 61
+SCHEMA_VERSION = 62
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1396,6 +1396,10 @@ class CatalogStore:
                     refreshed_at TEXT,
                     -- The page behind the drawer's header (schema 58): one of
                     -- the arc's own comics, chosen or found, as a run's is.
+                    -- 62: whose arc it is (NULL: the household's) and whether its
+                    -- maker shared it. A profile's own arc goes with the profile.
+                    owner_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    shared INTEGER NOT NULL DEFAULT 0,
                     backdrop_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
                     backdrop_member TEXT,
                     backdrop_source TEXT,
@@ -1916,6 +1920,12 @@ class CatalogStore:
             list_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reading_lists)")}
             for column, kind in (("backdrop_file_id", "INTEGER REFERENCES files(id) ON DELETE SET NULL"),
                                  ("backdrop_member", "TEXT"), ("backdrop_source", "TEXT"), ("backdrop_signature", "TEXT")):
+                if list_columns and column not in list_columns:
+                    connection.execute(f"ALTER TABLE reading_lists ADD COLUMN {column} {kind}")
+            # 62: hand-built arcs belong to the profile that made them until it
+            # shares them; every arc before this stays the household's.
+            for column, kind in (("owner_user_id", "INTEGER REFERENCES users(id) ON DELETE CASCADE"),
+                                 ("shared", "INTEGER NOT NULL DEFAULT 0")):
                 if list_columns and column not in list_columns:
                     connection.execute(f"ALTER TABLE reading_lists ADD COLUMN {column} {kind}")
             # 55: member_requests loses its CHECK on kind (story arcs are a new
@@ -3856,6 +3866,8 @@ class CatalogStore:
             "sourceName": row["source_name"],
             "createdBy": int(row["created_by"]) if row["created_by"] is not None else None,
             "createdAt": row["created_at"], "updatedAt": row["updated_at"], "refreshedAt": row["refreshed_at"],
+            "ownerId": int(row["owner_user_id"]) if row["owner_user_id"] is not None else None,
+            "shared": bool(row["shared"]),
         }
 
     @staticmethod
@@ -3916,6 +3928,7 @@ class CatalogStore:
         source: str = "metron", provider: str | None = None, provider_arc_id: str | None = None,
         source_url: str | None = None, source_name: str | None = None,
         created_by: int | None = None, items: list[dict[str, Any]] | None = None,
+        owner_user_id: int | None = None,
     ) -> dict[str, Any]:
         """Save an arc with its issues in the order given. Items are dicts with
         `seriesTitle`, `number` and, when known, `provider`, `providerIssueId`,
@@ -3928,15 +3941,110 @@ class CatalogStore:
         with self._write_lock, self._connect() as connection:
             cursor = connection.execute(
                 """INSERT INTO reading_lists(name, description, cover, source, provider, provider_arc_id,
-                       source_url, source_name, created_by, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       source_url, source_name, created_by, owner_user_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (name, description, cover, source, provider,
                  str(provider_arc_id) if provider_arc_id is not None else None, source_url, source_name,
-                 int(created_by) if created_by is not None else None, now, now),
+                 int(created_by) if created_by is not None else None,
+                 int(owner_user_id) if owner_user_id is not None else None, now, now),
             )
             list_id = int(cursor.lastrowid)
             self._insert_reading_list_items(connection, list_id, list(items or []), now=now)
         return self.reading_list(list_id)
+
+    # Which catalog's ids an added issue carries, best first: Metron is what
+    # Pull and CBL export know best.
+    _ISSUE_PROVIDER_ORDER = ("metron", "comic_vine", "gcd")
+
+    def add_reading_list_issues(self, list_id: int, issue_ids: list[int]) -> dict[str, list[str]]:
+        """Library issues appended to an arc by hand, in the order given.
+
+        Each item is the issue as the catalog knows it -- its run's title and
+        year, its number and date -- tied to it by `issue_id`, and carries the
+        issue's catalog ids so an issue not owned yet can be pulled and the arc
+        exported. One already in the arc is skipped, not added twice.
+        """
+        wanted = list(dict.fromkeys(int(value) for value in issue_ids))
+        if not wanted:
+            raise ValueError("Choose an issue to add")
+        now = _utc_now()
+        added: list[str] = []
+        skipped: list[str] = []
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            marks = ",".join("?" * len(wanted))
+            rows = {int(row["id"]): row for row in connection.execute(
+                f"""SELECT issues.id, issues.issue_number, issues.publication_date, issues.cover, issues.series_run_id,
+                           series_runs.canonical_title, series_runs.start_year
+                      FROM issues JOIN series_runs ON series_runs.id=issues.series_run_id
+                     WHERE issues.id IN ({marks})""", wanted)}
+            if len(rows) != len(wanted):
+                raise LookupError("Some of those issues are no longer in the library")
+            present = {int(row["issue_id"]) for row in connection.execute(
+                "SELECT issue_id FROM reading_list_items WHERE reading_list_id=? AND removed_at IS NULL AND issue_id IS NOT NULL",
+                (int(list_id),))}
+            issue_ids_by_provider: dict[int, dict[str, str]] = {}
+            for row in connection.execute(
+                    f"SELECT issue_id, provider, provider_id FROM issue_provider_ids WHERE issue_id IN ({marks})", wanted):
+                issue_ids_by_provider.setdefault(int(row["issue_id"]), {})[row["provider"]] = str(row["provider_id"])
+            run_ids = sorted({int(row["series_run_id"]) for row in rows.values()})
+            series_ids_by_provider: dict[int, dict[str, str]] = {}
+            for row in connection.execute(
+                    f"SELECT series_run_id, provider, provider_id FROM series_provider_ids WHERE series_run_id IN ({','.join('?' * len(run_ids))})",
+                    run_ids):
+                series_ids_by_provider.setdefault(int(row["series_run_id"]), {})[row["provider"]] = str(row["provider_id"])
+            position = int(connection.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM reading_list_items WHERE reading_list_id=? AND removed_at IS NULL",
+                (int(list_id),)).fetchone()[0])
+            for issue_id in wanted:
+                if issue_id in present:
+                    skipped.append(str(issue_id))
+                    continue
+                present.add(issue_id)
+                row = rows[issue_id]
+                ids = issue_ids_by_provider.get(issue_id, {})
+                provider = next((name for name in self._ISSUE_PROVIDER_ORDER if name in ids), None)
+                series_ids = series_ids_by_provider.get(int(row["series_run_id"]), {})
+                # The arc may already hold this catalog issue: taken out
+                # before, or never matched to a file. It is that item again --
+                # brought back at the end and tied to the issue -- since an
+                # arc holds a catalog issue once.
+                earlier = connection.execute(
+                    """SELECT id, removed_at FROM reading_list_items
+                        WHERE reading_list_id=? AND provider=? AND provider_issue_id=?""",
+                    (int(list_id), provider, ids.get(provider))).fetchone() if provider else None
+                if earlier is not None and earlier["removed_at"] is None:
+                    connection.execute("UPDATE reading_list_items SET issue_id=?, updated_at=? WHERE id=?",
+                                       (issue_id, now, int(earlier["id"])))
+                    skipped.append(str(issue_id))
+                    continue
+                if earlier is not None:
+                    connection.execute(
+                        "UPDATE reading_list_items SET removed_at=NULL, issue_id=?, position=?, updated_at=? WHERE id=?",
+                        (issue_id, position, now, int(earlier["id"])))
+                else:
+                    self._insert_reading_list_items(connection, list_id, [{
+                        "seriesTitle": row["canonical_title"], "seriesYear": row["start_year"],
+                        "number": row["issue_number"], "coverDate": row["publication_date"], "cover": row["cover"],
+                        "issueId": issue_id, "provider": provider,
+                        "providerIssueId": ids.get(provider) if provider else None,
+                        "providerSeriesId": series_ids.get(provider) if provider else None,
+                    }], now=now, start=position)
+                position += 1
+                added.append(str(issue_id))
+            connection.execute("UPDATE reading_lists SET updated_at=? WHERE id=?", (now, int(list_id)))
+        return {"added": added, "skipped": skipped}
+
+    def set_reading_list_shared(self, list_id: int, shared: bool) -> None:
+        with self._write_lock, self._connect() as connection:
+            self._require_reading_list(connection, list_id)
+            connection.execute("UPDATE reading_lists SET shared=?, updated_at=? WHERE id=?",
+                               (1 if shared else 0, _utc_now(), int(list_id)))
+
+    def reading_list_meta(self, list_id: int) -> dict[str, Any]:
+        """An arc's name, source, owner and sharing, without its items."""
+        with self._connect() as connection:
+            return self._reading_list_meta(self._require_reading_list(connection, list_id))
 
     def reading_list_by_provider(self, provider: str, provider_arc_id: str) -> int | None:
         with self._connect() as connection:

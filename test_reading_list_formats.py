@@ -1,6 +1,6 @@
 import unittest
 
-from reading_list_formats import MAX_ITEMS, parse_reading_list
+from reading_list_formats import MAX_ITEMS, parse_reading_list, write_reading_list
 
 CBL = b"""<?xml version="1.0" encoding="utf-8"?>
 <ReadingList xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -73,3 +73,31 @@ class ReadingListFormatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadingListWriterTests(unittest.TestCase):
+    ITEMS = [
+        {"seriesTitle": "Batman", "seriesYear": 1940, "number": "608", "coverDate": "2002-12-01",
+         "provider": "metron", "providerSeriesId": "s1", "providerIssueId": "m608"},
+        {"seriesTitle": "Batman: Gotham Knights", "seriesYear": 2000, "number": "1", "coverDate": "2003-06-01",
+         "provider": "comic_vine", "providerSeriesId": "796", "providerIssueId": "c1", "issueType": "Event Tie-In"},
+        {"seriesTitle": "Wonder Woman & Friends", "seriesYear": None, "number": "23.1", "coverDate": None,
+         "provider": None, "providerIssueId": None},
+    ]
+
+    def test_an_arc_written_as_cbl_reads_back_the_same_in_both_formats(self):
+        for fmt in ("cbl", "json"):
+            with self.subTest(fmt=fmt):
+                back = parse_reading_list(write_reading_list("Hush <mine>", self.ITEMS, fmt=fmt, description="By hand"))
+                self.assertEqual(back["name"], "Hush <mine>")
+                self.assertEqual([(i["seriesTitle"], i["seriesYear"], i["number"], i.get("provider"), i.get("providerIssueId"),
+                                   i.get("providerSeriesId")) for i in back["items"]],
+                                 [("Batman", 1940, "608", "metron", "m608", "s1"),
+                                  ("Batman: Gotham Knights", 2000, "1", "comic_vine", "c1", "796"),
+                                  ("Wonder Woman & Friends", None, "23.1", None, None, None)])
+
+    def test_cbl_carries_the_year_and_catalog_names_other_apps_read(self):
+        text = write_reading_list("Hush", self.ITEMS[:2]).decode()
+        self.assertIn('<Book Series="Batman" Number="608" Volume="1940" Year="2002">', text)
+        self.assertIn('<Database Name="cv" Series="796" Issue="c1" />', text)
+        self.assertTrue(text.startswith('<?xml version="1.0" encoding="utf-8"?>'))

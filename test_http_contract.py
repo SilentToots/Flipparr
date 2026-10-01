@@ -1646,8 +1646,14 @@ NOT_ADMIN = {
     ("POST", "/api/v1/series/1/reading"): "reader",
     ("GET", "/api/v1/reading-lists"): "reader",
     ("GET", "/api/v1/reading-lists/1"): "reader",
+    ("PATCH", "/api/v1/reading-lists/1"): "reader",
+    ("DELETE", "/api/v1/reading-lists/1"): "reader",
     ("GET", "/api/v1/reading-lists/1/backdrop"): "reader",
+    ("POST", "/api/v1/reading-lists/1/backdrop"): "reader",
     ("POST", "/api/v1/reading-lists/1/reading"): "reader",
+    ("POST", "/api/v1/reading-lists/manual"): "reader",
+    ("POST", "/api/v1/reading-lists/1/items"): "reader",
+    ("GET", "/api/v1/reading-lists/1/export"): "reader",
     ("GET", "/api/v1/reading/lists"): "reader",
     ("GET", "/api/v1/files/1/progress"): "reader",
     ("POST", "/api/v1/files/1/progress"): "reader",
@@ -1736,7 +1742,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual((stale.status, stale.json()["reason"]), (401, "profile_required"),
                          "a cookie from the one-profile days no longer opens the admin")
 
-    def test_a_reader_sees_story_arcs_and_their_own_place_but_only_the_admin_shapes_them(self):
+    def test_a_reader_sees_story_arcs_and_their_own_place_but_only_the_admin_shapes_the_households(self):
         sam = self._household_with_a_reader()
         cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
         shelf = self.call("GET", "/api/v1/reading-lists", cookies=cookies)
@@ -1749,11 +1755,13 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(marked.status, 404, "the reader's own place, on an arc that is not there")
         self.assertEqual(self.call("POST", "/api/v1/reading-lists/1/reading", {"read": "yes"}, cookies=cookies).status, 400)
         self.assertEqual(self.call("GET", "/api/v1/reading-lists/1/backdrop", cookies=cookies).status, 404, "no arc, no background")
-        for method, path in (("POST", "/api/v1/reading-lists"), ("PATCH", "/api/v1/reading-lists/1"),
-                             ("DELETE", "/api/v1/reading-lists/1"), ("POST", "/api/v1/reading-lists/1/pull"),
-                             ("POST", "/api/v1/reading-lists/1/refresh"), ("POST", "/api/v1/reading-lists/1/backdrop")):
+        for method, path in (("POST", "/api/v1/reading-lists"), ("POST", "/api/v1/reading-lists/1/pull"),
+                             ("POST", "/api/v1/reading-lists/1/refresh")):
             denied = self.call(method, path, {"arcId": "482"}, cookies=cookies)
             self.assertEqual((denied.status, denied.json().get("reason")), (403, "admin_only"), f"{method} {path}")
+        for method, path in (("PATCH", "/api/v1/reading-lists/1"), ("DELETE", "/api/v1/reading-lists/1"),
+                             ("POST", "/api/v1/reading-lists/1/backdrop")):
+            self.assertEqual(self.call(method, path, {"name": "x"}, cookies=cookies).status, 404, f"{method} {path}: no arc")
         self.assertEqual(self.call("POST", "/api/v1/reading-lists/import", {"url": "https://example.invalid/x.cbl"}, cookies=cookies).json().get("reason"), "admin_only")
         admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
         self.assertEqual(self.call("POST", "/api/v1/reading-lists", {"arcId": "not-an-id"}, cookies=admin).status, 400)
@@ -1764,6 +1772,12 @@ class ReaderProfileHttpTests(unittest.TestCase):
                       headers={"X-Filename": "two.cbl", "Cookie": "; ".join(f"{k}={v}" for k, v in admin.items())})
         self.assertEqual((raw.status, raw.json()["name"], raw.json()["issueCount"]), (201, "Two", 2), raw.body)
         self.assertEqual(self.call("GET", "/api/v1/reading-lists", cookies=cookies).json()["lists"][0]["name"], "Two", "the reader sees it")
+        for method, path in (("PATCH", "/api/v1/reading-lists/1"), ("DELETE", "/api/v1/reading-lists/1"),
+                             ("POST", "/api/v1/reading-lists/1/backdrop")):
+            refused = self.call(method, path, {"name": "Mine now", "source": "auto"}, cookies=cookies)
+            self.assertEqual(refused.status, 403, f"{method} {path}: the household's arc is the admin's")
+        self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"shared": True}, cookies=admin).status, 400,
+                         "the household's arcs are everyone's already")
         # A cover is one of the arc's own comics or the picture it came with, never a typed link.
         for bad in ("https://evil.invalid/x.jpg", "javascript:alert(1)", "/api/v1/files/999/pages/0"):
             self.assertEqual(self.call("PATCH", "/api/v1/reading-lists/1", {"cover": bad}, cookies=admin).status, 400, bad)
@@ -2117,6 +2131,66 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(self.call("DELETE", f"/api/v1/me/reading-list/run/{other}", cookies=reader).status, 200)
         mine = self.call("GET", "/api/v1/me/reading-list", cookies=admin).json()
         self.assertEqual([item["id"] for item in mine["runs"]], [str(example)], "the admin's list was untouched")
+
+    def test_any_profile_makes_its_own_story_arc_and_shares_it_with_the_household(self):
+        store, example, other = self._two_runs()
+        issues = store.issues_by_run([example, other])
+        first, second = (int(issues[str(run)][0][0]) for run in (example, other))
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        alex = self.call("POST", "/api/v1/users", {"name": "Alex", "colour": "teal"}, cookies=admin).json()["id"]
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self.call("POST", "/api/v1/reading-lists/manual", {"name": "  "}, cookies=reader).status, 400)
+        made = self.call("POST", "/api/v1/reading-lists/manual", {"name": "My order", "issueIds": [second]}, cookies=reader)
+        self.assertEqual(made.status, 201, made.body)
+        arc = made.json()
+        self.assertEqual((arc["source"], arc["shared"], arc["mine"], arc["editable"], arc["issueCount"]),
+                         ("manual", False, True, True, 1))
+        path = f"/api/v1/reading-lists/{arc['id']}"
+        added = self.call("POST", f"{path}/items", {"issueIds": [first, second]}, cookies=reader).json()
+        self.assertEqual((added["added"], added["skipped"]), ([str(first)], [str(second)]), "an issue is in an arc once")
+        self.assertEqual([item["issueId"] for item in added["items"]], [str(second), str(first)], "added at the end")
+        self.assertEqual(self.call("POST", f"{path}/items", {"issueIds": [99999]}, cookies=reader).status, 404)
+        self.assertEqual(self.call("POST", f"{path}/items", {"issueIds": []}, cookies=reader).status, 400)
+        items = [item["id"] for item in added["items"]]
+        ordered = self.call("PATCH", path, {"order": list(reversed(items))}, cookies=reader).json()
+        self.assertEqual([item["issueId"] for item in ordered["items"]], [str(first), str(second)])
+        empty = self.call("POST", "/api/v1/reading-lists/manual", {"name": "Later"}, cookies=reader)
+        self.assertEqual((empty.status, empty.json()["issueCount"]), (201, 0), "an arc can start empty")
+        # Private: neither the admin nor another reader knows it is there.
+        alex_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": alex}).cookies
+        for cookies in (admin, alex_cookies):
+            self.assertNotIn("My order", [item["name"] for item in self.call("GET", "/api/v1/reading-lists", cookies=cookies).json()["lists"]])
+            self.assertEqual(self.call("GET", path, cookies=cookies).status, 404)
+            self.assertEqual(self.call("GET", f"{path}/export", cookies=cookies).status, 404)
+            self.assertEqual(self.call("PATCH", path, {"name": "Taken"}, cookies=cookies).status, 404)
+            self.assertEqual(self.call("POST", f"/api/v1/me/reading-list/arc/{arc['id']}", cookies=cookies).status, 404)
+        self.assertEqual(self.call("PATCH", path, {"shared": "yes"}, cookies=reader).status, 400)
+        self.assertTrue(self.call("PATCH", path, {"shared": True}, cookies=reader).json()["shared"])
+        # Shared: everyone reads it, with whose it is; only Sam changes it.
+        seen = {item["name"]: item for item in self.call("GET", "/api/v1/reading-lists", cookies=alex_cookies).json()["lists"]}
+        self.assertEqual((seen["My order"]["ownerName"], seen["My order"]["editable"], seen["My order"]["mine"]),
+                         ("Sam", False, False))
+        self.assertNotIn("Later", seen, "sharing one arc shares only that one")
+        self.assertEqual(self.call("POST", f"{path}/items", {"issueIds": [first]}, cookies=alex_cookies).status, 403)
+        self.assertEqual(self.call("PATCH", path, {"name": "Taken"}, cookies=admin).status, 403, "not even the admin rewrites it")
+        self.assertEqual(self.call("DELETE", path, cookies=alex_cookies).status, 403)
+        self.assertEqual(self.call("POST", f"/api/v1/me/reading-list/arc/{arc['id']}", cookies=alex_cookies).status, 200)
+        exported = self.call("GET", f"{path}/export", cookies=alex_cookies)
+        self.assertEqual(exported.status, 200)
+        self.assertIn(b'<Book Series="Other" Number="1"', exported.body)
+        self.assertEqual(self.call("GET", f"{path}/export?format=pdf", cookies=alex_cookies).status, 400)
+        self.assertEqual(json.loads(self.call("GET", f"{path}/export?format=json", cookies=reader).body)["listDetails"]["name"], "My order")
+        # The admin keeps the household: a shared arc can be taken back out.
+        self.assertFalse(self.call("PATCH", path, {"shared": False}, cookies=admin).json()["shared"])
+        self.assertEqual(self.call("GET", path, cookies=alex_cookies).status, 404)
+        self.assertEqual(self.call("GET", "/api/v1/me/reading-list", cookies=alex_cookies).json()["arcs"], [],
+                         "an arc no longer shared leaves the reading list it was on")
+        self.assertEqual(self.call("DELETE", path, cookies=reader).status, 200, "its maker deletes it")
+        self.assertEqual(self.call("GET", path, cookies=reader).status, 404)
+        # A profile that goes takes its own arcs with it.
+        self.assertEqual(self.call("DELETE", f"/api/v1/users/{sam}", cookies=admin).status, 200)
+        self.assertEqual([item["name"] for item in store.reading_lists_overview()], [])
 
     def test_the_catalog_says_when_each_issue_and_run_first_arrived(self):
         """Comics' Recently Added shelves order by these."""

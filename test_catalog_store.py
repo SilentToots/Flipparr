@@ -4692,6 +4692,66 @@ class ReadingListTests(LibraryFixture):
             with self.assertRaises(ValueError):
                 store.create_reading_list("Nameless issue", items=[{"seriesTitle": "Batman", "number": ""}])
 
+    def test_an_arc_made_by_hand_takes_library_issues_with_their_catalog_ids(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            ids = self._ids(store)
+            batman, gotham = ids["Batman"], ids["Batman: Gotham Knights"]
+            with sqlite3.connect(store.database_path) as connection:
+                connection.executemany(
+                    "INSERT INTO issue_provider_ids(issue_id, provider, provider_id, updated_at) VALUES (?, ?, ?, 'now')",
+                    [(batman[1]["608"], "gcd", "g608"), (batman[1]["608"], "metron", "m608"), (gotham[1]["1"], "comic_vine", "cgk1")])
+                connection.execute(
+                    "INSERT INTO series_provider_ids(series_run_id, provider, provider_id, source, updated_at) VALUES (?, 'metron', 's1', 'test', 'now')",
+                    (batman[0],))
+            sam = store.create_user("Sam")["id"]
+            arc = store.create_reading_list("My Hush", source="manual", created_by=sam, owner_user_id=sam)
+            self.assertEqual((arc["ownerId"], arc["shared"], arc["items"]), (sam, False, []))
+            list_id = int(arc["id"])
+            outcome = store.add_reading_list_issues(list_id, [gotham[1]["1"], batman[1]["608"], gotham[1]["1"]])
+            self.assertEqual(outcome, {"added": [str(gotham[1]["1"]), str(batman[1]["608"])], "skipped": []})
+            items = store.reading_list(list_id)["items"]
+            self.assertEqual([(i["seriesTitle"], i["number"], i["provider"], i["providerIssueId"], i["providerSeriesId"], i["position"])
+                              for i in items],
+                             [("Batman: Gotham Knights", "1", "comic_vine", "cgk1", None, 0),
+                              ("Batman", "608", "metron", "m608", "s1", 1)], "Metron's ids first")
+            self.assertEqual(store.add_reading_list_issues(list_id, [batman[1]["608"], batman[1]["610"]]),
+                             {"added": [str(batman[1]["610"])], "skipped": [str(batman[1]["608"])]})
+            self.assertEqual(items[0]["issueId"], str(gotham[1]["1"]))
+            # Taken out and added again, it is the same item, back at the end.
+            store.remove_reading_list_items(list_id, [int(items[1]["id"])])
+            store.add_reading_list_issues(list_id, [batman[1]["608"]])
+            again = store.reading_list(list_id)["items"]
+            self.assertEqual([(i["number"], i["position"]) for i in again], [("1", 0), ("610", 1), ("608", 2)])
+            self.assertEqual(again[2]["id"], items[1]["id"])
+            with self.assertRaises(LookupError):
+                store.add_reading_list_issues(list_id, [999999])
+            with self.assertRaises(ValueError):
+                store.add_reading_list_issues(list_id, [])
+            store.set_reading_list_shared(list_id, True)
+            self.assertTrue(store.reading_list_meta(list_id)["shared"])
+            household = store.create_reading_list("Household", source="manual")
+            self.assertIsNone(household["ownerId"])
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute("DELETE FROM users WHERE id=?", (sam,))
+            self.assertEqual([entry["name"] for entry in store.reading_lists_overview()], ["Household"],
+                             "a profile's arcs go with it; the household's stay")
+
+    def test_a_library_from_before_hand_made_arcs_gains_owners_and_sharing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._two_runs(Path(folder))
+            arc, _ = self._hush(store)
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("ALTER TABLE reading_lists DROP COLUMN owner_user_id")
+                connection.execute("ALTER TABLE reading_lists DROP COLUMN shared")
+                connection.execute("UPDATE schema_info SET version=61")
+            reopened = CatalogStore(store.database_path)
+            meta = reopened.reading_list_meta(int(arc["id"]))
+            self.assertEqual((meta["ownerId"], meta["shared"]), (None, False), "every arc saved before is the household's")
+            with sqlite3.connect(store.database_path) as connection:
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 62)
+
     def test_reordering_places_every_issue_once_and_removal_is_soft(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._two_runs(Path(folder))
@@ -4796,7 +4856,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 61)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 62)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
@@ -4810,7 +4870,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=59")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 61)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 62)
             self.assertEqual(reopened.run_collections(), [])
             self.assertEqual(reopened.catalog()["runCollections"], [])
 
@@ -4842,7 +4902,7 @@ class ReadingListTests(LibraryFixture):
             with sqlite3.connect(store.database_path) as connection:
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")}
                 self.assertIn("taken_by_hand", columns)
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 61)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 62)
 
     def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
         with tempfile.TemporaryDirectory() as folder:

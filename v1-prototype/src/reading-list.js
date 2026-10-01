@@ -71,7 +71,10 @@ export function skippedLine(skipped) {
  * first, in the arcs' order, that holds one of its issues).
  */
 export function arcOnlyRuns(series, lists) {
-  const arcs = (lists || []).filter((list) => (list.issueIds || []).length);
+  // Only an arc that was saved or imported pulls runs in for itself; one made
+  // by hand -- someone's own order of issues already here -- never folds a
+  // run away from the grid.
+  const arcs = (lists || []).filter((list) => list.source !== "manual" && (list.issueIds || []).length);
   const claimed = new Map();
   for (const list of arcs) for (const id of list.issueIds) if (!claimed.has(String(id))) claimed.set(String(id), list);
   const folded = new Map();
@@ -101,4 +104,46 @@ export function foldArcRuns(series, lists) {
     foldedRunCount: counts.get(String(list.id)),
   }));
   return { series: kept, arcs };
+}
+
+// Arcs made by hand (since 2026-10-01): any profile makes its own, private
+// until it shares it with the household. The server says whose each is
+// (`mine`, `ownerName`) and whether this profile may change it (`editable`).
+
+/** Whose an arc is, as its card and drawer say it: nothing for the household's. */
+export function arcOwnerLine(list) {
+  if (list?.mine) return list.shared ? "Yours \u00b7 shared" : "Yours";
+  if (list?.ownerName) return `Shared by ${list.ownerName}`;
+  return "";
+}
+
+/**
+ * The arcs an issue can be added to: the ones this profile may change,
+ * most recently changed first, each saying whether the issue is in it.
+ */
+export function arcsToAddTo(lists, issueId) {
+  const id = String(issueId ?? "");
+  return (lists || []).filter((list) => list.editable)
+    .map((list) => ({ ...list, has: (list.issueIds || []).map(String).includes(id) }))
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+}
+
+/** An order with one id moved to the top or the bottom. */
+export function moveToEdge(order, id, edge) {
+  const rest = (order || []).filter((value) => value !== id);
+  if (rest.length === (order || []).length) return order;
+  return edge === "top" ? [id, ...rest] : [...rest, id];
+}
+
+/**
+ * An arc's items ordered once by cover date, oldest first, for the order
+ * editor's "Sort by release date". Items of the same date, and undated ones
+ * (kept at the end), stay in the order they were in: this is a starting
+ * point to fine-tune by hand, not a live sort.
+ */
+export function orderByReleaseDate(order, itemsById) {
+  const dated = (id) => /^\d{4}-\d{2}(-\d{2})?$/.test(String(itemsById[id]?.coverDate || "")) ? String(itemsById[id].coverDate) : null;
+  return (order || []).map((id, index) => ({ id, index, date: dated(id) }))
+    .sort((a, b) => (a.date === null) - (b.date === null) || String(a.date || "").localeCompare(String(b.date || "")) || a.index - b.index)
+    .map((entry) => entry.id);
 }

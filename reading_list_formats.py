@@ -157,3 +157,51 @@ def _parse_json(text: str) -> dict[str, Any]:
         "publisher": _clean(details.get("publisher")) or None,
         "coverUrls": covers, "items": items,
     }
+
+
+# ---- Writing ------------------------------------------------------------------
+
+# How each format names a catalog, the reverse of `_PROVIDERS`.
+_XML_DATABASE = {"metron": "Metron", "comic_vine": "cv", "gcd": "GCD"}
+_JSON_DATABASE = {"metron": "metron", "comic_vine": "comicvine", "gcd": "grandComicsDatabase"}
+
+
+def write_reading_list(name: str, items: list[dict[str, Any]], *, fmt: str = "cbl",
+                       description: str | None = None) -> bytes:
+    """An arc as a file other apps read: the CBL XML that ComicRack began and
+    Kavita, Komga and Mylar import, or the Comic Reading List JSON Standard.
+    Items are the library's arc items, in reading order; each says its series,
+    start year, number, cover date and, when known, its catalog id -- which
+    is how another app finds the same issue."""
+    if fmt == "json":
+        return json.dumps({
+            "fileDetails": {"version": "1.0"},
+            "listDetails": {"name": name, **({"description": description} if description else {})},
+            "issueList": [{
+                "seriesName": item.get("seriesTitle") or "",
+                "seriesStartYear": item.get("seriesYear"),
+                "issueNumber": str(item.get("number") or ""),
+                "issueCoverDate": item.get("coverDate"),
+                **({"issueType": item["issueType"]} if item.get("issueType") else {}),
+                "id": ([{"name": _JSON_DATABASE[item["provider"]], "series": str(item.get("providerSeriesId") or ""),
+                         "issue": str(item.get("providerIssueId") or "")}]
+                       if item.get("provider") in _JSON_DATABASE and item.get("providerIssueId") else []),
+            } for item in items],
+        }, indent=2).encode("utf-8")
+    root = ET.Element("ReadingList")
+    ET.SubElement(root, "Name").text = name
+    books = ET.SubElement(root, "Books")
+    for item in items:
+        attributes = {"Series": str(item.get("seriesTitle") or ""), "Number": str(item.get("number") or "")}
+        if item.get("seriesYear"):
+            attributes["Volume"] = str(item["seriesYear"])
+        year = str(item.get("coverDate") or "")[:4]
+        if year.isdigit():
+            attributes["Year"] = year
+        book = ET.SubElement(books, "Book", attributes)
+        if item.get("provider") in _XML_DATABASE and item.get("providerIssueId"):
+            ET.SubElement(book, "Database", {"Name": _XML_DATABASE[item["provider"]],
+                                             "Series": str(item.get("providerSeriesId") or ""),
+                                             "Issue": str(item["providerIssueId"])})
+    ET.indent(root)
+    return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8")

@@ -44,7 +44,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from reading_list_formats import parse_reading_list
+from reading_list_formats import parse_reading_list, write_reading_list
 import torrent_client
 import zipfile
 import xml.etree.ElementTree as ET
@@ -13826,15 +13826,54 @@ def _arc_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(groups.values())
 
 
+# Whose an arc is (schema 62). One with no owner is the household's, as
+# every arc saved from Metron or a CBL file is, and the admin keeps it. Any
+# profile may make its own by hand; it is that profile's until shared with
+# the household, and then the others read it but only its maker changes it
+# -- the admin may still unshare or delete it, as the household's keeper.
+
+def arc_visible_to(entry: dict[str, Any], viewer: "Viewer | None") -> bool:
+    """The household's arcs, shared ones and a profile's own. Without a viewer
+    -- the library's own work: healing, pulling -- every arc."""
+    owner = entry.get("ownerId")
+    return viewer is None or owner is None or bool(entry.get("shared")) or int(owner) == viewer.id
+
+
+def arc_editable_by(entry: dict[str, Any], viewer: "Viewer") -> bool:
+    owner = entry.get("ownerId")
+    return viewer.is_admin if owner is None else int(owner) == viewer.id
+
+
+def arc_manageable_by(entry: dict[str, Any], viewer: "Viewer") -> bool:
+    """Who may unshare or delete it: whoever edits it, and the admin a shared one."""
+    return arc_editable_by(entry, viewer) or (viewer.is_admin and bool(entry.get("shared")))
+
+
+def _arc_ownership(entry: dict[str, Any], viewer: "Viewer | None", names: dict[int, str]) -> dict[str, Any]:
+    owner = entry.get("ownerId")
+    return {
+        "editable": bool(viewer and arc_editable_by(entry, viewer)),
+        "manageable": bool(viewer and arc_manageable_by(entry, viewer)),
+        "mine": bool(viewer and owner is not None and int(owner) == viewer.id),
+        "ownerName": names.get(int(owner)) if owner is not None else None,
+    }
+
+
+def _profile_names() -> dict[int, str]:
+    return {int(user["id"]): user["name"] for user in _profiles_store().list_users()}
+
+
 def reading_list_detail(
     list_id: int, *, user_id: int, may_see: "Callable[[int], bool] | None" = None,
-    may_see_unrated: bool = True,
+    may_see_unrated: bool = True, viewer: "Viewer | None" = None,
 ) -> dict[str, Any]:
     """An arc as the drawer draws it: every issue in order with what the
     library holds and where this profile is in it, and where its Read button
     goes. Items of runs the profile may not see are left out, and an arc with
     nothing left to show is not there for it."""
     store = catalog_store()
+    if not arc_visible_to(store.reading_list_meta(list_id), viewer):
+        raise LookupError("That story arc is not in the library")
     data = _reading_list_resolved(list_id)
     # "On the way" for the issues here that are not: one scoped query, not
     # the catalog's every request.
@@ -13855,7 +13894,9 @@ def reading_list_detail(
             "page": record.get("page", 0), "pageCount": record.get("pageCount", 0),
             "finishedAt": record.get("finishedAt"), "stale": record.get("stale", False),
         })
-    if not items:
+    # An arc made by hand starts empty; one emptied by the profile's rating
+    # is not there for it.
+    if not items and data["items"]:
         raise LookupError("That story arc is not in the library")
     comics = [{"id": item["fileId"], "issueNumber": item["number"], "filename": item["filename"],
                "readable": item["readable"]} for item in items if item["fileId"]]
@@ -13866,20 +13907,24 @@ def reading_list_detail(
         "queued": sum(1 for item in items if item["queued"]),
         "missing": sum(1 for item in items if not (item["owned"] or item["queued"])),
         "series": _arc_series(items), "resume": reading_target(comics, [], progress), "items": items,
-        **_arc_years(items),
+        **_arc_years(items), **_arc_ownership(meta, viewer, _profile_names()),
     }
 
 
 def reading_lists(
     *, may_see: "Callable[[int], bool] | None" = None, may_see_unrated: bool = True,
+    viewer: "Viewer | None" = None,
 ) -> dict[str, Any]:
     """Every arc for the Comics grid, without progress (that is `reading_by_list`,
     as `reading_by_run` is for runs) and without resolving anything: the grid
     asks on every visit."""
     lists = []
+    names = _profile_names()
     for entry in catalog_store().reading_lists_overview():
+        if not arc_visible_to(entry, viewer):
+            continue
         items = [item for item in entry["items"] if _arc_item_visible(item["runId"], may_see, may_see_unrated)]
-        if not items:
+        if not items and entry["items"]:
             continue
         titles = list(dict.fromkeys(item["seriesTitle"] for item in items))
         lists.append({
@@ -13891,6 +13936,7 @@ def reading_lists(
             # fold a run kept only for this arc into the arc's card.
             "issueIds": [item["issueId"] for item in items if item["issueId"]],
             "runIds": list(dict.fromkeys(item["runId"] for item in items if item["runId"])),
+            **_arc_ownership(entry, viewer, names),
         })
     return {"lists": lists}
 
@@ -13922,6 +13968,7 @@ def _reading_place(progress: dict[str, dict[str, Any]], owned_total: int) -> dic
 
 def reading_by_list(
     *, user_id: int, may_see: "Callable[[int], bool] | None" = None, may_see_unrated: bool = True,
+    viewer: "Viewer | None" = None,
 ) -> dict[str, Any]:
     """Where each arc was left, for the Comics grid: one query, only arcs
     with a reading history, the same record a run's card gets."""
@@ -13930,7 +13977,7 @@ def reading_by_list(
     lists = {}
     for list_id, progress in store.reading_progress_by_list(user_id=user_id).items():
         entry = overview.get(list_id)
-        if entry is None:
+        if entry is None or not arc_visible_to(entry, viewer):
             continue
         files = {item["fileId"] for item in entry["items"]
                  if item["fileId"] and _arc_item_visible(item["runId"], may_see, may_see_unrated)}
@@ -13942,10 +13989,12 @@ def reading_by_list(
 
 def mark_reading_list_reading(
     list_id: int, read: bool, *, user_id: int, may_see: "Callable[[int], bool] | None" = None,
-    may_see_unrated: bool = True,
+    may_see_unrated: bool = True, viewer: "Viewer | None" = None,
 ) -> dict[str, Any]:
     """Mark every comic of an arc this profile may see read or unread, as
     `mark_run_reading` does for a run."""
+    if not arc_visible_to(catalog_store().reading_list_meta(list_id), viewer):
+        raise LookupError("That story arc is not in the library")
     for item in catalog_store().reading_list_files(list_id):
         if not _arc_item_visible(item["runId"], may_see, may_see_unrated):
             continue
@@ -13953,7 +14002,7 @@ def mark_reading_list_reading(
             mark_file_read(int(item["id"]), read, user_id=user_id)
         except (ValueError, LookupError, OSError):
             continue
-    return reading_list_detail(list_id, user_id=user_id, may_see=may_see, may_see_unrated=may_see_unrated)
+    return reading_list_detail(list_id, user_id=user_id, may_see=may_see, may_see_unrated=may_see_unrated, viewer=viewer)
 
 
 def _arc_items_from_metron(detail: dict[str, Any]) -> list[dict[str, Any]]:
@@ -14198,6 +14247,27 @@ def pull_reading_list(list_id: int, *, user_id: int) -> dict[str, Any]:
     if not result["pulled"] and not result["failed"]:
         raise ValueError("Every issue of this arc is in your library or on the way")
     return {"name": detail["name"], **result}
+
+
+def create_manual_reading_list(name: str, *, viewer: "Viewer", issue_ids: list[int] | None = None) -> dict[str, Any]:
+    """An arc made by hand: the asker's own, private until shared, and either
+    empty or holding the issue it was made from."""
+    store = catalog_store()
+    made = store.create_reading_list(name, source="manual", created_by=viewer.id, owner_user_id=viewer.id)
+    if issue_ids:
+        store.add_reading_list_issues(int(made["id"]), issue_ids)
+    return reading_list_detail(int(made["id"]), user_id=viewer.id, viewer=viewer)
+
+
+def export_reading_list(list_id: int, fmt: str, **visibility: Any) -> tuple[bytes, str]:
+    """An arc as a CBL file, with only what the asking profile may see in it."""
+    if fmt not in {"cbl", "json"}:
+        raise ValueError("Export a story arc as cbl or json")
+    detail = reading_list_detail(list_id, user_id=visibility["viewer"].id if visibility.get("viewer") else ADMIN_USER_ID,
+                                 **visibility)
+    body = write_reading_list(detail["name"], detail["items"], fmt=fmt, description=detail.get("description"))
+    stem = re.sub(r"[^\w .()-]+", "", detail["name"]).strip() or "Story arc"
+    return body, f"{stem}.{fmt}"
 
 
 def request_discovered_series(
@@ -15992,17 +16062,45 @@ class Handler(BaseHTTPRequestHandler):
         Discover arc drawer does."""
         viewer = self._viewer()
         if viewer is None or viewer.is_admin or not viewer.max_rating:
-            return {}
+            return {"viewer": viewer}
         ratings = catalog_store().run_age_ratings()
         return {"may_see": lambda run_id: viewer_may_see_run(viewer, ratings.get(int(run_id))),
-                "may_see_unrated": viewer_may_see_run(viewer, None)}
+                "may_see_unrated": viewer_may_see_run(viewer, None), "viewer": viewer}
+
+    def _arc_gate(self, list_id: int, need: str = "see") -> dict[str, Any] | None:
+        """The arc a route is about, or None with the answer sent: 404 for one
+        this profile can't see -- a private arc is not there for anyone else --
+        and 403 for one it sees but may not change (`need` "edit"), or unshare
+        and delete ("manage")."""
+        try:
+            entry = catalog_store().reading_list_meta(list_id)
+        except LookupError as exc:
+            self.send_json({"error": str(exc)}, 404)
+            return None
+        viewer = self._viewer()
+        if not arc_visible_to(entry, viewer):
+            self.send_json({"error": "That story arc is not in the library"}, 404)
+            return None
+        allowed = {"see": True, "edit": arc_editable_by(entry, viewer), "manage": arc_manageable_by(entry, viewer)}[need]
+        if not allowed:
+            self.send_json({"error": "Only the admin can change the household's story arcs" if entry["ownerId"] is None
+                            else "Only the profile that made this story arc can change it"}, 403)
+            return None
+        return entry
 
     def _reading_list_visible(self, kind: str, target_id: int) -> bool:
         """Whether this profile may see what it is adding to its reading list."""
         viewer = self._viewer()
+        store = catalog_store()
+        if kind == "arc":
+            # Someone else's private arc is not there; its issues are trimmed
+            # to the profile's rating when it is opened.
+            try:
+                return arc_visible_to(store.reading_list_meta(int(target_id)), viewer)
+            except LookupError:
+                return False
         if viewer is None or viewer.is_admin or not viewer.max_rating:
             return True
-        store = catalog_store()
         ratings = store.run_age_ratings()
         if kind == "run":
             return int(target_id) in ratings and viewer_may_see_run(viewer, ratings.get(int(target_id)))
@@ -16010,7 +16108,6 @@ class Handler(BaseHTTPRequestHandler):
             collection = next((item for item in store.run_collections() if item["id"] == str(int(target_id))), None)
             return bool(collection) and any(
                 viewer_may_see_run(viewer, ratings.get(int(run_id))) for run_id in collection["runIds"])
-        # An arc is trimmed to what the profile may see when it is opened.
         return True
 
     def _run_visible(self, path: str) -> bool:
@@ -16183,6 +16280,7 @@ class Handler(BaseHTTPRequestHandler):
             entries["runs"] = [item for item in entries["runs"] if self._reading_list_visible("run", int(item["id"]))]
             entries["collections"] = [item for item in entries["collections"]
                                       if self._reading_list_visible("collection", int(item["id"]))]
+            entries["arcs"] = [item for item in entries["arcs"] if self._reading_list_visible("arc", int(item["id"]))]
             self.send_json(entries)
             return
         if parsed_url.path == "/api/v1/me/activity":
@@ -16427,10 +16525,35 @@ class Handler(BaseHTTPRequestHandler):
             return
         reading_list_backdrop_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
         if reading_list_backdrop_get:
+            if self._arc_gate(int(reading_list_backdrop_get.group(1))) is None:
+                return
             try:
                 self.send_json(reading_list_backdrop(int(reading_list_backdrop_get.group(1))))
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+            return
+        reading_list_export = re.fullmatch(r"/api/v1/reading-lists/(\d+)/export", parsed_url.path)
+        if reading_list_export:
+            fmt = (urllib.parse.parse_qs(parsed_url.query).get("format") or ["cbl"])[0]
+            try:
+                body, filename = export_reading_list(int(reading_list_export.group(1)), fmt, **self._arc_visibility())
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8" if fmt == "json" else "application/xml; charset=utf-8")
+            self.send_header("Content-Disposition", "attachment; filename=\"{}\"; filename*=UTF-8''{}".format(
+                filename.encode("ascii", "ignore").decode().replace('"', "") or f"Story arc.{fmt}",
+                urllib.parse.quote(filename)))
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Vary", "Cookie")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
             return
         reading_list_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
         if reading_list_get:
@@ -17388,6 +17511,49 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(saved, 200 if saved.get("existed") else 201)
             return
+        if parsed_url.path == "/api/v1/reading-lists/manual":
+            issue_ids = payload.get("issueIds") or []
+            if not isinstance(issue_ids, list) or not all(isinstance(item, (int, str)) and str(item).isdigit() for item in issue_ids):
+                self.send_json({"error": "Say which issues to start the story arc with"}, 400)
+                return
+            if any(not self._run_visible(f"/api/v1/issues/{int(item)}") for item in issue_ids):
+                self.send_json({"error": "That issue is not in the library"}, 404)
+                return
+            try:
+                made = create_manual_reading_list(str(payload.get("name") or ""), viewer=self._viewer(),
+                                                  issue_ids=[int(item) for item in issue_ids])
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(made, 201)
+            return
+        reading_list_items_post = re.fullmatch(r"/api/v1/reading-lists/(\d+)/items", parsed_url.path)
+        if reading_list_items_post:
+            list_id = int(reading_list_items_post.group(1))
+            issue_ids = payload.get("issueIds")
+            if not isinstance(issue_ids, list) or not issue_ids or not all(
+                    isinstance(item, (int, str)) and str(item).isdigit() for item in issue_ids):
+                self.send_json({"error": "Say which issues to add"}, 400)
+                return
+            if self._arc_gate(list_id, "edit") is None:
+                return
+            if any(not self._run_visible(f"/api/v1/issues/{int(item)}") for item in issue_ids):
+                self.send_json({"error": "That issue is not in the library"}, 404)
+                return
+            try:
+                outcome = catalog_store().add_reading_list_issues(list_id, [int(item) for item in issue_ids])
+                result = reading_list_detail(list_id, user_id=self._viewer_id(), **self._arc_visibility())
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({**result, **outcome})
+            return
         reading_list_reading_post = re.fullmatch(r"/api/v1/reading-lists/(\d+)/reading", parsed_url.path)
         if reading_list_reading_post:
             if not isinstance(payload.get("read"), bool):
@@ -17404,6 +17570,8 @@ class Handler(BaseHTTPRequestHandler):
         reading_list_backdrop_post = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
         if reading_list_backdrop_post:
             list_id = int(reading_list_backdrop_post.group(1))
+            if self._arc_gate(list_id, "edit") is None:
+                return
             try:
                 if str(payload.get("source") or "") == "auto":
                     catalog_store().clear_reading_list_backdrop(list_id)
@@ -17424,6 +17592,8 @@ class Handler(BaseHTTPRequestHandler):
         reading_list_pull = re.fullmatch(r"/api/v1/reading-lists/(\d+)/pull", parsed_url.path)
         reading_list_refresh = re.fullmatch(r"/api/v1/reading-lists/(\d+)/refresh", parsed_url.path)
         if reading_list_pull or reading_list_refresh:
+            if self._arc_gate(int((reading_list_pull or reading_list_refresh).group(1))) is None:
+                return
             try:
                 if reading_list_pull:
                     result = pull_reading_list(int(reading_list_pull.group(1)), user_id=self._viewer_id())
@@ -17681,10 +17851,25 @@ class Handler(BaseHTTPRequestHandler):
             list_id = int(reading_list_patch.group(1))
             remove = payload.get("remove")
             order = payload.get("order")
+            shared = payload.get("shared")
             if (remove is not None and not isinstance(remove, list)) or (order is not None and not isinstance(order, list)):
                 self.send_json({"error": "Say which issues to remove, or the order to keep them in"}, 400)
                 return
+            if shared is not None and not isinstance(shared, bool):
+                self.send_json({"error": "Say whether the household shares this story arc (true or false)"}, 400)
+                return
+            changes_arc = bool(remove or order) or isinstance(payload.get("name"), str) or isinstance(payload.get("cover"), str)
+            # Only the maker shares an arc; the admin may take a shared one
+            # back out of the household's view.
+            entry = self._arc_gate(list_id, "edit" if changes_arc or shared else "manage")
+            if entry is None:
+                return
+            if shared is not None and entry["ownerId"] is None:
+                self.send_json({"error": "The household's story arcs are already everyone's"}, 400)
+                return
             try:
+                if shared is not None:
+                    catalog_store().set_reading_list_shared(list_id, shared)
                 if remove:
                     catalog_store().remove_reading_list_items(list_id, [int(item) for item in remove])
                 if order:
@@ -17695,7 +17880,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Choose a cover from the arc's own comics")
                     catalog_store().update_reading_list(
                         list_id, name=payload.get("name") if isinstance(payload.get("name"), str) else None, cover=cover)
-                result = reading_list_detail(list_id, user_id=self._viewer_id())
+                if not arc_visible_to(catalog_store().reading_list_meta(list_id), self._viewer()):
+                    # The admin took someone's arc back out of the household:
+                    # done, and no longer theirs to see.
+                    self.send_json({"id": str(list_id), "shared": False, "visible": False})
+                    return
+                result = reading_list_detail(list_id, user_id=self._viewer_id(), **self._arc_visibility())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
@@ -17807,6 +17997,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         reading_list_delete = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
         if reading_list_delete:
+            if self._arc_gate(int(reading_list_delete.group(1)), "manage") is None:
+                return
             try:
                 catalog_store().delete_reading_list(int(reading_list_delete.group(1)))
             except LookupError as exc:

@@ -107,11 +107,17 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # Reading a run, and marking it read or unread -- the profile's own place.
     (frozenset({"GET", "POST"}), r"/api/v1/series/(\d+)/reading", READER),
     # Story arcs saved to read across runs: seeing them and one's own place
-    # in them. Saving, ordering, pulling and deleting stay the admin's.
+    # in them. Any profile makes its own by hand and changes it; whose arc
+    # may be changed by whom is the handlers' (`_arc_gate`): the household's
+    # arcs are the admin's, a profile's own are its own. Saving from Metron,
+    # importing, pulling and refreshing stay the admin's.
     (frozenset({"GET"}), r"/api/v1/reading-lists", READER),
-    (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)", READER),
-    (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)/backdrop", READER),
+    (frozenset({"GET", "PATCH", "DELETE"}), r"/api/v1/reading-lists/(\d+)", READER),
+    (frozenset({"GET", "POST"}), r"/api/v1/reading-lists/(\d+)/backdrop", READER),
     (frozenset({"POST"}), r"/api/v1/reading-lists/(\d+)/reading", READER),
+    (frozenset({"POST"}), r"/api/v1/reading-lists/manual", READER),
+    (frozenset({"POST"}), r"/api/v1/reading-lists/(\d+)/items", READER),
+    (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)/export", READER),
     (frozenset({"GET"}), r"/api/v1/reading/lists", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/files/(\d+)/progress", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages", READER),

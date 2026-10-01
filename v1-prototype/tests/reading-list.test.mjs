@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns } from "../src/reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate } from "../src/reading-list.js";
 
 test("an arc's years read as one year or a span, and nothing when unknown", () => {
   assert.equal(arcYears({ year: 2002, yearEnd: 2003 }), "2002\u20132003");
@@ -69,4 +69,39 @@ test("a run kept only for an arc is folded into the arc; a followed run, or one 
   assert.deepEqual(grid.series.map((item) => item.title), ["Batman", "Superman", "Saga", "Empty", "Coll"]);
   assert.deepEqual(grid.arcs.map((item) => [item.id, item.listId, item.kind, item.title, item.foldedRunCount]), [["arc-3", "3", "arc", "Absolute Power", 2]], "Hush absorbed nothing, so it is not on the shelf");
   assert.deepEqual(foldArcRuns(series, []), { series, arcs: [] });
+});
+
+test("an arc says whose it is, and nothing when it is the household's", () => {
+  assert.equal(arcOwnerLine({ mine: true, shared: false }), "Yours");
+  assert.equal(arcOwnerLine({ mine: true, shared: true }), "Yours \u00b7 shared");
+  assert.equal(arcOwnerLine({ mine: false, ownerName: "Harrison", shared: true }), "Shared by Harrison");
+  assert.equal(arcOwnerLine({ mine: false, ownerName: null }), "");
+});
+
+test("an issue is added only to arcs this profile may change, the latest first", () => {
+  const lists = [
+    { id: "1", name: "Hush", editable: false, issueIds: ["5"], updatedAt: "2026-10-01T09:00:00" },
+    { id: "2", name: "Mine", editable: true, issueIds: ["5", "6"], updatedAt: "2026-09-01T09:00:00" },
+    { id: "3", name: "Newer", editable: true, issueIds: [], updatedAt: "2026-10-01T10:00:00" },
+  ];
+  assert.deepEqual(arcsToAddTo(lists, 5).map((list) => [list.name, list.has]), [["Newer", false], ["Mine", true]]);
+  assert.deepEqual(arcsToAddTo(null, 5), []);
+});
+
+test("an issue moves to either end, and an unknown one leaves the order alone", () => {
+  assert.deepEqual(moveToEdge(["a", "b", "c"], "c", "top"), ["c", "a", "b"]);
+  assert.deepEqual(moveToEdge(["a", "b", "c"], "a", "bottom"), ["b", "c", "a"]);
+  const order = ["a", "b"];
+  assert.equal(moveToEdge(order, "z", "top"), order);
+});
+
+test("sorting by release date is oldest first, stable, with undated issues last", () => {
+  const items = { a: { coverDate: "2003-01-01" }, b: { coverDate: null }, c: { coverDate: "2002-12-01" }, d: { coverDate: "2003-01-01" }, e: {} };
+  assert.deepEqual(orderByReleaseDate(["a", "b", "c", "d", "e"], items), ["c", "a", "d", "b", "e"]);
+});
+
+test("an arc made by hand never folds a run into itself", () => {
+  const run = { id: "9", monitoringStatus: "unmonitored", issues: [{ id: "90", ownership: "direct" }] };
+  assert.equal(arcOnlyRuns([run], [{ id: "1", source: "manual", issueIds: ["90"] }]).size, 0);
+  assert.equal(arcOnlyRuns([run], [{ id: "1", source: "metron", issueIds: ["90"] }]).size, 1);
 });

@@ -494,14 +494,32 @@ Motion tokens:
   issue is, nothing before (a bare count of what was left said nothing). The
   drawer's hero repeats it as a status badge, with how many are read. A
   story arc -- issues saved to read in order across runs -- is a card in the
-  Comics grid's *Story arcs* scope (shown once an arc exists, always for the
-  admin) with the same badge, and its drawer lists the issues in order, each
+  Comics grid's *Story arcs* scope (shown to every profile, since any can
+  make one) with the same badge, and its drawer lists the issues in order, each
   saying whether it is here, on the way or missing, and whether it is read.
   On the Runs shelf a run kept only for an arc -- not followed, every owned
   issue an arc's -- is folded into the arc's card ("N runs inside"), as a
   confirmed collection folds its runs; View & sort's *Story arcs* switch,
   "Collect story arc issues", turns it off, per profile. A search looks through
   everything, folded or not.
+- **Hand-made story arcs** (since 2026-10-01). Any profile makes its own arc:
+  *New story arc* in the Story arcs scope (shown to every profile now), or
+  *Add to story arc…* in any issue's "…" menu, owned or missing, which opens
+  `ArcPickerModal` -- the arcs this profile may change, latest first, with
+  *Added* on one that holds the issue, and a name field to start a new one.
+  An added issue goes on the end (Komga, Spotify). The arc drawer's Edit ›
+  Reading order is the shared `DragOrderList` (handle drag, arrow keys), each
+  row with a "…" menu (`ArcOrderRowMenu`): *Move to top* / *Move to bottom* --
+  the way through a long arc -- and Remove. A menu, not three 44px buttons,
+  so a phone row keeps ~170px for the issue's name. *Sort by release date*
+  (its own line under the note, so Cancel and Done stay together) orders
+  everything by cover date once, to fine-tune from; it is not a live sort. A hand-made arc is its maker's until
+  shared (Advanced › *Share with the household*, a `FollowSwitch`); cards and
+  the drawer say "Yours", "Yours · shared" or "Shared by Sam", and nothing on
+  the household's arcs. Only the maker edits a hand-made arc; the admin may
+  stop sharing or delete a shared one. Advanced is every profile's now, and
+  holds *Export as a reading list* (CBL or JSON). A hand-made arc never folds
+  runs into its card.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every
