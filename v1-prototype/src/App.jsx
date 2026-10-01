@@ -1662,7 +1662,10 @@ function TabAction({ icon, label, onClick }) {
 
 // `tools`: the New button above the grid, on a phone; wider, it sits at the
 // end of the tab row.
-function CollectionsTab({ cards, admin, onOpen, onNew, tools = true }) {
+function CollectionsTab({ cards, admin, onOpen, onNew, tools = true, loading = false }) {
+  // Collections come with the catalog: until it is in, the grid is loading,
+  // not empty -- a refresh showed "No collections yet" for seconds.
+  if (loading) return <LibraryLoadingSkeleton view="grid" />;
   return <>
     {tools && admin && cards.length ? <div className="arc-tools arc-tools--single">
       <button type="button" className="glass-button" onClick={onNew}><Plus size={17} /> New collection</button>
@@ -2790,10 +2793,10 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
       /> : null}
       <div className="dashboard-body">
       {!showLibrary && tab === "collections" ? <CollectionsTab cards={sortCollections(collectionItems, sort === "added" ? "added" : "title")}
-        admin={libraryAdmin} onOpen={onOpenRunCollection} onNew={onNewRunCollection} tools={phone} /> : null}
+        admin={libraryAdmin} onOpen={onOpenRunCollection} onNew={onNewRunCollection} tools={phone} loading={catalogPending(catalog, backendStatus)} /> : null}
       {!showLibrary && tab === "reading" ? <ReadingListTab items={sortReadingList(readingListItems(readingList, {
           series, lists: readingLists || [], collections: collectionItems, runReading: runReading || {}, listReading: listReading || {},
-        }), sort === "title" ? "title" : "added")} reading={runReading || {}} listReading={listReading || {}} loading={readingList === null || readingLists === null}
+        }), sort === "title" ? "title" : "added")} reading={runReading || {}} listReading={listReading || {}} loading={readingList === null || readingLists === null || catalogPending(catalog, backendStatus)}
         onOpen={(item) => item.kind === "collection" ? onOpenRunCollection(item) : item.kind === "arc" ? onOpenList({ ...item, id: item.listId }) : onOpenSeries(item)}
         onRead={onRead} onRemove={(kind, id) => onToggleReadingList?.(kind, id, false)} onBrowse={() => onTab?.("all")} /> : null}
       {!showLibrary && tab === "arcs" ? <ArcsTab lists={displayedLists} reading={listReading} loading={readingLists === null} admin={libraryAdmin} tools={phone}
