@@ -1902,6 +1902,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .cover-picker-actions { margin-top: var(--space-16); display: flex; justify-content: space-between; gap: var(--space-10); }
 .upload-cover-button { cursor: pointer; }
 .upload-cover-button input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.upload-cover-button { position: relative; }
+.upload-cover-button:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* An arc's or a collection's own picture: Upload beside the choices. */
+.arc-cover-upload { display: grid; justify-items: start; gap: var(--space-8); }
+.run-collection-cover-field { display: flex; align-items: center; gap: var(--space-8); }
+.run-collection-cover-field > :first-child { flex: 1; min-width: 0; }
+.run-collection-cover-field > .upload-cover-button { flex: 0 0 auto; }
 .contents-workbench { width: min(860px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; }
 .contents-workbench h2 { margin-bottom: var(--space-8); overflow-wrap: anywhere; }
 .contents-summary { min-height: 62px; display: flex; align-items: center; gap: var(--space-8); padding: var(--space-12) var(--space-12); border: 1px solid var(--green-border); border-radius: var(--radius-4); background: var(--surface-raised); }

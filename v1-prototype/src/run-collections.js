@@ -30,8 +30,9 @@ export function collectionCards(collections, series) {
   return (collections || []).map((collection) => {
     const runs = orderedRuns(collection, seriesById);
     const chosen = collection.coverSeriesId ? seriesById.get(String(collection.coverSeriesId)) : null;
-    const covers = [chosen, ...runs].filter(Boolean)
-      .flatMap((run) => run.coverCandidates?.length ? run.coverCandidates : run.cover ? [run.cover] : []);
+    // A picture the admin uploaded leads; then the chosen run's, then the runs'.
+    const covers = [...(collection.coverImage ? [collection.coverImage] : []), ...[chosen, ...runs].filter(Boolean)
+      .flatMap((run) => run.coverCandidates?.length ? run.coverCandidates : run.cover ? [run.cover] : [])];
     const years = runs.map(yearOf).filter((year) => year !== 9999);
     return {
       ...collection,

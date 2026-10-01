@@ -1654,6 +1654,9 @@ NOT_ADMIN = {
     ("POST", "/api/v1/reading-lists/manual"): "reader",
     ("POST", "/api/v1/reading-lists/1/items"): "reader",
     ("GET", "/api/v1/reading-lists/1/export"): "reader",
+    ("GET", "/api/v1/reading-lists/1/cover/image"): "reader",
+    ("POST", "/api/v1/reading-lists/1/cover/upload"): "reader",
+    ("GET", "/api/v1/run-collections/1/cover/image"): "reader",
     ("GET", "/api/v1/reading/lists"): "reader",
     ("GET", "/api/v1/files/1/progress"): "reader",
     ("POST", "/api/v1/files/1/progress"): "reader",
@@ -2191,6 +2194,75 @@ class ReaderProfileHttpTests(unittest.TestCase):
         # A profile that goes takes its own arcs with it.
         self.assertEqual(self.call("DELETE", f"/api/v1/users/{sam}", cookies=admin).status, 200)
         self.assertEqual([item["name"] for item in store.reading_lists_overview()], [])
+
+    def _png(self):
+        import io
+        from PIL import Image
+        out = io.BytesIO()
+        Image.new("RGB", (20, 30), (200, 40, 40)).save(out, format="PNG")
+        return out.getvalue()
+
+    def _upload(self, path, cookies, body=None, content_type="image/png"):
+        return request("POST", self.base + path, self._png() if body is None else body, content_type,
+                       headers={"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())})
+
+    def test_an_arc_takes_an_uploaded_cover_from_whoever_may_change_it(self):
+        store, example, other = self._two_runs()
+        first = int(store.issues_by_run([example])[str(example)][0][0])
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        arc = self.call("POST", "/api/v1/reading-lists/manual", {"name": "Mine", "issueIds": [first]}, cookies=reader).json()
+        path = f"/api/v1/reading-lists/{arc['id']}"
+        self.assertEqual(self._upload(f"{path}/cover/upload", reader, b"not an image", "text/plain").status, 415)
+        self.assertEqual(self._upload(f"{path}/cover/upload", reader, b"not an image").status, 422)
+        self.assertEqual(self._upload(f"{path}/cover/upload", admin).status, 404, "a private arc is not the admin's to see")
+        uploaded = self._upload(f"{path}/cover/upload", reader)
+        self.assertEqual(uploaded.status, 201, uploaded.body)
+        cover = uploaded.json()["cover"]
+        self.assertTrue(cover.startswith(f"{path}/cover/image?v="))
+        self.assertEqual(uploaded.json()["uploadedCover"], cover)
+        image = self.call("GET", cover, cookies=reader)
+        self.assertEqual((image.status, image.headers.get("Content-Type")), (200, "image/jpeg"))
+        self.assertEqual(self.call("GET", cover, cookies=admin).status, 404)
+        # Shared, the household sees it; it is still only Sam's to change.
+        self.call("PATCH", path, {"shared": True}, cookies=reader)
+        self.assertEqual(self.call("GET", cover, cookies=admin).status, 200)
+        self.assertEqual(self._upload(f"{path}/cover/upload", admin).status, 403)
+        # Another cover chosen, the upload can be chosen back.
+        self.assertEqual(self.call("PATCH", path, {"cover": "https://evil.invalid/x.jpg"}, cookies=reader).status, 400)
+        self.assertEqual(self.call("PATCH", path, {"cover": cover}, cookies=reader).status, 200)
+        self.assertEqual(self.call("DELETE", path, cookies=reader).status, 200)
+        self.assertIsNone(app.uploaded_cover_url("arcs", arc["id"]), "the picture goes with the arc")
+
+    def test_a_collection_takes_an_uploaded_cover_from_the_admin(self):
+        store, example, other = self._two_runs()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        collection = self.call("POST", "/api/v1/run-collections", {"name": "Both", "seriesIds": [example, other]}, cookies=admin).json()
+        path = f"/api/v1/run-collections/{collection['id']}"
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self._upload(f"{path}/cover/upload", reader).status, 403)
+        self.assertEqual(self._upload("/api/v1/run-collections/99999/cover/upload", admin).status, 404)
+        uploaded = self._upload(f"{path}/cover/upload", admin)
+        self.assertEqual(uploaded.status, 201, uploaded.body)
+        image_url = uploaded.json()["coverImage"]
+        seen = {item["id"]: item for item in self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"]}
+        self.assertEqual(seen[collection["id"]]["coverImage"], image_url, "readers see the picture too")
+        self.assertEqual(self.call("GET", image_url, cookies=reader).status, 200)
+        # A limited reader who may see none of its runs does not see the collection or its picture.
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone", "allowUnrated": False}, cookies=admin)
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self.call("GET", image_url, cookies=reader).status, 404)
+        # Saving other changes keeps it; asking for coverImage null takes it away.
+        kept = self.call("PATCH", path, {"name": "Both runs", "coverSeriesId": None}, cookies=admin).json()
+        self.assertEqual(kept["coverImage"], image_url)
+        self.assertEqual(self.call("PATCH", path, {"coverImage": "x"}, cookies=admin).status, 400)
+        dropped = self.call("PATCH", path, {"coverSeriesId": str(other), "coverImage": None}, cookies=admin).json()
+        self.assertEqual((dropped["coverImage"], dropped["coverSeriesId"]), (None, str(other)))
+        self._upload(f"{path}/cover/upload", admin)
+        self.assertEqual(self.call("DELETE", path, cookies=admin).status, 200)
+        self.assertIsNone(app.uploaded_cover_url("collections", collection["id"]), "the picture goes with the collection")
 
     def test_the_catalog_says_when_each_issue_and_run_first_arrived(self):
         """Comics' Recently Added shelves order by these."""

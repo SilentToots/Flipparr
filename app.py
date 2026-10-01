@@ -2002,6 +2002,28 @@ def user_cover_dir(kind: str = "files") -> Path:
     return configured / kind
 
 
+# Covers uploaded for a story arc ("arcs") or a collection ("collections"):
+# where each is served, with the file's time on it so a replacement is a
+# new address and no screen keeps showing the last one.
+_UPLOADED_COVER_ROUTES = {"arcs": "/api/v1/reading-lists/{id}/cover/image",
+                          "collections": "/api/v1/run-collections/{id}/cover/image"}
+
+
+def uploaded_cover_url(kind: str, entity_id: int | str) -> str | None:
+    try:
+        stamp = int((user_cover_dir(kind) / f"{int(entity_id)}.jpg").stat().st_mtime)
+    except (OSError, ValueError):
+        return None
+    return _UPLOADED_COVER_ROUTES[kind].format(id=int(entity_id)) + f"?v={stamp}"
+
+
+def remove_uploaded_cover(kind: str, entity_id: int | str) -> None:
+    try:
+        (user_cover_dir(kind) / f"{int(entity_id)}.jpg").unlink()
+    except (FileNotFoundError, ValueError):
+        pass
+
+
 def reading_cache_dir() -> Path:
     """Where rendered reading pages are kept, beside the catalog.
 
@@ -13908,6 +13930,7 @@ def reading_list_detail(
         "missing": sum(1 for item in items if not (item["owned"] or item["queued"])),
         "series": _arc_series(items), "resume": reading_target(comics, [], progress), "items": items,
         **_arc_years(items), **_arc_ownership(meta, viewer, _profile_names()),
+        "uploadedCover": uploaded_cover_url("arcs", list_id),
     }
 
 
@@ -14014,6 +14037,11 @@ def _arc_items_from_metron(detail: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _reading_list_cover_choices(list_id: int) -> set[str]:
+    uploaded = uploaded_cover_url("arcs", list_id)
+    return _reading_list_cover_choices_found(list_id) | ({uploaded} if uploaded else set())
+
+
+def _reading_list_cover_choices_found(list_id: int) -> set[str]:
     """The covers an arc may wear: the first page of any of its comics that
     is here, or a picture the provider or the list gave it. Never a link
     someone typed."""
@@ -16301,6 +16329,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/catalog":
             admin = self._viewer().is_admin
             payload = catalog_api_payload(viewer_id=self._viewer_id())
+            for collection in payload.get("runCollections") or []:
+                collection["coverImage"] = uploaded_cover_url("collections", collection["id"])
             payload = payload if admin else reader_catalog(payload, self._viewer())
             # Readers' requests: everyone's for the admin, a reader's own for them.
             store = catalog_store()
@@ -16523,6 +16553,18 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/reading-lists":
             self.send_json(reading_lists(**self._arc_visibility()))
             return
+        arc_cover_image = re.fullmatch(r"/api/v1/reading-lists/(\d+)/cover/image", parsed_url.path)
+        if arc_cover_image:
+            if self._arc_gate(int(arc_cover_image.group(1))) is not None:
+                self.handle_uploaded_cover(int(arc_cover_image.group(1)), "arcs")
+            return
+        collection_cover_image = re.fullmatch(r"/api/v1/run-collections/(\d+)/cover/image", parsed_url.path)
+        if collection_cover_image:
+            if not self._reading_list_visible("collection", int(collection_cover_image.group(1))):
+                self.send_json({"error": "That collection is not in the library"}, 404)
+                return
+            self.handle_uploaded_cover(int(collection_cover_image.group(1)), "collections")
+            return
         reading_list_backdrop_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
         if reading_list_backdrop_get:
             if self._arc_gate(int(reading_list_backdrop_get.group(1))) is None:
@@ -16710,6 +16752,14 @@ class Handler(BaseHTTPRequestHandler):
         series_upload_match = re.fullmatch(r"/api/v1/series/(\d+)/cover/upload", parsed_url.path)
         if series_upload_match:
             self.handle_cover_upload(int(series_upload_match.group(1)), "series")
+            return
+        arc_upload_match = re.fullmatch(r"/api/v1/reading-lists/(\d+)/cover/upload", parsed_url.path)
+        if arc_upload_match:
+            self.handle_cover_upload(int(arc_upload_match.group(1)), "arcs")
+            return
+        collection_upload_match = re.fullmatch(r"/api/v1/run-collections/(\d+)/cover/upload", parsed_url.path)
+        if collection_upload_match:
+            self.handle_cover_upload(int(collection_upload_match.group(1)), "collections")
             return
         if parsed_url.path == "/api/v1/reading-lists/import":
             # A reading list file as a raw body, or JSON naming a link.
@@ -17830,10 +17880,17 @@ class Handler(BaseHTTPRequestHandler):
                     if cover is not None and not str(cover).isdigit():
                         raise ValueError("Choose a cover from the collection's runs")
                     changes["coverSeriesId"] = cover
+                # An uploaded picture is the cover until it is taken away.
+                if "coverImage" in body and body["coverImage"] is not None:
+                    raise ValueError("Upload a picture to /cover/upload; coverImage only takes null")
+                drop_upload = "coverImage" in body
                 for key in ("add", "remove", "order"):
                     if key in body:
                         changes[key] = _run_id_list(body[key])
                 updated = catalog_store().update_run_collection(int(collection_patch.group(1)), changes)
+                if drop_upload:
+                    remove_uploaded_cover("collections", updated["id"])
+                updated = {**updated, "coverImage": uploaded_cover_url("collections", updated["id"])}
             except CollectionNameTaken as exc:
                 self.send_json({"error": str(exc)}, 409)
                 return
@@ -17993,6 +18050,7 @@ class Handler(BaseHTTPRequestHandler):
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
+            remove_uploaded_cover("collections", collection_delete.group(1))
             self.send_json({"status": "removed"})
             return
         reading_list_delete = re.fullmatch(r"/api/v1/reading-lists/(\d+)", parsed_url.path)
@@ -18004,6 +18062,7 @@ class Handler(BaseHTTPRequestHandler):
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
+            remove_uploaded_cover("arcs", reading_list_delete.group(1))
             self.send_json({"status": "removed"})
             return
         avatar_clear = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)
@@ -18329,20 +18388,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(result, 200 if result.get("existed") else 201)
 
     def handle_cover_upload(self, entity_id: int, kind: str = "files") -> None:
-        """Take a raw image body for a comic file or for a series run.
+        """Take a raw image body for a comic file, a series run, a story arc or
+        a collection.
 
-        Only the existence check and the setter differ between the two; the
+        Only the existence check and the setter differ between them; the
         type gate, the size limit, the thumbnailing and the atomic write are
-        the same job either way.
+        the same job either way. An arc's cover is changed by whoever may
+        change the arc (`_arc_gate`).
         """
-        try:
-            if kind == "series":
-                catalog_store().get_series_cover_workbench(entity_id)
-            else:
-                catalog_store().get_file_workbench(entity_id)
-        except (LookupError, ValueError) as exc:
-            self.send_json({"error": str(exc)}, 404)
-            return
+        if kind == "arcs":
+            if self._arc_gate(entity_id, "edit") is None:
+                return
+        else:
+            try:
+                if kind == "series":
+                    catalog_store().get_series_cover_workbench(entity_id)
+                elif kind == "collections":
+                    catalog_store().run_collection(entity_id)
+                else:
+                    catalog_store().get_file_workbench(entity_id)
+            except (LookupError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -18367,11 +18434,16 @@ class Handler(BaseHTTPRequestHandler):
             temporary = covers / f".{entity_id}-{threading.get_ident()}.tmp"
             temporary.write_bytes(body)
             os.replace(temporary, destination)
-            result = (
-                catalog_store().set_series_cover_preference(entity_id, "upload")
-                if kind == "series"
-                else catalog_store().set_file_cover_preference(entity_id, "upload")
-            )
+            if kind == "arcs":
+                catalog_store().update_reading_list(entity_id, cover=uploaded_cover_url("arcs", entity_id))
+                result = reading_list_detail(entity_id, user_id=self._viewer_id(), **self._arc_visibility())
+            elif kind == "collections":
+                result = {**catalog_store().run_collection(entity_id),
+                          "coverImage": uploaded_cover_url("collections", entity_id)}
+            elif kind == "series":
+                result = catalog_store().set_series_cover_preference(entity_id, "upload")
+            else:
+                result = catalog_store().set_file_cover_preference(entity_id, "upload")
         except (OSError, ValueError) as exc:
             self.send_json({"error": str(exc)}, 422)
             return

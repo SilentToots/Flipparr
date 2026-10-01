@@ -544,6 +544,12 @@ Motion tokens:
   stop sharing or delete a shared one. Advanced is every profile's now, and
   holds *Export as a reading list* (CBL or JSON). A hand-made arc never folds
   runs into its card.
+- **Uploaded covers for arcs and collections** (since 2026-10-01). An arc's
+  Edit › Cover leads with *Upload an image*; the picture becomes the cover
+  and stays among the choices as "Your picture". A collection's Edit has
+  *Upload* beside its Cover choice; the picture leads (as "Your uploaded
+  picture") until another cover is chosen and saved, which removes it. Both
+  are made a bounded JPEG on the server, as a run's uploaded cover is.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,
   because a transform here would make the page the containing block for every

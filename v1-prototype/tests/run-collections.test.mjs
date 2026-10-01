@@ -49,3 +49,12 @@ test("moving a run gives the whole order to save", () => {
   assert.deepEqual(moveRun(["1", "2", "3"], "3", 0), ["3", "1", "2"]);
   assert.deepEqual(moveRun(["1", "2", "3"], 1, 9), ["2", "3", "1"]);
 });
+
+test("an uploaded picture is a collection's cover before any run's", () => {
+  const series = [{ id: "1", title: "A", cover: "/a.jpg" }, { id: "2", title: "B", cover: "/b.jpg" }];
+  const [card] = collectionCards([{ id: "9", name: "Both", runIds: ["1", "2"], coverSeriesId: "2", coverImage: "/api/v1/run-collections/9/cover/image?v=1" }], series);
+  assert.equal(card.cover, "/api/v1/run-collections/9/cover/image?v=1");
+  assert.deepEqual(card.coverCandidates, ["/api/v1/run-collections/9/cover/image?v=1", "/b.jpg", "/a.jpg"]);
+  const [plain] = collectionCards([{ id: "9", name: "Both", runIds: ["1", "2"], coverSeriesId: "2", coverImage: null }], series);
+  assert.equal(plain.cover, "/b.jpg");
+});
