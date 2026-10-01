@@ -6563,16 +6563,55 @@ function Provider({ provider, onConfigure, concise = false }) {
  */
 function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
   const saved = ids.map(String);
+  const savedKey = saved.join();
+  const latestSaved = useRef(saved);
+  latestSaved.current = saved;
   const [order, setOrder] = useState(saved);
   const [drag, setDrag] = useState(null);
+  // Saves still on their way. Until they land the list keeps the order it was
+  // put in by hand: following the saved order meanwhile snapped a dropped row
+  // back, then forward again seconds later once the catalog had reloaded (a
+  // collection's runs, 2026-10-01). A save that fails puts it back.
+  const pending = useRef(0);
   const rowRefs = useRef({});
   const handleRefs = useRef({});
   const refocus = useRef(null);
-  const savedKey = saved.join();
-  useEffect(() => { if (!drag) setOrder(savedKey ? savedKey.split(",") : []); }, [savedKey, drag]);
+  // Where each row stood before a swap, so the ones that make way glide.
+  const before = useRef(null);
+  useEffect(() => { if (!drag && !pending.current) setOrder(savedKey ? savedKey.split(",") : []); }, [savedKey, drag]);
   useEffect(() => {
     if (refocus.current) { handleRefs.current[refocus.current]?.focus(); refocus.current = null; }
   });
+  useLayoutEffect(() => {
+    const tops = before.current;
+    before.current = null;
+    if (!tops || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    for (const [id, top] of Object.entries(tops)) {
+      const node = rowRefs.current[id];
+      const delta = node ? top - node.getBoundingClientRect().top : 0;
+      if (Math.abs(delta) > 0.5) {
+        node.animate?.([{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
+          { duration: 160, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+      }
+    }
+  }, [order]);
+  // A row's own content is drawn once per order, not on every move of the
+  // pointer: only the dragged row's offset changes while it follows a finger.
+  const rows = useMemo(() => Object.fromEntries(order.map((id, index) => [id, renderRow(id, index)])), [order, renderRow]);
+  function remember(except) {
+    before.current = Object.fromEntries(order.filter((id) => id !== except)
+      .map((id) => [id, rowRefs.current[id]?.getBoundingClientRect().top ?? 0]));
+  }
+  function report(next) {
+    pending.current += 1;
+    let failed = false;
+    Promise.resolve().then(() => onReorder(next))
+      .then((result) => { failed = result === false; }, () => { failed = true; })
+      .finally(() => {
+        pending.current -= 1;
+        if (failed && !pending.current) setOrder(latestSaved.current);
+      });
+  }
   function start(event, id) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
@@ -6596,14 +6635,14 @@ function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
       current = moveRun(current, drag.id, index - 1);
       startY -= above.offsetHeight; offset += above.offsetHeight;
     }
-    if (current !== order) setOrder(current);
+    if (current !== order) { remember(drag.id); setOrder(current); }
     setDrag({ ...drag, startY, offset });
   }
   function drop() {
     if (!drag) return;
     const changed = order.join() !== drag.before;
     setDrag(null);
-    if (changed) onReorder(order);
+    if (changed) report(order);
   }
   function key(event, id) {
     const delta = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
@@ -6613,19 +6652,20 @@ function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
     if (index + delta < 0 || index + delta >= order.length) return;
     const next = moveRun(order, id, index + delta);
     refocus.current = id;
+    remember(null);
     setOrder(next);
-    onReorder(next);
+    report(next);
   }
   return <ol className="source-order-list">
     {order.map((id, index) => {
       const dragging = drag?.id === id;
       return <li className={`source-order-row ${rowClassName?.(id) || ""} ${dragging ? "source-order-row--dragging" : ""}`}
-        key={id} ref={(node) => { rowRefs.current[id] = node; }} style={dragging ? { transform: `translateY(${drag.offset}px)` } : undefined}>
+        key={id} ref={(node) => { rowRefs.current[id] = node; }} style={dragging ? { transform: `translateY(${drag.offset}px)`, willChange: "transform" } : undefined}>
         <button type="button" className="source-order-handle" ref={(node) => { handleRefs.current[id] = node; }}
           aria-label={`${label(id, index, order.length)}. Drag, or press the up and down arrow keys, to reorder.`}
           onPointerDown={(event) => start(event, id)} onPointerMove={follow} onPointerUp={drop} onPointerCancel={drop}
           onKeyDown={(event) => key(event, id)}><DotsSixVertical size={20} weight="bold" /></button>
-        {renderRow(id, index)}
+        {rows[id]}
       </li>;
     })}
   </ol>;
@@ -10697,7 +10737,14 @@ export function App() {
     const saved = await apiRequest(`/api/v1/run-collections/${id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes),
     });
-    await loadCatalog();
+    // The server's answer is the collection as it now is: drawn at once,
+    // rather than after the whole catalog has come back, which took seconds
+    // on a real library. The catalog follows behind.
+    setCatalog((current) => current ? {
+      ...current,
+      runCollections: (current.runCollections || []).map((item) => (String(item.id) === String(saved.id) ? { ...item, ...saved } : item)),
+    } : current);
+    loadCatalog();
     return saved;
   }
   async function uploadRunCollectionCover(id, file) {
