@@ -1664,7 +1664,7 @@ function TabAction({ icon, label, onClick }) {
 // end of the tab row.
 function CollectionsTab({ cards, admin, onOpen, onNew, tools = true }) {
   return <>
-    {tools && admin && cards.length ? <div className="arc-tools">
+    {tools && admin && cards.length ? <div className="arc-tools arc-tools--single">
       <button type="button" className="glass-button" onClick={onNew}><Plus size={17} /> New collection</button>
     </div> : null}
     {cards.length ? <div className="series-grid">{cards.map((card, index) => <CollectionCard card={card} index={index} onOpen={onOpen} key={card.key} />)}</div>
@@ -1687,7 +1687,7 @@ function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew, onImpo
     {admin ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> <span className="label-wide">Import a story arc</span><span className="label-narrow">Import arc</span></button> : null}
   </>;
   return lists.length ? <>
-    {showTools ? <div className={`arc-tools${admin ? " arc-tools--pair" : ""}`}>{tools}</div> : null}
+    {showTools ? <div className={`arc-tools ${admin ? "arc-tools--pair" : "arc-tools--single"}`}>{tools}</div> : null}
     <ArcGrid lists={lists} reading={reading} onOpen={onOpen} onRead={onRead} />
   </> : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong>
     <span>A story arc is a reading order across runs: a crossover, or your own path through a character. Make one, then add issues from any run.</span>

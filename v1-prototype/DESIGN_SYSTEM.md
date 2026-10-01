@@ -213,7 +213,9 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   query shows them as their icons alone, square and named, when the row is
   narrower than 720px (one button) or 900px (two), and on a tight tablet row
   the tabs scroll a little instead. On a phone the tabs fill the row, so View
-  & sort stays by the bell and New/Import sit above the grid (`TabAction`,
+  & sort stays by the bell and New/Import sit above the grid -- a pair one
+  to a column, a single button (New collection, a reader's New story arc)
+  across both (`TabAction`,
   `.page-header-tab-actions`). A search on any tab shows the library's matches.
   Recommended is shelves in Discover's frame (`.release-shelf` /
   `.shelf-row` / `.pull-card`): Keep Reading (the issue to carry on with,

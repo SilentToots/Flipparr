@@ -993,10 +993,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .reading-list-title-badge { margin-left: var(--space-6); vertical-align: middle; }
 .arc-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8); margin-bottom: var(--space-16); }
 .arc-tools .label-narrow { display: none; }
-/* On a phone the pair lines up with the two columns of covers below. */
+/* On a phone the buttons line up with the two columns of covers below:
+   a pair one to a column, a single button across both. */
 @media (max-width: 640px) {
   .arc-tools--pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
   .arc-tools--pair > button { justify-content: center; }
+  /* One button spans both columns. */
+  .arc-tools--single { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .arc-tools--single > button { justify-content: center; }
   .arc-tools--pair .label-wide { display: none; }
   .arc-tools--pair .label-narrow { display: inline; }
 }
