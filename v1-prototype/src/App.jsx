@@ -1669,12 +1669,14 @@ function CollectionsTab({ cards, admin, onOpen, onNew }) {
  */
 function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew, onImport }) {
   if (loading) return <LibraryLoadingSkeleton view="grid" />;
+  // A phone fits each button to a column of the grid below it, in words
+  // short enough for a 320px screen's column; the tab already says "story".
   const tools = <>
-    <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onNew}><Plus size={17} /> New story arc</button>
-    {admin ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> Import a story arc</button> : null}
+    <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onNew}><Plus size={17} /> <span className="label-wide">New story arc</span><span className="label-narrow">New arc</span></button>
+    {admin ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> <span className="label-wide">Import a story arc</span><span className="label-narrow">Import arc</span></button> : null}
   </>;
   return lists.length ? <>
-    <div className="arc-tools">{tools}</div>
+    <div className={`arc-tools${admin ? " arc-tools--pair" : ""}`}>{tools}</div>
     <ArcGrid lists={lists} reading={reading} onOpen={onOpen} onRead={onRead} />
   </> : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong>
     <span>A story arc is a reading order across runs: a crossover, or your own path through a character. Make one, then add issues from any run.</span>

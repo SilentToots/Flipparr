@@ -505,7 +505,9 @@ Motion tokens:
   a run's issue menus). Comics' tabs are Recommended · Library · Collections ·
   Story arcs · Reading list (`/library/arcs`); the Story arcs scope left View &
   sort. The tab leads with *New story arc* (and *Import* for the admin), as
-  Collections leads with *New collection*. A new, empty arc opens its drawer
+  Collections leads with *New collection*. On a phone the pair is a two-column
+  grid matching the covers' columns below (`.arc-tools--pair`), worded *New
+  arc* / *Import arc* so each fits a 320px screen's 138px column. A new, empty arc opens its drawer
   with `ArcIssuePickerModal` on top -- Spotify's empty playlist asking what to
   put in it: find a run, tick its issues or a *From # / To #* range, *Add*,
   and go on to another run without leaving; issues already in the arc are

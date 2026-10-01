@@ -976,6 +976,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .issue-run-group-tools { display: flex; align-items: center; gap: var(--space-8); }
 .reading-list-title-badge { margin-left: var(--space-6); vertical-align: middle; }
 .arc-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8); margin-bottom: var(--space-16); }
+.arc-tools .label-narrow { display: none; }
+/* On a phone the pair lines up with the two columns of covers below. */
+@media (max-width: 640px) {
+  .arc-tools--pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
+  .arc-tools--pair > button { justify-content: center; }
+  .arc-tools--pair .label-wide { display: none; }
+  .arc-tools--pair .label-narrow { display: inline; }
+}
 .import-list-modal form { display: grid; gap: var(--space-16); }
 .import-list-modal input[type="file"] { padding: var(--space-8) var(--space-12); }
 .import-list-credit { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-relaxed); }
