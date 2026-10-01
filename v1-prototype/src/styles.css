@@ -1311,6 +1311,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .edit-collection-new .form-field { flex: 1; min-width: 0; margin: 0; }
 .rating-review-filters--two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 
+/* Reading list (since 2026-10-01): a card in the tab carries a way off the
+   list in its cover's corner, above the card's own open target. */
+.card-remove { position: absolute; top: var(--space-8); right: var(--space-8); z-index: 3; }
+
 /* Set ratings (Settings > Profiles > Ratings): filters, a list to tick, and
    the action row held at the sheet's foot so Rate is always in reach. */
 .ratings-card-review { display: flex; align-items: center; gap: var(--space-14); padding-top: var(--space-14); margin-top: var(--space-14); border-top: 1px solid var(--line); }

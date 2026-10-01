@@ -196,6 +196,7 @@ export const states = [
   // Comics' home (since 2026-10-01): shelves, or the empty library's state.
   { name: "library-recommended", path: "/library", waitForCatalog: true, require: [".library-shelf, .empty-state"] },
   { name: "library-collections", path: "/library/collections", waitForCatalog: true, require: [".collection-card, .empty-state"] },
+  { name: "library-reading", path: "/library/reading", waitForCatalog: true, require: [".series-card, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },

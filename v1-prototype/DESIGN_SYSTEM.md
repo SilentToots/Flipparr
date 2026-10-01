@@ -225,6 +225,16 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   Title / Year, cover) and Arrange (the Download order drag list:
   `DragOrderList`, with Remove per row). A run's drawer lists its
   collections as an "In Collections" row, and its Edit sheet ticks them.
+- **Reading list** (since 2026-10-01) is each profile's own: the runs, story
+  arcs and collections it added to come back to -- nothing it is merely in
+  the middle of, which is Recommended's Keep Reading. The bookmark is its
+  mark (Follow took the eye): a toggle in the run and arc drawers' top bar
+  beside Follow, and a labelled button in a collection's drawer. Its tab is
+  the Library grid's cards, newest addition first (or Title A-Z), each with
+  a `.card-remove` glass button in the cover's corner; a run or arc read to
+  its end steps out until new issues arrive. With four tabs a phone scrolls
+  the tab row, and the open tab is brought into view once the font has
+  loaded.
 - **Set ratings** (since 2026-09-30) is the bulk tool behind Settings ›
   Profiles › Ratings: a modal of filters (what has no rating, what one
   limited profile can see now, or everything; a publisher, one per house
