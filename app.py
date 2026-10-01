@@ -15997,6 +15997,22 @@ class Handler(BaseHTTPRequestHandler):
         return {"may_see": lambda run_id: viewer_may_see_run(viewer, ratings.get(int(run_id))),
                 "may_see_unrated": viewer_may_see_run(viewer, None)}
 
+    def _reading_list_visible(self, kind: str, target_id: int) -> bool:
+        """Whether this profile may see what it is adding to its reading list."""
+        viewer = self._viewer()
+        if viewer is None or viewer.is_admin or not viewer.max_rating:
+            return True
+        store = catalog_store()
+        ratings = store.run_age_ratings()
+        if kind == "run":
+            return int(target_id) in ratings and viewer_may_see_run(viewer, ratings.get(int(target_id)))
+        if kind == "collection":
+            collection = next((item for item in store.run_collections() if item["id"] == str(int(target_id))), None)
+            return bool(collection) and any(
+                viewer_may_see_run(viewer, ratings.get(int(run_id))) for run_id in collection["runIds"])
+        # An arc is trimmed to what the profile may see when it is opened.
+        return True
+
     def _run_visible(self, path: str) -> bool:
         """Whether the run a reading route is about is one this profile may see."""
         store = catalog_store()
@@ -16159,6 +16175,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/notifications":
             self.send_json(notifications_for(self._viewer()))
+            return
+        if parsed_url.path == "/api/v1/me/reading-list":
+            # Only this profile's rows, and only what it may see now: a run
+            # rated above its limit since it was added is not listed.
+            entries = catalog_store().reading_list_entries(self._viewer_id())
+            entries["runs"] = [item for item in entries["runs"] if self._reading_list_visible("run", int(item["id"]))]
+            entries["collections"] = [item for item in entries["collections"]
+                                      if self._reading_list_visible("collection", int(item["id"]))]
+            self.send_json(entries)
             return
         if parsed_url.path == "/api/v1/me/activity":
             self.send_json(self._only_visible_runs(_profiles_store().reading_activity(self._viewer_id())))
@@ -16963,6 +16988,18 @@ class Handler(BaseHTTPRequestHandler):
             _start_automatic_release_grabs({"id": request.get("acquisitionRequestId")})
             self.send_json(request, 201)
             return
+        reading_list_add = re.fullmatch(r"/api/v1/me/reading-list/(run|arc|collection)/(\d+)", parsed_url.path)
+        if reading_list_add:
+            kind, target = reading_list_add.group(1), int(reading_list_add.group(2))
+            try:
+                if not self._reading_list_visible(kind, target):
+                    raise LookupError("That is not in the library")
+                catalog_store().set_reading_list_entry(self._viewer_id(), kind, target, True)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(catalog_store().reading_list_entries(self._viewer_id()))
+            return
         if parsed_url.path == "/api/v1/run-collections":
             # A household collection; the admin's alone (unlisted).
             body = payload if isinstance(payload, dict) else {}
@@ -17753,6 +17790,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_delete(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
+        reading_list_remove = re.fullmatch(r"/api/v1/me/reading-list/(run|arc|collection)/(\d+)", parsed_url.path)
+        if reading_list_remove:
+            catalog_store().set_reading_list_entry(
+                self._viewer_id(), reading_list_remove.group(1), int(reading_list_remove.group(2)), False)
+            self.send_json(catalog_store().reading_list_entries(self._viewer_id()))
+            return
         collection_delete = re.fullmatch(r"/api/v1/run-collections/(\d+)", parsed_url.path)
         if collection_delete:
             try:

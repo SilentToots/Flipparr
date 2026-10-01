@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 60
+SCHEMA_VERSION = 61
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1448,6 +1448,27 @@ class CatalogStore:
                     PRIMARY KEY (collection_id, series_run_id)
                 );
                 CREATE INDEX IF NOT EXISTS run_collection_items_run ON run_collection_items(series_run_id);
+                -- A profile's reading list (schema 61): the runs, story arcs and
+                -- collections it added, to find again when choosing what to
+                -- read next. Its own rows, like its place in a comic.
+                CREATE TABLE IF NOT EXISTS series_run_bookmarks (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    series_run_id INTEGER NOT NULL REFERENCES series_runs(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, series_run_id)
+                );
+                CREATE TABLE IF NOT EXISTS reading_list_bookmarks (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    reading_list_id INTEGER NOT NULL REFERENCES reading_lists(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, reading_list_id)
+                );
+                CREATE TABLE IF NOT EXISTS run_collection_bookmarks (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    collection_id INTEGER NOT NULL REFERENCES run_collections(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, collection_id)
+                );
                 CREATE TABLE IF NOT EXISTS metadata_enrichment_jobs (
                     id INTEGER PRIMARY KEY,
                     series_run_id INTEGER NOT NULL UNIQUE
@@ -6797,6 +6818,40 @@ class CatalogStore:
             if connection.execute("DELETE FROM run_collections WHERE id=?", (int(collection_id),)).rowcount == 0:
                 raise LookupError("That collection is not in the library")
 
+    # ---- A profile's reading list (schema 61) ---------------------------------
+
+    _READING_LIST_KINDS = {
+        "run": ("series_run_bookmarks", "series_run_id", "series_runs"),
+        "arc": ("reading_list_bookmarks", "reading_list_id", "reading_lists"),
+        "collection": ("run_collection_bookmarks", "collection_id", "run_collections"),
+    }
+
+    def reading_list_entries(self, user_id: int) -> dict[str, list[dict[str, str]]]:
+        """What this profile added to its reading list, newest first, by kind."""
+        entries: dict[str, list[dict[str, str]]] = {}
+        with self._connect() as connection:
+            for kind, (table, column, _target) in self._READING_LIST_KINDS.items():
+                entries[f"{kind}s"] = [{"id": str(row[column]), "at": row["created_at"]} for row in connection.execute(
+                    f"SELECT {column}, created_at FROM {table} WHERE user_id=? ORDER BY created_at DESC, {column} DESC",
+                    (int(user_id),))]
+        return entries
+
+    def set_reading_list_entry(self, user_id: int, kind: str, target_id: int, on: bool) -> None:
+        """Add to, or take off, a profile's reading list. Adding twice keeps the first date."""
+        if kind not in self._READING_LIST_KINDS:
+            raise ValueError("A reading list holds runs, story arcs and collections")
+        table, column, target = self._READING_LIST_KINDS[kind]
+        with self._write_lock, self._connect() as connection:
+            if on:
+                if not connection.execute(f"SELECT 1 FROM {target} WHERE id=?", (int(target_id),)).fetchone():
+                    raise LookupError("That is not in the library")
+                connection.execute(
+                    f"INSERT OR IGNORE INTO {table}(user_id, {column}, created_at) VALUES (?, ?, ?)",
+                    (int(user_id), int(target_id), _utc_now()),
+                )
+            else:
+                connection.execute(f"DELETE FROM {table} WHERE user_id=? AND {column}=?", (int(user_id), int(target_id)))
+
     def set_series_run_family(self, series_run_id: int, series_family_id: int | None) -> dict[str, Any]:
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
@@ -9033,6 +9088,13 @@ class CatalogStore:
             target = connection.execute("SELECT * FROM series_runs WHERE id=?", (target_id,)).fetchone()
             if not source or not target:
                 raise ValueError("One of the canonical series was not found")
+            # So do the reading lists it was on.
+            connection.execute(
+                """INSERT OR IGNORE INTO series_run_bookmarks(user_id, series_run_id, created_at)
+                   SELECT user_id, ?, created_at FROM series_run_bookmarks WHERE series_run_id=?""",
+                (target_id, source_id),
+            )
+            connection.execute("DELETE FROM series_run_bookmarks WHERE series_run_id=?", (source_id,))
             # Its collections follow it; a collection that held both keeps one.
             connection.execute(
                 """INSERT OR IGNORE INTO run_collection_items(collection_id, series_run_id, position, added_at)

@@ -4796,7 +4796,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 60)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 61)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
@@ -4810,9 +4810,27 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=59")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 60)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 61)
             self.assertEqual(reopened.run_collections(), [])
             self.assertEqual(reopened.catalog()["runCollections"], [])
+
+    def test_a_library_from_before_reading_lists_gains_the_tables_and_keeps_a_merged_runs_entries(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            with sqlite3.connect(store.database_path) as connection:
+                for table in ("series_run_bookmarks", "reading_list_bookmarks", "run_collection_bookmarks"):
+                    connection.execute(f"DROP TABLE {table}")
+                connection.execute("UPDATE schema_info SET version=60")
+            reopened = CatalogStore(store.database_path)
+            self.assertEqual(reopened.reading_list_entries(1), {"runs": [], "arcs": [], "collections": []})
+            keep = int(reopened.ensure_provider_series_run("gcd", "x", "Saga", 2012, "Image")["id"])
+            dupe = int(reopened.ensure_provider_series_run("gcd", "y", "Saga", 2019, "Image")["id"])
+            reopened.set_reading_list_entry(1, "run", dupe, True)
+            reopened.set_reading_list_entry(1, "run", dupe, True)
+            with self.assertRaises(LookupError):
+                reopened.set_reading_list_entry(1, "collection", 999, True)
+            reopened.merge_series(dupe, keep, allow_provider_conflicts=True)
+            self.assertEqual([item["id"] for item in reopened.reading_list_entries(1)["runs"]], [str(keep)])
 
     def test_a_library_from_before_hand_taken_releases_gains_the_column(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -4824,7 +4842,7 @@ class ReadingListTests(LibraryFixture):
             with sqlite3.connect(store.database_path) as connection:
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")}
                 self.assertIn("taken_by_hand", columns)
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 60)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 61)
 
     def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
         with tempfile.TemporaryDirectory() as folder:

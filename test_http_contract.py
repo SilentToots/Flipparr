@@ -1608,7 +1608,7 @@ def _sample(pattern: str) -> str:
     """A concrete path a route pattern matches."""
     path = pattern.replace(r"(\d+)", "1").replace("([a-z_]+)", "metron").replace("([a-z0-9_]+)", "sabnzbd")
     path = re.sub(r"\(\?:[^()]*\)\?", "", path)
-    path = path.replace("(issues|series)", "issues")
+    path = path.replace("(issues|series)", "issues").replace("(run|arc|collection)", "run")
     return path.replace("\\", "")
 
 
@@ -1625,6 +1625,9 @@ NOT_ADMIN = {
     ("PATCH", "/api/v1/me"): "signed_in",
     ("PATCH", "/api/v1/me/prefs"): "signed_in",
     ("GET", "/api/v1/me/activity"): "signed_in",
+    ("GET", "/api/v1/me/reading-list"): "reader",
+    ("POST", "/api/v1/me/reading-list/run/1"): "reader",
+    ("DELETE", "/api/v1/me/reading-list/run/1"): "reader",
     ("GET", "/api/v1/profiles/1/avatar"): "picture",
     ("POST", "/api/v1/profiles/1/avatar"): "signed_in",
     ("DELETE", "/api/v1/profiles/1/avatar"): "signed_in",
@@ -2088,6 +2091,32 @@ class ReaderProfileHttpTests(unittest.TestCase):
                          "a collection with nothing they may see is not there at all")
         self.assertEqual(self.call("DELETE", path, cookies=admin).status, 200)
         self.assertEqual([item["name"] for item in store.run_collections()], ["Also"])
+
+    def test_a_reading_list_is_the_profiles_own_and_never_holds_what_it_may_not_see(self):
+        store, example, other = self._two_runs()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        collection = self.call("POST", "/api/v1/run-collections", {"name": "Both", "seriesIds": [example, other]}, cookies=admin).json()
+        self.assertEqual(self.call("POST", f"/api/v1/me/reading-list/run/{example}", cookies=admin).status, 200)
+        added = self.call("POST", f"/api/v1/me/reading-list/collection/{collection['id']}", cookies=admin).json()
+        self.assertEqual(([item["id"] for item in added["runs"]], [item["id"] for item in added["collections"]]),
+                         ([str(example)], [collection["id"]]))
+        self.assertEqual(self.call("POST", "/api/v1/me/reading-list/run/99999", cookies=admin).status, 404)
+        # Sam's list is Sam's.
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone", "allowUnrated": True}, cookies=admin)
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self.call("GET", "/api/v1/me/reading-list", cookies=reader).json(), {"runs": [], "arcs": [], "collections": []})
+        self.assertEqual(self.call("POST", f"/api/v1/me/reading-list/run/{other}", cookies=reader).status, 200)
+        store.set_run_rating_override(example, "mature")
+        self.assertEqual(self.call("POST", f"/api/v1/me/reading-list/run/{example}", cookies=reader).status, 404,
+                         "a run above the limit cannot be added, as if it were not there")
+        store.set_run_rating_override(other, "mature")
+        self.assertEqual(self.call("GET", "/api/v1/me/reading-list", cookies=reader).json()["runs"], [],
+                         "one rated above the limit since is not listed")
+        self.assertEqual(self.call("POST", f"/api/v1/me/reading-list/collection/{collection['id']}", cookies=reader).status, 404)
+        self.assertEqual(self.call("DELETE", f"/api/v1/me/reading-list/run/{other}", cookies=reader).status, 200)
+        mine = self.call("GET", "/api/v1/me/reading-list", cookies=admin).json()
+        self.assertEqual([item["id"] for item in mine["runs"]], [str(example)], "the admin's list was untouched")
 
     def test_the_catalog_says_when_each_issue_and_run_first_arrived(self):
         """Comics' Recently Added shelves order by these."""

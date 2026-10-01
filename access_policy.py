@@ -86,6 +86,10 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"GET", "PATCH"}), r"/api/v1/me", SIGNED_IN),
     (frozenset({"PATCH"}), r"/api/v1/me/prefs", SIGNED_IN),
     (frozenset({"GET"}), r"/api/v1/me/activity", SIGNED_IN),
+    # A profile's own reading list: runs, story arcs and collections it added.
+    # The handlers touch only the asking profile's rows.
+    (frozenset({"GET"}), r"/api/v1/me/reading-list", READER),
+    (frozenset({"POST", "DELETE"}), r"/api/v1/me/reading-list/(run|arc|collection)/(\d+)", READER),
     (frozenset({"POST", "DELETE"}), r"/api/v1/profiles/(\d+)/avatar", SIGNED_IN),
     (frozenset({"POST"}), r"/api/v1/profiles/(\d+)/avatar/upload", SIGNED_IN),
     # Reading the library. Covers are served by path, but only a path inside a
