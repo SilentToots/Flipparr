@@ -76,8 +76,8 @@ class FakeStorage {
 
 test("what was chosen last time comes back", () => {
   const storage = new FakeStorage();
-  saveLibraryPrefs({ sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true }, storage);
-  assert.deepEqual(loadLibraryPrefs(storage), { sort: "rated", view: "list", scope: "collections", followingOnly: true, inProgressOnly: true, groupArcRuns: true });
+  saveLibraryPrefs({ sort: "rated", view: "list", scope: "families", followingOnly: true, inProgressOnly: true, showCollections: false }, storage);
+  assert.deepEqual(loadLibraryPrefs(storage), { sort: "rated", view: "list", scope: "families", followingOnly: true, inProgressOnly: true, groupArcRuns: true, showCollections: false });
 });
 
 test("nothing remembered means the defaults", () => {
@@ -102,7 +102,9 @@ test("the story arcs scope is remembered, and an unknown scope falls back to run
   const memory = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
   saveLibraryPrefs({ sort: "recent", view: "grid", scope: "arcs", followingOnly: false, inProgressOnly: true }, memory);
   assert.equal(loadLibraryPrefs(memory).scope, "arcs");
-  assert.deepEqual([...SCOPES], ["runs", "collections", "arcs"]);
+  assert.deepEqual([...SCOPES], ["runs", "families", "arcs"]);
+  saveLibraryPrefs({ sort: "recent", view: "grid", scope: "collections", followingOnly: false, inProgressOnly: false }, memory);
+  assert.equal(loadLibraryPrefs(memory).scope, "runs", "the old family scope's name is not a scope any more");
   saveLibraryPrefs({ sort: "recent", view: "grid", scope: "shelves", followingOnly: false, inProgressOnly: false }, memory);
   assert.equal(loadLibraryPrefs(memory).scope, "runs");
 });

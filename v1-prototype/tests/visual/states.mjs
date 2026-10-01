@@ -8,8 +8,9 @@
 const settle = async (page, ms = 400) => page.waitForTimeout(ms);
 
 async function openFirstSeries(page) {
-  await page.waitForSelector(".series-card", { timeout: 15000 });
-  await page.locator(".series-card").first().click();
+  // A run's card, not a collection's: collections lead the grid (2026-10-01).
+  await page.waitForSelector(".series-card:not(.collection-card)", { timeout: 15000 });
+  await page.locator(".series-card:not(.collection-card)").first().click();
   await page.waitForSelector(".series-drawer", { timeout: 15000 });
   await settle(page);
 }
@@ -194,6 +195,7 @@ export const states = [
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .request-queue-row, .request-swipe, .request-empty"] },
   // Comics' home (since 2026-10-01): shelves, or the empty library's state.
   { name: "library-recommended", path: "/library", waitForCatalog: true, require: [".library-shelf, .empty-state"] },
+  { name: "library-collections", path: "/library/collections", waitForCatalog: true, require: [".collection-card, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },

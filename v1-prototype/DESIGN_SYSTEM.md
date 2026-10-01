@@ -212,6 +212,19 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   Recently Added Issues and Recently Added Runs; a shelf with "See all" makes
   its title a link with a caret. A See all sorts the Library tab, never
   filters it: a filter left behind hid a later search.
+- **Collections** (since 2026-10-01) are the household's own groups of runs,
+  after Plex's; a series family is no longer called a collection anywhere
+  (Library's Show menu says "Series families", a run's tab "Family"). A
+  collection is a run card (`.series-card.collection-card`) with the
+  collection mark -- MDI's bookmark-box-multiple -- in the cover's corner on
+  `--scrim-strong`, its years and run count for a byline, and a muted
+  "Collection" badge. The cards fill the Collections tab and lead the Library
+  grid (View & sort: "Show collections in Library"). Its drawer is the series
+  drawer's frame: name, summary, facts, the runs as a grid; the admin's Add
+  runs (the Set ratings list, choosing), Edit (name, summary, Your order /
+  Title / Year, cover) and Arrange (the Download order drag list:
+  `DragOrderList`, with Remove per row). A run's drawer lists its
+  collections as an "In Collections" row, and its Edit sheet ticks them.
 - **Set ratings** (since 2026-09-30) is the bulk tool behind Settings ›
   Profiles › Ratings: a modal of filters (what has no rating, what one
   limited profile can see now, or everything; a publisher, one per house

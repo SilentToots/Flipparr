@@ -1292,6 +1292,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .provider-row > span > em { color: var(--muted-weak); font-style: normal; font-size: var(--text-sm); }
 .provider-title-line { display: flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
 .provider-priority { color: var(--muted-weak); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
+/* Collections (since 2026-10-01): a collection is a run card with its mark in
+   the cover's corner; its drawer is the series drawer's frame. */
+.collection-card-mark { position: absolute; top: var(--space-8); left: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
+.run-collection-eyebrow { display: inline-flex; align-items: center; gap: var(--space-6); }
+.run-collection-drawer h2 { margin: var(--space-8) 0 var(--space-8); }
+.run-collection-summary { margin: 0 0 var(--space-8); color: var(--muted-strong); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.run-collection-facts { margin: 0 0 var(--space-16); color: var(--muted); font-size: var(--text-xs); }
+.run-collection-drawer > .drawer-actions { margin-bottom: var(--space-20); }
+.run-collection-edit, .run-collection-arrange { margin-bottom: var(--space-20); }
+.run-collection-arrange .settings-card-note { margin: 0 0 var(--space-8); }
+.source-order-row > span.rating-review-cover { flex: 0 0 auto; display: grid; }
+.run-collection-remove { flex: 0 0 auto; }
+.edit-collections .edit-collection-list { display: grid; gap: var(--space-4); margin-top: var(--space-12); }
+.edit-collections .check-row { margin: 0; padding: var(--space-6) 0; align-items: center; }
+.edit-collections .check-row input { margin-top: 0; }
+.edit-collection-new { display: flex; align-items: center; gap: var(--space-8); margin-top: var(--space-12); }
+.edit-collection-new .form-field { flex: 1; min-width: 0; margin: 0; }
+.rating-review-filters--two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
 /* Set ratings (Settings > Profiles > Ratings): filters, a list to tick, and
    the action row held at the sheet's foot so Rate is always in reach. */
 .ratings-card-review { display: flex; align-items: center; gap: var(--space-14); padding-top: var(--space-14); margin-top: var(--space-14); border-top: 1px solid var(--line); }

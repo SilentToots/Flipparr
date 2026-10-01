@@ -22,11 +22,14 @@ export const LIBRARY_DEFAULTS = Object.freeze({
   // A run kept only for a story arc -- not followed, every owned issue in an
   // arc -- is shown as the arc's card rather than as a run of its own.
   groupArcRuns: true,
+  // Collections lead the Library grid, as Plex shows "collections and their items".
+  showCollections: true,
 });
 
-// What the grid can show: runs, collections (with editions on), or the story
-// arcs saved to read across runs.
-export const SCOPES = new Set(["runs", "collections", "arcs"]);
+// What the Library tab can show: runs, series families (with editions on),
+// or the story arcs saved to read across runs. Collections -- the household's
+// own groups of runs -- have a tab of their own.
+export const SCOPES = new Set(["runs", "families", "arcs"]);
 
 // Collections have a name where runs have a title; both fall back to the
 // title rather than to an arbitrary order that would look like a broken sort.
@@ -98,6 +101,7 @@ export function loadLibraryPrefs(storage = profileStorage()) {
     followingOnly: saved.followingOnly === true,
     inProgressOnly: saved.inProgressOnly === true,
     groupArcRuns: saved.groupArcRuns !== false,
+    showCollections: saved.showCollections !== false,
   };
 }
 
@@ -107,6 +111,7 @@ export function saveLibraryPrefs(prefs, storage = profileStorage()) {
     storage?.setItem(PREFS_KEY, JSON.stringify({
       sort: prefs.sort, view: prefs.view, scope: prefs.scope, followingOnly: Boolean(prefs.followingOnly),
       inProgressOnly: Boolean(prefs.inProgressOnly), groupArcRuns: prefs.groupArcRuns !== false,
+      showCollections: prefs.showCollections !== false,
     }));
   } catch {
     // Nothing to do: the grid still works, it just forgets.
