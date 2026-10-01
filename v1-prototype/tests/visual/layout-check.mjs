@@ -23,7 +23,7 @@ import { chromium } from "playwright";
 const APP = process.env.VISUAL_APP_ORIGIN || "http://localhost:4173";
 const WIDTHS = [320, 375, 390, 430, 768, 1024, 1440];
 const PAGES = {
-  library: { path: "/library", ready: ".series-card", first: ".series-grid > :first-child, .series-table", last: ".series-grid, .series-table" },
+  library: { path: "/library/all", ready: ".series-card", first: ".series-grid > :first-child, .series-table", last: ".series-grid, .series-table" },
   discover: { path: "/discover", ready: ".release-shelf", first: ".release-shelf", last: ".release-shelf" },
   // A phone opens this as Discover's results; above 640px it is the Search page.
   search: { path: "/search?q=batman", ready: ".discover-results .library-match, .discover-results .discover-note", first: ".discover-results", last: ".discover-results" },

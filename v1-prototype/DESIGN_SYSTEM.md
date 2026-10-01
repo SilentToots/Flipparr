@@ -201,6 +201,17 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   handle the arrow keys move a source a place at a time, since a drag must
   never be the only way (WCAG 2.5.7). The order saves on drop, and an
   `aria-live` line says which source is tried first.
+- **Comics' tabs** (since 2026-10-01), after Plex and Komga: `SegmentedTabs`
+  in the header's tools row -- Recommended, Library, and (as they ship)
+  Collections and Reading list. `/library` is Recommended, the page's home,
+  which a tap on Comics always returns to; `/library/all` is the grid, the
+  only tab with View & sort. A search on any tab shows the library's matches.
+  Recommended is shelves in Discover's frame (`.release-shelf` /
+  `.shelf-row` / `.pull-card`): Keep Reading (the issue to carry on with,
+  its card carrying `.profile-history-progress`), Recently Released,
+  Recently Added Issues and Recently Added Runs; a shelf with "See all" makes
+  its title a link with a caret. A See all sorts the Library tab, never
+  filters it: a filter left behind hid a later search.
 - **Set ratings** (since 2026-09-30) is the bulk tool behind Settings ›
   Profiles › Ratings: a modal of filters (what has no rating, what one
   limited profile can see now, or everything; a publisher, one per house

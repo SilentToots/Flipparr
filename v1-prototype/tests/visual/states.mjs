@@ -25,7 +25,7 @@ async function drawerTab(page, label) {
 export const states = [
   {
     name: "library-grid",
-    path: "/library",
+    path: "/library/all",
     require: [".series-card", ".page-header", ".sidebar"],
     // A phone has no app bar; its header is part of the Comics screen.
     phoneRequire: [".series-card", ".page-header-search", ".sidebar"],
@@ -33,7 +33,7 @@ export const states = [
   {
     name: "library-list",
     phone: false,
-    path: "/library",
+    path: "/library/all",
     require: [".series-row"],
     async setup(page) {
       await page.waitForSelector(".library-view-toggle", { timeout: 15000 });
@@ -44,7 +44,7 @@ export const states = [
   {
     name: "library-following",
     phone: false,
-    path: "/library",
+    path: "/library/all",
     // The catalog takes seconds over the tunnel, and `.filter-button` is in
     // the header before any of it arrives -- so this used to photograph the
     // loading skeleton and pass, which is the false clean `require` exists to
@@ -66,7 +66,7 @@ export const states = [
     // the same dependence library-following has on followed runs.
     name: "library-in-progress",
     phone: false,
-    path: "/library",
+    path: "/library/all",
     waitForCatalog: true,
     require: [".library-view-button", ".series-card"],
     async setup(page) {
@@ -88,7 +88,7 @@ export const states = [
     name: "notifications-open",
     // The phone's bell is a different control in the Comics header.
     phone: false,
-    path: "/library",
+    path: "/library/all",
     waitForCatalog: true,
     require: [".page-header", ".notifications-popover", ".series-card"],
     async setup(page) {
@@ -98,10 +98,10 @@ export const states = [
       await settle(page);
     },
   },
-  { name: "drawer-overview", path: "/library", require: [".series-drawer"], setup: openFirstSeries },
+  { name: "drawer-overview", path: "/library/all", require: [".series-drawer"], setup: openFirstSeries },
   {
     name: "drawer-issues",
-    path: "/library",
+    path: "/library/all",
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Issues"),
   },
@@ -109,7 +109,7 @@ export const states = [
     // Photographed on a phone now: it is the one surface that has had a Read
     // button all along, and it had never been captured at 375px.
     name: "drawer-files",
-    path: "/library",
+    path: "/library/all",
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Files"),
   },
@@ -118,7 +118,7 @@ export const states = [
   // panel renders captures the drawer underneath and the run reads clean.
   {
     name: "drawer-edit",
-    path: "/library",
+    path: "/library/all",
     require: [".edit-rows", ".edit-identity"],
     async setup(page) {
       await openFirstSeries(page);
@@ -129,7 +129,7 @@ export const states = [
   },
   {
     name: "drawer-edit-cover",
-    path: "/library",
+    path: "/library/all",
     require: [".cover-option-grid"],
     async setup(page) {
       await openFirstSeries(page);
@@ -143,7 +143,7 @@ export const states = [
   // with collected editions switched on, which the QA library leaves off.
   {
     name: "drawer-advanced",
-    path: "/library",
+    path: "/library/all",
     require: [".series-drawer"],
     setup: (page) => drawerTab(page, "Advanced"),
   },
@@ -159,7 +159,7 @@ export const states = [
     // capture that changed what it photographs. The POST is swallowed for the
     // same reason.
     name: "reader-finish",
-    path: "/library",
+    path: "/library/all",
     waitForCatalog: true,
     require: [".finish-drawer", ".finish-card", ".finish-next"],
     async setup(page) {
@@ -192,6 +192,8 @@ export const states = [
   // are different pages, so the baseline is made with no request pending (see
   // README.md, "What the library needs").
   { name: "pull-list", path: "/pull-list", waitForCatalog: true, require: [".segmented-tabs", ".request-row, .request-queue-row, .request-swipe, .request-empty"] },
+  // Comics' home (since 2026-10-01): shelves, or the empty library's state.
+  { name: "library-recommended", path: "/library", waitForCatalog: true, require: [".library-shelf, .empty-state"] },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },
