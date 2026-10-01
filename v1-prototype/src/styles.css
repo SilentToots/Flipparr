@@ -464,6 +464,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* One View & sort button on every width (2026-09-29). */
 .page-header .library-view-button { display: inline-flex; position: relative; }
 .page-header-tools { grid-area: tools; min-width: 0; margin-top: var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
+/* The shown tab's own actions, at the far end of the tab row. They never
+   wrap under it: on a tight row the tabs scroll instead, as on a phone. */
+.page-header-tab-actions { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: var(--space-8); }
+/* A tab's actions keep their words while the row has room beside the tabs
+   (551px of them): 720px for one button, 900px for two. Narrower, they are
+   their icons alone, square, rather than a line of their own. */
+.page-header-tools { container: header-tools / inline-size; }
+.tab-action { gap: var(--space-8); }
+@container header-tools (max-width: 720px) {
+  .page-header-tab-actions[data-count="1"] .tab-action-label { display: none; }
+  .page-header-tab-actions[data-count="1"] .tab-action { width: var(--control-height-md); padding: 0; justify-content: center; }
+}
+@container header-tools (max-width: 900px) {
+  .page-header-tab-actions[data-count="2"] .tab-action-label { display: none; }
+  .page-header-tab-actions[data-count="2"] .tab-action { width: var(--control-height-md); padding: 0; justify-content: center; }
+}
 
 /* --- Glass controls ------------------------------------------------------------
    The navigation layer's material (see the --glass-* tokens): a tinted blur, a

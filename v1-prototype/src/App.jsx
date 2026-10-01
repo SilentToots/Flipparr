@@ -1651,9 +1651,20 @@ function CollectionCard({ card, index, onOpen, action = null }) {
   </article>;
 }
 
-function CollectionsTab({ cards, admin, onOpen, onNew }) {
+// A tab's action at the end of the tab row: labelled while the row has room,
+// its icon alone (named, with a tooltip) once the tabs need the space, so it
+// never drops to a row of its own.
+function TabAction({ icon, label, onClick }) {
+  return <button type="button" className="glass-button tab-action" onClick={onClick} aria-label={label} title={label}>
+    {icon}<span className="tab-action-label" aria-hidden="true">{label}</span>
+  </button>;
+}
+
+// `tools`: the New button above the grid, on a phone; wider, it sits at the
+// end of the tab row.
+function CollectionsTab({ cards, admin, onOpen, onNew, tools = true }) {
   return <>
-    {admin && cards.length ? <div className="arc-tools">
+    {tools && admin && cards.length ? <div className="arc-tools">
       <button type="button" className="glass-button" onClick={onNew}><Plus size={17} /> New collection</button>
     </div> : null}
     {cards.length ? <div className="series-grid">{cards.map((card, index) => <CollectionCard card={card} index={index} onOpen={onOpen} key={card.key} />)}</div>
@@ -1667,7 +1678,7 @@ function CollectionsTab({ cards, admin, onOpen, onNew }) {
  * Story arcs -- reading orders across runs -- with a way to make one, as the
  * Collections tab has. Any profile makes its own; the admin also imports.
  */
-function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew, onImport }) {
+function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew, onImport, tools: showTools = true }) {
   if (loading) return <LibraryLoadingSkeleton view="grid" />;
   // A phone fits each button to a column of the grid below it, in words
   // short enough for a 320px screen's column; the tab already says "story".
@@ -1676,7 +1687,7 @@ function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew, onImpo
     {admin ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> <span className="label-wide">Import a story arc</span><span className="label-narrow">Import arc</span></button> : null}
   </>;
   return lists.length ? <>
-    <div className={`arc-tools${admin ? " arc-tools--pair" : ""}`}>{tools}</div>
+    {showTools ? <div className={`arc-tools${admin ? " arc-tools--pair" : ""}`}>{tools}</div> : null}
     <ArcGrid lists={lists} reading={reading} onOpen={onOpen} onRead={onRead} />
   </> : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong>
     <span>A story arc is a reading order across runs: a crossover, or your own path through a character. Make one, then add issues from any run.</span>
@@ -2652,19 +2663,34 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
   }, [families, sort, searching, queryParts]);
   // The Story arcs tab: the library's sort, over each arc's own reading map.
   const displayedLists = useMemo(() => sortLibrary((readingLists || []).map(listCard), sort, listReading), [readingLists, sort, listReading]);
+  // What the tab shown does, at the far end of the tab row (Notion's and
+  // Linear's views; Apple's "actions for the view at the trailing end"):
+  // the title row keeps what is the whole app's -- search, the bell, the
+  // profile. A phone's tabs fill their row, so there View & sort stays by
+  // the bell and a tab's buttons sit above its grid (2026-10-01).
+  const phone = usePhoneWidth();
+  const viewButton = showLibrary ? <button
+    type="button" className="glass-button glass-button--icon library-view-button"
+    aria-label={viewCustomized ? "View and sort, changed from the default" : "View and sort"}
+    aria-haspopup="dialog" aria-expanded={viewSheetOpen} onClick={() => setViewSheetOpen(true)}
+  ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button> : null;
+  const tabActions = phone ? null
+    : showLibrary ? viewButton
+    : tab === "collections" && libraryAdmin && collectionItems.length ? <TabAction icon={<Plus size={17} />} label="New collection" onClick={onNewRunCollection} />
+    : tab === "arcs" && (readingLists?.length || 0) > 0 ? <>
+      <TabAction icon={<Plus size={17} />} label="New story arc" onClick={onNewArc} />
+      {libraryAdmin ? <TabAction icon={<UploadSimple size={17} />} label="Import a story arc" onClick={onImportList} /> : null}
+    </> : null;
   return (
     <>
       {/* No field of its own: searching the library is search's, from the
           sidebar or the header's button, as everywhere else (2026-10-01). */}
       <PageHeader
         title="Comics"
-        tools={<SegmentedTabs label="Comics" items={COMICS_TABS} value={tab || "recommended"}
-          onChange={(next) => onTab?.(next === "recommended" ? "" : next)} />}
-        actions={showLibrary ? <button
-          type="button" className="glass-button glass-button--icon library-view-button"
-          aria-label={viewCustomized ? "View and sort, changed from the default" : "View and sort"}
-          aria-haspopup="dialog" aria-expanded={viewSheetOpen} onClick={() => setViewSheetOpen(true)}
-        ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button> : null}
+        tools={<><SegmentedTabs label="Comics" items={COMICS_TABS} value={tab || "recommended"}
+          onChange={(next) => onTab?.(next === "recommended" ? "" : next)} />
+          {tabActions ? <div className="page-header-tab-actions" data-count={tab === "arcs" && libraryAdmin ? 2 : 1}>{tabActions}</div> : null}</>}
+        actions={phone ? viewButton : null}
       />
       {/* One button on every width (the owner, 2026-09-29): view, sort and the
           filters are a sheet on a phone and a drawer on a desktop, with the
@@ -2681,13 +2707,13 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
       /> : null}
       <div className="dashboard-body">
       {!showLibrary && tab === "collections" ? <CollectionsTab cards={sortCollections(collectionItems, sort === "added" ? "added" : "title")}
-        admin={libraryAdmin} onOpen={onOpenRunCollection} onNew={onNewRunCollection} /> : null}
+        admin={libraryAdmin} onOpen={onOpenRunCollection} onNew={onNewRunCollection} tools={phone} /> : null}
       {!showLibrary && tab === "reading" ? <ReadingListTab items={sortReadingList(readingListItems(readingList, {
           series, lists: readingLists || [], collections: collectionItems, runReading: runReading || {}, listReading: listReading || {},
         }), sort === "title" ? "title" : "added")} reading={runReading || {}} listReading={listReading || {}} loading={readingList === null || readingLists === null}
         onOpen={(item) => item.kind === "collection" ? onOpenRunCollection(item) : item.kind === "arc" ? onOpenList({ ...item, id: item.listId }) : onOpenSeries(item)}
         onRead={onRead} onRemove={(kind, id) => onToggleReadingList?.(kind, id, false)} onBrowse={() => onTab?.("all")} /> : null}
-      {!showLibrary && tab === "arcs" ? <ArcsTab lists={displayedLists} reading={listReading} loading={readingLists === null} admin={libraryAdmin}
+      {!showLibrary && tab === "arcs" ? <ArcsTab lists={displayedLists} reading={listReading} loading={readingLists === null} admin={libraryAdmin} tools={phone}
         onOpen={onOpenList} onRead={onRead} onNew={onNewArc} onImport={onImportList} /> : null}
       {!showLibrary && tab !== "collections" && tab !== "reading" && tab !== "arcs" ? <RecommendedView series={series} catalog={catalog} backendStatus={backendStatus} readingVersion={readingVersion}
         onOpenSeries={onOpenSeries} onRead={onRead} onAdd={() => onNavigate("import")}

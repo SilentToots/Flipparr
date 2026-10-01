@@ -205,7 +205,16 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   in the header's tools row -- Recommended, Library, Collections, Story arcs
   and Reading list. `/library` is Recommended, the page's home,
   which a tap on Comics always returns to; `/library/all` is the grid, the
-  only tab with View & sort. A search on any tab shows the library's matches.
+  only tab with View & sort. **A tab's own actions sit at the far end of the
+  tab row** (Notion's and Linear's views; the owner, 2026-10-01): View & sort on
+  Library, New collection on Collections, New story arc and Import on Story
+  arcs -- the title row keeps only what is the whole app's (search, bell,
+  profile). They never take a row of their own: a `header-tools` container
+  query shows them as their icons alone, square and named, when the row is
+  narrower than 720px (one button) or 900px (two), and on a tight tablet row
+  the tabs scroll a little instead. On a phone the tabs fill the row, so View
+  & sort stays by the bell and New/Import sit above the grid (`TabAction`,
+  `.page-header-tab-actions`). A search on any tab shows the library's matches.
   Recommended is shelves in Discover's frame (`.release-shelf` /
   `.shelf-row` / `.pull-card`): Keep Reading (the issue to carry on with,
   its card carrying `.profile-history-progress`), Recently Released,
