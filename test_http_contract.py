@@ -2034,6 +2034,15 @@ class ReaderProfileHttpTests(unittest.TestCase):
         summary = self.call("GET", "/api/v1/ratings", cookies=admin).json()
         self.assertEqual((summary["runs"], summary["rated"]), (1, 0))
 
+    def test_the_catalog_says_when_each_issue_and_run_first_arrived(self):
+        """Comics' Recently Added shelves order by these."""
+        store, run = self._library_of_one_run()
+        series = self.call("GET", "/api/v1/catalog").json()["series"][0]
+        added = [issue["addedAt"] for issue in series["issues"]]
+        self.assertTrue(all(added), "every owned issue says when its file arrived")
+        self.assertEqual(series["firstAddedAt"], min(added))
+        self.assertEqual(series["addedAt"], max(added), "addedAt stays the newest, for the Recent sort")
+
     def test_the_admin_rates_many_runs_at_once_and_a_reader_cannot(self):
         store, run = self._library_of_one_run()
         sam = self._household_with_a_reader()

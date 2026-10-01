@@ -9902,9 +9902,12 @@ class CatalogStore:
             # first". Arbitrary, but stable; there is no better signal, and a
             # picker for it would be a feature of its own.
             issue_file_ids: dict[int, str] = {}
+            # When the issue's file was first catalogued: Comics' Recently
+            # Added Issues shelf orders by it.
+            issue_file_added: dict[int, str] = {}
             for link in connection.execute(
                 """SELECT file_issue_links.issue_id AS issue_id, files.id AS file_id,
-                          files.result_json,
+                          files.result_json, files.created_at AS file_created_at,
                           file_cover_preferences.source AS cover_source,
                           file_cover_preferences.cover_url AS preferred_cover_url
                    FROM file_issue_links
@@ -9918,6 +9921,7 @@ class CatalogStore:
                 # file whose cover cannot be drawn is still a file that can be
                 # read, and sharing the covers' key would have skipped it.
                 issue_file_ids.setdefault(issue_id, str(link["file_id"]))
+                issue_file_added.setdefault(issue_id, link["file_created_at"])
                 if issue_id in issue_file_covers:
                     continue
                 url = self._resolved_file_cover(
@@ -9992,6 +9996,7 @@ class CatalogStore:
                         "cover": issue["cover"],
                         "fileCover": issue_file_covers.get(int(issue["id"])),
                         "fileId": issue_file_ids.get(int(issue["id"])),
+                        "addedAt": issue_file_added.get(int(issue["id"])),
                         "yourRating": issue_ratings.get(int(issue["id"])),
                         "metadataLocked": bool(issue["metadata_locked"]),
                         "directOwned": direct, "collectionOwned": collected,
@@ -10133,7 +10138,7 @@ class CatalogStore:
                 "yourRating": run_ratings.get(int(run["id"])),
                 "monitorRefresh": monitor_refresh_by_series.get(int(run["id"])),
                 "issueNumbers": set(), "files": [], "covers": [], "hasProblem": False,
-                "updatedAt": run["updated_at"], "addedAt": None,
+                "updatedAt": run["updated_at"], "addedAt": None, "firstAddedAt": None,
                 "aliases": alias_map.get(int(run["id"]), []),
                 "creators": creators_by_run.get(int(run["id"]), []),
                 "identityConfidences": [], "issues": issues_by_series.get(int(run["id"]), []),
@@ -10185,7 +10190,7 @@ class CatalogStore:
                     "acquisitionPreference": "either", "monitoringStatus": "cataloged",
                     "monitorRefresh": monitor_refresh_by_series.get(series_run_id) if series_run_id else None,
                     "hasProblem": False, "updatedAt": row["updated_at"],
-                    "addedAt": row["created_at"],
+                    "addedAt": row["created_at"], "firstAddedAt": row["created_at"],
                     "aliases": alias_map.get(series_run_id, []) if series_run_id else [],
                     "identityConfidences": [],
                     "issues": issues_by_series.get(series_run_id, []) if series_run_id else [],
@@ -10234,6 +10239,10 @@ class CatalogStore:
             # files rather than the day the run itself appeared.
             if group["addedAt"] is None or row["created_at"] > group["addedAt"]:
                 group["addedAt"] = row["created_at"]
+            # And when its first comic was: Recently Added Runs means runs new
+            # to the library, not runs that gained an issue this week.
+            if group.get("firstAddedAt") is None or row["created_at"] < group["firstAddedAt"]:
+                group["firstAddedAt"] = row["created_at"]
             if publisher != "Publisher unknown":
                 group["publisher"] = publisher
             if year:
@@ -10363,7 +10372,7 @@ class CatalogStore:
                     "unowned": unowned, "missing": None,
                     "ownership": ownership,
                     "format": display_format, "updated": date, "time": clock,
-                    "addedAt": group["addedAt"],
+                    "addedAt": group["addedAt"], "firstAddedAt": group.get("firstAddedAt"),
                     "cover": run_covers[0] if run_covers else None,
                     "coverCandidates": run_covers,
                     "coverPreference": run_cover_preference,
