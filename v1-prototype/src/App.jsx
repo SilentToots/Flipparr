@@ -4981,7 +4981,7 @@ function ProfilesSettings({ catalog, onCatalogChanged }) {
     <SettingsCard title="Shared devices">
       <p className="settings-card-lead">A device you sign in on with your password asks &ldquo;Who&rsquo;s reading?&rdquo; from then on, like a Plex Home. A reader who signs in with their own password on their own phone gets only their profile.</p>
     </SettingsCard>
-    {editing ? <ProfileEditorModal user={editing} catalog={catalog} adminPassword={Boolean(security?.configured)} onClose={() => setEditing(null)}
+    {editing ? <ProfileEditorDrawer user={editing} catalog={catalog} adminPassword={Boolean(security?.configured)} onClose={() => setEditing(null)}
       onPictureChanged={async (updated) => { setEditing(updated); await load(); }}
       onSaved={async () => { setEditing(null); await load(); }} /> : null}
   </>;
@@ -5173,8 +5173,12 @@ function RatingReviewModal({ catalog, profiles, onClose, onSaved }) {
   </div>;
 }
 
-function ProfileEditorModal({ user, catalog, adminPassword, onClose, onSaved, onPictureChanged }) {
-  const dialogRef = useDialog(onClose);
+// A drawer, as a run's details are: a profile's settings are a long form,
+// and a centred modal outgrew an iPad's screen with Save below the fold.
+function ProfileEditorDrawer({ user, catalog, adminPassword, onClose, onSaved, onPictureChanged }) {
+  const { closing, requestClose } = useDrawerExit(onClose);
+  const dialogRef = useDialog(requestClose);
+  useSwipeToDismiss(dialogRef, requestClose);
   const creating = !user.id;
   const owner = user.id === 1;
   const [name, setName] = useState(user.name || "");
@@ -5233,8 +5237,8 @@ function ProfileEditorModal({ user, catalog, adminPassword, onClose, onSaved, on
   }
   // Grouped as Settings groups a section: a card for each thing the admin
   // decides about the profile, and the profile's actions at the foot.
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal profile-editor" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="profile-editor-title" onMouseDown={(event) => event.stopPropagation()}>
-    <DialogCloseButton onClose={onClose} label="Close profile" />
+  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer profile-editor ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="profile-editor-title" onMouseDown={(event) => event.stopPropagation()}>
+    <DialogCloseButton onClose={requestClose} label="Close profile" drawer />
     <span className="eyebrow">{creating ? "New profile" : owner ? "Admin" : "Reader"}</span>
     <h2 id="profile-editor-title">{creating ? "Add a profile" : user.name}</h2>
     <div className="profile-editor-cards">
@@ -5303,7 +5307,7 @@ function ProfileEditorModal({ user, catalog, adminPassword, onClose, onSaved, on
         </div>
       </form>
     </div>
-  </section></div>;
+  </aside></div>;
 }
 
 // A profile about itself: name, picture, what switching to it asks for; a

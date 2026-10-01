@@ -1043,7 +1043,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .request-job-panel > footer { display: block; padding: var(--space-10) var(--space-16); border-top: 1px solid var(--line); background: var(--surface); }
 
 .modal-backdrop, .drawer-backdrop { position: fixed; z-index: 70; inset: 0; background: var(--scrim-strong); display: grid; place-items: center; padding: var(--space-20); }
-.modal { width: min(620px, 100%); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-16); padding: var(--space-28); position: relative; box-shadow: 0 24px 90px var(--shadow-strong); }
+/* Never taller than the window it sits in: the backdrop is fixed, so a modal
+   that grew past it -- a reader's profile on an iPad -- was cut off with no
+   way to reach its foot. It scrolls inside instead; select menus are fixed
+   and are not clipped by it. */
+.modal { width: min(620px, 100%); max-height: calc(100dvh - var(--space-40)); overflow-y: auto; overscroll-behavior: contain; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-16); padding: var(--space-28); position: relative; box-shadow: 0 24px 90px var(--shadow-strong); }
 .modal-close { position: absolute; right: 18px; top: 18px; width: 34px; height: 34px; display: grid; place-items: center; }
 .modal h2 { margin: 0 0 var(--space-20); font-size: var(--text-2xl); }
 .request-empty { margin-top: var(--space-24); }
@@ -3998,6 +4002,14 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .profile-editor .settings-card .settings-card-lead, .profile-editor .settings-card .settings-card-note { margin: 0; }
 .profile-editor .toggle-row { min-height: 52px; padding: var(--space-4) 0; }
 .profile-editor .provider-modal-actions { margin-top: var(--space-4); }
+/* In a drawer (since 2026-09-30): the cards are raised off the drawer's own
+   surface, and Remove and Save are held at its foot, inside its inset. */
+.series-drawer.profile-editor { padding-bottom: 0; }
+.series-drawer.profile-editor .settings-card { background: var(--surface-raised); }
+.series-drawer.profile-editor .provider-modal-actions { position: sticky; bottom: 0; z-index: 2; margin: var(--space-4) calc(var(--space-28) * -1) 0; padding: var(--space-14) var(--space-28) calc(var(--space-14) + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); }
+@media (max-width: 640px) {
+  .series-drawer.profile-editor .provider-modal-actions { margin-inline: calc(var(--space-16) * -1); padding-inline: var(--space-16); }
+}
 
 /* A profile's picture fills its disc. */
 .profile-avatar { overflow: hidden; }

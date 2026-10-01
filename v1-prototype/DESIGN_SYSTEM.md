@@ -315,7 +315,11 @@ Motion tokens:
   under its name; a PIN or password is asked for on the same card. In
   Settings, the admin's Profiles list uses rows of avatar, name and a line of
   facts (`.profile-row`, the fill one step up from the card), and a profile is
-  edited in the standard modal. Who is reading is the header's avatar, which
+  edited in a drawer (since 2026-09-30; the centred modal outgrew an iPad's
+  screen): the series drawer's frame from the right, full width with Back on
+  a phone, its cards raised to `--surface-raised`, and Remove and Save held at
+  its foot. Every modal is bounded to the window too (`100dvh` less 40px)
+  and scrolls inside. Who is reading is the header's avatar, which
   opens Your profile; the sidebar's foot no longer repeats it (2026-09-29).
 - **Readers' requests** (since 2026-09-27) use the Pull List's card
   (`.request-card` with `.member-request`): cover, title, what was asked
