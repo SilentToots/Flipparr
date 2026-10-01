@@ -118,15 +118,39 @@ export function arcOwnerLine(list) {
 }
 
 /**
- * The arcs an issue can be added to: the ones this profile may change,
- * most recently changed first, each saying whether the issue is in it.
+ * The arcs issues can be added to: the ones this profile may change, most
+ * recently changed first, each saying whether it holds every one of them
+ * already (`has`) or some (`hasSome`).
  */
-export function arcsToAddTo(lists, issueId) {
-  const id = String(issueId ?? "");
+export function arcsToAddTo(lists, issueIds) {
+  const ids = (Array.isArray(issueIds) ? issueIds : [issueIds]).map((id) => String(id ?? ""));
   return (lists || []).filter((list) => list.editable)
-    .map((list) => ({ ...list, has: (list.issueIds || []).map(String).includes(id) }))
+    .map((list) => {
+      const held = new Set((list.issueIds || []).map(String));
+      const count = ids.filter((id) => held.has(id)).length;
+      return { ...list, has: ids.length > 0 && count === ids.length, hasSome: count > 0 && count < ids.length };
+    })
     .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
+
+/** An issue number as a number to compare, or null: "23.1" is 23.1, "Annual 1" is not a number. */
+export function issueNumberValue(number) {
+  const text = String(number ?? "").trim();
+  return /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : null;
+}
+
+/** The ids of the issues numbered from..to, both ends included, in the order given. */
+export function issuesInRange(issues, from, to) {
+  const low = issueNumberValue(from);
+  const high = issueNumberValue(to);
+  if (low === null || high === null) return [];
+  const [start, end] = low <= high ? [low, high] : [high, low];
+  return (issues || []).filter((issue) => {
+    const value = issueNumberValue(issue.number);
+    return value !== null && value >= start && value <= end;
+  }).map((issue) => String(issue.id));
+}
+
 
 /** An order with one id moved to the top or the bottom. */
 export function moveToEdge(order, id, edge) {

@@ -55,7 +55,7 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
-import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate } from "./reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate, issuesInRange } from "./reading-list.js";
 import { jobsNeedingAttention } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel, sourceOrder, sourceRows, groupServices } from "./pull-list.js";
@@ -1664,6 +1664,24 @@ function CollectionsTab({ cards, admin, onOpen, onNew }) {
 }
 
 /**
+ * Story arcs -- reading orders across runs -- with a way to make one, as the
+ * Collections tab has. Any profile makes its own; the admin also imports.
+ */
+function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew, onImport }) {
+  if (loading) return <LibraryLoadingSkeleton view="grid" />;
+  const tools = <>
+    <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onNew}><Plus size={17} /> New story arc</button>
+    {admin ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> Import a story arc</button> : null}
+  </>;
+  return lists.length ? <>
+    <div className="arc-tools">{tools}</div>
+    <ArcGrid lists={lists} reading={reading} onOpen={onOpen} onRead={onRead} />
+  </> : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong>
+    <span>A story arc is a reading order across runs: a crossover, or your own path through a character. Make one, then add issues from any run.</span>
+    {tools}</div>;
+}
+
+/**
  * What this profile added to read: runs, story arcs and collections, newest
  * first, each with a way off the list. In-progress reading is Keep Reading's.
  */
@@ -1817,20 +1835,23 @@ function RunCollectionDrawer({ card, admin, readingVersion, readingList = EMPTY_
  * only makes a new, empty arc. Komga's and Spotify's add-to-list pattern: the
  * issue goes on the end, and the order is fine-tuned in the arc.
  */
-function ArcPickerModal({ issue = null, issueName = "", onClose, onAdded, onCreated }) {
+function ArcPickerModal({ issues = null, issueName = "", onClose, onAdded, onCreated }) {
+  const issue = issues?.length ? issues : null;
+  const picking = Boolean(issue);
+  const issueIds = (issues || []).map((item) => String(item.id));
   const dialogRef = useDialog(onClose);
   const [lists, setLists] = useState(() => lastAnswer("/api/v1/reading-lists")?.lists ?? null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
-    if (!issue) return undefined;
+    if (!picking) return undefined;
     let live = true;
     apiRequest("/api/v1/reading-lists").then((answer) => { if (live) setLists(answer.lists || []); })
       .catch((failure) => { if (live) { setLists((current) => current || []); setError(failure.message); } });
     return () => { live = false; };
-  }, [issue]);
-  const choices = issue ? arcsToAddTo(lists, issue.id) : [];
+  }, [picking]);
+  const choices = issue ? arcsToAddTo(lists, issueIds) : [];
   async function act(kind, work) {
     if (busy) return;
     setBusy(kind);
@@ -1839,26 +1860,26 @@ function ArcPickerModal({ issue = null, issueName = "", onClose, onAdded, onCrea
   }
   const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const addTo = (list) => act(list.id, async () => {
-    const result = await apiRequest(`/api/v1/reading-lists/${list.id}/items`, json({ issueIds: [issue.id] }));
+    const result = await apiRequest(`/api/v1/reading-lists/${list.id}/items`, json({ issueIds }));
     onAdded(result);
   });
   const create = (event) => {
     event.preventDefault();
     if (!name.trim()) return;
-    act("new", async () => onCreated(await apiRequest("/api/v1/reading-lists/manual", json({ name: name.trim(), issueIds: issue ? [issue.id] : [] }))));
+    act("new", async () => onCreated(await apiRequest("/api/v1/reading-lists/manual", json({ name: name.trim(), issueIds }))));
   };
   return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}>
     <section className="modal arc-picker" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="arc-picker-title" onMouseDown={(event) => event.stopPropagation()}>
       <DialogCloseButton onClose={onClose} label="Close" />
       <span className="eyebrow">Story arcs</span>
       <h2 id="arc-picker-title">{issue ? "Add to story arc" : "New story arc"}</h2>
-      {issue ? <p className="settings-card-note">{issueName} goes on the end of the arc you choose; drag it into place there.</p>
+      {issue ? <p className="settings-card-note">{issueIds.length > 1 ? `${issueName} go on the end of the arc you choose, in their run's order; drag them into place there.` : `${issueName} goes on the end of the arc you choose; drag it into place there.`}</p>
         : <p className="settings-card-note">Your own reading order across runs. Add issues from any issue&rsquo;s menu, then drag them into order. Only you see it until you share it.</p>}
       {issue ? (lists === null ? <div className="arc-picker-loading" role="status"><LoadingSpinner size={18} /> Finding your story arcs</div>
         : choices.length ? <div className="arc-picker-list">{choices.map((list) => <button type="button" className="arc-picker-row" key={list.id}
           disabled={list.has || Boolean(busy)} aria-busy={busy === list.id || undefined} onClick={() => addTo(list)}>
           <span className="rating-review-cover"><DiscoverCover src={list.cover} alt="" glyph={16} /></span>
-          <span><strong>{list.name}</strong><small>{[`${list.issueCount} issue${list.issueCount === 1 ? "" : "s"}`, arcOwnerLine(list)].filter(Boolean).join(" \u00b7 ")}</small></span>
+          <span><strong>{list.name}</strong><small>{[`${list.issueCount} issue${list.issueCount === 1 ? "" : "s"}`, arcOwnerLine(list), list.hasSome ? "some already in it" : null].filter(Boolean).join(" \u00b7 ")}</small></span>
           {list.has ? <span className="arc-picker-state"><Check size={16} weight="bold" /> Added</span> : busy === list.id ? <LoadingSpinner size={16} /> : <Plus size={18} />}
         </button>)}</div>
         : <p className="arc-picker-empty">No story arcs of your own yet. Name one below to start it with this issue.</p>) : null}
@@ -1873,6 +1894,122 @@ function ArcPickerModal({ issue = null, issueName = "", onClose, onAdded, onCrea
           </button>
         </div>
       </form>
+    </section>
+  </div>;
+}
+
+/**
+ * "Add issues" from inside an arc -- Spotify's empty playlist that asks what
+ * to put in it: find a run, tick its issues (or a range of numbers), add
+ * them, and go on to another run without leaving. Owned and missing issues
+ * alike; those already in the arc are ticked and fixed. They go on the end
+ * in the run's order, to drag into place after.
+ */
+function ArcIssuePickerModal({ list, series, onClose, onAdded }) {
+  const dialogRef = useDialog(onClose);
+  const runs = useMemo(() => ratingRows((series || []).filter((run) => (run.issues || []).length)), [series]);
+  const runsById = useMemo(() => new Map((series || []).map((run) => [String(run.id), run])), [series]);
+  const [query, setQuery] = useState("");
+  const [runId, setRunId] = useState(null);
+  const [inArc, setInArc] = useState(() => new Set());
+  const [selected, setSelected] = useState(() => new Set());
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const [arcName, setArcName] = useState(list.name);
+  useEffect(() => {
+    let live = true;
+    apiRequest(`/api/v1/reading-lists/${list.id}`).then((detail) => {
+      if (!live) return;
+      setInArc(new Set(detail.items.map((item) => String(item.issueId)).filter((id) => id !== "null")));
+      setArcName(detail.name);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [list.id]);
+  const run = runId ? runsById.get(runId) : null;
+  const issues = run?.issues || [];
+  const choosable = issues.filter((issue) => !inArc.has(String(issue.id)));
+  const allChosen = choosable.length > 0 && choosable.every((issue) => selected.has(String(issue.id)));
+  const shownRuns = filterRatingRows(runs, { show: "all", query });
+  function toggle(id) {
+    setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
+  function chooseRun(id) { setRunId(id); setSelected(new Set()); setRange({ from: "", to: "" }); setStatus(""); setError(""); }
+  function selectRange(event) {
+    event.preventDefault();
+    const ids = issuesInRange(choosable, range.from, range.to);
+    setSelected((current) => new Set([...current, ...ids]));
+    setStatus(ids.length ? "" : `No issues numbered ${range.from} to ${range.to} to add`);
+  }
+  async function add() {
+    if (!selected.size || busy) return;
+    setBusy(true); setError(""); setStatus("");
+    // In the run's order, whatever order they were ticked in.
+    const ids = issues.map((issue) => String(issue.id)).filter((id) => selected.has(id));
+    try {
+      const result = await apiRequest(`/api/v1/reading-lists/${list.id}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ issueIds: ids }) });
+      setInArc(new Set(result.items.map((item) => String(item.issueId))));
+      setSelected(new Set());
+      const count = result.added?.length || 0;
+      setStatus(`${count} issue${count === 1 ? "" : "s"} added to ${result.name}`);
+      onAdded?.(result);
+    } catch (failure) { setError(failure.message); }
+    setBusy(false);
+  }
+  const runLabel = run ? `${run.title}${/^\d{4}$/.test(String(run.year)) ? ` (${run.year})` : ""}` : "";
+  return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}>
+    <section className="modal rating-review arc-issue-picker" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="arc-issue-picker-title" onMouseDown={(event) => event.stopPropagation()}>
+      <DialogCloseButton onClose={onClose} label="Close" />
+      <span className="eyebrow">Add issues</span>
+      <h2 id="arc-issue-picker-title">{arcName}</h2>
+      {!run ? <>
+        <label className="form-field rating-review-search"><span className="sr-only">Find a run</span>
+          <input type="search" value={query} autoFocus onChange={(event) => setQuery(event.target.value)} placeholder="Find a run" /></label>
+        {shownRuns.length ? <div className="arc-picker-list">{shownRuns.map((row) => {
+          const item = runsById.get(row.id);
+          const count = item?.issues?.length || 0;
+          const here = (item?.issues || []).filter((issue) => inArc.has(String(issue.id))).length;
+          return <button type="button" className="arc-picker-row" key={row.id} onClick={() => chooseRun(row.id)}>
+            <span className="rating-review-cover"><CoverArt id={row.id} title={row.title} cover={row.cover} coverCandidates={row.coverCandidates} decorative placeholderSize={16} /></span>
+            <span><strong>{row.title}{row.year ? ` (${row.year})` : ""}</strong>
+              <small>{[`${count} issue${count === 1 ? "" : "s"}`, here ? `${here} in this arc` : null, row.publisher].filter(Boolean).join(" \u00b7 ")}</small></span>
+            <CaretRight size={16} />
+          </button>;
+        })}</div> : <p className="rating-review-empty">No runs match.</p>}
+      </> : <>
+        <button type="button" className="ghost-button arc-issue-picker-back" onClick={() => chooseRun(null)}><ArrowLeft size={16} /> All runs</button>
+        <h3 className="arc-issue-picker-run">{runLabel}</h3>
+        <form className="arc-issue-range" onSubmit={selectRange}>
+          <label className="form-field"><span>From #</span><input inputMode="decimal" value={range.from} onChange={(event) => setRange({ ...range, from: event.target.value })} /></label>
+          <label className="form-field"><span>To #</span><input inputMode="decimal" value={range.to} onChange={(event) => setRange({ ...range, to: event.target.value })} /></label>
+          <button type="submit" className="secondary-button" disabled={!range.from.trim() || !range.to.trim()}>Select</button>
+        </form>
+        <label className="check-row rating-review-all">
+          <input type="checkbox" checked={allChosen} disabled={!choosable.length}
+            onChange={() => setSelected(allChosen ? new Set() : new Set(choosable.map((issue) => String(issue.id))))} />
+          <span><strong>{allChosen ? "Clear all" : "Select all"}</strong><small>{issues.length} issue{issues.length === 1 ? "" : "s"}{issues.length - choosable.length ? ` \u00b7 ${issues.length - choosable.length} in this arc` : ""}</small></span>
+        </label>
+        <ul className="rating-review-list">{issues.map((issue) => {
+          const id = String(issue.id);
+          const member = inArc.has(id);
+          const owned = issue.ownership && issue.ownership !== "unowned";
+          return <li key={id}><label className="rating-review-row">
+            <input type="checkbox" checked={member || selected.has(id)} disabled={member} onChange={() => toggle(id)} />
+            <span className="rating-review-cover"><DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={16} /></span>
+            <span><strong>{issueLabel(issue.number, run.medium)}{issue.title && identityKey(issue.title) !== identityKey(`Issue ${issue.number}`) ? ` \u00b7 ${issue.title}` : ""}</strong>
+              <small>{[formatLongDate(issue.publicationDate), member ? "In this arc" : owned ? "In library" : "Missing"].filter(Boolean).join(" \u00b7 ")}</small></span>
+          </label></li>;
+        })}</ul>
+      </>}
+      {error ? <p className="workbench-error" role="alert">{error}</p> : null}
+      <p className="arc-issue-picker-status" role="status">{status}</p>
+      <div className="rating-review-actions">
+        <span>{run ? `${selected.size} selected` : "Choose a run"}</span>
+        {run ? <button type="button" className="primary-button" onClick={add} disabled={busy || !selected.size} aria-busy={busy || undefined}>
+          {busy ? <LoadingSpinner size={18} /> : <Plus size={18} />} Add {selected.size || ""} issue{selected.size === 1 ? "" : "s"}
+        </button> : <button type="button" className="secondary-button" onClick={onClose}>Done</button>}
+      </div>
     </section>
   </div>;
 }
@@ -2432,7 +2569,7 @@ function useReadingLists(version) {
 // Comics' tabs, as Plex and Komga have them. Recommended is the page's home.
 const COMICS_TABS = [
   { id: "recommended", label: "Recommended" }, { id: "all", label: "Library" }, { id: "collections", label: "Collections" },
-  { id: "reading", label: "Reading list" },
+  { id: "arcs", label: "Story arcs" }, { id: "reading", label: "Reading list" },
 ];
 
 function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleReadingList, onNavigate, onOpenSeries, onOpenCollection, onOpenRunCollection, onNewRunCollection, onOpenList, onImportList, onNewArc, onSearch, onRead, readingVersion, listsVersion = 0, catalog, backendStatus }) {
@@ -2466,20 +2603,16 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
   // Nothing is drawn until what decides its order is in: the catalog, and
   // for Recent and In progress the reading map as well.
   const initialLoading = (backendStatus === "loading" && !catalog) || (runReading === null && (sort === "recent" || inProgressOnly))
-    || (readingLists === null && (scope === "arcs" || groupArcRuns));
+    || (readingLists === null && groupArcRuns);
   // The server has always reported this; nothing read it, so arriving during a
   // scan showed the "no comics yet" empty state on a library that was filling.
   const activeScan = catalog?.activeScan || null;
   const editionsOn = Boolean(catalog?.collectedEditionsEnabled);
-  // The Story arcs scope appears once there is an arc to show; the admin's
-  // way to make one is Discover, so an empty scope would be a dead end.
-  // Every profile can make its own arcs, so the scope is there for each.
-  const arcsOn = true;
-  const effectiveScope = (scope === "families" && !editionsOn) || (scope === "arcs" && !arcsOn) ? "runs" : scope;
+  // Story arcs are a tab of their own, as Collections are.
+  const effectiveScope = scope === "families" && editionsOn ? "families" : "runs";
   const scopeItems = [
     { id: "runs", label: "Runs", icon: <ListBullets size={17} /> },
     ...(editionsOn ? [{ id: "families", label: "Series families", icon: <Books size={17} /> }] : []),
-    ...(arcsOn ? [{ id: "arcs", label: "Story arcs", icon: <ListNumbers size={17} /> }] : []),
   ];
   const scopedSeries = useMemo(() => editionsOn ? series : series.filter((item) => !item.isCollectionSeries), [editionsOn, series]);
   // A run kept only for a story arc -- not followed, every owned issue an
@@ -2515,15 +2648,8 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
     const matching = searching ? families.filter((family) => String(family.name || "").toLowerCase().includes(needle)) : families;
     return sortLibrary(matching, sort);
   }, [families, sort, searching, queryParts]);
-  // Arcs: the same In progress filter, search and sort as runs, over the
-  // arc's own reading map. Following does not apply -- an arc is not
-  // monitored, its runs are.
-  const displayedLists = useMemo(() => {
-    let items = (readingLists || []).map(listCard);
-    if (inProgressOnly) items = items.filter((item) => inProgress(listReading?.[String(item.id)]));
-    if (searching) items = items.filter((item) => arcMatches(item, queryParts.title));
-    return sortLibrary(items, sort, listReading);
-  }, [readingLists, inProgressOnly, listReading, searching, queryParts, sort]);
+  // The Story arcs tab: the library's sort, over each arc's own reading map.
+  const displayedLists = useMemo(() => sortLibrary((readingLists || []).map(listCard), sort, listReading), [readingLists, sort, listReading]);
   return (
     <>
       {/* No field of its own: searching the library is search's, from the
@@ -2559,7 +2685,9 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
         }), sort === "title" ? "title" : "added")} reading={runReading || {}} listReading={listReading || {}} loading={readingList === null || readingLists === null}
         onOpen={(item) => item.kind === "collection" ? onOpenRunCollection(item) : item.kind === "arc" ? onOpenList({ ...item, id: item.listId }) : onOpenSeries(item)}
         onRead={onRead} onRemove={(kind, id) => onToggleReadingList?.(kind, id, false)} onBrowse={() => onTab?.("all")} /> : null}
-      {!showLibrary && tab !== "collections" && tab !== "reading" ? <RecommendedView series={series} catalog={catalog} backendStatus={backendStatus} readingVersion={readingVersion}
+      {!showLibrary && tab === "arcs" ? <ArcsTab lists={displayedLists} reading={listReading} loading={readingLists === null} admin={libraryAdmin}
+        onOpen={onOpenList} onRead={onRead} onNew={onNewArc} onImport={onImportList} /> : null}
+      {!showLibrary && tab !== "collections" && tab !== "reading" && tab !== "arcs" ? <RecommendedView series={series} catalog={catalog} backendStatus={backendStatus} readingVersion={readingVersion}
         onOpenSeries={onOpenSeries} onRead={onRead} onAdd={() => onNavigate("import")}
         // Sorted Recent, not filtered to In progress: what you are reading
         // rises to the top, and no filter is left behind to hide a later search.
@@ -2570,17 +2698,7 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
       {!initialLoading && activeScan && !series.length ? <LibraryLoadingSkeleton scan={activeScan} view={view} /> : null}
       {!initialLoading && !(activeScan && !series.length) ? <>
       {backendStatus === "offline" ? <div className="backend-banner"><WarningCircle size={19} weight="fill" /> Showing sample comics because your library is unavailable.</div> : null}
-      {effectiveScope === "arcs" ? <>
-        {(readingLists?.length || 0) > 0 ? <div className="arc-tools">
-          {onNewArc ? <button type="button" className="glass-button" onClick={onNewArc}><Plus size={17} /> New story arc</button> : null}
-          {libraryAdmin ? <button type="button" className="glass-button" onClick={onImportList}><UploadSimple size={17} /> Import a story arc</button> : null}
-        </div> : null}
-        {displayedLists.length ? <ArcGrid lists={displayedLists} reading={listReading} onOpen={onOpenList} onRead={onRead} />
-        : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No story arcs match “{query.trim()}”</strong><span>Try the arc's name, or a series in it.</span></div>
-        : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>No story arcs in progress</strong><span>Start one and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all story arcs</button></div>
-        : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong><span>A story arc is a reading order across runs. Make your own and add issues from any issue&rsquo;s menu{libraryAdmin ? ", save one from Discover, or import a CBL reading list file" : ""}.</span>{onNewArc ? <button className="ghost-button" onClick={onNewArc}><Plus size={17} /> New story arc</button> : null}{libraryAdmin ? <button className="ghost-button" onClick={onImportList}><UploadSimple size={17} /> Import a story arc</button> : null}{can(libraryViewer, "discover.search") ? <button className="ghost-button" onClick={() => onSearch("")}>Find one in Discover</button> : null}</div>}
-      </>
-      : effectiveScope === "families" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : gridItems.length ? <SeriesList series={gridItems} onOpen={(item) => item.kind === "collection" ? onOpenRunCollection(item) : item.kind === "arc" ? onOpenList({ ...item, id: item.listId }) : item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={gridReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>{can(libraryViewer, "discover.search") ? "The comic catalogs may have it." : "Try another title or creator."}</span>{can(libraryViewer, "discover.search") ? <button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button> : null}</div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>{libraryAdmin ? "Open any run and choose Follow run to monitor future issues." : "Open any run and choose Request follow to ask for its new issues."}</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
+      {effectiveScope === "families" ? (sortedFamilies.length ? <CollectionGroups families={sortedFamilies} onOpenCollection={onOpenCollection} /> : <CollectionEmpty query={query.trim()} />) : gridItems.length ? <SeriesList series={gridItems} onOpen={(item) => item.kind === "collection" ? onOpenRunCollection(item) : item.kind === "arc" ? onOpenList({ ...item, id: item.listId }) : item.isCollectionSeries && editionsOn ? onOpenCollection(item.collection) : onOpenSeries(item)} onRead={onRead} reading={gridReading} view={view} /> : searching ? <div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>No comics match “{query.trim()}”</strong><span>{can(libraryViewer, "discover.search") ? "The comic catalogs may have it." : "Try another title or creator."}</span>{can(libraryViewer, "discover.search") ? <button className="ghost-button" onClick={() => onSearch(query)}>Search the catalogs</button> : null}</div> : inProgressOnly ? <div className="empty-state"><BookOpen size={35} weight="duotone" /><strong>Nothing in progress</strong><span>Start a run and it shows up here.</span><button className="ghost-button" onClick={() => setInProgressOnly(false)}>Show all runs</button></div> : followingOnly ? <div className="empty-state"><CheckCircle size={35} weight="duotone" /><strong>No followed runs</strong><span>{libraryAdmin ? "Open any run and choose Follow run to monitor future issues." : "Open any run and choose Request follow to ask for its new issues."}</span><button className="ghost-button" onClick={() => setFollowingOnly(false)}>Show all runs</button></div> : <CatalogEmpty onAdd={() => onNavigate("import")} />}
       </> : null}
       </> : null}
       </div>
@@ -6729,10 +6847,25 @@ function RunMenu({ runRead, runStarted, onMarkRun }) {
   </>;
 }
 
-function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, runRead = false, runStarted = false, readingFiles, medium }) {
+function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, onAddIssuesToArc, empty = null, runRead = false, runStarted = false, readingFiles, medium }) {
   // Covers are why the tab exists, so posters lead. A long run is also less
   // scrolling this way than as tall rows: four across beats one down.
   const [view, setView] = useState("grid");
+  // Select (Komga's and Kavita's pattern): tick many issues, then add them
+  // to a story arc at once. A tap toggles instead of reading.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const selectable = onAddIssuesToArc ? (issues || []).filter((issue) => /^\d+$/.test(String(issue.id))) : [];
+  function endSelecting() { setSelecting(false); setSelected(new Set()); }
+  function toggleSelected(id) {
+    setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
+  const selectToggle = (issue) => selecting && /^\d+$/.test(String(issue.id))
+    ? <button type="button" className={`issue-select-toggle${selected.has(String(issue.id)) ? " selected" : ""}`} aria-pressed={selected.has(String(issue.id))}
+      aria-label={`Select ${issueLabel(issue.number, medium)}`} onClick={() => toggleSelected(String(issue.id))}>
+      <span className="issue-select-check" aria-hidden="true">{selected.has(String(issue.id)) ? <Check size={14} weight="bold" /> : null}</span>
+    </button> : null;
+  if (!issues?.length && empty) return empty;
   if (!issues?.length) return <div className="drawer-empty"><BookOpen size={26} weight="duotone" /><strong>No issue list linked yet</strong><span>Flipparr will add series runs and their issues automatically when a match is found.</span></div>;
   const groups = [];
   const byRun = new Map();
@@ -6757,11 +6890,12 @@ function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, on
   // The Comics tools row's switch, so grid or list reads the same everywhere.
   const viewToggle = <GlassSegmented label="Choose issue view" value={view} onChange={setView} className="issue-view-toggle"
     items={[{ id: "grid", title: "Grid view", icon: <GridViewIcon /> }, { id: "list", title: "List view", icon: <ListViewIcon /> }]} />;
-  return <div className={`grouped-issue-inventory ${view}`}>
+  const allSelected = selectable.length > 0 && selectable.every((issue) => selected.has(String(issue.id)));
+  return <div className={`grouped-issue-inventory ${view}${selecting ? " selecting" : ""}`}>
     {groups.map((group, groupIndex) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
     return <section className="issue-run-group" key={group.key}>
-      <header><div><span>{group.type === "specials" ? "Special / one-shot" : group.type === "arc" ? "Story arc" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && onMarkRun && readingFiles ? <RunMenu runRead={runRead} runStarted={runStarted} onMarkRun={onMarkRun} /> : null}</div></header>
+      <header><div><span>{group.type === "specials" ? "Special / one-shot" : group.type === "arc" ? "Story arc" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && (selectable.length || (onMarkRun && readingFiles)) ? <span className="issue-run-group-tools">{selectable.length ? <button type="button" className="glass-button issue-select-button" aria-pressed={selecting} onClick={() => (selecting ? endSelecting() : setSelecting(true))}>{selecting ? "Cancel" : "Select"}</button> : null}{onMarkRun && readingFiles && !selecting ? <RunMenu runRead={runRead} runStarted={runStarted} onMarkRun={onMarkRun} /> : null}</span> : null}</div></header>
       <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
         // "Volume 5" under "Vol. 5" says it twice.
         const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
@@ -6782,6 +6916,7 @@ function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, on
           // A missing issue keeps its tile, dimmed, so a gap in a run is
           // visible rather than silently absent from the grid.
           return <article className={`issue-tile ${owned ? "" : "unowned"}`} key={issue.id}>
+            {selectToggle(issue)}
             {/* The badge sits over the cover, beside it rather than inside it,
                 so a missing issue's dimmed cover does not dim its badge too. */}
             <span className="issue-tile-art">
@@ -6801,10 +6936,17 @@ function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, on
             {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
           </article>;
         }
-        return <article key={issue.id}><span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions">{!stateLabel && readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}<IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-row-menu" /></div></article>;
+        return <article key={issue.id}>{selectToggle(issue)}<span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions">{!stateLabel && readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}<IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-row-menu" /></div></article>;
       })}</div>
     </section>;
-  })}</div>;
+  })}
+    {selecting ? <div className="issue-select-bar" role="toolbar" aria-label="Selected issues">
+      <span className="issue-select-count"><strong role="status">{selected.size} selected</strong>
+        <button type="button" onClick={() => setSelected(allSelected ? new Set() : new Set(selectable.map((issue) => String(issue.id))))}>{allSelected ? "Clear all" : "Select all"}</button></span>
+      <button type="button" className="primary-button" disabled={!selected.size}
+        onClick={() => { onAddIssuesToArc(selectable.filter((issue) => selected.has(String(issue.id)))); endSelecting(); }}><ListNumbers size={17} /> Add to story arc</button>
+    </div> : null}
+  </div>;
 }
 
 function VolumeInventory({ editions }) {
@@ -7363,7 +7505,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   coverBusy = false, coverError = "", onSelectSeriesCover, onUploadSeriesCover,
   backdropBusy = false, backdropError = "", onSaveBackdrop, onSetDirection, onRate, onRateIssue, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0, requested = false, onSetAgeRating,
   runCollections = [], onOpenRunCollection, onToggleRunCollection, onCreateRunCollection,
-  readingList = EMPTY_ENTRIES, onToggleReadingList, onAddToArc }) {
+  readingList = EMPTY_ENTRIES, onToggleReadingList, onAddToArc, onAddIssuesToArc }) {
   const admin = isAdmin(useViewer());
   const inCollections = collectionsFor(series.id, runCollections);
   const { closing, requestClose } = useDrawerExit(onClose);
@@ -7617,7 +7759,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
         {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
         {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
       </> : null}
-      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} onAddToArc={onAddToArc} onMarkRun={onMarkRun ? (read) => onMarkRun(series, read) : undefined} runRead={runAllRead} runStarted={runStarted} readingFiles={readingFiles} medium={series.medium} /> : null}
+      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} onAddToArc={onAddToArc} onAddIssuesToArc={onAddIssuesToArc ? (chosen) => onAddIssuesToArc(chosen, series.title) : undefined} onMarkRun={onMarkRun ? (read) => onMarkRun(series, read) : undefined} runRead={runAllRead} runStarted={runStarted} readingFiles={readingFiles} medium={series.medium} /> : null}
       {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
       {tab === "files" ? <FileInventory files={series.fileDetails} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
       {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
@@ -7847,7 +7989,7 @@ function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
 // take some out, refresh it from where it came, pull what is missing, or
 // delete it.
 function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingList = EMPTY_ENTRIES, onToggleReadingList, onClose, onRead, onOpenSeries, onMarkIssue, onRateIssue, onEditIssue,
-  onPullMissing, onRequestMissing, onRefresh, onDelete, onMark, onChanged, onAddToArc, onGone,
+  onPullMissing, onRequestMissing, onRefresh, onDelete, onMark, onChanged, onAddToArc, onGone, onAddIssues,
   onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
@@ -8148,6 +8290,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
       </div> : detail.state !== "error" ? <>
         <div className="comic-drawer-actions">
           {data ? <ReadRunButton reading={data} title={name} medium="comic" onRead={(target) => onRead({ ...target, ...context })} /> : null}
+          {canEdit && onAddIssues ? <button type="button" className="glass-button comic-drawer-add" onClick={() => onAddIssues(data)}><Plus size={18} /> Add issues</button> : null}
         </div>
         {/* The labels come from the card and do not change when the detail
             lands, so nothing settles under the glass pill once it is placed. */}
@@ -8159,12 +8302,13 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
           </div> : null}
           {data && tab === "overview" ? <>
             {data.description ? <RunSynopsis text={data.description} source={data.source === "cbl" ? (data.sourceName || "the reading list") : "Metron"} /> : null}
-            {!items.length ? <div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>Open a run, choose an issue&rsquo;s menu, and Add to story arc. Each one goes on the end; drag them into order in Edit.</span></div> : null}
+            {!items.length ? <div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run, owned or missing. Each goes on the end; drag them into order in Edit." : "Its issues show up here once they are added."}</span></div> : null}
             <ComicDrawerRow title="Reading order" count={issues.length}>{issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium="comic" onOpen={() => setTab("issues")} onRead={onRead ? (target) => onRead({ ...target, ...context }) : undefined} readingFiles={readingFiles} key={issue.id} />)}</ComicDrawerRow>
             {runsInArc.length && onOpenSeries ? <ComicDrawerRow title="Runs in this arc" count={runsInArc.length}>{runsInArc.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries(item)} key={run.id} />)}</ComicDrawerRow> : null}
           </> : null}
           {data && tab === "issues" ? <GroupedIssueInventory issues={issues} onEditIssue={admin ? (issue) => (issue.runId ? onEditIssue?.(issue) : undefined) : undefined}
             onRead={onRead ? (target) => onRead({ ...target, ...context }) : undefined} onRate={onRateIssue} onMark={onMarkIssue} onAddToArc={onAddToArc}
+            empty={<div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run to start its reading order." : "Its issues show up here once they are added."}</span></div>}
             onMarkRun={onMark ? (read) => run("mark", () => onMark(list, read)) : undefined} runRead={allRead} runStarted={started} readingFiles={readingFiles} medium="comic" /> : null}
           {data && tab === "files" ? <FileInventory files={files} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
           {data && tab === "advanced" ? advanced : null}
@@ -9948,7 +10092,7 @@ function usePhoneWidth() {
 
 // Comics' tabs after Recommended, which is plain /library: Plex and Komga
 // open a library on its home, and so does a tap on Comics.
-const LIBRARY_TABS = ["all", "collections", "reading"];
+const LIBRARY_TABS = ["all", "collections", "arcs", "reading"];
 
 function locationForState({ active, settingsSection, libraryTab, searchQuery, seriesId, readFileId }) {
   let path = ROUTE_BY_VIEW[active] || ROUTE_BY_VIEW.library;
@@ -10136,8 +10280,11 @@ export function App() {
   // ends, the next one is the arc's next, across runs.
   const [readingList, setReadingList] = useState(null);
   const [importingList, setImportingList] = useState(false);
-  // "Add to story arc…": { issue, name } from an issue's menu, or { issue: null } for a new arc.
+  // "Add to story arc…": { issues, name } from an issue's menu or a run's
+  // selection, or { issues: null } for a new arc.
   const [arcPicker, setArcPicker] = useState(null);
+  // "Add issues" inside an arc: the arc it adds to.
+  const [issuePickerList, setIssuePickerList] = useState(null);
   const [seriesParentCollection, setSeriesParentCollection] = useState(null);
   const [collectionTab, setCollectionTab] = useState("overview");
   const [scanState, setScanState] = useState("idle");
@@ -10545,7 +10692,11 @@ export function App() {
     }
   }
   function addIssueToArc(issue) {
-    setArcPicker({ issue: { id: String(issue.id) }, name: `${issue.seriesTitle || issue.contextLabel || "Issue"} #${issue.number}` });
+    setArcPicker({ issues: [{ id: String(issue.id) }], name: `${issue.seriesTitle || issue.contextLabel || "Issue"} #${issue.number}` });
+  }
+  function addIssuesToArc(issues, runTitle) {
+    if (issues.length === 1) { addIssueToArc({ ...issues[0], seriesTitle: issues[0].seriesTitle || runTitle }); return; }
+    setArcPicker({ issues: issues.map((issue) => ({ id: String(issue.id) })), name: `${issues.length} issues of ${runTitle}` });
   }
   function arcGone(message) {
     setSelectedList(null);
@@ -11778,9 +11929,22 @@ export function App() {
   if (setupOutstanding) {
     return <SetupView catalog={catalog} onFinish={finishSetup} />;
   }
-  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "profile" ? <ProfileView onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{active === "library" ? <LibraryView readingList={readingListEntries} onToggleReadingList={toggleReadingList} onOpenRunCollection={(card) => setRunCollectionId(String(card.id))} onNewRunCollection={() => setNewCollectionOpen(true)} tab={libraryTab} onTab={(next) => { setLibraryTab(next); window.scrollTo({ top: 0 }); }} onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onOpenList={openList} onImportList={() => setImportingList(true)} onNewArc={() => setArcPicker({ issue: null, name: "" })} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} listsVersion={listsVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" && !can(authStatus?.viewer, "nav.discover") ? <><PageHeader title="Discover" /><div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>Discover is off for this profile</strong><span>New comics come through the admin.</span></div></> : null}{active === "search" || (active === "discover" && can(authStatus?.viewer, "nav.discover")) ? <DiscoverView key={active} mode={active} query={viewQuery} draft={searchDraft} onDraft={setSearchDraft} onLeaveSearch={leaveSearch} runCollections={runCollectionList} onOpenRunCollection={(card) => setRunCollectionId(String(card.id))} onOpenList={openList} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} onPullArc={pullStoryArc} onSaveArc={saveStoryArc} onReadArc={readComic} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? (viewerIsAdmin ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} onDecide={decideMemberRequest} /> : <MyRequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onDecide={decideMemberRequest} />) : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} onCatalogChanged={loadCatalog} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); setReadingList(null); }} /> : null}{finished ? <FinishDrawer key={readFileId} fileId={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} list={readingList} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{runCollectionCard ? <RunCollectionDrawer readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={runCollectionCard.id} card={runCollectionCard} admin={viewerIsAdmin} readingVersion={readingVersion} onClose={() => setRunCollectionId(null)} onOpenSeries={openSeries} onRead={readComic} onSave={saveRunCollection} onDelete={deleteRunCollection} onAddRuns={() => setCollectionPickerId(runCollectionCard.id)} /> : null}{newCollectionOpen ? <NewCollectionModal onClose={() => setNewCollectionOpen(false)} onCreate={createRunCollection} /> : null}{collectionPickerCard ? <RunPickerModal title={`Add to ${collectionPickerCard.name}`} series={visibleSeries} already={collectionPickerCard.runIds} onClose={() => setCollectionPickerId(null)} onAdd={(ids) => addRunsToCollection(collectionPickerCard.id, ids)} /> : null}{selectedSeries ? <SeriesDrawer onAddToArc={addIssueToArc} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} runCollections={runCollectionList} onOpenRunCollection={(card) => { setSelectedSeries(null); setRunCollectionId(String(card.id)); }} onToggleRunCollection={(id, runId, on) => saveRunCollection(id, on ? { add: [runId] } : { remove: [runId] })} onCreateRunCollection={(name, runId) => createRunCollection({ name, seriesIds: [runId] }, { open: false })} key={selectedSeries.id} readingVersion={readingVersion} onMarkIssue={markIssueRead} onMarkRun={markRunRead} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onSetAgeRating={setSeriesAgeRating} onRequest={() => createAcquisitionRequest(selectedSeries)} requested={waitingKeys(catalog?.memberRequests).has(`run:${selectedSeries.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} requested={waitingKeys(catalog?.memberRequests).has(`collection:${selectedCollection.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{importingList ? <ImportReadingListModal onClose={() => setImportingList(false)} onImported={(result) => { setImportingList(false); setListsVersion((version) => version + 1); if (!result.existed) showToast(`${result.name} imported · ${result.owned} of ${result.issueCount} in your library`); openList({ id: result.id, name: result.name, cover: result.cover, issueCount: result.issueCount, owned: result.owned, missing: result.missing, seriesTitles: (result.series || []).map((group) => group.title) }); }} /> : null}{arcPicker ? <ArcPickerModal issue={arcPicker.issue} issueName={arcPicker.name} onClose={() => setArcPicker(null)}
-  onAdded={(result) => { setArcPicker(null); setListsVersion((version) => version + 1); showToast(result.added?.length ? `${arcPicker.name} added to ${result.name}` : `${arcPicker.name} is already in ${result.name}`); }}
-  onCreated={(made) => { setArcPicker(null); setListsVersion((version) => version + 1); if (arcPicker.issue) showToast(`${made.name} started with ${arcPicker.name}`); else openList({ id: made.id, name: made.name, cover: made.cover, issueCount: 0, owned: 0, missing: 0, seriesTitles: [] }); }} /> : null}{selectedList ? <ReadingListDrawer onAddToArc={addIssueToArc} onGone={arcGone} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={selectedList.id} list={selectedList} allSeries={visibleSeries} readingVersion={readingVersion + listsVersion} onClose={() => setSelectedList(null)} onRead={readComic} onOpenSeries={openSeries} onMarkIssue={markIssueRead} onRateIssue={rateIssue} onEditIssue={openIssueWorkbench} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRefresh={refreshReadingList} onDelete={deleteReadingList} onMark={markListRead} onChanged={() => setListsVersion((version) => version + 1)} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onReplace={openReplacementRequest} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{profileSheet ? <ProfileSheet onClose={() => setProfileSheet(false)} onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
+  return <ViewerContext.Provider value={authStatus?.viewer || null}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}><div className="app-shell"><Nav active={navActive} onNavigate={navigate} catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} authStatus={authStatus} onSignOut={signOut} scanning={scanState === "scanning" || Boolean(catalog?.activeScan)} onScanLibrary={() => scanLibrary()} /><main className="main-content"><div className="page-view" key={active}>{catalog?.collectedEditionsEnabled ? <div className="collected-editions-notice"><WarningCircle size={17} weight="fill" /> <span>Collected-edition support is on. Trades, hardcovers and omnibuses have less complete metadata and file availability than Issues, and never fulfill Issue ownership or acquisition.</span></div> : null}{active === "profile" ? <ProfileView onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{active === "library" ? <LibraryView readingList={readingListEntries} onToggleReadingList={toggleReadingList} onOpenRunCollection={(card) => setRunCollectionId(String(card.id))} onNewRunCollection={() => setNewCollectionOpen(true)} tab={libraryTab} onTab={(next) => { setLibraryTab(next); window.scrollTo({ top: 0 }); }} onNavigate={navigate} onOpenSeries={openSeries} onOpenCollection={openCollection} onOpenList={openList} onImportList={() => setImportingList(true)} onNewArc={() => setArcPicker({ issues: null, name: "" })} onSearch={openSearch} onRead={readComic} readingVersion={readingVersion} listsVersion={listsVersion} catalog={catalog} backendStatus={backendStatus} /> : null}{active === "discover" && !can(authStatus?.viewer, "nav.discover") ? <><PageHeader title="Discover" /><div className="empty-state"><MagnifyingGlass size={35} weight="duotone" /><strong>Discover is off for this profile</strong><span>New comics come through the admin.</span></div></> : null}{active === "search" || (active === "discover" && can(authStatus?.viewer, "nav.discover")) ? <DiscoverView key={active} mode={active} query={viewQuery} draft={searchDraft} onDraft={setSearchDraft} onLeaveSearch={leaveSearch} runCollections={runCollectionList} onOpenRunCollection={(card) => setRunCollectionId(String(card.id))} onOpenList={openList} catalog={catalog} backendStatus={backendStatus} onSearch={openSearch} onClearSearch={() => openSearch("")} onOpenSeries={openSeries} onOpenCollection={openCollection} onDiscoverRequest={requestDiscoveredSeries} onUnfollowRun={unfollowDiscoveredRun} onPullIssue={pullDiscoveredIssue} onPullIssues={pullDiscoveredIssues} onPullArc={pullStoryArc} onSaveArc={saveStoryArc} onReadArc={readComic} /> : null}{active === "import" ? <ImportLibraryView onNavigate={navigate} onStartInventory={scanLibrary} onScanLibrary={() => scanLibrary()} onUpdateRoot={updateLibraryRoot} onRemoveRoot={removeLibraryRoot} catalog={catalog} backendStatus={backendStatus} scanState={scanState} scanProgress={scanProgress} /> : null}{active === "requests" ? (viewerIsAdmin ? <RequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onCancelReplacement={cancelFileReplacement} onDeletePull={deletePull} onRefresh={loadCatalog} onDecide={decideMemberRequest} /> : <MyRequestsView catalog={catalog} backendStatus={backendStatus} focus={requestFocus} onDecide={decideMemberRequest} />) : null}{active === "settings" ? <SettingsView catalog={catalog} backendStatus={backendStatus} logicalSeriesCount={logicalSeriesCount} onNavigate={navigate} onAuthChanged={loadAuthStatus} onSignOut={signOut} authStatus={authStatus} section={settingsSection} onSectionChange={setSettingsSection} health={{ items: catalog?.inbox ?? [], loading: catalogPending(catalog, backendStatus), focus: reviewFocus, backendStatus, onResolve: resolveReview, onReplace: openReplacementRequest }} onScanLibrary={() => scanLibrary()} scanState={scanState} scanProgress={scanProgress} onCatalogChanged={loadCatalog} /> : null}</div></main>{readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection} startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || finished} onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged} onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined} onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); setReadingList(null); }} /> : null}{finished ? <FinishDrawer key={readFileId} fileId={readFileId} series={readingSeries} issue={readingIssue} nextIssue={readingNext} medium={readingSeries?.medium} title={readingTitle} readingVersion={readingVersion} list={readingList} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRateIssue={rateIssue} onRead={readComic} onOpenSeries={openSeries} onClose={() => setFinishedFileId("")} /> : null}{runCollectionCard ? <RunCollectionDrawer readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={runCollectionCard.id} card={runCollectionCard} admin={viewerIsAdmin} readingVersion={readingVersion} onClose={() => setRunCollectionId(null)} onOpenSeries={openSeries} onRead={readComic} onSave={saveRunCollection} onDelete={deleteRunCollection} onAddRuns={() => setCollectionPickerId(runCollectionCard.id)} /> : null}{newCollectionOpen ? <NewCollectionModal onClose={() => setNewCollectionOpen(false)} onCreate={createRunCollection} /> : null}{collectionPickerCard ? <RunPickerModal title={`Add to ${collectionPickerCard.name}`} series={visibleSeries} already={collectionPickerCard.runIds} onClose={() => setCollectionPickerId(null)} onAdd={(ids) => addRunsToCollection(collectionPickerCard.id, ids)} /> : null}{selectedSeries ? <SeriesDrawer onAddToArc={addIssueToArc} onAddIssuesToArc={addIssuesToArc} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} runCollections={runCollectionList} onOpenRunCollection={(card) => { setSelectedSeries(null); setRunCollectionId(String(card.id)); }} onToggleRunCollection={(id, runId, on) => saveRunCollection(id, on ? { add: [runId] } : { remove: [runId] })} onCreateRunCollection={(name, runId) => createRunCollection({ name, seriesIds: [runId] }, { open: false })} key={selectedSeries.id} readingVersion={readingVersion} onMarkIssue={markIssueRead} onMarkRun={markRunRead} coverBusy={coverBusy} coverError={coverError} onSelectSeriesCover={selectSeriesCover} onUploadSeriesCover={uploadSeriesCover} backdropBusy={backdropBusy} backdropError={backdropError} onSaveBackdrop={saveSeriesBackdrop} series={selectedSeries} families={catalog?.families || []} allSeries={visibleSeries} parentCollection={seriesParentCollection} dismissSignal={drawerDismissSignal} onBack={returnToCollection} onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }} onRead={readComic} onSetAgeRating={setSeriesAgeRating} onRequest={() => createAcquisitionRequest(selectedSeries)} requested={waitingKeys(catalog?.memberRequests).has(`run:${selectedSeries.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `series:${selectedSeries.id}`} onAddAlias={addSeriesAlias} onSyncIssues={syncSeriesIssues} onFindRun={openSeriesRunWorkbench} onMergeRun={openSeriesMergeWorkbench} onRebuildRun={rebuildSeriesRun} rebuilding={rebuildingRun} rebuildResult={rebuildResult} onCreateFamily={createSeriesFamily} onSetFamily={setSeriesFamily} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onChangeSeriesCover={openSeriesCoverWorkbench} onFixSeriesMatch={openSeriesMatchWorkbench} onSetFormat={setSeriesFormat} onSetDirection={setSeriesDirection} onRate={rateSeries} onRateIssue={rateIssue} onRemove={removeSeries} onUnfollow={unfollowSeries} unfollowBusy={unfollowBusy} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onEditIssue={openIssueWorkbench} onReplace={openReplacementRequest} onOpenSeries={openSeries} onChangeBackdrop={(item, current) => { setBackdropError(""); setBackdropWorkbench({ series: item, current }); }} backdropVersion={backdropVersion} /> : null}{selectedCollection ? <CollectionDrawer collection={selectedCollection} tab={collectionTab} onTabChange={setCollectionTab} onClose={() => setSelectedCollection(null)} onFindStructure={openStoryStructure} onOpenSeries={openCollectionRun} onOpenContents={openContentsWorkbench} onRequest={() => createAcquisitionRequest(selectedCollection)} requested={waitingKeys(catalog?.memberRequests).has(`collection:${selectedCollection.id}`)} onViewRequests={() => navigate("requests")} requestBusy={requestBusyKey === `collection:${selectedCollection.id}`} onEditIssue={openIssueWorkbench} onUnfollow={unfollowCollection} unfollowBusy={unfollowBusy} /> : null}{importingList ? <ImportReadingListModal onClose={() => setImportingList(false)} onImported={(result) => { setImportingList(false); setListsVersion((version) => version + 1); if (!result.existed) showToast(`${result.name} imported · ${result.owned} of ${result.issueCount} in your library`); openList({ id: result.id, name: result.name, cover: result.cover, issueCount: result.issueCount, owned: result.owned, missing: result.missing, seriesTitles: (result.series || []).map((group) => group.title) }); }} /> : null}{arcPicker ? <ArcPickerModal issues={arcPicker.issues} issueName={arcPicker.name} onClose={() => setArcPicker(null)}
+  onAdded={(result) => {
+    setArcPicker(null); setListsVersion((version) => version + 1);
+    const added = result.added?.length || 0;
+    const several = arcPicker.issues.length > 1;
+    showToast(!added ? `${several ? "They are" : `${arcPicker.name} is`} already in ${result.name}`
+      : several ? `${added} issue${added === 1 ? "" : "s"} added to ${result.name}` : `${arcPicker.name} added to ${result.name}`);
+  }}
+  onCreated={(made) => {
+    setArcPicker(null); setListsVersion((version) => version + 1);
+    if (arcPicker.issues) { showToast(`${made.name} started with ${arcPicker.name}`); return; }
+    // A new, empty arc opens on what to put in it.
+    openList({ id: made.id, name: made.name, cover: made.cover, issueCount: 0, owned: 0, missing: 0, seriesTitles: [] });
+    setIssuePickerList({ id: made.id, name: made.name });
+  }} /> : null}{issuePickerList ? <ArcIssuePickerModal list={issuePickerList} series={visibleSeries} onClose={() => setIssuePickerList(null)}
+    onAdded={() => setListsVersion((version) => version + 1)} /> : null}{selectedList ? <ReadingListDrawer onAddToArc={addIssueToArc} onGone={arcGone} onAddIssues={(list) => setIssuePickerList({ id: list.id, name: list.name })} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={selectedList.id} list={selectedList} allSeries={visibleSeries} readingVersion={readingVersion + listsVersion} onClose={() => setSelectedList(null)} onRead={readComic} onOpenSeries={openSeries} onMarkIssue={markIssueRead} onRateIssue={rateIssue} onEditIssue={openIssueWorkbench} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRefresh={refreshReadingList} onDelete={deleteReadingList} onMark={markListRead} onChanged={() => setListsVersion((version) => version + 1)} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onReplace={openReplacementRequest} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{profileSheet ? <ProfileSheet onClose={() => setProfileSheet(false)} onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
       onClose={() => setPicker(null)} canAdd={isAdmin(authStatus?.viewer)} onAdd={() => setAddingProfile(true)} /> : null}{addingProfile ? <AddProfileSheet onClose={() => setAddingProfile(false)}
       onAdded={() => { setAddingProfile(false); setProfilesVersion((value) => value + 1); showToast("Profile added"); }} /> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider>;
 }

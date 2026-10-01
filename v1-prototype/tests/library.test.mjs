@@ -97,12 +97,14 @@ test("a storage that throws is the same as an empty one", () => {
   assert.doesNotThrow(() => saveLibraryPrefs({ sort: "title", view: "grid", scope: "runs", followingOnly: false }, hostile));
 });
 
-test("the story arcs scope is remembered, and an unknown scope falls back to runs", () => {
+test("a scope is remembered, and one that left View & sort falls back to runs", () => {
   const storage = new Map();
   const memory = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
-  saveLibraryPrefs({ sort: "recent", view: "grid", scope: "arcs", followingOnly: false, inProgressOnly: true }, memory);
-  assert.equal(loadLibraryPrefs(memory).scope, "arcs");
-  assert.deepEqual([...SCOPES], ["runs", "families", "arcs"]);
+  saveLibraryPrefs({ sort: "recent", view: "grid", scope: "families", followingOnly: false, inProgressOnly: true }, memory);
+  assert.equal(loadLibraryPrefs(memory).scope, "families");
+  assert.deepEqual([...SCOPES], ["runs", "families"]);
+  saveLibraryPrefs({ sort: "recent", view: "grid", scope: "arcs", followingOnly: false, inProgressOnly: false }, memory);
+  assert.equal(loadLibraryPrefs(memory).scope, "runs", "story arcs are a Comics tab now");
   saveLibraryPrefs({ sort: "recent", view: "grid", scope: "collections", followingOnly: false, inProgressOnly: false }, memory);
   assert.equal(loadLibraryPrefs(memory).scope, "runs", "the old family scope's name is not a scope any more");
   saveLibraryPrefs({ sort: "recent", view: "grid", scope: "shelves", followingOnly: false, inProgressOnly: false }, memory);

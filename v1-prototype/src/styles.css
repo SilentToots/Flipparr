@@ -950,6 +950,30 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .arc-picker-empty, .arc-picker-loading { margin: var(--space-12) 0 0; color: var(--muted); font-size: var(--text-sm); }
 .arc-picker-loading { display: flex; align-items: center; gap: var(--space-8); }
 .arc-picker-new { margin-top: var(--space-16); }
+/* "Add issues" inside an arc: a run, then its issues with a range of
+   numbers to tick at once. The rating picker's list and footer. */
+.arc-issue-picker-back { margin-top: var(--space-12); }
+.arc-issue-picker-run { margin: var(--space-8) 0 0; font-size: var(--text-md); }
+.arc-issue-range { display: flex; align-items: flex-end; gap: var(--space-8); margin-top: var(--space-12); }
+.arc-issue-range .form-field { flex: 1; min-width: 0; }
+.arc-issue-picker-status { margin: var(--space-8) 0 0; color: var(--muted-strong); font-size: var(--text-sm); }
+.arc-issue-picker-status:empty { display: none; }
+.comic-drawer-actions .comic-drawer-add { justify-content: center; }
+/* Select in a run's Issues tab: a tap ticks an issue rather than reading
+   it; its read, menu and edit buttons step aside until Cancel. */
+.grouped-issue-inventory.selecting article { position: relative; }
+.grouped-issue-inventory.selecting :is(.issue-tile-read, .issue-tile-menu, .issue-tile-edit, .issue-row-actions) { visibility: hidden; }
+.issue-select-toggle { position: absolute; inset: 0; z-index: 2; padding: var(--space-6); border: 0; border-radius: var(--radius-8); background: transparent; display: flex; align-items: flex-start; justify-content: flex-start; cursor: pointer; }
+.issue-select-toggle.selected { box-shadow: inset 0 0 0 2px var(--violet); }
+.issue-select-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.issue-select-check { width: var(--space-24); height: var(--space-24); border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--color-neutral-0); background: var(--scrim); color: var(--color-neutral-0); }
+.issue-select-toggle.selected .issue-select-check { border-color: var(--violet); background: var(--violet); }
+.issue-select-bar { position: sticky; bottom: var(--space-12); z-index: 3; display: flex; align-items: center; gap: var(--space-8); margin-top: var(--space-16); padding: var(--space-8) var(--space-8) var(--space-8) var(--space-16); border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--surface-raised); box-shadow: var(--glass-shadow); }
+.issue-select-count { flex: 1; min-width: 0; display: grid; justify-items: start; gap: var(--space-2); font-size: var(--text-sm); }
+.issue-select-count > button { padding: 0; border: 0; background: transparent; color: var(--violet-text); font: inherit; font-size: var(--text-xs); font-weight: var(--weight-semibold); cursor: pointer; }
+.issue-select-count > button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Select beside the run's menu, on one row, so the header is no taller. */
+.issue-run-group-tools { display: flex; align-items: center; gap: var(--space-8); }
 .reading-list-title-badge { margin-left: var(--space-6); vertical-align: middle; }
 .arc-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8); margin-bottom: var(--space-16); }
 .import-list-modal form { display: grid; gap: var(--space-16); }

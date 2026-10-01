@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate } from "../src/reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate, issueNumberValue, issuesInRange } from "../src/reading-list.js";
 
 test("an arc's years read as one year or a span, and nothing when unknown", () => {
   assert.equal(arcYears({ year: 2002, yearEnd: 2003 }), "2002\u20132003");
@@ -104,4 +104,20 @@ test("an arc made by hand never folds a run into itself", () => {
   const run = { id: "9", monitoringStatus: "unmonitored", issues: [{ id: "90", ownership: "direct" }] };
   assert.equal(arcOnlyRuns([run], [{ id: "1", source: "manual", issueIds: ["90"] }]).size, 0);
   assert.equal(arcOnlyRuns([run], [{ id: "1", source: "metron", issueIds: ["90"] }]).size, 1);
+});
+
+test("several issues are in an arc when all of them are, and partly when some are", () => {
+  const lists = [{ id: "2", editable: true, issueIds: ["5", "6"] }];
+  assert.deepEqual(arcsToAddTo(lists, ["5", "6"]).map((list) => [list.has, list.hasSome]), [[true, false]]);
+  assert.deepEqual(arcsToAddTo(lists, ["5", "7"]).map((list) => [list.has, list.hasSome]), [[false, true]]);
+  assert.deepEqual(arcsToAddTo(lists, []).map((list) => [list.has, list.hasSome]), [[false, false]]);
+});
+
+test("a range of issue numbers takes both ends, decimals, and either order", () => {
+  const issues = ["0", "1", "2", "2.1", "3", "Annual 1", "10"].map((number, index) => ({ id: index, number }));
+  assert.deepEqual(issuesInRange(issues, "1", "3"), ["1", "2", "3", "4"]);
+  assert.deepEqual(issuesInRange(issues, 3, 1), ["1", "2", "3", "4"]);
+  assert.deepEqual(issuesInRange(issues, "", "3"), []);
+  assert.equal(issueNumberValue("23.1"), 23.1);
+  assert.equal(issueNumberValue("Annual 1"), null);
 });

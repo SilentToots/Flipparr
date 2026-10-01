@@ -26,10 +26,11 @@ export const LIBRARY_DEFAULTS = Object.freeze({
   showCollections: true,
 });
 
-// What the Library tab can show: runs, series families (with editions on),
-// or the story arcs saved to read across runs. Collections -- the household's
-// own groups of runs -- have a tab of their own.
-export const SCOPES = new Set(["runs", "families", "arcs"]);
+// What the Library tab can show: runs, or series families (with editions on).
+// Collections and story arcs have tabs of their own (arcs since 2026-10-01: a
+// scope inside View & sort hid where to make one), so a saved "arcs" scope
+// falls back to runs.
+export const SCOPES = new Set(["runs", "families"]);
 
 // Collections have a name where runs have a title; both fall back to the
 // title rather than to an arbitrary order that would look like a broken sort.

@@ -202,8 +202,8 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   never be the only way (WCAG 2.5.7). The order saves on drop, and an
   `aria-live` line says which source is tried first.
 - **Comics' tabs** (since 2026-10-01), after Plex and Komga: `SegmentedTabs`
-  in the header's tools row -- Recommended, Library, and (as they ship)
-  Collections and Reading list. `/library` is Recommended, the page's home,
+  in the header's tools row -- Recommended, Library, Collections, Story arcs
+  and Reading list. `/library` is Recommended, the page's home,
   which a tap on Comics always returns to; `/library/all` is the grid, the
   only tab with View & sort. A search on any tab shows the library's matches.
   Recommended is shelves in Discover's frame (`.release-shelf` /
@@ -494,17 +494,28 @@ Motion tokens:
   issue is, nothing before (a bare count of what was left said nothing). The
   drawer's hero repeats it as a status badge, with how many are read. A
   story arc -- issues saved to read in order across runs -- is a card in the
-  Comics grid's *Story arcs* scope (shown to every profile, since any can
-  make one) with the same badge, and its drawer lists the issues in order, each
+  Comics' *Story arcs* tab with the same badge, and its drawer lists the issues in order, each
   saying whether it is here, on the way or missing, and whether it is read.
   On the Runs shelf a run kept only for an arc -- not followed, every owned
   issue an arc's -- is folded into the arc's card ("N runs inside"), as a
   confirmed collection folds its runs; View & sort's *Story arcs* switch,
   "Collect story arc issues", turns it off, per profile. A search looks through
   everything, folded or not.
+- **Story arcs tab** (since 2026-10-01, the owner: making an arc was buried in
+  a run's issue menus). Comics' tabs are Recommended · Library · Collections ·
+  Story arcs · Reading list (`/library/arcs`); the Story arcs scope left View &
+  sort. The tab leads with *New story arc* (and *Import* for the admin), as
+  Collections leads with *New collection*. A new, empty arc opens its drawer
+  with `ArcIssuePickerModal` on top -- Spotify's empty playlist asking what to
+  put in it: find a run, tick its issues or a *From # / To #* range, *Add*,
+  and go on to another run without leaving; issues already in the arc are
+  ticked and fixed. An arc's drawer offers *Add issues* under Read for
+  whoever may change it. A run's Issues tab has *Select* (beside the run's
+  menu): a tap ticks an issue, its read/menu/edit buttons step aside, and a
+  floating bar says how many, with *Select all* and *Add to story arc*.
 - **Hand-made story arcs** (since 2026-10-01). Any profile makes its own arc:
-  *New story arc* in the Story arcs scope (shown to every profile now), or
-  *Add to story arc…* in any issue's "…" menu, owned or missing, which opens
+  *New story arc* on the Story arcs tab, *Add issues* inside it, *Select* in a
+  run, or *Add to story arc…* in any issue's "…" menu, owned or missing, which opens
   `ArcPickerModal` -- the arcs this profile may change, latest first, with
   *Added* on one that holds the issue, and a name field to start a new one.
   An added issue goes on the end (Komga, Spotify). The arc drawer's Edit ›
