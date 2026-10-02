@@ -7055,7 +7055,7 @@ function ActionMenu({ anchor, label, items, onClose }) {
   }, [onClose]);
   return createPortal(<div className="glass-menu glass-select-menu action-menu" ref={menuRef} role="menu" aria-label={label}
     style={place ? { ...place } : { visibility: "hidden", top: 0, left: 0 }} onMouseDown={(event) => event.stopPropagation()}>
-    {items.map((item) => <button type="button" role="menuitem" key={item.key} onClick={() => { onClose(); item.onSelect(); }}>
+    {items.map((item) => <button type="button" role="menuitem" key={item.key} disabled={item.disabled} onClick={() => { onClose(); item.onSelect(); }}>
       <span className="sort-menu-check" aria-hidden="true">{item.icon}</span>
       <span>{item.label}</span>
     </button>)}
@@ -7289,9 +7289,37 @@ function FileActionButtons({ file, readable, onRead, onOpenWorkbench, onOpenCove
     : <small className="file-not-readable">Not a readable archive</small>}{file.identityKind === "edition" && editionsOn ? <button onClick={() => onOpenContents(file)}><ListBullets size={14} /> Issues</button> : null}<button onClick={() => onReplace(file)}><CloudArrowDown size={14} /> Replace</button><button onClick={() => onChangeRun(file)}><Books size={14} /> Change run</button><button onClick={() => onOpenCover(file)}><BookOpen size={14} /> Cover</button><button onClick={() => onOpenWorkbench(file, "match")}><ArrowsClockwise size={14} /> Fix match</button><button onClick={() => onOpenWorkbench(file, "edit")}><PencilSimple size={14} /> Metadata</button></>;
 }
 
+// A phone's file row: the same tools as the desktop's buttons, from a "..."
+// beside the file, as an issue row's menu is (the owner, 2026-10-01: the old
+// labelled Actions button sat on a row of its own under every file).
+function FileMenu({ file, readable, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
+  const editionsOn = useCollectedEditions();
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  const items = [
+    readable ? { key: "read", label: "Read", icon: <BookOpen size={16} />, onSelect: () => onRead(file) }
+      : { key: "read", label: "Not a readable archive", icon: <BookOpen size={16} />, disabled: true, onSelect: () => {} },
+    ...(file.identityKind === "edition" && editionsOn ? [{ key: "issues", label: "Issues", icon: <ListBullets size={16} />, onSelect: () => onOpenContents(file) }] : []),
+    { key: "replace", label: "Replace", icon: <CloudArrowDown size={16} />, onSelect: () => onReplace(file) },
+    { key: "run", label: "Change run", icon: <Books size={16} />, onSelect: () => onChangeRun(file) },
+    { key: "cover", label: "Cover", icon: <BookOpen size={16} />, onSelect: () => onOpenCover(file) },
+    { key: "match", label: "Fix match", icon: <ArrowsClockwise size={16} />, onSelect: () => onOpenWorkbench(file, "match") },
+    { key: "edit", label: "Metadata", icon: <PencilSimple size={16} />, onSelect: () => onOpenWorkbench(file, "edit") },
+  ];
+  const label = `Actions for ${file.filename}`;
+  return <>
+    <button type="button" ref={buttonRef} className="file-menu-button" onClick={() => setOpen((value) => !value)}
+      aria-haspopup="menu" aria-expanded={open} aria-label={label} title="Actions">
+      <DotsThree size={22} weight="bold" />
+    </button>
+    {open ? <ActionMenu anchor={buttonRef} label={label} items={items} onClose={close} /> : null}
+  </>;
+}
+
 function FileInventory({ files, readingFiles, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
   if (!files?.length) return <div className="drawer-empty"><HardDrive size={26} weight="duotone" /><strong>No local files linked</strong></div>;
-  return <div className="file-inventory">{files.map((file) => <article key={file.path}><HardDrive size={20} weight="duotone" /><div><strong>{file.filename}</strong><small>{file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)} · {(file.sizeBytes / 1024 / 1024).toFixed(1)} MB</small>{file.metadataLocked ? <small className="metadata-lock"><ShieldCheck size={13} weight="fill" /> Local corrections locked</small> : null}</div><span className="file-row-actions"><FileActionButtons file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></span><details className="file-actions-menu"><summary><DotsThree size={17} weight="bold" /> Actions <CaretDown size={13} /></summary><div><FileActionButtons file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></div></details></article>)}</div>;
+  return <div className="file-inventory">{files.map((file) => <article key={file.path}><HardDrive size={20} weight="duotone" /><div><strong>{file.filename}</strong><small>{file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)} · {(file.sizeBytes / 1024 / 1024).toFixed(1)} MB</small>{file.metadataLocked ? <small className="metadata-lock"><ShieldCheck size={13} weight="fill" /> Local corrections locked</small> : null}</div><span className="file-row-actions"><FileActionButtons file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></span><FileMenu file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></article>)}</div>;
 }
 
 function IssueCatalogCard({ series, catalogKnown, syncing, error, lastResult, onSync, onReviewFiles, onFindRun }) {

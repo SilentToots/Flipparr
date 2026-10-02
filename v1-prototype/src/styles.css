@@ -1792,7 +1792,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .file-row-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .file-row-actions button { min-height: 30px; padding: 0 var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--muted-strong); display: flex; align-items: center; gap: var(--space-4); cursor: pointer; font-size: var(--text-xs); white-space: nowrap; }
 @media (hover: hover) { .file-row-actions button:not(:disabled):hover { border-color: var(--violet-border); color: var(--muted-strong); } }
-.file-actions-menu { display: none; }
+.file-menu-button { display: none; }
+.action-menu button:disabled { color: var(--muted); cursor: default; }
 .alias-list { display: grid; gap: var(--space-8); }
 .alias-list > span { min-height: 51px; padding: var(--space-8) var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-4); background: var(--surface-raised); display: grid; gap: var(--space-4); }
 .alias-list > span.confirmed { border-color: var(--green-border); background: var(--surface-raised); }
@@ -2181,14 +2182,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .edition-cover { width: 50px; }
   .edition-inventory header { flex-direction: column; gap: var(--space-8); }
   .edition-inventory header > span { text-align: left; }
+  /* The "..." sits beside the file, centred on it, at a finger's 44px. */
   .file-row-actions { display: none; }
-  .file-actions-menu { grid-column: 2; display: block; justify-self: end; }
-  .file-actions-menu > summary { min-height: 31px; padding: 0 var(--space-8); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--status-muted-bg); color: var(--muted-strong); display: inline-flex; align-items: center; gap: var(--space-4); cursor: pointer; list-style: none; }
-  .file-actions-menu > summary::-webkit-details-marker { display: none; }
-  .file-actions-menu[open] > summary { border-color: var(--violet-border); background: var(--violet-soft); color: var(--muted-strong); }
-  .file-actions-menu > div { position: absolute; z-index: 8; right: 0; top: calc(100% - 8px); width: min(190px, calc(100vw - 64px)); padding: var(--space-4); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface-soft); box-shadow: 0 14px 35px var(--shadow-soft); display: grid; }
-  .file-actions-menu > div button { min-height: 36px; padding: 0 var(--space-8); border: 0; border-radius: var(--radius-4); background: transparent; color: var(--muted-strong); display: flex; align-items: center; gap: var(--space-8); cursor: pointer; font-size: var(--text-sm); text-align: left; }
-  .file-actions-menu > div button:hover { background: var(--surface-sunken); color: var(--text); }
+  .file-inventory article { grid-template-columns: 24px minmax(0, 1fr) 44px; align-items: center; }
+  .file-inventory article > svg { align-self: start; }
+  .file-menu-button { justify-self: end; width: 44px; height: 44px; margin-right: calc(var(--space-10) * -1); padding: 0; border: 0; border-radius: var(--radius-8); background: transparent; color: var(--muted-strong); display: grid; place-items: center; cursor: pointer; }
+  .file-menu-button[aria-expanded="true"] { background: var(--status-muted-bg); color: var(--text); }
   .modal-backdrop { place-items: center; padding: var(--space-12) var(--space-12) calc(var(--mobile-nav-height) + var(--space-12) + env(safe-area-inset-bottom)); }
   .modal { justify-self: stretch; width: 100%; max-width: none; max-height: calc(100dvh - var(--mobile-nav-height) - 36px - env(safe-area-inset-bottom)); padding: var(--space-20) var(--space-16); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   .modal h2 { padding-right: var(--space-40); font-size: var(--text-xl); line-height: var(--leading-tight); }
@@ -3003,8 +3002,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .comic-drawer-follow .follow-switch, .comic-drawer-link, .comic-drawer-more { min-height: 44px; }
   .issue-tile-edit { top: 4px; right: 4px; width: 36px; height: 36px; }
   .issue-tile-edit::after { content: ""; position: absolute; inset: -4px; }
-  .file-actions-menu > summary { min-height: 44px; padding: 0 var(--space-12); font-size: var(--text-sm); }
-  .file-actions-menu > div button { min-height: 44px; }
   .advanced-card button { min-height: 44px; }
   .issue-catalog-card summary { line-height: 44px; }
   /* Refresh details matched no other button: regular weight in violet. */

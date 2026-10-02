@@ -18,7 +18,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 - This is a desktop-first standalone comic catalog, request portal, metadata workbench and comic reader. It must not depend on Omnibus or another reader.
 - The selected visual direction is the dark, library-first “Library Command Center” concept: persistent left navigation, restrained violet actions, green ownership states, red file-health warnings, and cover-forward series rows.
-- Mobile layouts preserve information while reducing persistent chrome: keep summary metrics in compact single rows, move dense secondary file operations behind one clearly labeled Actions menu, and center dialogs within the usable viewport above mobile navigation without wrapping button labels.
+- Mobile layouts preserve information while reducing persistent chrome: keep summary metrics in compact single rows, move dense secondary file operations behind one "…" menu button beside the file, centred on its details, as an issue row's menu is (its accessible name says "Actions for" the file; the owner, 2026-10-01 -- the old labelled Actions button sat on a row of its own under every file), and center dialogs within the usable viewport above mobile navigation without wrapping button labels.
 - The primary user journeys are library inventory, series ownership, requests, reading, metadata review, collection coverage, activity, and settings.
 - Acquisition and reading are the two primary actions. Customizing covers and backgrounds is secondary: it lives behind Edit on a run, not in a surface's prominent slot.
 - Favor explainable states and source provenance. Never hide damaged files or metadata conflicts behind a successful catalog match.
