@@ -1375,6 +1375,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .collection-card-mark { position: absolute; top: var(--space-8); left: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
 .source-order-row > span.rating-review-cover { flex: 0 0 auto; display: grid; }
 .run-collection-remove { flex: 0 0 auto; }
+/* A collection's Runs tab: how its runs are ordered, and Arrange, above them. */
+.collection-runs { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
+.collection-runs-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-8); }
+.collection-edit-form .arc-cover-choices { margin-top: var(--space-12); }
+.collection-runs-tools + .settings-card-note { margin: 0; }
 /* A collection drawer's failed save, under its header. */
 .comic-drawer-error { margin: var(--space-12) var(--drawer-inset) 0; }
 .edit-collections .edit-collection-list { display: grid; gap: var(--space-4); margin-top: var(--space-12); }
@@ -3616,6 +3621,15 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 }
 :is(.form-field, .match-search-form, .metadata-edit-form, .series-match-search, .advanced-run-toolbar,
   .contents-add-form, .alias-form, .family-create-form, .structure-groups, .login-card) input::placeholder { color: var(--muted-weak); }
+/* A field of several lines is the same filled field: a summary typed in an
+   edit form read as the browser's own box beside the inputs (2026-10-01). */
+.form-field textarea {
+  box-sizing: border-box; width: 100%; padding: var(--space-10) var(--space-12); border: 1px solid transparent; border-radius: var(--radius-12);
+  background: var(--field-bg); color: var(--text); font: inherit; line-height: var(--leading-normal); resize: vertical;
+  transition: background var(--motion-duration-fast) ease, border-color var(--motion-duration-fast) ease;
+}
+.form-field textarea:focus { border-color: var(--violet-border); background: var(--field-bg-focus); }
+.form-field textarea::placeholder { color: var(--muted-weak); }
 .field-group { display: grid; gap: var(--space-12); }
 @media (max-width: 640px) {
   .field-group { gap: 0; overflow: hidden; border-radius: var(--radius-12); background: var(--field-bg); }
