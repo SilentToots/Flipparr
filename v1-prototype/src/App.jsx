@@ -1801,7 +1801,6 @@ function RunCollectionDrawer({ card, admin, readingVersion, readingList = EMPTY_
     try { await work(); return true; } catch (failure) { setError(failure.message); return false; } finally { setBusy(""); }
   }
   const runs = card.runs || [];
-  const count = `${card.runCount} run${card.runCount === 1 ? "" : "s"}`;
   const issueTotals = runs.reduce((sum, run) => ({ owned: sum.owned + (Number(run.owned) || 0), total: sum.total + (Number(run.total) || 0) }), { owned: 0, total: 0 });
   // The run to read, as the big button offers it like every comic drawer's:
   // the one read most lately unless it is finished, else the first in the
@@ -1907,9 +1906,12 @@ function RunCollectionDrawer({ card, admin, readingVersion, readingList = EMPTY_
           <div className="comic-drawer-copy">
             <div className="comic-drawer-titles">
               <h2 id="run-collection-title">{card.name}</h2>
-              <p>{["Collection", card.years, count].filter(Boolean).join(" • ")}</p>
+              {/* As its card and a run's: the one publisher, if it is one, then
+                  the years; what it is, a badge, as on the card. */}
+              {card.publisher || card.years ? <p>{[card.publisher, card.years].filter(Boolean).join(" • ")}</p> : null}
             </div>
             <div className="comic-drawer-statuses">
+              <StatusBadge tone="muted">Collection</StatusBadge>
               {started ? <StatusBadge tone="violet">{started} run{started === 1 ? "" : "s"} in progress</StatusBadge> : null}
               {finished && finished === card.runCount ? <StatusBadge tone="green">Read</StatusBadge> : null}
             </div>
@@ -3785,9 +3787,10 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
       role="dialog" aria-modal="true" aria-labelledby="story-arc-title" onMouseDown={(event) => event.stopPropagation()}>
       <DiscoverDrawerHero art={data?.cover} titleId="story-arc-title" title={data?.name || arc.name}
         cover={<DiscoverCover src={data?.cover} alt={`${arc.name} cover`} glyph={30} />}
-        byline={["Story arc", arcYears(data || {}) || null].filter(Boolean).join(" • ")}
+        byline={arcYears(data || {}) || null}
         onClose={requestClose} closeLabel="Close story arc"
         ownership={data && issues.length ? <Ownership series={arcOwnership({ owned: data.owned, issueCount: issues.length, missing: data.missing })} compact /> : null}>
+        <StatusBadge tone="violet">Story arc</StatusBadge>
         {saved ? <StatusBadge tone="muted">In your comics</StatusBadge> : null}
       </DiscoverDrawerHero>
       {/* One action, the band's, as a library drawer's Read is: Read once the
@@ -8410,6 +8413,10 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
     id: item.fileId, readable: item.readable, page: item.page, pageCount: item.pageCount, finishedAt: item.finishedAt, stale: item.stale,
   }])), [items]);
   const runsById = useMemo(() => Object.fromEntries((allSeries || []).map((run) => [String(run.id), run])), [allSeries]);
+  const arcByline = useMemo(() => {
+    const publisher = data?.items ? arcPublisher(data, new Map(Object.entries(runsById))) : list?.publisher || "";
+    return [publisher, arcYears(data || list)].filter(Boolean).join(" • ");
+  }, [data, list, runsById]);
   // Each item as a catalog issue: the run's own record when the issue is in
   // the library (so its title, date and rating are the real ones), else a
   // stand-in that says what is missing. Across several series the tile's
@@ -8607,11 +8614,13 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
           <div className="comic-drawer-copy">
             <div className="comic-drawer-titles">
               <h2 id="reading-list-title">{name}</h2>
-              {/* What it is and when, as a run's "Publisher • year": the counts are
-                  the ownership line's, the series are its Runs shelf's. */}
-              <p>{["Story arc", arcYears(data || list)].filter(Boolean).join(" • ")}</p>
+              {/* As its card and a run's "Publisher • year": the one publisher,
+                  if it is one, then the years; what it is, a badge. The counts
+                  are the ownership line's, the series its Runs shelf's. */}
+              {arcByline ? <p>{arcByline}</p> : null}
             </div>
             <div className="comic-drawer-statuses">
+              <StatusBadge tone="violet">Story arc</StatusBadge>
               {ownerLine ? <StatusBadge tone="muted">{ownerLine}</StatusBadge> : null}
               {data?.queued ? <StatusBadge tone="violet">{data.queued} on the way</StatusBadge> : null}
               {readingBadgeText ? <StatusBadge tone={readingBadgeText.tone}>{readingBadgeText.text}</StatusBadge> : null}

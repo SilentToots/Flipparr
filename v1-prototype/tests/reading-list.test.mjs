@@ -72,9 +72,9 @@ test("a run kept only for an arc is folded into the arc; a followed run, or one 
 });
 
 test("an arc says whose it is, and nothing when it is the household's", () => {
-  assert.equal(arcOwnerLine({ mine: true, shared: false }), "Yours");
-  assert.equal(arcOwnerLine({ mine: true, shared: true }), "Yours \u00b7 shared");
-  assert.equal(arcOwnerLine({ mine: false, ownerName: "Harrison", shared: true }), "Shared by Harrison");
+  assert.equal(arcOwnerLine({ mine: true, shared: false }), "Made by you");
+  assert.equal(arcOwnerLine({ mine: true, shared: true }), "Made by you \u00b7 shared");
+  assert.equal(arcOwnerLine({ mine: false, ownerName: "Harrison", shared: true }), "Made by Harrison");
   assert.equal(arcOwnerLine({ mine: false, ownerName: null }), "");
 });
 

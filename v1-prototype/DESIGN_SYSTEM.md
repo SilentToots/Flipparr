@@ -267,6 +267,10 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   series), the owned bar only while something is missing, and "Made by" for
   an arc a profile made ("you", or its maker's name). Collections are always
   the admin's, so they name no maker. Run cards keep their status badges.
+  Their drawers' headers say the same: the byline is the publisher (when one)
+  and the years, and *Story arc* / *Collection* is the first badge, as on the
+  card -- runs, collections and arcs share their information and patterns
+  wherever that makes sense (the owner, 2026-10-02).
 - **The header's cover leads** (2026-10-01): on a phone it is 140x196 from
   a 390px screen up (120x168 on a 320px one, so the badges still fit), and
   the copy beside it stays shorter than it -- a run's stars moved out of the
@@ -576,7 +580,8 @@ Motion tokens:
   (its own line under the note, so Cancel and Done stay together) orders
   everything by cover date once, to fine-tune from; it is not a live sort. A hand-made arc is its maker's until
   shared (Advanced › *Share with the household*, a `FollowSwitch`); cards and
-  the drawer say "Yours", "Yours · shared" or "Shared by Sam", and nothing on
+  the drawer say "Made by you" (the drawer adds " · shared") or "Made by
+  Sam", the same words everywhere since 2026-10-02, and nothing on
   the household's arcs. Only the maker edits a hand-made arc; the admin may
   stop sharing or delete a shared one. Advanced is every profile's now, and
   holds *Export as a reading list* (CBL or JSON). A hand-made arc never folds

@@ -120,10 +120,11 @@ export function arcMaker(list) {
   return list?.ownerName || "";
 }
 
+/** Who made an arc, in its card's words, and whether yours is shared. */
 export function arcOwnerLine(list) {
-  if (list?.mine) return list.shared ? "Yours \u00b7 shared" : "Yours";
-  if (list?.ownerName) return `Shared by ${list.ownerName}`;
-  return "";
+  const maker = arcMaker(list);
+  if (!maker) return "";
+  return `Made by ${maker}${list.mine && list.shared ? " \u00b7 shared" : ""}`;
 }
 
 /**
