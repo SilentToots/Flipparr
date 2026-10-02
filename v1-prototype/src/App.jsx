@@ -55,7 +55,7 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
-import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate, issuesInRange } from "./reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, arcMaker, arcsToAddTo, moveToEdge, orderByReleaseDate, issuesInRange } from "./reading-list.js";
 import { jobsNeedingAttention, jobHasFailed } from "./nav-counts.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel, sourceOrder, sourceRows, groupServices } from "./pull-list.js";
@@ -80,7 +80,7 @@ import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPre
 import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, nextProfileColour, pinInput, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, ratingSource, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { ratingRows, limitedProfiles, filterRatingRows, publisherChoices, ratingNote, ratingOutcome } from "./rating-review.js";
 import { keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, localDay } from "./recommended.js";
-import { collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, COLLECTION_SORTS } from "./run-collections.js";
+import { collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine, COLLECTION_SORTS } from "./run-collections.js";
 import { EMPTY_ENTRIES, isOnReadingList, withEntry, readingListItems, sortReadingList } from "./reading-list-tab.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import {
@@ -1636,6 +1636,21 @@ function CollectionGroups({ families, onOpenCollection }) {
   </div>;
 }
 
+/**
+ * A card's foot under the rule, for a story arc or a collection: its size,
+ * then -- only while some of it is missing -- the owned bar, then who made
+ * it when that is not the household (2026-10-02, after the owner's mock).
+ */
+function CardFoot({ runCount, issueCount, owned, maker = "" }) {
+  const missing = Math.max(0, issueCount - owned);
+  return <>
+    <span className="series-card-rule" />
+    <span className="series-card-foot series-card-counts">{countsLine(runCount, issueCount)}</span>
+    {issueCount && missing ? <Ownership series={arcOwnership({ owned, issueCount, missing })} compact /> : null}
+    {maker ? <span className="series-card-foot series-card-maker">Made by <strong>{maker}</strong></span> : null}
+  </>;
+}
+
 /** A collection, as a card among runs: its cover, name, years and size. */
 function CollectionCard({ card, index, onOpen, action = null }) {
   const count = `${card.runCount} run${card.runCount === 1 ? "" : "s"}`;
@@ -1645,8 +1660,9 @@ function CollectionCard({ card, index, onOpen, action = null }) {
       <span className="collection-card-mark" aria-hidden="true"><CollectionIcon size={16} /></span>
       {action}
     </span>
-    <span className="series-card-identity"><strong>{card.name}</strong><span className="series-card-byline">{[card.years, count].filter(Boolean).join(" • ")}</span></span>
+    <span className="series-card-identity"><strong>{card.name}</strong>{card.years ? <span className="series-card-byline">{card.years}</span> : null}</span>
     <span className="series-card-statuses"><StatusBadge tone="muted">Collection</StatusBadge></span>
+    <CardFoot runCount={card.runCount} issueCount={card.issueCount || 0} owned={card.owned || 0} />
     <button type="button" className="discover-open series-card-open" onClick={() => onOpen(card)} aria-label={`${card.name}, a collection of ${count}. Show details`} />
   </article>;
 }
@@ -7700,10 +7716,9 @@ function ArcCard({ list, index, reading, onOpen, onRead, action = null }) {
       <ReadListOverlay list={list} reading={reading} onRead={onRead} />
       {action}
     </span>
-    <span className="series-card-identity"><strong>{list.name}</strong><span className="series-card-byline">{[arcYears(list), `${list.seriesCount} series`, `${list.issueCount} issue${list.issueCount === 1 ? "" : "s"}`, arcOwnerLine(list)].filter(Boolean).join(" • ")}</span></span>
-    <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge>{list.foldedRunCount ? <StatusBadge tone="muted">{list.foldedRunCount} run{list.foldedRunCount === 1 ? "" : "s"} inside</StatusBadge> : list.missing ? <StatusBadge tone="muted">{list.missing} missing</StatusBadge> : null}</span>
-    <span className="series-card-rule" />
-    <Ownership series={arcOwnership(list)} compact />
+    <span className="series-card-identity"><strong>{list.name}</strong>{arcYears(list) ? <span className="series-card-byline">{arcYears(list)}</span> : null}</span>
+    <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge>{list.foldedRunCount ? <StatusBadge tone="muted">{list.foldedRunCount} run{list.foldedRunCount === 1 ? "" : "s"} inside</StatusBadge> : null}</span>
+    <CardFoot runCount={list.seriesCount} issueCount={list.issueCount || 0} owned={list.owned || 0} maker={arcMaker(list)} />
     <button type="button" className="discover-open series-card-open" onClick={() => onOpen(list)} aria-label={`${list.name}. Show details`} />
   </article>;
 }

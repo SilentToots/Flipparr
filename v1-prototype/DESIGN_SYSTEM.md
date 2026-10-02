@@ -258,6 +258,13 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   picker (a cover, a backdrop, an arc's order) steps in, its name in the top
   bar rather than an "Editing" heading. A backdrop that will not load is left
   out, not shown broken.
+- **Story arc and collection cards** (the owner's mock, 2026-10-02) are built as
+  a run's: name, the years alone as the byline, one type badge (Story arc,
+  Collection; an arc on the Runs shelf may add "N runs inside"), then under
+  the rule its size, "13 Runs | 29 Issues" (runs, the app's word, not
+  series), the owned bar only while something is missing, and "Made by" for
+  an arc a profile made ("you", or its maker's name). Collections are always
+  the admin's, so they name no maker. Run cards keep their status badges.
 - **The header's cover leads** (2026-10-01): on a phone it is 140x196 from
   a 390px screen up (120x168 on a 320px one, so the badges still fit), and
   the copy beside it stays shorter than it -- a run's stars moved out of the

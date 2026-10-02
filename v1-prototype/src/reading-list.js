@@ -111,6 +111,15 @@ export function foldArcRuns(series, lists) {
 // (`mine`, `ownerName`) and whether this profile may change it (`editable`).
 
 /** Whose an arc is, as its card and drawer say it: nothing for the household's. */
+/**
+ * Who made an arc, for its card: "you" for your own, the maker's name for
+ * someone else's shared one, nothing for the household's (2026-10-02).
+ */
+export function arcMaker(list) {
+  if (list?.mine) return "you";
+  return list?.ownerName || "";
+}
+
 export function arcOwnerLine(list) {
   if (list?.mine) return list.shared ? "Yours \u00b7 shared" : "Yours";
   if (list?.ownerName) return `Shared by ${list.ownerName}`;

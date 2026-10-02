@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcsToAddTo, moveToEdge, orderByReleaseDate, issueNumberValue, issuesInRange } from "../src/reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcMaker, arcsToAddTo, moveToEdge, orderByReleaseDate, issueNumberValue, issuesInRange } from "../src/reading-list.js";
 
 test("an arc's years read as one year or a span, and nothing when unknown", () => {
   assert.equal(arcYears({ year: 2002, yearEnd: 2003 }), "2002\u20132003");
@@ -120,4 +120,10 @@ test("a range of issue numbers takes both ends, decimals, and either order", () 
   assert.deepEqual(issuesInRange(issues, "", "3"), []);
   assert.equal(issueNumberValue("23.1"), 23.1);
   assert.equal(issueNumberValue("Annual 1"), null);
+});
+
+test("an arc's card names its maker only when it is a profile's", () => {
+  assert.equal(arcMaker({ mine: true, shared: true }), "you");
+  assert.equal(arcMaker({ mine: false, ownerName: "Sam" }), "Sam");
+  assert.equal(arcMaker({ mine: false }), "");
 });

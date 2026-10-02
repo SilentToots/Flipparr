@@ -41,11 +41,20 @@ export function collectionCards(collections, series) {
       title: collection.name,
       runs,
       runCount: runs.length,
+      // Issues across its runs, and how many of them are here.
+      issueCount: runs.reduce((sum, run) => sum + (Number(run.total) || 0), 0),
+      owned: runs.reduce((sum, run) => sum + (Number(run.owned) || 0), 0),
       cover: covers[0] || null,
       coverCandidates: [...new Set(covers)],
       years: years.length ? (Math.min(...years) === Math.max(...years) ? String(years[0]) : `${Math.min(...years)}–${Math.max(...years)}`) : "",
     };
   }).filter((card) => card.runCount > 0 || card.runIds?.length === 0);
+}
+
+/** A card's size: "13 Runs | 29 Issues", one of each in the singular. */
+export function countsLine(runCount, issueCount) {
+  const n = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  return `${n(Number(runCount) || 0, "Run")} | ${n(Number(issueCount) || 0, "Issue")}`;
 }
 
 /** Collections in the Collections tab's order: by name, or newest first. */

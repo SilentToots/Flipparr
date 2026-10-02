@@ -93,6 +93,9 @@ const SMALLEST_TEXT = new Set([
   ".series-card :is(.publication-status, .monitoring-status)",
   ".new-run-copy p",
   ".series-card-byline",
+  // Who made an arc, under its size on the card (the owner's mock, 2026-10-02).
+  ".series-card-maker",
+  ".series-card-counts",
   ".ownership.compact .ownership-label",
   ".sidebar .nav-item > b",
   // A tablet's rail: labels under their icons, as YouTube's mini guide.

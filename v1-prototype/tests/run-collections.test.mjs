@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  orderedRuns, collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun,
+  orderedRuns, collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine,
 } from "../src/run-collections.js";
 
 const series = [
@@ -57,4 +57,17 @@ test("an uploaded picture is a collection's cover before any run's", () => {
   assert.deepEqual(card.coverCandidates, ["/api/v1/run-collections/9/cover/image?v=1", "/b.jpg", "/a.jpg"]);
   const [plain] = collectionCards([{ id: "9", name: "Both", runIds: ["1", "2"], coverSeriesId: "2", coverImage: null }], series);
   assert.equal(plain.cover, "/b.jpg");
+});
+
+test("a collection card counts its runs' issues and how many are here", () => {
+  const [card] = collectionCards([{ id: 9, name: "Vertigo", runIds: [1, 2] }],
+    [{ id: 1, title: "Saga", total: 12, owned: 12 }, { id: 2, title: "Paper Girls", total: 30, owned: 10 }]);
+  assert.equal(card.issueCount, 42);
+  assert.equal(card.owned, 22);
+});
+
+test("a card's size reads Runs | Issues, singular for one", () => {
+  assert.equal(countsLine(13, 29), "13 Runs | 29 Issues");
+  assert.equal(countsLine(1, 1), "1 Run | 1 Issue");
+  assert.equal(countsLine(undefined, 0), "0 Runs | 0 Issues");
 });

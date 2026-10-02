@@ -752,6 +752,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .series-card-identity { min-width: 0; padding: 0 var(--space-12); display: grid; gap: var(--space-2); }
 .series-card-identity > strong { min-width: 0; color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-bold); line-height: var(--leading-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .series-card-rule { display: block; width: 100%; height: 1px; background: var(--line); }
+/* A story arc's or collection's foot: its size where a run has its owned
+   count, the owned bar only while some is missing, then who made it when
+   that is someone. */
+.series-card-foot { display: block; min-width: 0; padding: 0 var(--space-12); overflow: hidden; color: var(--color-neutral-0); line-height: var(--leading-tight); text-overflow: ellipsis; white-space: nowrap; }
+.series-card-counts { font-size: var(--text-xs); }
+.series-card-maker { font-size: var(--text-2xs); }
+.series-card-maker strong { font-weight: var(--weight-bold); }
+/* With no bar between them, the maker sits close under the size. */
+.series-card-counts + .series-card-maker { margin-top: calc(var(--space-8) * -1); }
 .series-card-byline { display: block; width: 100%; min-width: 0; color: var(--color-neutral-0); font-size: var(--text-xs); line-height: var(--leading-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Two badges are wider than a card, so nowrap cut "Following" in half.
    They wrap now: the content block has a min-height rather than a height,
@@ -2438,6 +2447,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .series-card-statuses { flex-wrap: nowrap; }
   .series-card-statuses > * { flex-shrink: 1; min-width: 0; overflow: hidden; }
   .ownership.compact .ownership-label { font-size: var(--text-2xs); }
+  /* A card's size is the owned count's size, as on a desktop. */
+  .series-card-counts { font-size: var(--text-2xs); }
 
   /* 69:792: the tab bar floats -- a clear strip holding a violet pill over a
      blur, solid where the browser cannot blur. Sign out is in Settings. The
