@@ -2050,7 +2050,7 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
   const heroArt = backdrop.shown ? backdrop.page || (coverArt && artFailed !== coverArt ? coverArt : null) : null;
   const toned = toneProps(useArtTone(coverArt));
   const files = useMemo(() => runs.flatMap((run) => run.fileDetails || []), [runs]);
-  const tabs = [["overview", "Overview"], ["runs", `Runs (${card.runCount})`], ...(canEdit ? [["arrange", "Arrange"]] : []), ["advanced", "Advanced"]];
+  const tabs = [["overview", "Overview"], ["runs", `Runs (${card.runCount})`], ["advanced", "Advanced"]];
   const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, card.id, edit]);
   // The cover is the uploaded picture, a run's cover chosen for it, or the first run's.
   const chosenCover = card.coverImage ? "upload" : card.coverSeriesId ? String(card.coverSeriesId) : "auto";
@@ -2080,6 +2080,16 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
   const editTitle = edit ? EDIT_ROWS.find((row) => row.id === edit)?.label : "Edit collection";
   const advanced = <div className="advanced-tools">
     <div className="drawer-facts"><span><strong>{card.runCount}</strong>Runs</span><span><strong>{issueTotals.owned}</strong>Issues here</span><span><strong>{started}</strong>In progress</span></div>
+    {/* Arrange lives in Advanced, for whoever may change it (the owner, 2026-10-02). */}
+    {canEdit && runs.length ? <section className="advanced-arrange"><h3>Arrange</h3>
+      <GroupArrange noun="run" groupNoun="collection" ids={runIds} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} busy={busy}
+            onSortMode={(next) => act("sort", () => onSave(card.id, { sortMode: next }))}
+            onReorder={(order) => act("order", () => onSave(card.id, { order }))}
+            onRemove={(id) => act("remove", () => onSave(card.id, { remove: [String(id)] }))}
+            nameOf={(id) => runsById[id]?.title || "Run"}
+            renderRow={(id) => <RunCollectionRow run={runsById[id]} />}
+            onAdd={onAddRuns} addLabel="Add runs" empty={null} />
+    </section> : null}
     <GroupShareCard group={card} noun="collection" busy={busy}
       onShare={(on) => act("share", () => onSave(card.id, { shared: on }))}
       onStopSharing={() => act("share", () => onSave(card.id, { shared: false }))} />
@@ -2154,13 +2164,6 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
             </div> : emptyRuns}
           </> : null}
           {tab === "runs" ? (runs.length ? <SeriesList series={runs} view="grid" reading={reading || {}} onOpen={onOpenSeries} onRead={onRead} /> : emptyRuns) : null}
-          {tab === "arrange" && canEdit ? <GroupArrange noun="run" groupNoun="collection" ids={runIds} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} busy={busy}
-            onSortMode={(next) => act("sort", () => onSave(card.id, { sortMode: next }))}
-            onReorder={(order) => act("order", () => onSave(card.id, { order }))}
-            onRemove={(id) => act("remove", () => onSave(card.id, { remove: [String(id)] }))}
-            nameOf={(id) => runsById[id]?.title || "Run"}
-            renderRow={(id) => <RunCollectionRow run={runsById[id]} />}
-            onAdd={onAddRuns} addLabel="Add runs" empty={emptyRuns} /> : null}
           {tab === "advanced" ? advanced : null}
         </div>
       </>}
@@ -8549,12 +8552,11 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
   const coverArt = data?.cover || list.cover || null;
   const heroArt = backdrop.shown ? backdrop.page || coverArt : null;
   const toned = toneProps(useArtTone(coverArt));
-  // A collection's tabs, with an arc's Issues for its Runs: Arrange for whoever
-  // may change it, Files for the admin.
+  // A collection's tabs, with an arc's Issues for its Runs, and Files for the
+  // admin; Arrange is in Advanced, as a collection's is.
   const tabs = [
     ["overview", "Overview"],
     ["issues", `Issues (${counts.issues})`],
-    ...(canEdit ? [["arrange", "Arrange"]] : []),
     ...(admin ? [["files", `Files (${data ? files.length : counts.owned})`]] : []),
     ["advanced", "Advanced"],
   ];
@@ -8602,6 +8604,26 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
   ];
   const advanced = <div className="advanced-tools">
     <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
+    {canEdit && items.length ? <section className="advanced-arrange"><h3>Arrange</h3>
+      <GroupArrange noun="issue" groupNoun="arc" ids={items.map((item) => String(item.id))} sortMode={data.sortMode || "custom"} sortOptions={ARC_SORTS} busy={busy}
+            onSortMode={(next) => run("sort", () => patch({ sortMode: next }))}
+            onReorder={(order) => run("order", () => patch({ order }))}
+            onRemove={(id) => run("remove", () => patch({ remove: [id] }))}
+            nameOf={(id) => (itemsById[id] ? itemName(itemsById[id]) : "Issue")}
+            rowClassName={(id) => (itemsById[id]?.owned ? "" : "arc-order-row--missing")}
+            renderRow={(id, index) => {
+              const issue = itemsById[id];
+              if (!issue) return null;
+              return <>
+                <b className="source-order-position" aria-hidden="true">{index + 1}</b>
+                <span className="rating-review-cover"><DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={16} /></span>
+                <span><strong>{itemName(issue)}</strong>
+                  <small>{[issue.seriesYear ? `${issue.seriesTitle} (${issue.seriesYear})` : null, formatLongDate(issue.coverDate), issue.owned ? "In library" : issue.queued ? "On the way" : "Missing"].filter(Boolean).join(" \u00b7 ")}</small></span>
+              </>;
+            }}
+            onAdd={onAddIssues ? () => onAddIssues(data) : null} addLabel="Add issues"
+            empty={null} />
+    </section> : null}
     {origin ? <p className="settings-card-note drawer-provenance">{origin}</p> : null}
     <GroupShareCard group={data} noun="story arc" busy={busy}
       onShare={(on) => run("share", () => patch({ shared: on }))}
@@ -8708,7 +8730,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
           </div> : null}
           {data && tab === "overview" ? <>
             {data.description ? <RunSynopsis text={data.description} heading="About" source={data.source === "manual" ? null : data.source === "cbl" ? (data.sourceName || "the reading list") : "Metron"} /> : null}
-            {!items.length ? <div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run, owned or missing. Each goes on the end; arrange them in Arrange." : "Its issues show up here once they are added."}</span>
+            {!items.length ? <div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run, owned or missing. Each goes on the end; arrange them in Advanced." : "Its issues show up here once they are added."}</span>
               {canEdit && onAddIssues ? <button type="button" className="ghost-button" onClick={() => onAddIssues(data)}><Plus size={17} /> Add issues</button> : null}</div> : null}
             {/* The band above holds Read alone, as a run's does; adding is
                 done where the issues are, under their shelf. */}
@@ -8722,25 +8744,6 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
             onRead={onRead ? (target) => onRead({ ...target, ...context }) : undefined} onRate={onRateIssue} onMark={onMarkIssue} onAddToArc={onAddToArc}
             empty={<div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run to start its reading order." : "Its issues show up here once they are added."}</span></div>}
             onMarkRun={onMark ? (read) => run("mark", () => onMark(list, read)) : undefined} runRead={allRead} runStarted={started} readingFiles={readingFiles} medium="comic" /> : null}
-          {data && tab === "arrange" && canEdit ? <GroupArrange noun="issue" groupNoun="arc" ids={items.map((item) => String(item.id))} sortMode={data.sortMode || "custom"} sortOptions={ARC_SORTS} busy={busy}
-            onSortMode={(next) => run("sort", () => patch({ sortMode: next }))}
-            onReorder={(order) => run("order", () => patch({ order }))}
-            onRemove={(id) => run("remove", () => patch({ remove: [id] }))}
-            nameOf={(id) => (itemsById[id] ? itemName(itemsById[id]) : "Issue")}
-            rowClassName={(id) => (itemsById[id]?.owned ? "" : "arc-order-row--missing")}
-            renderRow={(id, index) => {
-              const issue = itemsById[id];
-              if (!issue) return null;
-              return <>
-                <b className="source-order-position" aria-hidden="true">{index + 1}</b>
-                <span className="rating-review-cover"><DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={16} /></span>
-                <span><strong>{itemName(issue)}</strong>
-                  <small>{[issue.seriesYear ? `${issue.seriesTitle} (${issue.seriesYear})` : null, formatLongDate(issue.coverDate), issue.owned ? "In library" : issue.queued ? "On the way" : "Missing"].filter(Boolean).join(" \u00b7 ")}</small></span>
-              </>;
-            }}
-            onAdd={onAddIssues ? () => onAddIssues(data) : null} addLabel="Add issues"
-            empty={<div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing to arrange yet</strong><span>Add issues from any run, owned or missing.</span>
-              {onAddIssues ? <button type="button" className="ghost-button" onClick={() => onAddIssues(data)}><Plus size={17} /> Add issues</button> : null}</div>} /> : null}
           {data && tab === "files" ? <FileInventory files={files} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
           {data && tab === "advanced" ? advanced : null}
         </div>

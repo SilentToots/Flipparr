@@ -243,9 +243,10 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   progress / Read), the big Read -- a collection's run read last unless
   finished, else the first unfinished; an arc's next comic -- then
   `DrawerTabs`: Overview (About, the Runs / Reading order shelf with *Add
-  runs* / *Add issues* under it), Runs (n) / Issues (n), *Arrange* for
-  whoever may change it, Files (an arc, the admin), Advanced for everyone.
-  Arrange (`GroupArrange`) is the Order `GlassSelect` (a collection: Your
+  runs* / *Add issues* under it), Runs (n) / Issues (n), Files (an arc, the
+  admin), Advanced for everyone. Arrange leads Advanced, under the facts row,
+  for whoever may change it (the owner, 2026-10-02: out of the tab row, which
+  five tabs made scroll on a phone). Arrange (`GroupArrange`) is the Order `GlassSelect` (a collection: Your
   order / Title / Year; an arc: Your order / Release date, saved, so an
   issue added later falls into place) over the `DragOrderList` (a finger
   lifts a row by holding its handle still for 250ms -- until then the handle
@@ -588,7 +589,7 @@ Motion tokens:
   `ArcPickerModal` -- the arcs this profile may change, latest first, with
   *Added* on one that holds the issue, and a name field to start a new one.
   An added issue goes on the end (Komga, Spotify), and is put in place in
-  the Arrange tab (see Read groups). A row's "…" is a menu, not three 44px
+  Advanced › Arrange (see Read groups). A row's "…" is a menu, not three 44px
   buttons, so a phone row keeps ~170px for the issue's name. A hand-made arc is its maker's until
   shared (Advanced › *Share with the household*, a `FollowSwitch`); cards and
   the drawer say "Made by you" (the drawer adds " · shared") or "Made by

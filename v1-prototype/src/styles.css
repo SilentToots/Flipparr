@@ -1386,7 +1386,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    2026-10-02, as an arc's), the top right a reading list's remove. */
 .collection-card-mark { position: absolute; right: var(--space-8); bottom: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
 .source-order-row > span.rating-review-cover { flex: 0 0 auto; display: grid; }
-/* A read group's Arrange tab (a collection's, an arc's): its order, then the list. */
+/* A read group's Arrange, first in its Advanced for whoever may change it
+   (2026-10-02): a heading as the drawer's sections have, then the order and the list. */
+.advanced-arrange { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-12); margin: var(--space-10) 0; }
+.series-drawer.comic-drawer .advanced-arrange > h3 { margin: 0; color: var(--color-neutral-0); font-size: var(--text-md); font-weight: var(--weight-bold); }
+/* Its order, then the list. */
 .group-arrange { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 /* A drawer's shelf with its add button under it (an arc's Add issues, a
    collection's Add runs): one section, not two of the body's. */
