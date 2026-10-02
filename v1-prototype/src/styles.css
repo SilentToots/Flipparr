@@ -956,11 +956,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .reading-list-position { color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-semibold); text-align: right; }
 .reading-list-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); }
 .reading-list-edit-actions { display: flex; justify-content: flex-end; gap: var(--space-8); }
-/* Sort by release date sits on its own line under the note, so Cancel and
-   Done never part company on a phone. */
-.arc-order-sort { justify-self: start; align-self: flex-start; }
-/* An arc's order is the shared drag list (DragOrderList); a row's menu
-   moves it to either end, the path for a long arc, or takes it out. */
+/* A read group's Arrange list is the shared drag list (DragOrderList); a
+   row's menu moves it to either end, the path for a long list, or takes it out. */
 .arc-order-menu { flex: 0 0 auto; }
 .arc-order-row--missing strong { color: var(--muted-strong); }
 /* "Add to story arc": the arcs this profile may change, then a new one. */
@@ -1022,7 +1019,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .arc-cover-choices button { display: grid; gap: var(--space-6); padding: var(--space-6); border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--surface-raised); color: var(--muted); font-size: var(--text-xs); text-align: center; cursor: pointer; }
 .arc-cover-choices button.active { border-color: var(--violet); color: var(--text); }
 .arc-cover-choices .discover-cover { width: 100%; height: auto; aspect-ratio: var(--cover-ratio); }
-.arc-edit-form { display: grid; gap: var(--space-16); }
+.arc-edit-form, .group-edit-form { display: grid; gap: var(--space-16); }
+/* Save alone, at the end of the row; a phone's fills it, as every action row's does. */
+.group-edit-actions { justify-content: flex-end; }
 .request-swipe-pile { display: grid; }
 .request-swipe-pile > * { grid-area: 1 / 1; }
 .request-swipe-peek { transform: translateY(var(--space-12)) scale(.96); opacity: .5; pointer-events: none; }
@@ -1381,28 +1380,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .provider-priority { color: var(--muted-weak); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
 /* Collections (since 2026-10-01): a collection is a run card with its mark in
    the cover's corner; its drawer is the series drawer's frame. */
-.collection-card-mark { position: absolute; top: var(--space-8); left: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
+/* Bottom right: the top left is Read's (a collection's card has Read since
+   2026-10-02, as an arc's), the top right a reading list's remove. */
+.collection-card-mark { position: absolute; right: var(--space-8); bottom: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
 .source-order-row > span.rating-review-cover { flex: 0 0 auto; display: grid; }
-.run-collection-remove { flex: 0 0 auto; }
-/* A collection's Runs tab: how its runs are ordered, and Arrange, above them. */
-.collection-runs { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
+/* A read group's Arrange tab (a collection's, an arc's): its order, then the list. */
+.group-arrange { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 /* A drawer's shelf with its add button under it (an arc's Add issues, a
    collection's Add runs): one section, not two of the body's. */
 .comic-drawer-shelf-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 /* A series family's Overview links, under its body at the drawer's inset. */
 .collection-drawer-links { padding: 0 var(--drawer-inset) var(--space-32); }
-.collection-edit-form .arc-cover-choices { margin-top: var(--space-12); }
-.collection-order-field + .settings-card-note { margin: 0; }
+.group-order-field + .settings-card-note { margin: 0; }
 /* A collection drawer's failed save, under its header. */
 .comic-drawer-error { margin: var(--space-12) var(--drawer-inset) 0; }
-.edit-collections .edit-collection-list { display: grid; gap: var(--space-4); margin-top: var(--space-12); }
-.edit-collections .check-row { margin: 0; padding: var(--space-6) 0; align-items: center; }
-.edit-collections .check-row input { margin-top: 0; }
-.edit-collection-new { display: flex; align-items: center; gap: var(--space-8); margin-top: var(--space-12); }
-.edit-collection-new .form-field { flex: 1; min-width: 0; margin: 0; }
-/* Create keeps its own width: the card's full-width button rule squeezed the
-   name field beside it to a sliver. */
-.advanced-card .edit-collection-new > button { flex: 0 0 auto; width: auto; }
 .rating-review-filters--two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 
 /* Reading list (since 2026-10-01): a card in the tab carries a way off the

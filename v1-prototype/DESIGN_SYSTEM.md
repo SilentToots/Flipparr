@@ -230,24 +230,39 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   collection mark -- MDI's bookmark-box-multiple -- in the cover's corner on
   `--scrim-strong`, its years and run count for a byline, and a muted
   "Collection" badge. The cards fill the Collections tab and lead the Library
-  grid (View & sort: "Show collections in Library"). Its drawer is the comic
-  drawers' frame, as a run's and an arc's are (the owner, 2026-10-01): the top
-  bar (bookmark, and Edit for the admin), the cover over its own blurred art
-  with "Collection • years • N runs" and status badges, then the big Read
-  button every comic drawer leads with -- for the run read last unless it is
-  finished, else the first unfinished in the collection's order (its own read
-  target: Continue, Begin or Restart). Overview has the summary and a Runs
-  shelf with *Add runs* under it (the admin's; the Set ratings list,
-  choosing). The admin's tabs are Overview / *Arrange* / Advanced: Arrange is
-  the Order dropdown (Your order / Title / Year -- a `GlassSelect`, not a
-  segmented slider) over the `DragOrderList` (a finger lifts a row by holding its handle still for 250ms -- until then the handle scrolls like the rest of the row; a mouse drags at once) with Remove per row; Advanced is
-  the counts and Delete. A reader's are Overview / Runs (the grid). A comic
-  drawer with three tabs or fewer gives each an equal share of the bar; four
-  still spread edge to edge. Edit (the pencil)
-  is one screen: name, summary and cover (upload, or a run's cover as tiles),
-  one Save. A run's drawer lists its collections as an "In Collections" row,
-  and its Edit sheet ticks them. Every `.form-field textarea` is the filled
-  field the inputs are (it was the browser's own box until 2026-10-01).
+  grid (View & sort: "Show collections in Library"); since 2026-10-02 the
+  mark sits bottom right, Read (as on an arc's card) top left.
+- **Read groups: collections and story arcs** (one pattern since 2026-10-02,
+  the owner: "collections are runs read in a sequence, story arcs issues read
+  in a sequence"). Any profile makes either, private until shared; the
+  household's (every collection made before schema 63, arcs saved from
+  Metron or a CBL) are the admin's. Cards, rows and drawers say "Made by
+  you" or "Made by Sam". The drawer is the comic drawers' frame: top bar
+  (bookmark, Edit for whoever may change it; an arc also Pull/Request
+  missing), hero (publisher when one, years; the type badge, its maker, In
+  progress / Read), the big Read -- a collection's run read last unless
+  finished, else the first unfinished; an arc's next comic -- then
+  `DrawerTabs`: Overview (About, the Runs / Reading order shelf with *Add
+  runs* / *Add issues* under it), Runs (n) / Issues (n), *Arrange* for
+  whoever may change it, Files (an arc, the admin), Advanced for everyone.
+  Arrange (`GroupArrange`) is the Order `GlassSelect` (a collection: Your
+  order / Title / Year; an arc: Your order / Release date, saved, so an
+  issue added later falls into place) over the `DragOrderList` (a finger
+  lifts a row by holding its handle still for 250ms -- until then the handle
+  scrolls like the rest of the row; a mouse drags at once), each row's "…"
+  (`OrderRowMenu`) moving it to the top or bottom or taking it out; every
+  change saves at once. Edit (`GroupEditScreen`) is one screen: Name and
+  Summary (an arc's Description), one Save, then Cover (`GroupCoverPicker`)
+  and Header background (`BackdropPicker`, a page from its comics) a step
+  in. Advanced is the facts row and the shared cards: Share
+  (`GroupShareCard`), Restart and Reading state, Delete; an arc adds Pull,
+  Refresh and Export. *New collection* / *New story arc* open one
+  `NewGroupModal` (name and summary) and then the group's add picker;
+  adding from outside is one `AddToGroupSheet` (an issue's "…" or a run's
+  Select for an arc; a run drawer's *Add to collection* under its "In
+  Collections" row). A comic drawer with three tabs or fewer gives each an
+  equal share of the bar; four still spread edge to edge. Every
+  `.form-field textarea` is the filled field the inputs are.
 - **Every drawer is the comic drawer** (evaluated 2026-10-01 against the run
   drawer): top bar (actions only, the title appears once scrolled), hero with
   ownership, one action band (Read, or the drawer's one primary -- Add &
@@ -572,13 +587,9 @@ Motion tokens:
   run, or *Add to story arc…* in any issue's "…" menu, owned or missing, which opens
   `ArcPickerModal` -- the arcs this profile may change, latest first, with
   *Added* on one that holds the issue, and a name field to start a new one.
-  An added issue goes on the end (Komga, Spotify). The arc drawer's Edit ›
-  Reading order is the shared `DragOrderList` (handle drag, arrow keys), each
-  row with a "…" menu (`ArcOrderRowMenu`): *Move to top* / *Move to bottom* --
-  the way through a long arc -- and Remove. A menu, not three 44px buttons,
-  so a phone row keeps ~170px for the issue's name. *Sort by release date*
-  (its own line under the note, so Cancel and Done stay together) orders
-  everything by cover date once, to fine-tune from; it is not a live sort. A hand-made arc is its maker's until
+  An added issue goes on the end (Komga, Spotify), and is put in place in
+  the Arrange tab (see Read groups). A row's "…" is a menu, not three 44px
+  buttons, so a phone row keeps ~170px for the issue's name. A hand-made arc is its maker's until
   shared (Advanced › *Share with the household*, a `FollowSwitch`); cards and
   the drawer say "Made by you" (the drawer adds " · shared") or "Made by
   Sam", the same words everywhere since 2026-10-02, and nothing on
@@ -587,10 +598,9 @@ Motion tokens:
   holds *Export as a reading list* (CBL or JSON). A hand-made arc never folds
   runs into its card.
 - **Uploaded covers for arcs and collections** (since 2026-10-01). An arc's
-  Edit › Cover leads with *Upload an image*; the picture becomes the cover
-  and stays among the choices as "Your picture". A collection's Edit has
-  *Upload* beside its Cover choice; the picture leads (as "Your uploaded
-  picture") until another cover is chosen and saved, which removes it. Both
+  or collection's Edit › Cover leads with *Upload an image*; the picture
+  becomes the cover and stays among the choices as "Your picture" (a
+  collection's goes when another cover is chosen). Both
   are made a bounded JPEG on the server, as a run's uploaded cover is.
 - **Arrivals.** Nothing snaps in: a page fades as it opens (`.page-view`,
   keyed by the view -- a fade only, and `animation-fill-mode: backwards`,

@@ -41,6 +41,7 @@ export function collectionCards(collections, series) {
       kind: "collection",
       key: `collection-${collection.id}`,
       title: collection.name,
+      addedAt: collection.createdAt,
       runs,
       runCount: runs.length,
       publisher: sharedPublisher(runs),
@@ -52,6 +53,40 @@ export function collectionCards(collections, series) {
       years: years.length ? (Math.min(...years) === Math.max(...years) ? String(years[0]) : `${Math.min(...years)}–${Math.max(...years)}`) : "",
     };
   }).filter((card) => card.runCount > 0 || card.runIds?.length === 0);
+}
+
+/**
+ * Where a collection stands for one profile, from its runs' places
+ * (`runReading`, keyed by run): the run to read -- the one read last unless
+ * it is finished, else the first unfinished in the collection's order, else
+ * the first again -- and how many runs are started and finished. The drawer's
+ * Read and its card's mark both come from here.
+ */
+export function collectionReadTarget(card, runReading) {
+  const runs = card?.runs || [];
+  const places = runs.map((run) => ({ run, place: runReading?.[String(run.id)] })).filter((entry) => entry.place);
+  const latest = [...places].sort((a, b) => String(b.place.lastReadAt || "").localeCompare(String(a.place.lastReadAt || "")))[0] || null;
+  const run = (latest && latest.place.state !== "finished" ? latest.run : null)
+    || runs.find((item) => runReading?.[String(item.id)]?.state !== "finished") || runs[0] || null;
+  const finished = places.filter((entry) => entry.place.state === "finished").length;
+  return {
+    run, finished,
+    started: places.filter((entry) => entry.place.state !== "finished").length,
+    allRead: runs.length > 0 && finished === runs.length,
+    anyRead: places.length > 0,
+  };
+}
+
+/**
+ * Each collection's latest place among its runs, keyed by the collection, so
+ * the Collections tab sorts by "recently read" as the Story arcs tab does.
+ */
+export function collectionPlaces(cards, runReading) {
+  return Object.fromEntries((cards || []).map((card) => {
+    const places = (card.runs || []).map((run) => runReading?.[String(run.id)]).filter(Boolean);
+    const latest = places.sort((a, b) => String(b.lastReadAt || "").localeCompare(String(a.lastReadAt || "")))[0];
+    return [String(card.id), latest];
+  }).filter(([, place]) => place));
 }
 
 /** A card's size: "13 Runs | 29 Issues", one of each in the singular. */

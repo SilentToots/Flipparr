@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  orderedRuns, collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine,
+  orderedRuns, collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine, collectionReadTarget, collectionPlaces,
 } from "../src/run-collections.js";
 
 const series = [
@@ -70,4 +70,23 @@ test("a card's size reads Runs | Issues, singular for one", () => {
   assert.equal(countsLine(13, 29), "13 Runs | 29 Issues");
   assert.equal(countsLine(1, 1), "1 Run | 1 Issue");
   assert.equal(countsLine(undefined, 0), "0 Runs | 0 Issues");
+});
+
+test("a collection reads on from the run read last, else the first unfinished in its order", () => {
+  const card = { id: "9", runs: [{ id: 1 }, { id: 2 }, { id: 3 }] };
+  assert.equal(collectionReadTarget(card, {}).run.id, 1, "nothing read: the first");
+  const reading = { 1: { state: "finished", lastReadAt: "2026-10-01" }, 2: { state: "continue", lastReadAt: "2026-10-02" } };
+  const mid = collectionReadTarget(card, reading);
+  assert.deepEqual([mid.run.id, mid.started, mid.finished, mid.allRead, mid.anyRead], [2, 1, 1, false, true]);
+  const lastDone = collectionReadTarget(card, { 1: { state: "finished", lastReadAt: "2026-10-03" } });
+  assert.equal(lastDone.run.id, 2, "the run read last is finished: the first unfinished");
+  const all = collectionReadTarget(card, { 1: { state: "finished" }, 2: { state: "finished" }, 3: { state: "finished" } });
+  assert.deepEqual([all.run.id, all.allRead], [1, true], "all read: the first again");
+});
+
+test("a collection's place, to sort by recently read, is its runs' latest", () => {
+  const cards = [{ id: "9", runs: [{ id: 1 }, { id: 2 }] }, { id: "10", runs: [{ id: 3 }] }];
+  const places = collectionPlaces(cards, { 1: { lastReadAt: "2026-10-01" }, 2: { lastReadAt: "2026-10-02" } });
+  assert.deepEqual(Object.keys(places), ["9"]);
+  assert.equal(places["9"].lastReadAt, "2026-10-02");
 });

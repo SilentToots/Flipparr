@@ -120,6 +120,15 @@ export function arcMaker(list) {
   return list?.ownerName || "";
 }
 
+/** The orders an arc is read in, as its Arrange tab offers them. */
+export const ARC_SORTS = [
+  { id: "custom", label: "Your order" },
+  { id: "release", label: "Release date" },
+];
+
+/** Who made a read group, in its card's words, and whether yours is shared. */
+export const groupOwnerLine = (group) => arcOwnerLine(group);
+
 /** Who made an arc, in its card's words, and whether yours is shared. */
 export function arcOwnerLine(list) {
   const maker = arcMaker(list);
@@ -133,12 +142,22 @@ export function arcOwnerLine(list) {
  * already (`has`) or some (`hasSome`).
  */
 export function arcsToAddTo(lists, issueIds) {
-  const ids = (Array.isArray(issueIds) ? issueIds : [issueIds]).map((id) => String(id ?? ""));
-  return (lists || []).filter((list) => list.editable)
+  return groupsToAddTo(lists, issueIds, (list) => list.issueIds);
+}
+
+/**
+ * The read groups -- story arcs or collections -- something can be added to:
+ * the ones this profile may change, latest first, each saying whether it
+ * already holds all (`has`) or some (`hasSome`) of `ids`. `membersOf` gives
+ * a group's members (an arc's issues, a collection's runs).
+ */
+export function groupsToAddTo(groups, ids, membersOf) {
+  const wanted = (Array.isArray(ids) ? ids : [ids]).map((id) => String(id ?? ""));
+  return (groups || []).filter((list) => list.editable)
     .map((list) => {
-      const held = new Set((list.issueIds || []).map(String));
-      const count = ids.filter((id) => held.has(id)).length;
-      return { ...list, has: ids.length > 0 && count === ids.length, hasSome: count > 0 && count < ids.length };
+      const held = new Set((membersOf(list) || []).map(String));
+      const count = wanted.filter((id) => held.has(id)).length;
+      return { ...list, has: wanted.length > 0 && count === wanted.length, hasSome: count > 0 && count < wanted.length };
     })
     .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
