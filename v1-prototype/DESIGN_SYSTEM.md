@@ -248,6 +248,16 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   one Save. A run's drawer lists its collections as an "In Collections" row,
   and its Edit sheet ticks them. Every `.form-field textarea` is the filled
   field the inputs are (it was the browser's own box until 2026-10-01).
+- **Every drawer is the comic drawer** (evaluated 2026-10-01 against the run
+  drawer): top bar (actions only, the title appears once scrolled), hero with
+  ownership, one action band (Read, or the drawer's one primary -- Add &
+  follow, Request, Pull), glass tabs, body cards. Discover's drawers, the
+  reader's finish drawer and the series family drawer use it too; a tab with
+  nothing in it is not offered. Edit is one screen everywhere: the fields and
+  short lists (a run's alternate titles, an arc's name) are on it, and only a
+  picker (a cover, a backdrop, an arc's order) steps in, its name in the top
+  bar rather than an "Editing" heading. A backdrop that will not load is left
+  out, not shown broken.
 - **Reading list** (since 2026-10-01) is each profile's own: the runs, story
   arcs and collections it added to come back to -- nothing it is merely in
   the middle of, which is Recommended's Keep Reading. The bookmark is its

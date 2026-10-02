@@ -3548,10 +3548,13 @@ function DrawerTopBar({ title, onClose, onBack, closeLabel, stacked = false, chi
 // violet-to-black scrim, the cover itself, the title, a byline and chips. The
 // same classes as the Comics drawer, so the two read as one kind of panel.
 function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, closeLabel, children, actions = null, ownership = null }) {
+  // A picture that cannot be fetched is no backdrop, rather than a broken image.
+  const [failed, setFailed] = useState(null);
+  const shown = art && failed !== art ? art : null;
   return <><DrawerTopBar title={title} onClose={onClose} closeLabel={closeLabel}>{actions}</DrawerTopBar><header className="comic-drawer-hero">
-    {art ? <>
-      <img className="comic-drawer-backdrop" src={art} alt="" aria-hidden="true" key={art} />
-      <img className="comic-drawer-backdrop blurred" src={art} alt="" aria-hidden="true" key={`${art}-blurred`} />
+    {shown ? <>
+      <img className="comic-drawer-backdrop" src={shown} alt="" aria-hidden="true" key={shown} onError={() => setFailed(shown)} />
+      <img className="comic-drawer-backdrop blurred" src={shown} alt="" aria-hidden="true" key={`${shown}-blurred`} onError={() => setFailed(shown)} />
     </> : null}
     <span className="comic-drawer-scrim" aria-hidden="true" />
     <div className="comic-drawer-identity">
@@ -7439,7 +7442,6 @@ function issueCardLabel(issue, medium) {
 const EDIT_SECTIONS = [
   ["cover", "Series cover", "Use another issue's art, a provider's cover, or your own image."],
   ["background", "Header background", "The page behind this drawer's header."],
-  ["titles", "Alternate titles", "Other names this run's comics are filed under."],
 ];
 
 /**
@@ -7477,13 +7479,6 @@ function SeriesEditPanel({
       <p className="edit-section-intro">Choose a page from {series.title} to show behind this header.</p>
       <BackdropPicker series={series} current={shownBackdrop} busy={backdropBusy} error={backdropError} readable={readingFiles}
         onChoose={onChooseBackdrop} onAutomatic={onAutomaticBackdrop} />
-    </div>;
-  }
-  if (section === "titles") {
-    return <div className="edit-section">
-      <p className="edit-section-intro">Scans use these automatically. Add one only if a scan keeps missing a file.</p>
-      {alternateTitles.length ? <div className="alias-list">{alternateTitles.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>)}</div> : null}
-      {aliasForm}
     </div>;
   }
   return <div className="edit-index">
@@ -7542,6 +7537,13 @@ function SeriesEditPanel({
         onChange={(next) => onSetAgeRating?.(series, next === "auto" ? null : next)}
         options={[{ value: "auto", label: series.ageRatingFound ? `Auto (${RATING_LABELS[series.ageRatingFound]})` : "Auto" },
           ...RATINGS.map((id) => ({ value: id, label: RATING_LABELS[id] }))]} />
+    </section>
+    {/* Small enough to edit where it is: only the cover and background
+        pickers are big enough to step into (the owner, 2026-10-01). */}
+    <section className="advanced-card edit-titles">
+      <div><strong>Alternate titles</strong><p>Other names this run&rsquo;s comics are filed under. Scans use these automatically; add one only if a scan keeps missing a file.</p></div>
+      {alternateTitles.length ? <div className="alias-list">{alternateTitles.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>)}</div> : null}
+      {aliasForm}
     </section>
     {collections ? <RunCollectionsCard series={series} collections={collections} onToggle={onToggleCollection} onCreate={onCreateCollection} /> : null}
   </div>;
@@ -7997,7 +7999,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
   }
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} data-in-address="" role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
     <DrawerTopBar
-      title={edit ? (EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title) : series.title}
+      title={edit ? (EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title) : edit === "" ? "Edit run" : series.title}
       onClose={requestClose}
       onBack={edit !== null ? () => setEdit(edit ? "" : null) : parentCollection ? onBack : undefined}
       stacked={edit !== null}
@@ -8045,10 +8047,6 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     {/* Reading and following, together, above the tabs and on every one of
         them. They are what this drawer is for; everything below is detail. */}
     {edit !== null ? <div className="comic-drawer-body comic-drawer-edit">
-      <header className="edit-heading">
-        <span className="eyebrow">Editing</span>
-        <h3>{EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title}</h3>
-      </header>
       <SeriesEditPanel
         collections={admin ? runCollections : null} onToggleCollection={onToggleRunCollection} onCreateCollection={onCreateRunCollection}
         series={series} section={edit} onSection={setEdit} shownBackdrop={shownBackdrop} medium={series.medium}
@@ -8473,7 +8471,11 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
   const canAskMissing = admin || Boolean(data?.providerArcId);
   const pullLabel = admin ? `Pull ${missingCount} missing` : `Request ${missingCount} missing`;
   const pullMissing = () => run("pull", () => (admin ? onPullMissing : onRequestMissing)(data));
-  const EDIT_ARC = [["name", "Name"], ["cover", "Cover"], ["backdrop", "Header background"], ["order", "Reading order"]];
+  const EDIT_ARC = [
+    ["cover", "Cover", "One of its comics' covers, the picture it came with, or one you upload."],
+    ["backdrop", "Header background", "A page from one of its comics, behind the header."],
+    ["order", "Reading order", "Drag issues into the order they are read, or take one out of the arc."],
+  ];
   const advanced = <div className="advanced-tools">
     <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
     {origin ? <p className="settings-card-note drawer-provenance">{origin}</p> : null}
@@ -8533,7 +8535,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
     <aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="reading-list-title" onMouseDown={(event) => event.stopPropagation()}>
       <DrawerTopBar
-        title={edit ? (EDIT_ARC.find(([id]) => id === edit)?.[1] || name) : name}
+        title={edit ? (EDIT_ARC.find(([id]) => id === edit)?.[1] || name) : edit === "" ? "Edit story arc" : name}
         onClose={requestClose}
         onBack={edit !== null ? () => setEdit(edit ? "" : null) : undefined}
         stacked={edit !== null}
@@ -8574,17 +8576,22 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
         <button type="button" onClick={load}>Try again</button>
       </div></div> : null}
       {edit !== null && data ? <div className="comic-drawer-body comic-drawer-edit">
-        {edit === "" ? <div className="advanced-tools">
-          {EDIT_ARC.map(([id, label]) => <section className="advanced-card" key={id}>
-            <div><strong>{label}</strong><p>{id === "name" ? "What the arc is called in your comics." : id === "cover" ? "One of its comics' covers, the picture it came with, or one you upload."
-              : id === "backdrop" ? "A page from one of its comics, behind the header." : "Drag issues into the order they are read, or take one out of the arc."}</p></div>
-            <button type="button" onClick={() => (id === "order" ? beginOrder() : setEdit(id))} disabled={id === "backdrop" && !files.length}><PencilSimple size={16} /> {label}</button>
-          </section>)}
+        {/* One screen, as a run's and a collection's: the name open to edit,
+            and the big pickers -- cover, background, reading order -- a step
+            in from it (the owner, 2026-10-01). */}
+        {edit === "" ? <div className="edit-index">
+          <form className="arc-edit-form" onSubmit={(event) => { event.preventDefault(); if (nameDraft.trim() && nameDraft.trim() !== name) run("name", () => patch({ name: nameDraft.trim() })); }}>
+            <label className="form-field"><span>Name</span><input value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} required maxLength={120} /></label>
+            <div className="metadata-edit-actions"><span /><button type="submit" className="primary-button" disabled={busy === "name" || !nameDraft.trim() || nameDraft.trim() === name} aria-busy={busy === "name" || undefined}>Save</button></div>
+          </form>
+          <div className="edit-rows">
+            {EDIT_ARC.map(([id, label, detail]) => <button type="button" className="edit-row" key={id} disabled={id === "backdrop" && !files.length}
+              onClick={() => (id === "order" ? beginOrder() : setEdit(id))}>
+              <span><strong>{label}</strong><small>{detail}</small></span>
+              <CaretRight size={17} />
+            </button>)}
+          </div>
         </div> : null}
-        {edit === "name" ? <form className="arc-edit-form" onSubmit={(event) => { event.preventDefault(); run("name", () => patch({ name: nameDraft.trim() })).then(() => setEdit("")); }}>
-          <label className="form-field"><span>Name</span><input value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} required maxLength={120} /></label>
-          <div className="metadata-edit-actions"><button type="button" className="ghost-button" onClick={() => setEdit("")}>Cancel</button><button type="submit" className="primary-button" disabled={busy === "name" || !nameDraft.trim()}>Save</button></div>
-        </form> : null}
         {edit === "cover" ? <div className="arc-cover-upload">
           <label className={`secondary-button upload-cover-button${busy === "upload" ? " busy" : ""}`}>
             {busy === "upload" ? <LoadingSpinner size={18} /> : <UploadSimple size={18} />} Upload an image
@@ -8671,6 +8678,8 @@ function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructu
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   useSwipeToDismiss(dialogRef, requestClose);
+  const toned = toneProps(useArtTone(collection?.cover || null));
+  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, collection?.id]);
   if (!collection) return null;
   const arcs = collection.storyArcs || [];
   const files = collection.runs.flatMap((run) => (run.fileDetails || []).map((file) => ({ ...file, run })));
@@ -8726,21 +8735,46 @@ function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructu
   };
   const display = { ...collection, id: `collection-${collection.id}`, title: collection.name };
   const preferenceLabel = ACQUISITION_LABELS[collection.acquisitionPreference] || ACQUISITION_LABELS.either;
+  // The comic drawers' frame (2026-10-01): Follow as the top bar's eye, the
+  // ownership bar in the header, the glass tab bar.
+  const following = collection.monitoringStatus === "monitored";
+  const followAction = isAdmin(viewer)
+    ? <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${following ? " active" : ""}`}
+      onClick={() => (following ? onUnfollow(collection) : onRequest())} disabled={requestBusy || unfollowBusy} aria-pressed={following}
+      aria-label={following ? `Stop following ${collection.name}` : `Follow ${collection.name}`} title={following ? "Following" : "Follow collection"}>
+      {requestBusy || unfollowBusy ? <LoadingSpinner size={18} /> : <FollowedIcon size={20} />}
+      <b>{following ? "Unfollow" : "Follow"}</b>
+    </button>
+    : !following ? <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${requested ? " active" : ""}`}
+      onClick={() => onRequest()} disabled={requestBusy || requested}
+      aria-label={requested ? `Following ${collection.name} is requested` : `Request a follow of ${collection.name}`}
+      title={requested ? "Waiting for approval" : "Ask for this to be followed"}>
+      {requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={20} /> : <FollowedIcon size={20} />}
+      <b>{requested ? "Follow requested" : "Request follow"}</b>
+    </button> : null;
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer collection-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collection-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
-      <DialogCloseButton onClose={requestClose} label="Close collection details" drawer />
-      <div className="drawer-identity"><div className="drawer-cover"><SeriesCover series={display} /></div><div><span className={`status-chip ${collection.structureStatus === "unmapped" || issueCoveragePending ? "amber" : "green"}`}>{collection.monitoringStatus === "monitored" ? "Following" : "In your library"}</span><h2 id="collection-drawer-title">{collection.name}</h2><p>{collection.publisher} · {collection.year} · {mainArcs.length} runs{specials.length ? ` + ${specials.length} specials` : ""}</p></div></div>
-      <div className="drawer-facts collection-coverage-facts">{issueCoveragePending ? <><span><strong>{volumes.length}</strong>Volumes identified</span><span><strong>{unverifiedVolumes.length}</strong>Need issue ranges</span><span><strong>{ownedIssueCount}</strong>Issues confirmed</span><span><strong>{files.length}</strong>Comic files</span></> : <><span><strong>{ownedIssueCount} <em>of {issues.length}</em></strong>Issues confirmed</span><span><strong>{missingIssueCount}</strong>Issues missing</span><span><strong>{volumes.length}</strong>Volumes owned</span><span><strong>{files.length}</strong>Comic files</span></>}</div>
-      <nav className="drawer-tabs" aria-label="Collection details">{[["overview", "Overview"], ["issues", `Issues (${issues.length})`], ["volumes", `Volumes (${volumes.length})`], ["specials", `Specials (${specials.length})`], ["arcs", `Runs (${mainArcs.length})`], ["files", `Files (${files.length})`]].map(([id, label]) => <button className={tab === id ? "active" : ""} onClick={() => onTabChange(id)} key={id}>{label}</button>)}</nav>
-      <div className="drawer-tab-content">
-        {tab === "overview" ? <><h3>Your collection</h3><Ownership series={coverage} /><section className="monitoring-summary"><div><strong>{preferenceLabel}</strong><small>{collection.includeSpecials === false ? "Main series only" : "Main series + specials"}</small></div><span><CheckCircle size={18} weight="fill" /> Series connections updated automatically</span></section>{unverifiedVolumes.length ? <section className="placement-callout"><WarningCircle size={21} weight="fill" /><div><strong>Issue contents are still being identified</strong><small>All {unverifiedVolumes.length} logical volume{unverifiedVolumes.length === 1 ? " is" : "s are"} already matched to this series across {unverifiedVolumeFileCount} comic file{unverifiedVolumeFileCount === 1 ? "" : "s"}. Flipparr will keep looking for the issue ranges in the background.</small></div><button onClick={() => onTabChange("volumes")}>View volumes</button></section> : null}{collection.structureStatus === "unmapped" ? <section className="structure-callout"><div><strong>Complete-series details are still being found</strong><small>Flipparr will keep your current files safe while it looks for a confident series structure.</small></div><button onClick={() => onFindStructure(collection)}><MagnifyingGlass size={17} /> Review details</button></section> : null}<details className="advanced-collection-tools"><summary><Gear size={16} /> Advanced tools</summary><p>Inspect provider runs, split or combine groups, and correct unusual series structures.</p><button onClick={() => onFindStructure(collection)}><PencilSimple size={16} /> Review series structure</button></details></> : null}
+    <aside className={`series-drawer comic-drawer collection-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collection-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
+      <DiscoverDrawerHero art={collection.cover} titleId="collection-drawer-title" title={collection.name}
+        cover={<SeriesCover series={display} />}
+        byline={[collection.publisher, collection.year, `${mainArcs.length} runs${specials.length ? ` + ${specials.length} specials` : ""}`].filter(Boolean).join(" • ")}
+        onClose={requestClose} closeLabel="Close collection details" actions={followAction}
+        ownership={<Ownership series={coverage} compact />}>
+        <MonitoringStatus series={collection} />
+        {collection.structureStatus === "unmapped" || issueCoveragePending ? <StatusBadge tone="amber">Contents being identified</StatusBadge> : null}
+      </DiscoverDrawerHero>
+      {/* A tab with nothing in it is not offered: six did not fit a phone. */}
+      <DrawerTabs tabs={[["overview", "Overview"], ["issues", `Issues (${issues.length})`], ...(volumes.length ? [["volumes", `Volumes (${volumes.length})`]] : []),
+        ...(specials.length ? [["specials", `Specials (${specials.length})`]] : []), ["arcs", `Runs (${mainArcs.length})`], ["files", `Files (${files.length})`]]}
+        tab={tab} onTab={onTabChange} label="Collection details" tabsRef={tabsRef} glass={tabGlass} />
+      <div className="comic-drawer-body" key={tab}>
+        {tab === "overview" ? <><div className="drawer-facts collection-coverage-facts">{issueCoveragePending ? <><span><strong>{volumes.length}</strong>Volumes identified</span><span><strong>{unverifiedVolumes.length}</strong>Need issue ranges</span><span><strong>{ownedIssueCount}</strong>Issues confirmed</span><span><strong>{files.length}</strong>Comic files</span></> : <><span><strong>{ownedIssueCount} <em>of {issues.length}</em></strong>Issues confirmed</span><span><strong>{missingIssueCount}</strong>Issues missing</span><span><strong>{volumes.length}</strong>Volumes owned</span><span><strong>{files.length}</strong>Comic files</span></>}</div><section className="monitoring-summary"><div><strong>{preferenceLabel}</strong><small>{collection.includeSpecials === false ? "Main series only" : "Main series + specials"}</small></div><span><CheckCircle size={18} weight="fill" /> Series connections updated automatically</span></section>{unverifiedVolumes.length ? <section className="placement-callout"><WarningCircle size={21} weight="fill" /><div><strong>Issue contents are still being identified</strong><small>All {unverifiedVolumes.length} logical volume{unverifiedVolumes.length === 1 ? " is" : "s are"} already matched to this series across {unverifiedVolumeFileCount} comic file{unverifiedVolumeFileCount === 1 ? "" : "s"}. Flipparr will keep looking for the issue ranges in the background.</small></div><button onClick={() => onTabChange("volumes")}>View volumes</button></section> : null}{collection.structureStatus === "unmapped" ? <section className="structure-callout"><div><strong>Complete-series details are still being found</strong><small>Flipparr will keep your current files safe while it looks for a confident series structure.</small></div><button onClick={() => onFindStructure(collection)}><MagnifyingGlass size={17} /> Review details</button></section> : null}<details className="advanced-collection-tools"><summary><Gear size={16} /> Advanced tools</summary><p>Inspect provider runs, split or combine groups, and correct unusual series structures.</p><button onClick={() => onFindStructure(collection)}><PencilSimple size={16} /> Review series structure</button></details></> : null}
         {tab === "issues" ? <GroupedIssueInventory issues={issues} onEditIssue={onEditIssue} /> : null}
         {tab === "arcs" ? <StoryArcList arcs={mainArcs} emptyTitle="No runs found" onOpenSeries={onOpenSeries} /> : null}
         {tab === "specials" ? <StoryArcList arcs={specials} emptyTitle="No specials found" onOpenSeries={onOpenSeries} /> : null}
         {tab === "volumes" ? <div className="collection-volume-list">{volumes.length ? volumes.map((volume) => { const title = volume.subtitle ? `${volume.title}: ${volume.subtitle}` : volume.title; const needsContents = volume.coverageStatus !== "verified"; const canReviewContents = needsContents && volume.linkedFile; return <button className={needsContents ? "unplaced" : "placed"} onClick={() => canReviewContents ? onOpenContents(volume.linkedFile) : onOpenSeries(volume.run)} key={`${volume.run.id}-${volume.logicalVolumeKey || volume.id}`}><span className="collection-volume-cover"><CoverArt id={`collection-volume-${volume.id}`} title={title} cover={volume.cover} decorative placeholderSize={17} /></span><span><strong>{title}</strong><small>{volume.run.title} · {editionKindLabel(volume.editionKind)}{volume.volume ? ` · Vol. ${volume.volume}` : ""}{volume.copyCount > 1 ? ` · ${volume.copyCount} files` : ""}</small>{needsContents ? <b>{volume.coverageStatus === "partial" ? `${volume.contentsIssueCount || 0} issues confirmed · more may be included` : "Issue contents not confirmed"}</b> : <b>{volume.contentsIssueCount || 0} issues confirmed</b>}</span><ArrowRight size={16} /></button>; }) : <div className="drawer-empty"><Books size={27} /><strong>No volumes cataloged</strong></div>}</div> : null}
         {tab === "files" ? <div className="collection-volume-list">{files.map((file) => <button onClick={() => onOpenSeries(file.run)} key={file.id}><HardDrive size={20} weight="duotone" /><span><strong>{file.filename}</strong><small>{file.run.title} · {file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)}</small></span><ArrowRight size={16} /></button>)}</div> : null}
       </div>
-      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions"><FollowSwitch following={collection.monitoringStatus === "monitored"} busy={requestBusy || unfollowBusy} label={requestBusy ? "Following…" : unfollowBusy ? "Stopping…" : collection.monitoringStatus === "monitored" ? "Following" : "Follow collection"} onChange={(on) => (on ? onRequest() : onUnfollow(collection))} />{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}{tab === "overview" && !isAdmin(viewer) && collection.monitoringStatus !== "monitored" ? <div className="drawer-actions"><button type="button" className="ghost-button" onClick={() => onRequest()} disabled={requestBusy || requested}>{requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={18} /> : <FollowedIcon size={18} />} {requested ? "Follow requested" : "Request follow"}</button></div> : null}
+      {tab === "overview" && isAdmin(viewer) ? <div className="drawer-actions collection-drawer-links">{issueCoveragePending ? <button className="ghost-button" onClick={() => onTabChange("volumes")}><Books size={18} /> Review volume contents</button> : null}{collection.monitoringStatus === "monitored" && !issueCoveragePending && missingIssueCount ? <button className="ghost-button" onClick={onViewRequests}><CheckCircle size={18} weight="fill" /> View {missingIssueCount} wanted issue{missingIssueCount === 1 ? "" : "s"}</button> : null}<button className="ghost-button" onClick={() => onTabChange("files")}><Eye size={18} /> View files</button></div> : null}
     </aside>
   </div>;
 }

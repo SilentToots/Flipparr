@@ -1380,6 +1380,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* A drawer's shelf with its add button under it (an arc's Add issues, a
    collection's Add runs): one section, not two of the body's. */
 .comic-drawer-shelf-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
+/* A series family's Overview links, under its body at the drawer's inset. */
+.collection-drawer-links { padding: 0 var(--drawer-inset) var(--space-32); }
 .collection-edit-form .arc-cover-choices { margin-top: var(--space-12); }
 .collection-order-field + .settings-card-note { margin: 0; }
 /* A collection drawer's failed save, under its header. */
@@ -1389,6 +1391,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .edit-collections .check-row input { margin-top: 0; }
 .edit-collection-new { display: flex; align-items: center; gap: var(--space-8); margin-top: var(--space-12); }
 .edit-collection-new .form-field { flex: 1; min-width: 0; margin: 0; }
+/* Create keeps its own width: the card's full-width button rule squeezed the
+   name field beside it to a sliver. */
+.advanced-card .edit-collection-new > button { flex: 0 0 auto; width: auto; }
 .rating-review-filters--two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 
 /* Reading list (since 2026-10-01): a card in the tab carries a way off the
@@ -2739,8 +2744,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .comic-drawer--editing .comic-drawer-hero { min-height: 200px; }
 .comic-drawer--editing .comic-drawer-identity { display: none; }
 .comic-drawer-edit { gap: var(--space-20); }
-.edit-heading { display: grid; gap: var(--space-4); }
-.edit-heading .eyebrow { margin-bottom: 0; font-size: var(--text-xs); }
 /* Three segments are wider than a card's button slot, and sharing the row
    squeezed the sentence beside them down to one word a line. It stacks. */
 .edit-direction { grid-template-columns: minmax(0, 1fr); }
@@ -2752,7 +2755,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .advanced-card .segmented-tabs .segmented-tab { width: auto; min-height: 36px; padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-weight: var(--weight-semibold); }
 .advanced-card .segmented-tabs .segmented-tab--icon { width: 36px; padding: 0; }
 .advanced-card .segmented-tabs .segmented-tab.active { color: var(--text); }
-.edit-heading h3 { margin: 0; color: var(--text); font-size: var(--text-lg); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
 .edit-index { display: grid; gap: var(--space-16); }
 .edit-section { display: grid; gap: var(--space-16); }
 .edit-section-intro { margin: 0; color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
