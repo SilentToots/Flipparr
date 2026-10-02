@@ -1775,8 +1775,6 @@ function RunCollectionDrawer({ card, admin, readingVersion, readingList = EMPTY_
   // Edit is one screen -- name, summary and cover together, one Save
   // (the owner, 2026-10-01: stepping into a section for each was a chore).
   const [editing, setEditing] = useState(false);
-  // The Runs tab's grid becomes the drag list to arrange or remove runs.
-  const [arranging, setArranging] = useState(false);
   const [name, setName] = useState(card.name);
   const [summary, setSummary] = useState(card.summary || "");
   const [busy, setBusy] = useState("");
@@ -1813,7 +1811,11 @@ function RunCollectionDrawer({ card, admin, readingVersion, readingList = EMPTY_
   const [artFailed, setArtFailed] = useState(null);
   const heroArt = coverArt && artFailed !== coverArt ? coverArt : null;
   const toned = toneProps(useArtTone(coverArt));
-  const tabs = [["overview", "Overview"], ["runs", `Runs (${card.runCount})`], ...(admin ? [["advanced", "Advanced"]] : [])];
+  // The admin's second tab is Arrange -- the order, and which runs belong --
+  // rather than a grid with sort controls that mean nothing until editing; a
+  // reader's is the runs themselves.
+  const tabs = admin ? [["overview", "Overview"], ["arrange", "Arrange"], ["advanced", "Advanced"]]
+    : [["overview", "Overview"], ["runs", `Runs (${card.runCount})`]];
   const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, card.id, editing]);
   // The cover is the uploaded picture, a run's cover chosen for it, or the first run's.
   const chosenCover = card.coverImage ? "upload" : card.coverSeriesId ? String(card.coverSeriesId) : "auto";
@@ -1906,29 +1908,24 @@ function RunCollectionDrawer({ card, admin, readingVersion, readingList = EMPTY_
             </div> : <div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing in it yet</strong><span>{admin ? "Add runs from your library to start it." : "Runs added to it show up here."}</span>
               {admin ? <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button> : null}</div>}
           </> : null}
-          {tab === "runs" ? (runs.length ? <div className="collection-runs">
-            {/* Its order lives with its runs: how they are sorted, and -- for
-                the admin -- the drag list to arrange them or take one out. */}
-            {admin ? <div className="collection-runs-tools">
-              <GlassSegmented label="Order" value={sortMode} onChange={(next) => act("sort", () => onSave(card.id, { sortMode: next }))}
-                items={COLLECTION_SORTS.map((item) => ({ id: item.id, label: item.label }))} />
-              <button type="button" className={arranging ? "primary-button" : "glass-button"} aria-pressed={arranging} onClick={() => setArranging((value) => !value)}>
-                {arranging ? <><Check size={17} /> Done</> : <><DotsSixVertical size={17} weight="bold" /> Arrange</>}
-              </button>
-            </div> : null}
-            {arranging && admin ? <>
-              <p className="settings-card-note">{sortMode === "custom"
-                ? "Drag a run by its handle, or use the arrow keys on it. Remove takes a run out of this collection only."
-                : `Shown by ${sortMode}. Choose Your order to arrange the runs by hand. Remove takes a run out of this collection only.`}</p>
-              {sortMode === "custom" ? <DragOrderList ids={runs.map((run) => String(run.id))}
-                label={(id, index, total) => `${runs.find((run) => String(run.id) === id)?.title}, ${index + 1} of ${total}`}
-                onReorder={(order) => act("order", () => onSave(card.id, { order }))}
-                renderRow={(id) => <RunCollectionRow run={runs.find((run) => String(run.id) === id)} busy={Boolean(busy)} onRemove={() => remove(id)} />} />
-                : <ol className="source-order-list">{runs.map((run) => <li className="source-order-row" key={run.id}>
-                  <RunCollectionRow run={run} busy={Boolean(busy)} onRemove={() => remove(run.id)} />
-                </li>)}</ol>}
-            </> : <SeriesList series={runs} view="grid" reading={reading || {}} onOpen={onOpenSeries} onRead={onRead} />}
-          </div> : <div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing in it yet</strong><span>{admin ? "Add runs from your library to start it." : "Runs added to it show up here."}</span></div>) : null}
+          {tab === "runs" ? (runs.length ? <SeriesList series={runs} view="grid" reading={reading || {}} onOpen={onOpenSeries} onRead={onRead} />
+            : <div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing in it yet</strong><span>Runs added to it show up here.</span></div>) : null}
+          {tab === "arrange" && admin ? (runs.length ? <div className="collection-runs">
+            <div className="form-field collection-order-field"><span>Order</span>
+              <GlassSelect label="Order" value={sortMode} onChange={(next) => act("sort", () => onSave(card.id, { sortMode: next }))} className="glass-select--fill"
+                options={COLLECTION_SORTS.map((item) => ({ value: item.id, label: item.label }))} /></div>
+            <p className="settings-card-note">{sortMode === "custom"
+              ? "Drag a run by its handle, or use the arrow keys on it. Remove takes a run out of this collection only."
+              : `Shown by ${sortMode}. Choose Your order to arrange the runs by hand. Remove takes a run out of this collection only.`}</p>
+            {sortMode === "custom" ? <DragOrderList ids={runs.map((run) => String(run.id))}
+              label={(id, index, total) => `${runs.find((run) => String(run.id) === id)?.title}, ${index + 1} of ${total}`}
+              onReorder={(order) => act("order", () => onSave(card.id, { order }))}
+              renderRow={(id) => <RunCollectionRow run={runs.find((run) => String(run.id) === id)} busy={Boolean(busy)} onRemove={() => remove(id)} />} />
+              : <ol className="source-order-list">{runs.map((run) => <li className="source-order-row" key={run.id}>
+                <RunCollectionRow run={run} busy={Boolean(busy)} onRemove={() => remove(run.id)} />
+              </li>)}</ol>}
+          </div> : <div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing to arrange yet</strong><span>Add runs from your library to start it.</span>
+            <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button></div>) : null}
           {tab === "advanced" && admin ? advanced : null}
         </div>
       </>}

@@ -1377,9 +1377,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .run-collection-remove { flex: 0 0 auto; }
 /* A collection's Runs tab: how its runs are ordered, and Arrange, above them. */
 .collection-runs { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
-.collection-runs-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-8); }
 .collection-edit-form .arc-cover-choices { margin-top: var(--space-12); }
-.collection-runs-tools + .settings-card-note { margin: 0; }
+.collection-order-field + .settings-card-note { margin: 0; }
 /* A collection drawer's failed save, under its header. */
 .comic-drawer-error { margin: var(--space-12) var(--drawer-inset) 0; }
 .edit-collections .edit-collection-list { display: grid; gap: var(--space-4); margin-top: var(--space-12); }
@@ -2619,6 +2618,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    value on the drawer (the surface, until the art says otherwise), so the
    one rule covers both. */
 .comic-drawer-tabs.drawer-tabs { gap: 0; justify-content: space-between; padding: var(--space-8) var(--drawer-inset); border-bottom: 0; background: color-mix(in srgb, var(--art-tone) 70%, var(--bg)); }
+/* Three tabs or fewer take equal shares of the bar: spread edge to edge, the
+   first pill hugged the inset and the gaps between them gaped (a
+   collection's, a reader's arc). Four still spread. */
+.comic-drawer-tabs.drawer-tabs:not(:has(> button:nth-of-type(4))) > button { flex: 1 1 0; }
 /* The labels ease from 16px down to 14 between 375 and 320: at the narrowest
    phone all four tabs fit rather than scrolling, and Read and Following stay
    on one row instead of the band growing to two. Nothing moves at 375 and

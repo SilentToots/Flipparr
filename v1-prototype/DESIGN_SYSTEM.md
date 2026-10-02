@@ -238,9 +238,12 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   finished, else the first unfinished in the collection's order (its own read
   target: Continue, Begin or Restart). Overview has the summary and a Runs
   shelf with *Add runs* under it (the admin's; the Set ratings list,
-  choosing); Runs is the grid, and for the admin its order -- Your order /
-  Title / Year, and *Arrange*, which turns the grid into the `DragOrderList`
-  with Remove per row; Advanced is the counts and Delete. Edit (the pencil)
+  choosing). The admin's tabs are Overview / *Arrange* / Advanced: Arrange is
+  the Order dropdown (Your order / Title / Year -- a `GlassSelect`, not a
+  segmented slider) over the `DragOrderList` with Remove per row; Advanced is
+  the counts and Delete. A reader's are Overview / Runs (the grid). A comic
+  drawer with three tabs or fewer gives each an equal share of the bar; four
+  still spread edge to edge. Edit (the pencil)
   is one screen: name, summary and cover (upload, or a run's cover as tiles),
   one Save. A run's drawer lists its collections as an "In Collections" row,
   and its Edit sheet ticks them. Every `.form-field textarea` is the filled
