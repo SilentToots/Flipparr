@@ -8038,7 +8038,7 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
             <h2 id="series-drawer-title">{series.title}</h2>
             <p>{[series.publisher, series.year].filter(Boolean).join(" • ")}</p>
           </div>
-          <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{series.ageRating ? <StatusBadge tone={ratingTone(series.ageRating.replace("_", " "))}>Rated {RATING_LABELS[series.ageRating]}</StatusBadge> : null}{runReadingBadge ? <StatusBadge tone={runReadingBadge.tone}>{runReadingBadge.text}</StatusBadge> : null}<StarRating rating={runRating(series)} title={series.title} onRate={(value) => onRate?.(series, value)} />{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
+          <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{series.ageRating ? <StatusBadge tone={ratingTone(series.ageRating.replace("_", " "))}>Rated {RATING_LABELS[series.ageRating]}</StatusBadge> : null}{runReadingBadge ? <StatusBadge tone={runReadingBadge.tone}>{runReadingBadge.text}</StatusBadge> : null}{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
           <Ownership series={series} compact />
           {isFollowing && wantedIssueCount && admin ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
         </div>
@@ -8068,6 +8068,8 @@ function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSi
     <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
       {tab === "overview" ? <>
+        {/* The stars sit here, not in the header: there they outweighed the cover on a phone. */}
+        <section className="comic-drawer-rating" aria-label="Your rating"><h3>Your rating</h3><StarRating rating={runRating(series)} title={series.title} size={24} onRate={(value) => onRate?.(series, value)} /></section>
         <RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} sourcePrefix="Source:" key={series.id} />
         {series.issues?.length ? <ComicDrawerRow title="Issues" count={series.issues.length}>{series.issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium={series.medium} onOpen={() => setTab("issues")} onRead={onRead} readingFiles={readingFiles} key={issue.id || issue.number} />)}</ComicDrawerRow> : null}
         {creators.length ? <ComicDrawerCreators creators={creators} key={`creators-${series.id}`} /> : null}
