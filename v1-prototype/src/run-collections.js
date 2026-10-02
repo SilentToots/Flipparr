@@ -6,6 +6,8 @@
 //
 // Pure: the Collections tab, the Library grid and the drawer draw them.
 
+import { sharedPublisher } from "./run-details.js";
+
 export const COLLECTION_SORTS = [
   { id: "custom", label: "Your order" },
   { id: "title", label: "Title" },
@@ -41,6 +43,7 @@ export function collectionCards(collections, series) {
       title: collection.name,
       runs,
       runCount: runs.length,
+      publisher: sharedPublisher(runs),
       // Issues across its runs, and how many of them are here.
       issueCount: runs.reduce((sum, run) => sum + (Number(run.total) || 0), 0),
       owned: runs.reduce((sum, run) => sum + (Number(run.owned) || 0), 0),

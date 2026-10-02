@@ -259,7 +259,9 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   bar rather than an "Editing" heading. A backdrop that will not load is left
   out, not shown broken.
 - **Story arc and collection cards** (the owner's mock, 2026-10-02) are built as
-  a run's: name, the years alone as the byline, one type badge (Story arc,
+  a run's: name, the byline (the publisher first when every run in it --
+  and, for an arc, every issue, which must all be the library's -- is one
+  house, then the years), one type badge (Story arc,
   Collection; no "N runs inside", which the size repeated), then under
   the rule its size, "13 Runs | 29 Issues" (runs, the app's word, not
   series), the owned bar only while something is missing, and "Made by" for

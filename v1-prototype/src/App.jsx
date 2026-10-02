@@ -62,7 +62,7 @@ import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList,
 import {
   needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, bellCount, timeAgo,
 } from "./notifications.js";
-import { creatorRoleLabel, orderedCreators, relatedRuns } from "./run-details.js";
+import { creatorRoleLabel, orderedCreators, relatedRuns, arcPublisher } from "./run-details.js";
 import { nextTabBarState, canTuck } from "./tab-bar.js";
 import { sheetPullDecision } from "./sheet.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
@@ -1605,10 +1605,10 @@ function SeriesList({ series, onOpen, onRead, reading, view, cardAction }) {
     <div className="series-table">
       <div className="series-table-head"><span>Series</span><span>Ownership</span><span>Format</span><span>Last updated</span><span /></div>
       {series.map((item) => item.kind === "collection" ? <button className="series-row" onClick={() => onOpen(item)} key={item.key}>
-          <div className="series-identity"><CoverArt id={item.key} title={item.name} cover={item.cover} coverCandidates={item.coverCandidates} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Collection · {[item.years, `${item.runCount} run${item.runCount === 1 ? "" : "s"}`].filter(Boolean).join(" · ")}</small></div></div>
+          <div className="series-identity"><CoverArt id={item.key} title={item.name} cover={item.cover} coverCandidates={item.coverCandidates} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Collection · {[item.publisher, item.years, `${item.runCount} run${item.runCount === 1 ? "" : "s"}`].filter(Boolean).join(" · ")}</small></div></div>
           <span className="table-copy" /><span className="table-copy">Collection</span><span className="table-copy" /><DotsThree size={22} />
         </button> : item.kind === "arc" ? <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
-          <div className="series-identity"><CoverArt id={`arc-${item.listId}`} title={item.name} cover={item.cover} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Story arc · {arcYears(item) ? `${arcYears(item)} · ` : ""}{item.seriesCount} run{item.seriesCount === 1 ? "" : "s"} · {item.issueCount} issue{item.issueCount === 1 ? "" : "s"}{arcOwnerLine(item) ? ` · ${arcOwnerLine(item)}` : ""}</small><div className="mobile-list-ownership"><Ownership series={arcOwnership(item)} compact /></div></div></div>
+          <div className="series-identity"><CoverArt id={`arc-${item.listId}`} title={item.name} cover={item.cover} decorative /><div className="series-identity-copy"><strong>{item.name}</strong><small>Story arc · {[item.publisher, arcYears(item)].filter(Boolean).map((part) => `${part} · `).join("")}{item.seriesCount} run{item.seriesCount === 1 ? "" : "s"} · {item.issueCount} issue{item.issueCount === 1 ? "" : "s"}{arcOwnerLine(item) ? ` · ${arcOwnerLine(item)}` : ""}</small><div className="mobile-list-ownership"><Ownership series={arcOwnership(item)} compact /></div></div></div>
           <Ownership series={arcOwnership(item)} /><span className="table-copy">Story arc</span><span className="table-copy" /><DotsThree size={22} />
         </button> : (
         <button className="series-row" onClick={() => onOpen(item)} key={item.id}>
@@ -1660,7 +1660,7 @@ function CollectionCard({ card, index, onOpen, action = null }) {
       <span className="collection-card-mark" aria-hidden="true"><CollectionIcon size={16} /></span>
       {action}
     </span>
-    <span className="series-card-identity"><strong>{card.name}</strong>{card.years ? <span className="series-card-byline">{card.years}</span> : null}</span>
+    <span className="series-card-identity"><strong>{card.name}</strong>{card.publisher || card.years ? <span className="series-card-byline">{[card.publisher, card.years].filter(Boolean).join(" • ")}</span> : null}</span>
     <span className="series-card-statuses"><StatusBadge tone="muted">Collection</StatusBadge></span>
     <CardFoot runCount={card.runCount} issueCount={card.issueCount || 0} owned={card.owned || 0} />
     <button type="button" className="discover-open series-card-open" onClick={() => onOpen(card)} aria-label={`${card.name}, a collection of ${count}. Show details`} />
@@ -2702,8 +2702,9 @@ function useListReading(version) {
 }
 
 // The story arcs saved to read across runs. Null until answered, so the grid
-// does not draw a Story arcs scope and then take it away.
-function useReadingLists(version) {
+// does not draw a Story arcs scope and then take it away. Each carries the
+// one publisher its runs share, if they do, for its card's byline.
+function useReadingLists(version, series = null) {
   const [lists, setLists] = useState(() => lastAnswer("/api/v1/reading-lists")?.lists ?? null);
   useEffect(() => {
     let live = true;
@@ -2712,7 +2713,11 @@ function useReadingLists(version) {
       .catch(() => { if (live) setLists((current) => current || []); });
     return () => { live = false; };
   }, [version]);
-  return lists;
+  return useMemo(() => {
+    if (!lists || !series) return lists;
+    const byId = new Map(series.map((run) => [String(run.id), run]));
+    return lists.map((list) => ({ ...list, publisher: arcPublisher(list, byId) }));
+  }, [lists, series]);
 }
 
 // Comics' tabs, as Plex and Komga have them. Recommended is the page's home.
@@ -2747,7 +2752,7 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
   const series = useMemo(() => logicalCatalogSeries(catalog, fallbackSeries), [catalog, backendStatus]);
   const families = useMemo(() => (catalog?.families || []).map((family) => ({ ...family, runCount: family.runs?.length || family.runCount || 0 })), [catalog?.families]);
   const runReading = useRunReading(readingVersion);
-  const readingLists = useReadingLists(listsVersion);
+  const readingLists = useReadingLists(listsVersion, series);
   const listReading = useListReading(readingVersion);
   // Nothing is drawn until what decides its order is in: the catalog, and
   // for Recent and In progress the reading map as well.
@@ -2962,7 +2967,6 @@ function DiscoverView({
   // asked only for what was submitted (`query`).
   const liveQuery = mode === "search" ? String(draft ?? "").trim() : "";
   const submittedMatches = Boolean(query) && String(query).trim() === liveQuery;
-  const savedArcs = useReadingLists(0);
   const [releases, setReleases] = useState(() => {
     const last = lastAnswer("/api/v1/discover/releases");
     return last ? { state: "done", data: last } : { state: "loading", data: null };
@@ -2994,6 +2998,7 @@ function DiscoverView({
   const allSeries = useMemo(
     () => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []),
     [catalog, backendStatus]);
+  const savedArcs = useReadingLists(0, allSeries);
   const libraryMatches = useMemo(() => {
     if (!liveQuery) return [];
     const parts = searchQueryParts(liveQuery);
@@ -7716,7 +7721,7 @@ function ArcCard({ list, index, reading, onOpen, onRead, action = null }) {
       <ReadListOverlay list={list} reading={reading} onRead={onRead} />
       {action}
     </span>
-    <span className="series-card-identity"><strong>{list.name}</strong>{arcYears(list) ? <span className="series-card-byline">{arcYears(list)}</span> : null}</span>
+    <span className="series-card-identity"><strong>{list.name}</strong>{list.publisher || arcYears(list) ? <span className="series-card-byline">{[list.publisher, arcYears(list)].filter(Boolean).join(" • ")}</span> : null}</span>
     <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge></span>
     <CardFoot runCount={list.seriesCount} issueCount={list.issueCount || 0} owned={list.owned || 0} maker={arcMaker(list)} />
     <button type="button" className="discover-open series-card-open" onClick={() => onOpen(list)} aria-label={`${list.name}. Show details`} />

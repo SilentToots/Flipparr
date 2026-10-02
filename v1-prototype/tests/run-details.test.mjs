@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  creatorRoleLabel, normalizedPublisher, orderedCreators, relatedRuns,
+  creatorRoleLabel, normalizedPublisher, orderedCreators, relatedRuns, sharedPublisher, arcPublisher,
 } from "../src/run-details.js";
 
 const run = (id, title, year, publisher, creators = []) => ({ id, title, year, publisher, creators });
@@ -61,4 +61,24 @@ test("runs with no publisher are not grouped under the placeholder", () => {
   const series = { id: 1, title: "A", publisher: "Publisher unknown" };
   const all = [series, { id: 2, title: "B", publisher: "Publisher unknown" }];
   assert.equal(relatedRuns(series, all).publisher, null);
+});
+
+test("a group names its publisher only when every run has the same one", () => {
+  assert.equal(sharedPublisher([{ publisher: "BOOM! Studios" }, { publisher: "Boom! Studios" }]), "BOOM! Studios");
+  assert.equal(sharedPublisher([{ publisher: "Image" }, { publisher: "DC Comics" }]), "");
+  assert.equal(sharedPublisher([{ publisher: "Image" }, { publisher: "Publisher unknown" }]), "");
+  assert.equal(sharedPublisher([{ publisher: "Image" }, {}]), "");
+  assert.equal(sharedPublisher([]), "");
+});
+
+test("an arc names its publisher only when every issue is the library's", () => {
+  const byId = new Map([["1", { id: 1, publisher: "DC Comics" }], ["2", { id: 2, publisher: "DC" }]]);
+  assert.equal(arcPublisher({ issueCount: 3, issueIds: [7, 8, 9], runIds: [1, 2] }, byId), "DC Comics");
+  // One issue from outside the library could be anyone's.
+  assert.equal(arcPublisher({ issueCount: 4, issueIds: [7, 8, 9], runIds: [1, 2] }, byId), "");
+  // A run this profile cannot see is not known to agree.
+  assert.equal(arcPublisher({ issueCount: 2, issueIds: [7, 8], runIds: [1, 5] }, byId), "");
+  // The drawer's arc, item by item.
+  assert.equal(arcPublisher({ items: [{ runId: "1" }, { runId: "2" }] }, byId), "DC Comics");
+  assert.equal(arcPublisher({ items: [{ runId: "1" }, { runId: null }] }, byId), "");
 });

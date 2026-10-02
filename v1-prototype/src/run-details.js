@@ -55,6 +55,32 @@ export function normalizedPublisher(name) {
     .trim();
 }
 
+/**
+ * The one publisher every run shares, spelled as the first run has it, or ""
+ * -- for a story arc's or a collection's card, which names the house as a
+ * run's does only when it is one house (the owner, 2026-10-02). "Publisher
+ * unknown" is the catalog's placeholder, so a run without one rules it out.
+ */
+export function sharedPublisher(runs) {
+  const names = (runs || []).map((run) => String(run?.publisher || "").trim());
+  if (!names.length || names.some((name) => !name || /^publisher unknown$/i.test(name))) return "";
+  const key = normalizedPublisher(names[0]);
+  return names.every((name) => normalizedPublisher(name) === key) ? names[0] : "";
+}
+
+/**
+ * An arc's one publisher, when every issue in it is in the library (an issue
+ * from elsewhere could be anyone's) and every run it spans agrees. Takes the
+ * grid's arc (`issueIds`, `runIds`) or the drawer's (`items`, each `runId`).
+ */
+export function arcPublisher(list, seriesById) {
+  const runIds = Array.isArray(list?.items) ? list.items.map((item) => item.runId)
+    : (list?.issueIds?.length === list?.issueCount ? list?.runIds : null);
+  if (!runIds?.length || runIds.some((id) => !id)) return "";
+  const runs = [...new Set(runIds.map(String))].map((id) => seriesById.get(id));
+  return runs.some((run) => !run) ? "" : sharedPublisher(runs);
+}
+
 const leadsOf = (run) => orderedCreators(run?.creators).filter((creator) => creator.roles.some((role) => LEAD_ROLES.has(role)));
 const byYearThenTitle = (a, b) => (Number(b.year) || 0) - (Number(a.year) || 0) || String(a.title).localeCompare(String(b.title));
 
