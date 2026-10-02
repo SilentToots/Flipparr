@@ -71,7 +71,7 @@ import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-s
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
   ComicsIcon, DiscoverIcon, PullListIcon,
-  GridViewIcon, ListViewIcon, FollowingIcon, ChevronDown,
+  GridViewIcon, ListViewIcon, FollowingIcon,
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
   PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon, CollectionIcon, ReadingListIcon,
 } from "./design-icons.jsx";
@@ -3547,8 +3547,8 @@ function DrawerTopBar({ title, onClose, onBack, closeLabel, stacked = false, chi
 // The run drawer's header, for the Discover drawers: the cover as art behind a
 // violet-to-black scrim, the cover itself, the title, a byline and chips. The
 // same classes as the Comics drawer, so the two read as one kind of panel.
-function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, closeLabel, children }) {
-  return <><DrawerTopBar title={title} onClose={onClose} closeLabel={closeLabel} /><header className="comic-drawer-hero">
+function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, closeLabel, children, actions = null, ownership = null }) {
+  return <><DrawerTopBar title={title} onClose={onClose} closeLabel={closeLabel}>{actions}</DrawerTopBar><header className="comic-drawer-hero">
     {art ? <>
       <img className="comic-drawer-backdrop" src={art} alt="" aria-hidden="true" key={art} />
       <img className="comic-drawer-backdrop blurred" src={art} alt="" aria-hidden="true" key={`${art}-blurred`} />
@@ -3562,9 +3562,41 @@ function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, close
           {byline ? <p>{byline}</p> : null}
         </div>
         {children ? <div className="comic-drawer-statuses">{children}</div> : null}
+        {ownership}
       </div>
     </div>
   </header></>;
+}
+
+/**
+ * The one thing a drawer is for, as the big pill under its header -- Read in
+ * the library's drawers (`ReadRunButton`), and here Pull, Request or Save in
+ * Discover's and Read next after a comic. The verb is bright, what it acts on
+ * beside it, and a line under it says what happened or what will.
+ */
+function DrawerPrimary({ icon, verb, noun = "", onClick, disabled = false, busy = false, settled = false, note = "", label }) {
+  return <div className="comic-drawer-actions">
+    <button type="button" className={`primary-button comic-drawer-read${settled ? " comic-drawer-read--settled" : ""}`}
+      onClick={onClick} disabled={disabled || busy} aria-busy={busy || undefined} aria-label={label}>
+      {busy ? <LoadingIndicator size={20} /> : icon}
+      <span>{verb}{noun ? <b>{noun}</b> : null}</span>
+    </button>
+    {note ? <small className="comic-drawer-action-note" role="status" aria-live="polite">{note}</small> : null}
+  </div>;
+}
+
+// A label such as "Pull 12 released issues" as the band's verb and its object.
+function splitAction(text) {
+  const [verb, ...rest] = String(text || "").split(" ");
+  return { verb, noun: rest.join(" ") };
+}
+
+// Discover's drawers' tabs: the library drawers' bar, glass pill and all.
+function DrawerTabs({ tabs, tab, onTab, label, tabsRef, glass }) {
+  return <nav className="drawer-tabs comic-drawer-tabs" aria-label={label} ref={tabsRef}>
+    <span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={glass || { opacity: 0 }} />
+    {tabs.map(([id, text]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => onTab(id)} key={id}>{text}</button>)}
+  </nav>;
 }
 
 /**
@@ -3577,6 +3609,7 @@ function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, close
 function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
+  const reader = !isAdmin(useViewer());
   const [detail, setDetail] = useState({ state: "loading", data: null });
   useEffect(() => {
     let live = true;
@@ -3602,35 +3635,35 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
       <DiscoverDrawerHero art={issue.cover} titleId="discover-issue-title" title={issue.title}
         cover={<DiscoverCover src={issue.cover} alt={`${issue.title} cover`} glyph={30} />}
         byline={[issue.publisher, issue.seriesTitle].filter(Boolean).join(" • ")}
-        onClose={requestClose} closeLabel="Close issue details" />
+        onClose={requestClose} closeLabel="Close issue details">
+        {issue.storeDate || data.storeDate ? <StatusBadge tone="muted">Ships {formatLongDate(data.storeDate || issue.storeDate)}</StatusBadge> : null}
+      </DiscoverDrawerHero>
+      {/* Pull is the band's, as Read is a library drawer's (2026-10-01). */}
+      <DrawerPrimary icon={state === PULL_STATES.requested ? <Hourglass size={20} /> : state === PULL_STATES.idle ? <PullIcon /> : <FollowingIcon size={20} />}
+        verb={state === PULL_STATES.idle ? (reader ? "Request" : "Pull") : (reader ? READER_PULL_LABELS : PULL_LABELS)[state]}
+        noun={state === PULL_STATES.idle ? "this issue" : ""}
+        busy={state === PULL_STATES.pending} settled={state !== PULL_STATES.idle && state !== PULL_STATES.pending}
+        disabled={state !== PULL_STATES.idle} onClick={() => onPull(issue)} />
       <div className="comic-drawer-body">
-      {facts.length ? <div className="drawer-facts">
-        {facts.map(([label, value]) => <span key={label}><strong>{value}</strong>{label}</span>)}
-      </div> : null}
-      <section className="discover-drawer-section">
-        <h3>About this issue</h3>
-        {detail.state === "loading" ? <div className="discover-drawer-lines" role="status" aria-busy="true">
-          <span className="sr-only">Getting this issue&rsquo;s details from Metron</span><i /><i /><i />
-        </div> : null}
+        {detail.state === "loading" ? <RunSynopsis loading heading="Story" /> : null}
         {detail.state === "error" ? <p className="discover-note">Metron&rsquo;s details for this issue are unavailable right now.</p> : null}
         {detail.state === "done" ? <>
           {data.storyTitles?.length ? <p className="discover-story-titles">{data.storyTitles.join(" · ")}</p> : null}
-          {data.description ? <p>{data.description}</p> : <p className="discover-note">Metron has no description for this issue.</p>}
-          {data.creators?.length ? <dl className="discover-credits">
-            {data.creators.map((creator) => <div key={creator.name}><dt>{creator.roles.join(", ")}</dt><dd>{creator.name}</dd></div>)}
-          </dl> : null}
+          {data.description ? <RunSynopsis text={data.description} source="Metron" /> : <p className="discover-note">Metron has no description for this issue.</p>}
+          {data.creators?.length ? <ComicDrawerCreators creators={data.creators} /> : null}
         </> : null}
-      </section>
-      </div>
-      <div className="discover-drawer-actions">
-        {issue.providerSeriesId ? <button type="button" className="ghost-button"
-          onClick={() => onOpenRun({
-            provider: "metron", providerSeriesId: issue.providerSeriesId,
-            providerIds: { metron: issue.providerSeriesId },
-            title: issue.seriesTitle, yearBegan: issue.seriesYear,
-            publisher: issue.publisher, cover: issue.cover,
-          })}>See the whole run</button> : <span />}
-        <PullButton state={state} idleLabel="Pull Issue" size="md" onClick={() => onPull(issue)} />
+        {issue.providerSeriesId && onOpenRun ? <ComicDrawerRow title="The run" count={1}>
+          <ComicDrawerRunCard run={{ id: `metron-${issue.providerSeriesId}`, title: issue.seriesTitle, year: issue.seriesYear, cover: issue.cover }}
+            onOpen={() => onOpenRun({
+              provider: "metron", providerSeriesId: issue.providerSeriesId,
+              providerIds: { metron: issue.providerSeriesId },
+              title: issue.seriesTitle, yearBegan: issue.seriesYear,
+              publisher: issue.publisher, cover: issue.cover,
+            })} />
+        </ComicDrawerRow> : null}
+        {facts.length ? <div className="drawer-facts">
+          {facts.map(([label, value]) => <span key={label}><strong>{value}</strong>{label}</span>)}
+        </div> : null}
       </div>
     </aside>
   </div>;
@@ -3713,6 +3746,8 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
   const label = !data ? `${verb} arc` : saveOnly ? "Save arc" : data.missing === issues.length ? `${verb} all ${issues.length} issues`
     : data.missing ? `${verb} ${data.missing} missing issue${data.missing === 1 ? "" : "s"}` : `${verb} arc`;
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState("overview");
+  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, detail.state]);
   async function save() {
     if (!data || saving) return;
     setSaving(true);
@@ -3726,42 +3761,37 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
       role="dialog" aria-modal="true" aria-labelledby="story-arc-title" onMouseDown={(event) => event.stopPropagation()}>
       <DiscoverDrawerHero art={data?.cover} titleId="story-arc-title" title={data?.name || arc.name}
         cover={<DiscoverCover src={data?.cover} alt={`${arc.name} cover`} glyph={30} />}
-        byline={["Story arc", data ? `${issues.length} issue${issues.length === 1 ? "" : "s"}` : null, seriesNames.slice(0, 2).join(", ")].filter(Boolean).join(" • ")}
-        onClose={requestClose} closeLabel="Close story arc">
-        {data ? <StatusBadge tone="muted">{data.owned} in library</StatusBadge> : null}
+        byline={["Story arc", arcYears(data || {}) || null].filter(Boolean).join(" • ")}
+        onClose={requestClose} closeLabel="Close story arc"
+        ownership={data && issues.length ? <Ownership series={arcOwnership({ owned: data.owned, issueCount: issues.length, missing: data.missing })} compact /> : null}>
+        {saved ? <StatusBadge tone="muted">In your comics</StatusBadge> : null}
       </DiscoverDrawerHero>
-      <div className="comic-drawer-body">
+      {/* One action, the band's, as a library drawer's Read is: Read once the
+          arc is kept, else Pull (Request, or Save when nothing is missing). */}
+      {saved ? (onRead ? <DrawerPrimary icon={<BookOpen size={20} weight="fill" />} verb="Read" noun="in order"
+        onClick={() => onRead({ listId: data.readingListId, listName: data.name || arc.name })}
+        note="Kept in your comics, under Story arcs." /> : null)
+        : <DrawerPrimary icon={saveOnly ? <ListPlus size={20} /> : <PullIcon />} {...splitAction(busy ? `${reader ? "Requesting" : "Pulling"}…` : saving ? "Saving…" : label)}
+          busy={busy || saving} disabled={!data || Boolean(done)} settled={Boolean(done)} onClick={saveOnly ? save : pull}
+          note={done || (detail.state === "loading" ? "Getting the arc’s issues…"
+            : reader ? "Saved to your comics once approved, in reading order."
+            : saveOnly ? "Every issue is here or on the way. Keep the reading order in your comics."
+            : `${seriesNames.length > 1 ? `Across ${seriesNames.length} series, in reading order.` : "In reading order."} The arc is kept in your comics.`)} />}
+      <DrawerTabs tabs={[["overview", "Overview"], ["issues", data ? `Issues (${issues.length})` : "Issues"]]} tab={tab} onTab={setTab}
+        label="Story arc details" tabsRef={tabsRef} glass={tabGlass} />
+      <div className="comic-drawer-body" key={tab}>
         {detail.state === "error" ? <div className="shelf-message">
           <WarningCircle size={18} />
           <span><strong>This arc&rsquo;s issues could not be listed</strong><small>{detail.error}</small></span>
           <button type="button" onClick={load}>Try again</button>
-        </div> : saved ? <section className="run-pull-options" aria-label="Read the arc">
-          <div className="run-pull-option">
-            <span className="run-pull-option-copy">
-              <strong>In your comics</strong>
-              <small>Read it in order from the Comics tab, under Story arcs.</small>
-            </span>
-            {onRead ? <button type="button" className="primary-button" onClick={() => onRead({ listId: data.readingListId, listName: data.name || arc.name })}>
-              <BookOpen size={18} weight="fill" /> Read
-            </button> : null}
-          </div>
-        </section> : <section className="run-pull-options" aria-label={reader ? "Request the arc" : saveOnly ? "Save the arc" : "Pull the arc"}>
-          <div className="run-pull-option">
-            <span className="run-pull-option-copy">
-              <strong>{label}</strong>
-              <small role="status" aria-live="polite">{done || (detail.state === "loading" ? "Getting the arc’s issues…"
-                : reader ? "Saved to your comics once approved, in reading order."
-                : saveOnly ? "Every issue is here or on the way. Keep the reading order in your comics."
-                : `${seriesNames.length > 1 ? `Across ${seriesNames.length} series, in reading order.` : "In reading order."} The arc is kept in your comics.`)}</small>
-            </span>
-            <button type="button" className="pull-button pull-button-md pull-button-idle"
-              disabled={!data || busy || saving || Boolean(done)} onClick={saveOnly ? save : pull} aria-busy={busy || saving || undefined}>
-              <span>{busy ? `${reader ? "Requesting" : "Pulling"}…` : saving ? "Saving…" : verb}</span>
-              {busy || saving ? <LoadingIndicator size={16} /> : saveOnly ? <ListPlus size={16} /> : <PullIcon />}
-            </button>
-          </div>
-        </section>}
-        {detail.state === "loading" ? <div role="status" aria-busy="true">
+        </div> : null}
+        {tab === "overview" ? <>
+          {detail.state === "loading" ? <RunSynopsis loading /> : null}
+          {data?.description ? <RunSynopsis text={data.description} source="Metron" /> : null}
+          {data && !data.description ? <p className="discover-note">Metron has no description for this arc. Its issues, in reading order, are under Issues.</p> : null}
+          {data && seriesNames.length ? <section className="discover-drawer-section"><h3>Series in it</h3><p>{seriesNames.join(" · ")}</p></section> : null}
+        </> : null}
+        {tab === "issues" ? (detail.state === "loading" ? <div role="status" aria-busy="true">
           {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}><i /><span className="discover-cover" /><span><i /><i /></span></div>)}
         </div> : <div className="discover-issue-list arc-issue-list">
           {issues.map((issue) => <div className="discover-issue-row" key={issue.providerIssueId}>
@@ -3772,8 +3802,7 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
                 issue.owned ? "In library" : issue.queued ? (reader ? "On the way" : "On Pull List") : null].filter(Boolean).join(" · ") || " "}</small>
             </span>
           </div>)}
-        </div>}
-        {data?.description ? <RunSynopsis text={data.description} source="Metron" /> : null}
+        </div>) : null}
       </div>
     </aside>
   </div>;
@@ -3786,7 +3815,6 @@ function DiscoverRunDrawer({ item, query, settled, followRequested = false, onFo
   const reader = !isAdmin(useViewer());
   const verb = reader ? "Request" : "Pull";
   const [preview, setPreview] = useState({ state: "loading", data: null, error: "" });
-  const [choosing, setChoosing] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   // Which action is running, and what the last one said, by action.
   const [busy, setBusy] = useState("");
@@ -3818,7 +3846,6 @@ function DiscoverRunDrawer({ item, query, settled, followRequested = false, onFo
   // What the switch last did outranks the preview until the preview catches up.
   const [followed, setFollowed] = useState(null);
   const following = followed ?? Boolean(run?.following);
-  const followSummary = runPullSummary("follow", issues, [], { following });
   const wholeMode = completed ? "complete" : "released";
   const wholeSummary = runPullSummary(wholeMode, issues);
   const chooseSummary = runPullSummary("choose", issues, [...selected]);
@@ -3865,95 +3892,94 @@ function DiscoverRunDrawer({ item, query, settled, followRequested = false, onFo
   const art = run?.cover || item.cover;
   const toned = toneProps(useArtTone(art));
   const waiting = preview.state === "loading" ? "Getting the issue list…" : "";
+  const title = run?.title || item.title;
+  // The library run drawer's frame (2026-10-01): Follow in the top bar as the
+  // eye, the whole pull as the band's pill, then Overview and Issues.
+  const [tab, setTab] = useState("overview");
+  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, preview.state]);
+  const ownedCount = issues.filter((issue) => issue.owned).length;
+  const whole = splitAction((run ? wholeSummary.label : completed ? "Pull complete run" : "Pull all released").replace(/^Pull/, verb));
+  const followButton = !canFollow ? null : reader
+    ? <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${following || asked ? " active" : ""}`}
+      onClick={() => commit("follow")} disabled={!run || busy === "follow" || following || asked}
+      aria-label={following ? `Following ${title}` : asked ? `Following ${title} is requested` : `Request a follow of ${title}`}
+      title={following ? "Following" : asked ? "Waiting for approval" : "Ask for this run to be followed: new issues as they come out"}>
+      {busy === "follow" ? <LoadingSpinner size={18} /> : asked && !following ? <Hourglass size={20} /> : <FollowedIcon size={20} />}
+      <b>{following ? "Following" : asked ? "Follow requested" : "Request follow"}</b>
+    </button>
+    : <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${following ? " active" : ""}`}
+      onClick={() => commit(following ? "unfollow" : "follow")} disabled={!run || busy === "follow" || busy === "unfollow"} aria-pressed={following}
+      aria-label={following ? `Stop following ${title}` : `Follow ${title}`} title={following ? "Following" : "Follow run"}>
+      {busy === "follow" || busy === "unfollow" ? <LoadingSpinner size={18} /> : <FollowedIcon size={20} />}
+      <b>{following ? "Unfollow" : "Follow"}</b>
+    </button>;
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
     <aside className={`series-drawer comic-drawer discover-drawer${toned.className} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="discover-run-title"
       onMouseDown={(event) => event.stopPropagation()}>
-      <DiscoverDrawerHero art={art} titleId="discover-run-title" title={run?.title || item.title}
+      <DiscoverDrawerHero art={art} titleId="discover-run-title" title={title}
         cover={<DiscoverCover src={art} alt={`${item.title} cover`} glyph={30} />}
         byline={[run?.publisher || item.publisher, yearLabel].filter(Boolean).join(" • ")}
-        onClose={requestClose} closeLabel="Close run details">
+        onClose={requestClose} closeLabel="Close run details" actions={followButton}
+        ownership={run && issues.length ? <Ownership series={arcOwnership({ owned: ownedCount, issueCount: issues.length, missing: issues.length - ownedCount })} compact /> : null}>
         <RunStatusChip status={status} />
+        <MonitoringStatus series={{ monitoringStatus: following ? "monitored" : "" }} />
         {(run?.medium || item.medium) === "manga" ? <StatusBadge tone="muted">Manga</StatusBadge> : null}
-        {run ? <StatusBadge tone="muted">{issues.length} issue{issues.length === 1 ? "" : "s"}</StatusBadge> : null}
       </DiscoverDrawerHero>
-      <div className="comic-drawer-body">
-        {canFollow ? <div className="comic-drawer-follow">
-          {reader ? <PullButton size="md" readerLabel="Request follow" requestedLabel="Follow requested" onClick={() => commit("follow")}
-            state={busy === "follow" ? PULL_STATES.pending : following ? PULL_STATES.queued
-              : asked ? PULL_STATES.requested : run ? PULL_STATES.idle : PULL_STATES.pending} />
-          : <FollowSwitch following={following} busy={busy === "follow" || busy === "unfollow" || !run}
-            label={busy === "follow" ? "Following…" : busy === "unfollow" ? "Stopping…" : following ? "Following Run" : "Follow Run"}
-            onChange={(on) => commit(on ? "follow" : "unfollow")} />}
-          <small className="comic-drawer-follow-note" role="status" aria-live="polite">{done.follow || waiting || followSummary.detail}</small>
-        </div> : null}
+      <DrawerPrimary icon={<PullIcon />} verb={whole.verb} noun={whole.noun}
+        busy={busy === "whole"} disabled={!run || wholeSummary.disabled || Boolean(busy)} settled={Boolean(run) && wholeSummary.disabled}
+        note={done.follow || done.whole || waiting || wholeSummary.detail} onClick={() => commit("whole")} />
+      <DrawerTabs tabs={[["overview", "Overview"], ["issues", run ? `Issues (${issues.length})` : "Issues"]]} tab={tab} onTab={setTab}
+        label="Run details" tabsRef={tabsRef} glass={tabGlass} />
+      <div className="comic-drawer-body" key={tab}>
         {preview.state === "error" ? <div className="shelf-message">
           <WarningCircle size={18} />
           <span><strong>This run&rsquo;s issues could not be listed</strong><small>{preview.error}</small></span>
           <button type="button" onClick={load}>Try again</button>
-        </div> : <section className="run-pull-options" aria-label="Pull issues">
-          <div className="run-pull-option">
-            <span className="run-pull-option-copy">
-              <strong>{(run ? wholeSummary.label : completed ? "Pull complete run" : "Pull all released").replace(/^Pull/, verb)}</strong>
-              <small role="status" aria-live="polite">{done.whole || waiting || wholeSummary.detail}</small>
-            </span>
-            <button type="button" className="pull-button pull-button-md pull-button-idle"
-              disabled={!run || wholeSummary.disabled || Boolean(busy)} onClick={() => commit("whole")} aria-busy={busy === "whole" || undefined}>
-              <span>{busy === "whole" ? `${verb === "Pull" ? "Pulling" : "Requesting"}…` : verb}</span>
-              {busy === "whole" ? <LoadingIndicator size={16} /> : <PullIcon />}
-            </button>
-          </div>
-          <div className={`run-pull-option run-pull-choose${choosing ? " open" : ""}`}>
-            <button type="button" className="run-pull-choose-toggle" aria-expanded={choosing} aria-controls="run-issue-picker"
-              onClick={() => setChoosing((open) => !open)}>
-              <span className="run-pull-option-copy">
-                <strong>Choose issues</strong>
-                <small>{choosing ? `Tick the issues you want to ${verb.toLowerCase()}.` : "Pick single issues from this run."}</small>
+        </div> : null}
+        {tab === "overview" ? <>
+          {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
+          {run?.detailsLimited ? <p className="discover-note">The Grand Comics Database lists this run&rsquo;s issue numbers without titles, dates or covers.</p> : null}
+          {preview.state === "done" && !run?.synopsis && !run?.detailsLimited ? <p className="discover-note">No description for this run. Its issues are under Issues.</p> : null}
+        </> : null}
+        {tab === "issues" && preview.state !== "error" ? <div className="discover-issue-list" id="run-issue-picker">
+          <header>
+            <h3>Choose issues</h3>
+            {run ? <span>
+              <button type="button" onClick={() => { setSelected(new Set(releasedToPull(issues).map((issue) => issue.number))); setDone((current) => ({ ...current, choose: "" })); }}>Select all released</button>
+              <button type="button" onClick={() => setSelected(new Set())} disabled={!selected.size}>Clear</button>
+            </span> : null}
+          </header>
+          {preview.state === "loading" ? <div role="status" aria-busy="true">
+            <p className="discover-note">Getting the issue list from {PREVIEW_PROVIDER_NAMES[source] || "the catalogs"}&hellip; a long run takes a little while the first time.</p>
+            {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}>
+              <i /><span className="discover-cover" /><span><i /><i /></span>
+            </div>)}
+          </div> : issues.map((issue, index) => {
+            const available = selectableIssue(issue);
+            const note = issue.owned ? "In library" : issue.queued ? (reader ? "On the way" : "On Pull List")
+              : issue.releaseState === "upcoming" ? "Not out yet"
+              : issue.releaseState === "unknown" ? "Release date unknown" : null;
+            const date = formatLongDate(issue.publicationDate) || issue.publicationYear;
+            return <label className={`discover-issue-row${available ? "" : " unavailable"}`} key={`${issue.number}-${index}`}>
+              <input type="checkbox" checked={selected.has(issue.number)} disabled={!available || Boolean(busy)}
+                onChange={() => toggle(issue.number)} aria-label={`Issue ${issue.number}`} />
+              <DiscoverCover src={issue.cover} alt="" glyph={16} />
+              <span>
+                <strong>{issueLabel(issue.number, run?.medium || item.medium)}{issue.title ? ` · ${issue.title}` : ""}</strong>
+                <small>{[date, note].filter(Boolean).join(" · ") || " "}</small>
               </span>
-              <ChevronDown />
+            </label>;
+          })}
+          <footer className="run-pull-choose-actions">
+            <small role="status" aria-live="polite">{done.choose || chooseSummary.detail}</small>
+            <button type="button" className="pull-button pull-button-md pull-button-idle"
+              disabled={!run || chooseSummary.disabled || Boolean(busy)} onClick={() => commit("choose")} aria-busy={busy === "choose" || undefined}>
+              <span>{busy === "choose" ? `${verb === "Pull" ? "Pulling" : "Requesting"}…` : (chooseSummary.disabled ? "Pull issues" : chooseSummary.label).replace(/^Pull/, verb)}</span>
+              {busy === "choose" ? <LoadingIndicator size={16} /> : <PullIcon />}
             </button>
-            {choosing ? <div className="discover-issue-list" id="run-issue-picker">
-              <header>
-                <h3>Issues</h3>
-                {run ? <span>
-                  <button type="button" onClick={() => { setSelected(new Set(releasedToPull(issues).map((issue) => issue.number))); setDone((current) => ({ ...current, choose: "" })); }}>Select all released</button>
-                  <button type="button" onClick={() => setSelected(new Set())} disabled={!selected.size}>Clear</button>
-                </span> : null}
-              </header>
-              {preview.state === "loading" ? <div role="status" aria-busy="true">
-                <p className="discover-note">Getting the issue list from {PREVIEW_PROVIDER_NAMES[source] || "the catalogs"}&hellip; a long run takes a little while the first time.</p>
-                {[0, 1, 2, 3].map((row) => <div className="discover-issue-row discover-issue-skeleton" aria-hidden="true" key={row}>
-                  <i /><span className="discover-cover" /><span><i /><i /></span>
-                </div>)}
-              </div> : issues.map((issue, index) => {
-                const available = selectableIssue(issue);
-                const note = issue.owned ? "In library" : issue.queued ? (reader ? "On the way" : "On Pull List")
-                  : issue.releaseState === "upcoming" ? "Not out yet"
-                  : issue.releaseState === "unknown" ? "Release date unknown" : null;
-                const date = formatLongDate(issue.publicationDate) || issue.publicationYear;
-                return <label className={`discover-issue-row${available ? "" : " unavailable"}`} key={`${issue.number}-${index}`}>
-                  <input type="checkbox" checked={selected.has(issue.number)} disabled={!available || Boolean(busy)}
-                    onChange={() => toggle(issue.number)} aria-label={`Issue ${issue.number}`} />
-                  <DiscoverCover src={issue.cover} alt="" glyph={16} />
-                  <span>
-                    <strong>{issueLabel(issue.number, run?.medium || item.medium)}{issue.title ? ` · ${issue.title}` : ""}</strong>
-                    <small>{[date, note].filter(Boolean).join(" · ") || " "}</small>
-                  </span>
-                </label>;
-              })}
-              <footer className="run-pull-choose-actions">
-                <small role="status" aria-live="polite">{done.choose || chooseSummary.detail}</small>
-                <button type="button" className="pull-button pull-button-md pull-button-idle"
-                  disabled={!run || chooseSummary.disabled || Boolean(busy)} onClick={() => commit("choose")} aria-busy={busy === "choose" || undefined}>
-                  <span>{busy === "choose" ? `${verb === "Pull" ? "Pulling" : "Requesting"}…` : (chooseSummary.disabled ? "Pull issues" : chooseSummary.label).replace(/^Pull/, verb)}</span>
-                  {busy === "choose" ? <LoadingIndicator size={16} /> : <PullIcon />}
-                </button>
-              </footer>
-            </div> : null}
-          </div>
-        </section>}
-        {preview.state === "loading" ? <RunSynopsis loading /> : <RunSynopsis text={run?.synopsis} source={run?.providerName} key={idsKey} />}
-        {run?.detailsLimited ? <p className="discover-note">The Grand Comics Database lists this run&rsquo;s issue numbers without titles, dates or covers.</p> : null}
+          </footer>
+        </div> : null}
       </div>
     </aside>
   </div>;
@@ -8192,6 +8218,15 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
         onClose={requestClose} closeLabel="Close">
         <span className="finish-done"><CheckCircle size={15} weight="fill" /> Finished</span>
       </DiscoverDrawerHero>
+      {/* Reading on is the band's pill, as Read is every comic drawer's; the
+          card below says what it is and what was passed over to reach it. */}
+      {onRead && inArc && arcNext?.next ? <DrawerPrimary icon={<BookOpen size={20} weight="fill" />} verb="Read"
+        noun={`Issue ${issueLabel(arcNext.next.number, "comic")}`} label={`Read ${arcNext.next.seriesTitle} ${issueLabel(arcNext.next.number, "comic")}, next in ${arcName}`}
+        onClick={() => onRead({ id: arcNext.next.fileId, listId: list.id, listName: arcName })} />
+        : onRead && !inArc && nextIssue ? <DrawerPrimary icon={<BookOpen size={20} weight="fill" />} verb="Read"
+          noun={issueLabel(nextIssue.number, medium).startsWith("#") ? `Issue ${issueLabel(nextIssue.number, medium)}` : issueLabel(nextIssue.number, medium)}
+          label={`Read ${[series?.title, issueLabel(nextIssue.number, medium)].filter(Boolean).join(" ")}, next in this run`}
+          onClick={() => onRead({ id: nextIssue.fileId })} /> : null}
       <div className="comic-drawer-body">
         {/* The two cards sit close, as one pair of things to do; the shelf
             below keeps the body's own distance. */}
@@ -8218,9 +8253,6 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
                   ? <button type="button" onClick={() => (admin ? onPullMissing : onRequestMissing)(arc)}>{admin ? "Pull" : "Request"}</button> : null}
               </p> : null}
               {description}
-              <button type="button" className="primary-button" onClick={() => onRead({ id: arcNext.next.fileId, listId: list.id, listName: arcName })}>
-                Read Issue {issueLabel(arcNext.next.number, "comic")}
-              </button>
             </div>
           </div>
         </section> : <>
@@ -8242,10 +8274,6 @@ function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion 
               <strong>{[series?.title, issueLabel(nextIssue.number, medium)].filter(Boolean).join(" ")}</strong>
               {nextIssue.title ? <span className="finish-next-title">{nextIssue.title}</span> : null}
               {description}
-              <button type="button" className="primary-button" onClick={() => onRead({ id: nextIssue.fileId })}>
-                {/* "Read Issue #2" for a comic; a volume label already names itself. */}
-                Read {issueLabel(nextIssue.number, medium).startsWith("#") ? "Issue " : ""}{issueLabel(nextIssue.number, medium)}
-              </button>
             </div>
           </div>
         </section> : <p className="finish-last">That is the last comic this run has.</p>) : null}

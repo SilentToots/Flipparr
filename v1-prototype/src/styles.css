@@ -2685,6 +2685,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    violet pill sharing a row with a switch read as an afterthought. */
 .comic-drawer-actions { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-12); padding: var(--space-16) var(--drawer-inset); background: var(--art-band-strong); }
 .comic-drawer-actions .comic-drawer-read { flex: 1; min-height: 56px; padding: 0 var(--space-20); border-radius: var(--radius-pill); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-10); font-size: clamp(var(--text-sm), calc(var(--text-sm) + (100vw - 320px) * 0.0364), var(--text-md)); }
+/* The band's pill once its job is done -- On your Pull List, Requested --
+   is a plain fill, not the call to act; the line under it says what next. */
+.comic-drawer-actions .comic-drawer-read--settled, .comic-drawer-actions .comic-drawer-read--settled:disabled { background: var(--button-standard-bg); color: var(--text); opacity: 1; }
+.comic-drawer-action-note { color: var(--muted-strong); font-size: var(--text-sm); line-height: var(--leading-normal); text-align: center; }
 /* One line. Two lines of text in a pill stop reading as a button. */
 .comic-drawer-read span { display: inline-flex; align-items: baseline; gap: var(--space-6); min-width: 0; white-space: nowrap; line-height: var(--leading-tight); }
 .comic-drawer-read b { font-weight: var(--weight-regular); opacity: var(--button-disabled-opacity); }
