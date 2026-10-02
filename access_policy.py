@@ -119,11 +119,17 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"POST"}), r"/api/v1/reading-lists/(\d+)/items", READER),
     (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)/export", READER),
     # An arc's uploaded cover: anyone who sees the arc sees it; whoever may
-    # change the arc uploads one (`_arc_gate`). A collection's is seen by
-    # whoever sees the collection; uploading one stays the admin's.
+    # change the arc uploads one (`_arc_gate`).
     (frozenset({"GET"}), r"/api/v1/reading-lists/(\d+)/cover/image", READER),
     (frozenset({"POST"}), r"/api/v1/reading-lists/(\d+)/cover/upload", READER),
+    # Collections, as story arcs since schema 63: any profile makes its own,
+    # private until shared; the household's are the admin's. Whose may be
+    # changed by whom is the handlers' (`_collection_gate`).
+    (frozenset({"POST"}), r"/api/v1/run-collections", READER),
+    (frozenset({"PATCH", "DELETE"}), r"/api/v1/run-collections/(\d+)", READER),
+    (frozenset({"GET", "POST"}), r"/api/v1/run-collections/(\d+)/backdrop", READER),
     (frozenset({"GET"}), r"/api/v1/run-collections/(\d+)/cover/image", READER),
+    (frozenset({"POST"}), r"/api/v1/run-collections/(\d+)/cover/upload", READER),
     (frozenset({"GET"}), r"/api/v1/reading/lists", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/files/(\d+)/progress", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages", READER),

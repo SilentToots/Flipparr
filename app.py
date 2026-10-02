@@ -13909,6 +13909,8 @@ def _arc_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(groups.values())
 
 
+# Whose an arc -- or, since schema 63, a collection -- is. The rules below
+# read only `ownerId` and `shared`, so both kinds of read group use them.
 # Whose an arc is (schema 62). One with no owner is the household's, as
 # every arc saved from Metron or a CBL file is, and the admin keeps it. Any
 # profile may make its own by hand; it is that profile's until shared with
@@ -14118,9 +14120,42 @@ def reading_list_backdrop(list_id: int) -> dict[str, Any]:
     """The page behind an arc's drawer header: the one chosen, or one found
     in the first of its comics that are here -- as a run's is."""
     store = catalog_store()
-    files = store.reading_list_files(list_id)
+    return _group_backdrop(store.reading_list_files(list_id), store.reading_list_backdrop_preference(list_id),
+                           lambda *found: store.set_reading_list_backdrop(list_id, *found))
+
+
+def run_collection_backdrop(collection_id: int) -> dict[str, Any]:
+    """The page behind a collection's drawer header, as an arc's: chosen, or
+    found in the first of its runs' comics."""
+    store = catalog_store()
+    return _group_backdrop(store.run_collection_files(collection_id),
+                           store.run_collection_backdrop_preference(collection_id),
+                           lambda *found: store.set_run_collection_backdrop(collection_id, *found))
+
+
+def choose_run_collection_backdrop(collection_id: int, file_id: str, page: int) -> dict[str, Any]:
+    """A page picked from one of the collection's own comics."""
+    files = {item["id"]: item for item in catalog_store().run_collection_files(collection_id)}
+    if str(file_id) not in files:
+        raise ValueError("That comic is not part of this collection")
+    path = Path(files[str(file_id)]["path"])
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("That comic cannot be opened")
+    pages = cached_page_members(path)
+    if not 0 <= int(page) < len(pages):
+        raise ValueError("That page is not in this comic")
+    catalog_store().set_run_collection_backdrop(collection_id, int(file_id), pages[int(page)], "chosen",
+                                                _file_signature(path))
+    return run_collection_backdrop(collection_id)
+
+
+def _group_backdrop(
+    files: list[dict[str, Any]], preference: dict[str, Any] | None, remember: "Callable[..., None]",
+) -> dict[str, Any]:
+    """A read group's header page: the preference while its comic is still
+    the same file (a chosen page holds through a rescan), else the automatic
+    page of the first of its first three comics that has one, remembered."""
     by_id = {item["id"]: item for item in files}
-    preference = store.reading_list_backdrop_preference(list_id)
     if preference and preference["fileId"] in by_id:
         path = Path(by_id[preference["fileId"]]["path"])
         try:
@@ -14144,7 +14179,7 @@ def reading_list_backdrop(list_id: int) -> dict[str, Any]:
             continue
         if not member:
             continue
-        store.set_reading_list_backdrop(list_id, int(item["id"]), member, "auto", signature)
+        remember(int(item["id"]), member, "auto", signature)
         index = cached_page_members(path).index(member)
         return {"url": _page_url(item["id"], index, path, "backdrop"), "source": "auto", "fileId": item["id"], "page": index}
     return {"url": None, "source": "none", "fileId": None, "page": None}
@@ -16177,6 +16212,32 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return entry
 
+    def _collection_gate(self, collection_id: int, need: str = "see") -> dict[str, Any] | None:
+        """A collection's `_arc_gate`: 404 for one this profile can't see -- a
+        private one is not there for anyone else -- and 403 for one it sees
+        but may not change ("edit"), or unshare and delete ("manage")."""
+        try:
+            entry = catalog_store().run_collection(collection_id)
+        except LookupError as exc:
+            self.send_json({"error": str(exc)}, 404)
+            return None
+        viewer = self._viewer()
+        if not arc_visible_to(entry, viewer):
+            self.send_json({"error": "That collection is not in the library"}, 404)
+            return None
+        allowed = {"see": True, "edit": arc_editable_by(entry, viewer), "manage": arc_manageable_by(entry, viewer)}[need]
+        if not allowed:
+            self.send_json({"error": "Only the admin can change the household's collections" if entry["ownerId"] is None
+                            else "Only the profile that made this collection can change it"}, 403)
+            return None
+        return entry
+
+    def _collection_payload(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """A collection as the asking profile is told it: its uploaded cover,
+        and whose it is and what it may do with it."""
+        return {**collection, "coverImage": uploaded_cover_url("collections", collection["id"]),
+                **_arc_ownership(collection, self._viewer(), _profile_names())}
+
     def _reading_list_visible(self, kind: str, target_id: int) -> bool:
         """Whether this profile may see what it is adding to its reading list."""
         viewer = self._viewer()
@@ -16186,6 +16247,12 @@ class Handler(BaseHTTPRequestHandler):
             # to the profile's rating when it is opened.
             try:
                 return arc_visible_to(store.reading_list_meta(int(target_id)), viewer)
+            except LookupError:
+                return False
+        if kind == "collection":
+            try:
+                if not arc_visible_to(store.run_collection(int(target_id)), viewer):
+                    return False
             except LookupError:
                 return False
         if viewer is None or viewer.is_admin or not viewer.max_rating:
@@ -16390,8 +16457,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/catalog":
             admin = self._viewer().is_admin
             payload = catalog_api_payload(viewer_id=self._viewer_id())
-            for collection in payload.get("runCollections") or []:
-                collection["coverImage"] = uploaded_cover_url("collections", collection["id"])
+            # Someone else's private collection is not there, for the admin
+            # too, as with story arcs; each says whose it is.
+            viewer = self._viewer()
+            payload = {**payload, "runCollections": [
+                self._collection_payload(collection) for collection in payload.get("runCollections") or []
+                if arc_visible_to(collection, viewer)]}
             payload = payload if admin else reader_catalog(payload, self._viewer())
             # Readers' requests: everyone's for the admin, a reader's own for them.
             store = catalog_store()
@@ -16625,6 +16696,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "That collection is not in the library"}, 404)
                 return
             self.handle_uploaded_cover(int(collection_cover_image.group(1)), "collections")
+            return
+        collection_backdrop_get = re.fullmatch(r"/api/v1/run-collections/(\d+)/backdrop", parsed_url.path)
+        if collection_backdrop_get:
+            if self._collection_gate(int(collection_backdrop_get.group(1))) is None:
+                return
+            try:
+                self.send_json(run_collection_backdrop(int(collection_backdrop_get.group(1))))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
             return
         reading_list_backdrop_get = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
         if reading_list_backdrop_get:
@@ -17235,14 +17315,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(catalog_store().reading_list_entries(self._viewer_id()))
             return
         if parsed_url.path == "/api/v1/run-collections":
-            # A household collection; the admin's alone (unlisted).
+            # Any profile's (schema 63): the maker's own, private until shared,
+            # as a hand-made story arc is.
             body = payload if isinstance(payload, dict) else {}
             try:
-                made = catalog_store().create_run_collection(
-                    body.get("name"), _run_id_list(body.get("seriesIds")),
+                run_ids = _run_id_list(body.get("seriesIds"))
+                if any(not self._run_visible(f"/api/v1/series/{run_id}") for run_id in run_ids):
+                    raise LookupError("That run is not in the library")
+                made = self._collection_payload(catalog_store().create_run_collection(
+                    body.get("name"), run_ids,
                     body.get("summary") if isinstance(body.get("summary"), str) else None,
-                    created_by=self._viewer_id(),
-                )
+                    created_by=self._viewer_id(), owner_user_id=self._viewer_id(),
+                ))
             except (LookupError, CollectionNameTaken) as exc:
                 self.send_json({"error": str(exc)}, 409)
                 return
@@ -17680,6 +17764,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(result)
             return
+        collection_backdrop_post = re.fullmatch(r"/api/v1/run-collections/(\d+)/backdrop", parsed_url.path)
+        if collection_backdrop_post:
+            collection_id = int(collection_backdrop_post.group(1))
+            if self._collection_gate(collection_id, "edit") is None:
+                return
+            try:
+                if str(payload.get("source") or "") == "auto":
+                    catalog_store().clear_run_collection_backdrop(collection_id)
+                    result = run_collection_backdrop(collection_id)
+                else:
+                    page = payload.get("page")
+                    if not isinstance(page, int) or isinstance(page, bool):
+                        raise ValueError("Choose a page")
+                    result = choose_run_collection_backdrop(collection_id, str(payload.get("fileId") or ""), page)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(result)
+            return
         reading_list_backdrop_post = re.fullmatch(r"/api/v1/reading-lists/(\d+)/backdrop", parsed_url.path)
         if reading_list_backdrop_post:
             list_id = int(reading_list_backdrop_post.group(1))
@@ -17931,8 +18037,24 @@ class Handler(BaseHTTPRequestHandler):
         collection_patch = re.fullmatch(r"/api/v1/run-collections/(\d+)", parsed_url.path)
         if collection_patch:
             body = payload if isinstance(payload, dict) else {}
+            shared = body.get("shared")
+            if shared is not None and not isinstance(shared, bool):
+                self.send_json({"error": "Say whether the household shares this collection (true or false)"}, 400)
+                return
+            # Only its maker changes or shares it; the admin may take a shared
+            # one back out of the household's view.
+            changes_it = any(key in body for key in (
+                "name", "summary", "sortMode", "coverSeriesId", "coverImage", "add", "remove", "order"))
+            entry = self._collection_gate(int(collection_patch.group(1)), "edit" if changes_it or shared else "manage")
+            if entry is None:
+                return
+            if shared is not None and entry["ownerId"] is None:
+                self.send_json({"error": "The household's collections are already everyone's"}, 400)
+                return
             try:
                 changes: dict[str, Any] = {}
+                if shared is not None:
+                    changes["shared"] = shared
                 for key in ("name", "summary", "sortMode"):
                     if key in body:
                         if body[key] is not None and not isinstance(body[key], str):
@@ -17950,10 +18072,17 @@ class Handler(BaseHTTPRequestHandler):
                 for key in ("add", "remove", "order"):
                     if key in body:
                         changes[key] = _run_id_list(body[key])
+                if any(not self._run_visible(f"/api/v1/series/{run_id}") for run_id in changes.get("add") or []):
+                    raise LookupError("That run is not in the library")
                 updated = catalog_store().update_run_collection(int(collection_patch.group(1)), changes)
                 if drop_upload:
                     remove_uploaded_cover("collections", updated["id"])
-                updated = {**updated, "coverImage": uploaded_cover_url("collections", updated["id"])}
+                if not arc_visible_to(updated, self._viewer()):
+                    # The admin took someone's collection back out of the
+                    # household: done, and no longer theirs to see.
+                    self.send_json({"id": updated["id"], "shared": False, "visible": False})
+                    return
+                updated = self._collection_payload(updated)
             except CollectionNameTaken as exc:
                 self.send_json({"error": str(exc)}, 409)
                 return
@@ -17978,7 +18107,12 @@ class Handler(BaseHTTPRequestHandler):
             if shared is not None and not isinstance(shared, bool):
                 self.send_json({"error": "Say whether the household shares this story arc (true or false)"}, 400)
                 return
-            changes_arc = bool(remove or order) or isinstance(payload.get("name"), str) or isinstance(payload.get("cover"), str)
+            for key in ("description", "sortMode"):
+                if key in payload and not isinstance(payload[key], str):
+                    self.send_json({"error": f"{key} is text"}, 400)
+                    return
+            changes_arc = bool(remove or order) or any(
+                isinstance(payload.get(key), str) for key in ("name", "cover", "description", "sortMode"))
             # Only the maker shares an arc; the admin may take a shared one
             # back out of the household's view.
             entry = self._arc_gate(list_id, "edit" if changes_arc or shared else "manage")
@@ -18000,6 +18134,9 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Choose a cover from the arc's own comics")
                     catalog_store().update_reading_list(
                         list_id, name=payload.get("name") if isinstance(payload.get("name"), str) else None, cover=cover)
+                if isinstance(payload.get("description"), str) or isinstance(payload.get("sortMode"), str):
+                    catalog_store().update_reading_list(
+                        list_id, description=payload.get("description"), sort_mode=payload.get("sortMode"))
                 if not arc_visible_to(catalog_store().reading_list_meta(list_id), self._viewer()):
                     # The admin took someone's arc back out of the household:
                     # done, and no longer theirs to see.
@@ -18108,6 +18245,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         collection_delete = re.fullmatch(r"/api/v1/run-collections/(\d+)", parsed_url.path)
         if collection_delete:
+            if self._collection_gate(int(collection_delete.group(1)), "manage") is None:
+                return
             try:
                 catalog_store().delete_run_collection(int(collection_delete.group(1)))
             except LookupError as exc:
@@ -18462,6 +18601,9 @@ class Handler(BaseHTTPRequestHandler):
         if kind == "arcs":
             if self._arc_gate(entity_id, "edit") is None:
                 return
+        elif kind == "collections":
+            if self._collection_gate(entity_id, "edit") is None:
+                return
         else:
             try:
                 if kind == "series":
@@ -18501,8 +18643,7 @@ class Handler(BaseHTTPRequestHandler):
                 catalog_store().update_reading_list(entity_id, cover=uploaded_cover_url("arcs", entity_id))
                 result = reading_list_detail(entity_id, user_id=self._viewer_id(), **self._arc_visibility())
             elif kind == "collections":
-                result = {**catalog_store().run_collection(entity_id),
-                          "coverImage": uploaded_cover_url("collections", entity_id)}
+                result = self._collection_payload(catalog_store().run_collection(entity_id))
             elif kind == "series":
                 result = catalog_store().set_series_cover_preference(entity_id, "upload")
             else:

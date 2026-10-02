@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 62
+SCHEMA_VERSION = 63
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1415,6 +1415,9 @@ class CatalogStore:
                     backdrop_member TEXT,
                     backdrop_source TEXT,
                     backdrop_signature TEXT,
+                    -- 63: the order it is read in: as arranged, or by cover
+                    -- date, so an issue added later falls into place.
+                    sort_mode TEXT NOT NULL DEFAULT 'custom' CHECK(sort_mode IN ('custom', 'release')),
                     UNIQUE(provider, provider_arc_id)
                 );
                 CREATE TABLE IF NOT EXISTS reading_list_items (
@@ -1453,7 +1456,17 @@ class CatalogStore:
                     cover_series_run_id INTEGER REFERENCES series_runs(id) ON DELETE SET NULL,
                     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    -- 63: whose it is and its header page, as a story arc's
+                    -- (schema 58, 62): NULL owner is the household's, which
+                    -- every collection before this stays. normalized_name is
+                    -- unique per owner ("u<id>:" before a profile's own).
+                    owner_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    shared INTEGER NOT NULL DEFAULT 0,
+                    backdrop_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                    backdrop_member TEXT,
+                    backdrop_source TEXT,
+                    backdrop_signature TEXT
                 );
                 CREATE TABLE IF NOT EXISTS run_collection_items (
                     collection_id INTEGER NOT NULL REFERENCES run_collections(id) ON DELETE CASCADE,
@@ -1939,6 +1952,18 @@ class CatalogStore:
                                  ("shared", "INTEGER NOT NULL DEFAULT 0")):
                 if list_columns and column not in list_columns:
                     connection.execute(f"ALTER TABLE reading_lists ADD COLUMN {column} {kind}")
+            # 63: an arc's saved order; a collection's maker, sharing and header
+            # page, as an arc's. Every collection before this is the household's.
+            if list_columns and "sort_mode" not in list_columns:
+                connection.execute("ALTER TABLE reading_lists ADD COLUMN sort_mode TEXT NOT NULL DEFAULT 'custom' "
+                                   "CHECK(sort_mode IN ('custom', 'release'))")
+            collection_columns = {row["name"] for row in connection.execute("PRAGMA table_info(run_collections)")}
+            for column, kind in (("owner_user_id", "INTEGER REFERENCES users(id) ON DELETE CASCADE"),
+                                 ("shared", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("backdrop_file_id", "INTEGER REFERENCES files(id) ON DELETE SET NULL"),
+                                 ("backdrop_member", "TEXT"), ("backdrop_source", "TEXT"), ("backdrop_signature", "TEXT")):
+                if collection_columns and column not in collection_columns:
+                    connection.execute(f"ALTER TABLE run_collections ADD COLUMN {column} {kind}")
             # 55: member_requests loses its CHECK on kind (story arcs are a new
             # kind; kinds are validated in Python). SQLite cannot drop a
             # constraint in place, so the table is copied, counted and swapped.
@@ -3879,7 +3904,19 @@ class CatalogStore:
             "createdAt": row["created_at"], "updatedAt": row["updated_at"], "refreshedAt": row["refreshed_at"],
             "ownerId": int(row["owner_user_id"]) if row["owner_user_id"] is not None else None,
             "shared": bool(row["shared"]),
+            "sortMode": row["sort_mode"] or "custom",
         }
+
+    # An arc read by cover date: dated issues first, oldest first, the
+    # arranged order breaking ties and keeping the undated where they were
+    # relative to each other (as the client's one-off sort did).
+    @staticmethod
+    def _release_ordered(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def dated(item: dict[str, Any]) -> str | None:
+            value = str(item.get("coverDate") or "")
+            return value if re.fullmatch(r"\d{4}-\d{2}(-\d{2})?", value) else None
+        return [item for _index, item in sorted(
+            enumerate(items), key=lambda pair: (dated(pair[1]) is None, dated(pair[1]) or "", pair[0]))]
 
     @staticmethod
     def _reading_list_item(row: sqlite3.Row) -> dict[str, Any]:
@@ -4101,6 +4138,8 @@ class CatalogStore:
             row = files.get(int(item["fileId"])) if item["fileId"] else None
             item["filename"] = row["filename"] if row else None
             item["path"] = row["path"] if row else None
+        if meta["sortMode"] == "release":
+            items = self._release_ordered(items)
         return {**meta, "items": items}
 
     def reading_lists_overview(self) -> list[dict[str, Any]]:
@@ -4117,17 +4156,29 @@ class CatalogStore:
             })
         for entry in lists:
             entry["items"] = by_list.get(entry["id"], [])
+            if entry["sortMode"] == "release":
+                entry["items"] = self._release_ordered(entry["items"])
         return lists
+
+    READING_LIST_SORTS = ("custom", "release")
 
     def update_reading_list(
         self, list_id: int, *, name: str | None = None, description: str | None = None,
-        cover: str | None = None, refreshed_at: str | None = None,
+        cover: str | None = None, refreshed_at: str | None = None, sort_mode: str | None = None,
     ) -> None:
+        """Change what is given; a description of "" clears it."""
         changes = {"name": " ".join(str(name).split()) if name is not None else None,
-                   "description": description, "cover": cover, "refreshed_at": refreshed_at}
+                   "description": description, "cover": cover, "refreshed_at": refreshed_at,
+                   "sort_mode": sort_mode}
         changes = {column: value for column, value in changes.items() if value is not None}
         if changes.get("name") == "":
             raise ValueError("A story arc needs a name")
+        if "description" in changes:
+            changes["description"] = str(changes["description"]).strip() or None
+            if changes["description"] and len(changes["description"]) > 2000:
+                raise ValueError("Keep the description under 2,000 characters")
+        if "sort_mode" in changes and changes["sort_mode"] not in self.READING_LIST_SORTS:
+            raise ValueError("Read a story arc in your order or by release date")
         with self._write_lock, self._connect() as connection:
             self._require_reading_list(connection, list_id)
             changes["updated_at"] = _utc_now()
@@ -6818,6 +6869,9 @@ class CatalogStore:
             "coverSeriesId": str(row["cover_series_run_id"]) if row["cover_series_run_id"] is not None else None,
             "runIds": members.get(int(row["id"]), []),
             "createdAt": row["created_at"], "updatedAt": row["updated_at"],
+            "createdBy": int(row["created_by"]) if row["created_by"] is not None else None,
+            "ownerId": int(row["owner_user_id"]) if row["owner_user_id"] is not None else None,
+            "shared": bool(row["shared"]),
         } for row in connection.execute("SELECT * FROM run_collections ORDER BY name COLLATE NOCASE, id")]
 
     def run_collections(self) -> list[dict[str, Any]]:
@@ -6831,11 +6885,18 @@ class CatalogStore:
         return found
 
     @staticmethod
-    def _collection_name(connection: sqlite3.Connection, name: Any, collection_id: int | None = None) -> tuple[str, str]:
+    def _collection_name(
+        connection: sqlite3.Connection, name: Any, collection_id: int | None = None, owner_user_id: int | None = None,
+    ) -> tuple[str, str]:
+        """The name as kept, and its key: unique among the household's, and
+        among each profile's own -- so a private name never collides with,
+        or gives away, anyone else's."""
         cleaned = re.sub(r"\s+", " ", str(name or "")).strip()
         normalized = _normalized(cleaned)
         if len(normalized) < 2 or len(cleaned) > 80:
             raise ValueError("Give the collection a name of 2 to 80 characters")
+        if owner_user_id is not None:
+            normalized = f"u{int(owner_user_id)}:{normalized}"
         taken = connection.execute(
             "SELECT id FROM run_collections WHERE normalized_name=? AND id IS NOT ?", (normalized, collection_id)
         ).fetchone()
@@ -6854,17 +6915,21 @@ class CatalogStore:
 
     def create_run_collection(
         self, name: str, series_run_ids: list[int] | None = None, summary: str | None = None,
-        created_by: int | None = None,
+        created_by: int | None = None, owner_user_id: int | None = None,
     ) -> dict[str, Any]:
+        """A collection; with an owner it is that profile's, private until
+        shared (as a hand-made story arc), without one the household's."""
         run_ids = list(dict.fromkeys(int(value) for value in (series_run_ids or [])))
         now = _utc_now()
         with self._write_lock, self._connect() as connection:
-            cleaned, normalized = self._collection_name(connection, name)
+            cleaned, normalized = self._collection_name(connection, name, owner_user_id=owner_user_id)
             self._existing_runs(connection, run_ids)
             cursor = connection.execute(
-                """INSERT INTO run_collections(name, normalized_name, summary, created_by, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (cleaned, normalized, (str(summary).strip() or None) if summary else None, created_by, now, now),
+                """INSERT INTO run_collections(name, normalized_name, summary, created_by, owner_user_id,
+                       created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (cleaned, normalized, (str(summary).strip() or None) if summary else None, created_by,
+                 int(owner_user_id) if owner_user_id is not None else None, now, now),
             )
             collection_id = int(cursor.lastrowid)
             connection.executemany(
@@ -6882,8 +6947,12 @@ class CatalogStore:
             row = connection.execute("SELECT * FROM run_collections WHERE id=?", (collection_id,)).fetchone()
             if not row:
                 raise LookupError("That collection is not in the library")
+            if "shared" in changes:
+                connection.execute("UPDATE run_collections SET shared=? WHERE id=?",
+                                   (1 if changes["shared"] else 0, collection_id))
             if "name" in changes:
-                cleaned, normalized = self._collection_name(connection, changes["name"], collection_id)
+                cleaned, normalized = self._collection_name(
+                    connection, changes["name"], collection_id, owner_user_id=row["owner_user_id"])
                 connection.execute("UPDATE run_collections SET name=?, normalized_name=? WHERE id=?",
                                    (cleaned, normalized, collection_id))
             if "summary" in changes:
@@ -6931,6 +7000,53 @@ class CatalogStore:
                 connection.execute("UPDATE run_collections SET cover_series_run_id=NULL WHERE id=?", (collection_id,))
             connection.execute("UPDATE run_collections SET updated_at=? WHERE id=?", (now, collection_id))
         return self.run_collection(collection_id)
+
+    def run_collection_files(self, collection_id: int) -> list[dict[str, Any]]:
+        """The collection's comics that are here: each run's, lowest issue
+        first, run by run in the collection's order -- what its header page is
+        found among and chosen from, as an arc's comics are."""
+        files: list[dict[str, Any]] = []
+        for run_id in self.run_collection(collection_id)["runIds"]:
+            try:
+                files += [{**item, "runId": run_id} for item in self.series_backdrop_files(int(run_id))]
+            except LookupError:
+                continue
+        return files
+
+    def run_collection_backdrop_preference(self, collection_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM run_collections WHERE id=?", (int(collection_id),)).fetchone()
+        if not row:
+            raise LookupError("That collection is not in the library")
+        if row["backdrop_file_id"] is None or not row["backdrop_member"]:
+            return None
+        return {"fileId": str(row["backdrop_file_id"]), "member": row["backdrop_member"],
+                "source": row["backdrop_source"] or "chosen", "fileSignature": row["backdrop_signature"]}
+
+    def set_run_collection_backdrop(
+        self, collection_id: int, file_id: int, member: str, source: str, file_signature: str | None = None,
+    ) -> None:
+        """The page behind the collection's header: one of its own comics only."""
+        if source not in {"chosen", "auto"}:
+            raise ValueError("Unsupported background source")
+        if not member:
+            raise ValueError("Choose a page")
+        if not any(item["id"] == str(file_id) for item in self.run_collection_files(collection_id)):
+            raise ValueError("That comic is not part of this collection")
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE run_collections SET backdrop_file_id=?, backdrop_member=?, backdrop_source=?,
+                       backdrop_signature=?, updated_at=? WHERE id=?""",
+                (int(file_id), member, source, file_signature, _utc_now(), int(collection_id)),
+            )
+
+    def clear_run_collection_backdrop(self, collection_id: int) -> None:
+        with self._write_lock, self._connect() as connection:
+            if connection.execute(
+                """UPDATE run_collections SET backdrop_file_id=NULL, backdrop_member=NULL, backdrop_source=NULL,
+                       backdrop_signature=NULL, updated_at=? WHERE id=?""", (_utc_now(), int(collection_id)),
+            ).rowcount == 0:
+                raise LookupError("That collection is not in the library")
 
     def delete_run_collection(self, collection_id: int) -> None:
         with self._write_lock, self._connect() as connection:

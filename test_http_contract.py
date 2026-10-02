@@ -1656,7 +1656,13 @@ NOT_ADMIN = {
     ("GET", "/api/v1/reading-lists/1/export"): "reader",
     ("GET", "/api/v1/reading-lists/1/cover/image"): "reader",
     ("POST", "/api/v1/reading-lists/1/cover/upload"): "reader",
+    ("POST", "/api/v1/run-collections"): "reader",
+    ("PATCH", "/api/v1/run-collections/1"): "reader",
+    ("DELETE", "/api/v1/run-collections/1"): "reader",
+    ("GET", "/api/v1/run-collections/1/backdrop"): "reader",
+    ("POST", "/api/v1/run-collections/1/backdrop"): "reader",
     ("GET", "/api/v1/run-collections/1/cover/image"): "reader",
+    ("POST", "/api/v1/run-collections/1/cover/upload"): "reader",
     ("GET", "/api/v1/reading/lists"): "reader",
     ("GET", "/api/v1/files/1/progress"): "reader",
     ("POST", "/api/v1/files/1/progress"): "reader",
@@ -2072,7 +2078,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         ids = {item["title"]: int(item["id"]) for item in store.catalog()["series"]}
         return store, ids["Example"], ids["Other"]
 
-    def test_collections_are_the_admins_and_a_reader_sees_only_what_they_may(self):
+    def test_any_profile_makes_its_own_collection_and_a_reader_sees_only_what_they_may(self):
         store, example, other = self._two_runs()
         sam = self._household_with_a_reader()
         admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
@@ -2080,6 +2086,8 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(made.status, 201, made.body)
         collection = made.json()
         self.assertEqual(collection["runIds"], [str(example), str(other)])
+        self.assertEqual((collection["mine"], collection["shared"], collection["editable"]), (True, False, True),
+                         "a new collection is its maker's, private, as a hand-made arc")
         second = self.call("POST", "/api/v1/run-collections", {"name": "Also", "seriesIds": [other]}, cookies=admin)
         self.assertEqual(second.status, 201, "a run can be in several collections")
         self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "essentials!"}, cookies=admin).status,
@@ -2093,9 +2101,34 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(self.call("PATCH", path, {"order": [example]}, cookies=admin).status, 409, "an order must be every member")
         self.assertEqual(self.call("PATCH", "/api/v1/run-collections/99999", {"name": "Nope"}, cookies=admin).status, 404)
         reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
-        self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "Mine"}, cookies=reader).status, 403)
-        self.assertEqual(self.call("PATCH", path, {"name": "Mine"}, cookies=reader).status, 403)
+        self.assertEqual(self.call("PATCH", path, {"name": "Mine"}, cookies=reader).status, 404,
+                         "someone else's private collection is not there")
+        self.assertEqual([item["name"] for item in self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"]], [])
+        self.assertEqual(self.call("PATCH", path, {"shared": True}, cookies=admin).json()["shared"], True)
+        seen = {item["name"]: item for item in self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"]}
+        self.assertEqual((seen["Essentials"]["mine"], seen["Essentials"]["editable"], seen["Essentials"]["ownerName"]),
+                         (False, False, "Admin"))
+        self.assertEqual(self.call("PATCH", path, {"name": "Mine"}, cookies=reader).status, 403, "shared is not theirs to change")
         self.assertEqual(self.call("DELETE", path, cookies=reader).status, 403)
+        # Sam's own: private, a name of their own even if the household has it.
+        own = self.call("POST", "/api/v1/run-collections", {"name": "Essentials", "seriesIds": [other]}, cookies=reader)
+        self.assertEqual(own.status, 201, own.body)
+        own_path = f"/api/v1/run-collections/{own.json()['id']}"
+        self.assertNotIn(own.json()["id"], [item["id"] for item in self.call("GET", "/api/v1/catalog", cookies=admin).json()["runCollections"]],
+                         "not even the admin sees a profile's private collection")
+        self.assertEqual(self.call("PATCH", own_path, {"order": [other]}, cookies=admin).status, 404)
+        self.assertEqual(self.call("PATCH", own_path, {"shared": True}, cookies=reader).status, 200)
+        self.assertEqual(self.call("PATCH", own_path, {"name": "Taken"}, cookies=admin).status, 403,
+                         "the admin reads a shared one but does not change it")
+        taken_back = self.call("PATCH", own_path, {"shared": False}, cookies=admin)
+        self.assertEqual((taken_back.status, taken_back.json().get("visible")), (200, False), "the admin may unshare it")
+        self.assertEqual(self.call("DELETE", own_path, cookies=reader).status, 200)
+        # The household's (made before schema 63): the admin's to change.
+        household = store.create_run_collection("Shelf", [example])
+        self.assertEqual(self.call("PATCH", f"/api/v1/run-collections/{household['id']}", {"name": "Shelf"}, cookies=reader).status, 403)
+        self.assertEqual(self.call("PATCH", f"/api/v1/run-collections/{household['id']}", {"shared": True}, cookies=admin).status, 400)
+        self.assertEqual(self.call("PATCH", f"/api/v1/run-collections/{household['id']}", {"summary": "x"}, cookies=admin).status, 200)
+        store.delete_run_collection(int(household["id"]))
         # A reader limited to Everyone, unrated allowed, with Example rated Mature.
         self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone", "allowUnrated": True}, cookies=admin)
         store.set_run_rating_override(example, "mature")
@@ -2103,11 +2136,30 @@ class ReaderProfileHttpTests(unittest.TestCase):
         seen = {item["name"]: item for item in self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"]}
         self.assertEqual(seen["Essentials"]["runIds"], [str(other)], "the Mature member is not there for them")
         self.assertIsNone(seen["Essentials"]["coverSeriesId"], "nor is its cover")
+        self.assertEqual(self.call("POST", "/api/v1/run-collections", {"name": "Peek", "seriesIds": [example]}, cookies=reader).status,
+                         409, "nor can a run above the limit go into theirs")
         store.set_run_rating_override(other, "mature")
         self.assertEqual(self.call("GET", "/api/v1/catalog", cookies=reader).json()["runCollections"], [],
                          "a collection with nothing they may see is not there at all")
         self.assertEqual(self.call("DELETE", path, cookies=admin).status, 200)
         self.assertEqual([item["name"] for item in store.run_collections()], ["Also"])
+
+    def test_a_collection_takes_a_header_page_from_its_own_comics(self):
+        store, example, other = self._two_runs()
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        collection = self.call("POST", "/api/v1/run-collections", {"name": "Both", "seriesIds": [example, other]}, cookies=admin).json()
+        path = f"/api/v1/run-collections/{collection['id']}/backdrop"
+        found = self.call("GET", path, cookies=admin)
+        self.assertEqual(found.status, 200, found.body)
+        self.assertIn(found.json()["source"], {"auto", "none"})
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self.call("GET", path, cookies=reader).status, 404, "a private collection's page is not there")
+        self.assertEqual(self.call("POST", path, {"fileId": "99999", "page": 0}, cookies=admin).status, 400)
+        self.call("PATCH", f"/api/v1/run-collections/{collection['id']}", {"shared": True}, cookies=admin)
+        self.assertEqual(self.call("GET", path, cookies=reader).status, 200)
+        self.assertEqual(self.call("POST", path, {"source": "auto"}, cookies=reader).status, 403)
+        self.assertEqual(self.call("POST", path, {"source": "auto"}, cookies=admin).status, 200)
 
     def test_a_reading_list_is_the_profiles_own_and_never_holds_what_it_may_not_see(self):
         store, example, other = self._two_runs()
@@ -2134,6 +2186,23 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(self.call("DELETE", f"/api/v1/me/reading-list/run/{other}", cookies=reader).status, 200)
         mine = self.call("GET", "/api/v1/me/reading-list", cookies=admin).json()
         self.assertEqual([item["id"] for item in mine["runs"]], [str(example)], "the admin's list was untouched")
+
+    def test_an_arcs_maker_writes_its_description_and_chooses_its_order(self):
+        store, example, other = self._two_runs()
+        issues = store.issues_by_run([example, other])
+        first, second = (int(issues[str(run)][0][0]) for run in (example, other))
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        arc = self.call("POST", "/api/v1/reading-lists/manual", {"name": "Mine", "issueIds": [first, second]}, cookies=reader).json()
+        path = f"/api/v1/reading-lists/{arc['id']}"
+        changed = self.call("PATCH", path, {"description": "Read this first", "sortMode": "release"}, cookies=reader)
+        self.assertEqual(changed.status, 200, changed.body)
+        self.assertEqual((changed.json()["description"], changed.json()["sortMode"]), ("Read this first", "release"))
+        self.assertEqual(self.call("PATCH", path, {"sortMode": "title"}, cookies=reader).status, 400)
+        self.assertEqual(self.call("PATCH", path, {"description": 5}, cookies=reader).status, 400)
+        self.call("PATCH", path, {"shared": True}, cookies=reader)
+        self.assertEqual(self.call("PATCH", path, {"description": "Mine now"}, cookies=admin).status, 403)
 
     def test_any_profile_makes_its_own_story_arc_and_shares_it_with_the_household(self):
         store, example, other = self._two_runs()
@@ -2242,7 +2311,9 @@ class ReaderProfileHttpTests(unittest.TestCase):
         collection = self.call("POST", "/api/v1/run-collections", {"name": "Both", "seriesIds": [example, other]}, cookies=admin).json()
         path = f"/api/v1/run-collections/{collection['id']}"
         reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
-        self.assertEqual(self._upload(f"{path}/cover/upload", reader).status, 403)
+        self.assertEqual(self._upload(f"{path}/cover/upload", reader).status, 404, "private: not there for them")
+        self.call("PATCH", path, {"shared": True}, cookies=admin)
+        self.assertEqual(self._upload(f"{path}/cover/upload", reader).status, 403, "shared: theirs to see, not change")
         self.assertEqual(self._upload("/api/v1/run-collections/99999/cover/upload", admin).status, 404)
         uploaded = self._upload(f"{path}/cover/upload", admin)
         self.assertEqual(uploaded.status, 201, uploaded.body)
