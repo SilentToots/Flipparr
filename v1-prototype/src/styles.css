@@ -2921,17 +2921,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      bar and 6px of tab -- instead of 4px from the screen's edge. The four
      labels are 300px, so this fits a 375px phone. */
   .comic-drawer-tabs.drawer-tabs { padding: var(--space-6) var(--drawer-inset); -webkit-mask-image: none; mask-image: none; }
-  .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-2); }
+  /* The tab carries its own room, so its pill is its own width: drawn wider
+     than the tab, the first and last pills stood past the drawer's inset,
+     out of line with the cover and buttons (every comic drawer, 2026-10-01). */
+  .comic-drawer-tabs.drawer-tabs button { min-height: 44px; padding: var(--space-10) var(--space-6); }
   /* The pill hugged its word: the buttons have 2px of side padding because
      four labels with counts fill a phone's width, and any more overflows the
      row. So the room is the pill's own -- it is drawn from the button's
      measured box, and grows past it without moving a label. The labels scale
      down to 12px at 320px (16px from 375px up) so the row has the room. */
-  .comic-drawer-tabs.drawer-tabs > .glass-indicator { box-sizing: content-box; padding: 0 var(--space-6); margin-left: calc(var(--space-6) * -1); }
-  /* Equal-share tabs are wide enough already: widened, the first and last
-     pills stood 6px past the drawer's inset, out of line with the cover and
-     buttons above and below. */
-  .comic-drawer-tabs.drawer-tabs:not(:has(> button:nth-of-type(4))) > .glass-indicator { padding: 0; margin-left: 0; }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--drawer-inset); }
   .finish-next { grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); }
   .finish-next .discover-cover { width: 96px; }
