@@ -2928,6 +2928,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
      measured box, and grows past it without moving a label. The labels scale
      down to 12px at 320px (16px from 375px up) so the row has the room. */
   .comic-drawer-tabs.drawer-tabs > .glass-indicator { box-sizing: content-box; padding: 0 var(--space-6); margin-left: calc(var(--space-6) * -1); }
+  /* Equal-share tabs are wide enough already: widened, the first and last
+     pills stood 6px past the drawer's inset, out of line with the cover and
+     buttons above and below. */
+  .comic-drawer-tabs.drawer-tabs:not(:has(> button:nth-of-type(4))) > .glass-indicator { padding: 0; margin-left: 0; }
   .comic-drawer-body { gap: var(--space-32); padding: var(--space-24) var(--drawer-inset); }
   .finish-next { grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-16); }
   .finish-next .discover-cover { width: 96px; }
