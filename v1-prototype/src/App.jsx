@@ -1962,6 +1962,16 @@ function GroupArrange({ noun, groupNoun, ids, sortMode, sortOptions, busy, onSor
   </div>;
 }
 
+/** Arrange, as one card in a read group's Advanced: how it is read now, and a step into the list. */
+function GroupArrangeCard({ noun, count, sortMode, sortOptions, onOpen }) {
+  const mode = sortOptions.find((item) => item.id === sortMode)?.label || "Your order";
+  const items = `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return <section className="advanced-card">
+    <div><strong>Arrange</strong><p>{sortMode === "custom" ? `${items}, in your order.` : `${items}, read by ${mode.toLowerCase()}.`} Change the order, move one to the top or bottom, or take one out.</p></div>
+    <button type="button" onClick={onOpen}><ListNumbers size={16} /> Arrange</button>
+  </section>;
+}
+
 /** Sharing a read group, in Advanced: its maker's switch, or the admin's Stop sharing on someone else's. */
 function GroupShareCard({ group, noun, busy, onShare, onStopSharing }) {
   if (group?.mine) return <section className="advanced-card">
@@ -2077,19 +2087,21 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
     { id: "cover", label: "Cover", detail: "A picture you upload, or one of its runs' covers.", onOpen: () => setEdit("cover") },
     { id: "backdrop", label: "Header background", detail: "A page from one of its comics, behind the header.", disabled: !files.length, onOpen: () => setEdit("backdrop") },
   ];
-  const editTitle = edit ? EDIT_ROWS.find((row) => row.id === edit)?.label : "Edit collection";
-  const advanced = <div className="advanced-tools">
-    <div className="drawer-facts"><span><strong>{card.runCount}</strong>Runs</span><span><strong>{issueTotals.owned}</strong>Issues here</span><span><strong>{started}</strong>In progress</span></div>
-    {/* Arrange lives in Advanced, for whoever may change it (the owner, 2026-10-02). */}
-    {canEdit && runs.length ? <section className="advanced-arrange"><h3>Arrange</h3>
-      <GroupArrange noun="run" groupNoun="collection" ids={runIds} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} busy={busy}
+  const editTitle = edit === "arrange" ? "Arrange" : edit ? EDIT_ROWS.find((row) => row.id === edit)?.label : "Edit collection";
+  const arrangeView = <GroupArrange noun="run" groupNoun="collection" ids={runIds} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} busy={busy}
             onSortMode={(next) => act("sort", () => onSave(card.id, { sortMode: next }))}
             onReorder={(order) => act("order", () => onSave(card.id, { order }))}
             onRemove={(id) => act("remove", () => onSave(card.id, { remove: [String(id)] }))}
             nameOf={(id) => runsById[id]?.title || "Run"}
             renderRow={(id) => <RunCollectionRow run={runsById[id]} />}
-            onAdd={onAddRuns} addLabel="Add runs" empty={null} />
-    </section> : null}
+            onAdd={onAddRuns} addLabel="Add runs" empty={<div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing to arrange yet</strong><span>Add runs from your library to start it.</span>
+              <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button></div>} />;
+  const advanced = <div className="advanced-tools">
+    <div className="drawer-facts"><span><strong>{card.runCount}</strong>Runs</span><span><strong>{issueTotals.owned}</strong>Issues here</span><span><strong>{started}</strong>In progress</span></div>
+    {/* Arrange lives in Advanced, for whoever may change it (the owner, 2026-10-02). */}
+    {/* Arrange is a card here that steps into its own screen, as Edit's
+        pickers do, rather than a long list over the rest (2026-10-02). */}
+    {canEdit && runs.length ? <GroupArrangeCard noun="run" count={runs.length} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} onOpen={() => setEdit("arrange")} /> : null}
     <GroupShareCard group={card} noun="collection" busy={busy}
       onShare={(on) => act("share", () => onSave(card.id, { shared: on }))}
       onStopSharing={() => act("share", () => onSave(card.id, { shared: false }))} />
@@ -2107,7 +2119,7 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
       <DrawerTopBar
         title={edit !== null ? editTitle : card.name}
         onClose={requestClose}
-        onBack={edit !== null ? () => setEdit(edit ? "" : null) : undefined}
+        onBack={edit !== null ? () => setEdit(edit && edit !== "arrange" ? "" : null) : undefined}
         stacked={edit !== null}
         closeLabel="Close collection">
         {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "collection", card.id)} title={card.name}
@@ -2143,6 +2155,7 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
           onUpload={onUploadCover ? (file) => act("upload", () => onUploadCover(card.id, file)).then((done) => { if (done) setEdit(""); }) : null}
           onChoose={(choice) => act("cover", () => onSave(card.id, choice.id === "upload" ? {}
             : { coverSeriesId: choice.id === "auto" ? null : choice.id, ...(card.coverImage ? { coverImage: null } : {}) })).then((done) => { if (done) setEdit(""); })} /> : null}
+        {edit === "arrange" ? arrangeView : null}
         {edit === "backdrop" ? <>
           <p className="backdrop-workbench-intro">Choose a page from one of {card.name}&rsquo;s comics to show behind the drawer&rsquo;s header.</p>
           <BackdropPicker series={{ id: `collection-${card.id}`, title: card.name, fileDetails: files }} current={backdrop.shown}
@@ -8602,10 +8615,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
     { id: "cover", label: "Cover", detail: "A picture you upload, the one it came with, or one of its comics' covers.", onOpen: () => setEdit("cover") },
     { id: "backdrop", label: "Header background", detail: "A page from one of its comics, behind the header.", disabled: !files.length, onOpen: () => setEdit("backdrop") },
   ];
-  const advanced = <div className="advanced-tools">
-    <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
-    {canEdit && items.length ? <section className="advanced-arrange"><h3>Arrange</h3>
-      <GroupArrange noun="issue" groupNoun="arc" ids={items.map((item) => String(item.id))} sortMode={data.sortMode || "custom"} sortOptions={ARC_SORTS} busy={busy}
+  const arrangeView = data ? <GroupArrange noun="issue" groupNoun="arc" ids={items.map((item) => String(item.id))} sortMode={data.sortMode || "custom"} sortOptions={ARC_SORTS} busy={busy}
             onSortMode={(next) => run("sort", () => patch({ sortMode: next }))}
             onReorder={(order) => run("order", () => patch({ order }))}
             onRemove={(id) => run("remove", () => patch({ remove: [id] }))}
@@ -8622,8 +8632,11 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
               </>;
             }}
             onAdd={onAddIssues ? () => onAddIssues(data) : null} addLabel="Add issues"
-            empty={null} />
-    </section> : null}
+            empty={<div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing to arrange yet</strong><span>Add issues from any run, owned or missing.</span>
+              {onAddIssues ? <button type="button" className="ghost-button" onClick={() => onAddIssues(data)}><Plus size={17} /> Add issues</button> : null}</div>} /> : null;
+  const advanced = <div className="advanced-tools">
+    <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
+    {canEdit && items.length ? <GroupArrangeCard noun="issue" count={items.length} sortMode={data?.sortMode || "custom"} sortOptions={ARC_SORTS} onOpen={() => setEdit("arrange")} /> : null}
     {origin ? <p className="settings-card-note drawer-provenance">{origin}</p> : null}
     <GroupShareCard group={data} noun="story arc" busy={busy}
       onShare={(on) => run("share", () => patch({ shared: on }))}
@@ -8658,9 +8671,9 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
     <aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="reading-list-title" onMouseDown={(event) => event.stopPropagation()}>
       <DrawerTopBar
-        title={edit ? (EDIT_ROWS.find((row) => row.id === edit)?.label || name) : edit === "" ? "Edit story arc" : name}
+        title={edit === "arrange" ? "Arrange" : edit ? (EDIT_ROWS.find((row) => row.id === edit)?.label || name) : edit === "" ? "Edit story arc" : name}
         onClose={requestClose}
-        onBack={edit !== null ? () => setEdit(edit ? "" : null) : undefined}
+        onBack={edit !== null ? () => setEdit(edit && edit !== "arrange" ? "" : null) : undefined}
         stacked={edit !== null}
         closeLabel="Close story arc">
         {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "arc", list.id)} title={name}
@@ -8709,6 +8722,7 @@ function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingLi
           onUpload={(file) => run("upload", () => uploadCover(file)).then(() => setEdit(""), () => {})}
           onChoose={(choice) => run("cover", () => patch({ cover: choice.url })).then(() => setEdit(""), () => {})}
           empty={<div className="drawer-empty"><ImageSquare size={26} weight="duotone" /><strong>No covers to choose from yet</strong><span>The arc's covers come from the comics of it that are here.</span></div>} /> : null}
+        {edit === "arrange" ? arrangeView : null}
         {edit === "backdrop" ? <>
           <p className="backdrop-workbench-intro">Choose a page from one of {name}&rsquo;s comics to show behind the drawer&rsquo;s header.</p>
           <BackdropPicker series={{ id: `arc-${list.id}`, title: name, fileDetails: files }} readable={readingFiles} current={backdrop.shown}

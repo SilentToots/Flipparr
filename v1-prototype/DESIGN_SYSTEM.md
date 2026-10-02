@@ -244,9 +244,11 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   finished, else the first unfinished; an arc's next comic -- then
   `DrawerTabs`: Overview (About, the Runs / Reading order shelf with *Add
   runs* / *Add issues* under it), Runs (n) / Issues (n), Files (an arc, the
-  admin), Advanced for everyone. Arrange leads Advanced, under the facts row,
-  for whoever may change it (the owner, 2026-10-02: out of the tab row, which
-  five tabs made scroll on a phone). Arrange (`GroupArrange`) is the Order `GlassSelect` (a collection: Your
+  admin), Advanced for everyone. For whoever may change it, Advanced's first
+  card (`GroupArrangeCard`: how it is read now) steps into the Arrange
+  screen, as Edit's pickers do, Back returning to Advanced (the owner,
+  2026-10-02: out of the tab row, which five tabs made scroll on a phone,
+  and not a long list over the other cards). Arrange (`GroupArrange`) is the Order `GlassSelect` (a collection: Your
   order / Title / Year; an arc: Your order / Release date, saved, so an
   issue added later falls into place) over the `DragOrderList` (a finger
   lifts a row by holding its handle still for 250ms -- until then the handle
