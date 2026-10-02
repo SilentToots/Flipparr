@@ -6642,18 +6642,33 @@ function Provider({ provider, onConfigure, concise = false }) {
  * once, on drop. `label(id, index, total)` names a handle; `renderRow(id,
  * index)` draws the rest of its row.
  */
+// How long a finger holds a handle still before the row lifts. Shorter and a
+// scroll that starts on the handle picks a run up; much longer and the hold
+// feels like nothing is happening.
+const DRAG_HOLD_MS = 250;
+// How far a finger may wander during the hold and still be holding.
+const DRAG_HOLD_SLOP = 8;
+
 function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
   const saved = ids.map(String);
   const savedKey = saved.join();
   const latestSaved = useRef(saved);
   latestSaved.current = saved;
+  const onReorderRef = useRef(onReorder);
+  onReorderRef.current = onReorder;
   const [order, setOrder] = useState(saved);
   const [drag, setDrag] = useState(null);
+  // The handlers read these rather than state: the touch listeners are
+  // attached once, and must see the order and the drag as they are now.
+  const orderRef = useRef(order);
+  orderRef.current = order;
+  const dragRef = useRef(null);
   // Saves still on their way. Until they land the list keeps the order it was
   // put in by hand: following the saved order meanwhile snapped a dropped row
   // back, then forward again seconds later once the catalog had reloaded (a
   // collection's runs, 2026-10-01). A save that fails puts it back.
   const pending = useRef(0);
+  const listRef = useRef(null);
   const rowRefs = useRef({});
   const handleRefs = useRef({});
   const refocus = useRef(null);
@@ -6680,50 +6695,113 @@ function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
   // pointer: only the dragged row's offset changes while it follows a finger.
   const rows = useMemo(() => Object.fromEntries(order.map((id, index) => [id, renderRow(id, index)])), [order, renderRow]);
   function remember(except) {
-    before.current = Object.fromEntries(order.filter((id) => id !== except)
+    before.current = Object.fromEntries(orderRef.current.filter((id) => id !== except)
       .map((id) => [id, rowRefs.current[id]?.getBoundingClientRect().top ?? 0]));
   }
   function report(next) {
     pending.current += 1;
     let failed = false;
-    Promise.resolve().then(() => onReorder(next))
+    Promise.resolve().then(() => onReorderRef.current(next))
       .then((result) => { failed = result === false; }, () => { failed = true; })
       .finally(() => {
         pending.current -= 1;
         if (failed && !pending.current) setOrder(latestSaved.current);
       });
   }
-  function start(event, id) {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDrag({ id, startY: event.clientY, offset: 0, before: order.join() });
+  function begin(id, y) {
+    const next = { id, startY: y, offset: 0, before: orderRef.current.join() };
+    dragRef.current = next;
+    setDrag(next);
   }
-  function follow(event) {
-    if (!drag) return;
-    let { startY } = drag;
-    let offset = event.clientY - startY;
-    let current = order;
-    const index = current.indexOf(drag.id);
-    const below = rowRefs.current[current[index + 1]];
-    const above = rowRefs.current[current[index - 1]];
+  function moveTo(y) {
+    const current = dragRef.current;
+    if (!current) return;
+    let { startY } = current;
+    let offset = y - startY;
+    let next = orderRef.current;
+    const index = next.indexOf(current.id);
+    const below = rowRefs.current[next[index + 1]];
+    const above = rowRefs.current[next[index - 1]];
     // Past half a neighbour, the two trade places and the pointer's origin
     // moves with the row, so it stays under the finger.
     if (below && offset > below.offsetHeight / 2) {
-      current = moveRun(current, drag.id, index + 1);
+      next = moveRun(next, current.id, index + 1);
       startY += below.offsetHeight; offset -= below.offsetHeight;
     } else if (above && offset < -above.offsetHeight / 2) {
-      current = moveRun(current, drag.id, index - 1);
+      next = moveRun(next, current.id, index - 1);
       startY -= above.offsetHeight; offset += above.offsetHeight;
     }
-    if (current !== order) { remember(drag.id); setOrder(current); }
-    setDrag({ ...drag, startY, offset });
+    if (next !== orderRef.current) { remember(current.id); orderRef.current = next; setOrder(next); }
+    dragRef.current = { ...current, startY, offset };
+    setDrag(dragRef.current);
   }
-  function drop() {
-    if (!drag) return;
-    const changed = order.join() !== drag.before;
+  function end() {
+    const current = dragRef.current;
+    if (!current) return;
+    dragRef.current = null;
     setDrag(null);
-    if (changed) report(order);
+    if (orderRef.current.join() !== current.before) report(orderRef.current);
+  }
+  // A finger lifts a row by holding its handle still (Reminders, Keep): a
+  // touch on the handle used to start a drag at once, so scrolling a long
+  // list with a thumb on that edge moved runs (the owner, 2026-10-01). Until
+  // the hold completes the handle scrolls like the rest of the row; once it
+  // has, the page holds still and the row follows. A mouse drags at once.
+  const startHold = useRef(null);
+  startHold.current = { begin, moveTo, end };
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    let timer = 0;
+    let held = null;
+    let startY = 0;
+    let lifted = false;
+    const reset = () => { window.clearTimeout(timer); timer = 0; held = null; lifted = false; };
+    const onStart = (event) => {
+      const handle = event.target.closest?.("[data-drag-id]");
+      if (!handle || event.touches.length !== 1) return;
+      held = handle.dataset.dragId;
+      startY = event.touches[0].clientY;
+      lifted = false;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        lifted = true;
+        startHold.current.begin(held, startY);
+      }, DRAG_HOLD_MS);
+    };
+    const onMove = (event) => {
+      if (!held) return;
+      const y = event.touches[0].clientY;
+      if (!lifted) {
+        // Moving before the hold is up is a scroll: let it be one.
+        if (Math.abs(y - startY) > DRAG_HOLD_SLOP) reset();
+        return;
+      }
+      event.preventDefault();
+      startHold.current.moveTo(y);
+    };
+    const onEnd = () => {
+      const wasLifted = lifted;
+      reset();
+      if (wasLifted) startHold.current.end();
+    };
+    list.addEventListener("touchstart", onStart, { passive: true });
+    list.addEventListener("touchmove", onMove, { passive: false });
+    list.addEventListener("touchend", onEnd);
+    list.addEventListener("touchcancel", onEnd);
+    return () => {
+      reset();
+      list.removeEventListener("touchstart", onStart);
+      list.removeEventListener("touchmove", onMove);
+      list.removeEventListener("touchend", onEnd);
+      list.removeEventListener("touchcancel", onEnd);
+    };
+  }, []);
+  function pointerDown(event, id) {
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    begin(id, event.clientY);
   }
   function key(event, id) {
     const delta = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
@@ -6734,17 +6812,22 @@ function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
     const next = moveRun(order, id, index + delta);
     refocus.current = id;
     remember(null);
+    orderRef.current = next;
     setOrder(next);
     report(next);
   }
-  return <ol className="source-order-list">
+  return <ol className="source-order-list" ref={listRef}>
     {order.map((id, index) => {
       const dragging = drag?.id === id;
       return <li className={`source-order-row ${rowClassName?.(id) || ""} ${dragging ? "source-order-row--dragging" : ""}`}
         key={id} ref={(node) => { rowRefs.current[id] = node; }} style={dragging ? { transform: `translateY(${drag.offset}px)`, willChange: "transform" } : undefined}>
-        <button type="button" className="source-order-handle" ref={(node) => { handleRefs.current[id] = node; }}
+        <button type="button" className="source-order-handle" data-drag-id={id} ref={(node) => { handleRefs.current[id] = node; }}
           aria-label={`${label(id, index, order.length)}. Drag, or press the up and down arrow keys, to reorder.`}
-          onPointerDown={(event) => start(event, id)} onPointerMove={follow} onPointerUp={drop} onPointerCancel={drop}
+          title="Hold and drag to reorder"
+          onPointerDown={(event) => pointerDown(event, id)}
+          onPointerMove={(event) => { if (event.pointerType === "mouse") moveTo(event.clientY); }}
+          onPointerUp={(event) => { if (event.pointerType === "mouse") end(); }}
+          onPointerCancel={(event) => { if (event.pointerType === "mouse") end(); }}
           onKeyDown={(event) => key(event, id)}><DotsSixVertical size={20} weight="bold" /></button>
         {rows[id]}
       </li>;

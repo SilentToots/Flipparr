@@ -240,7 +240,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   shelf with *Add runs* under it (the admin's; the Set ratings list,
   choosing). The admin's tabs are Overview / *Arrange* / Advanced: Arrange is
   the Order dropdown (Your order / Title / Year -- a `GlassSelect`, not a
-  segmented slider) over the `DragOrderList` with Remove per row; Advanced is
+  segmented slider) over the `DragOrderList` (a finger lifts a row by holding its handle still for 250ms -- until then the handle scrolls like the rest of the row; a mouse drags at once) with Remove per row; Advanced is
   the counts and Delete. A reader's are Overview / Runs (the grid). A comic
   drawer with three tabs or fewer gives each an equal share of the bar; four
   still spread edge to edge. Edit (the pencil)

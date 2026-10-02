@@ -1434,7 +1434,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .source-order-position { flex: 0 0 auto; width: var(--space-16); color: var(--muted-weak); font-size: var(--text-md); font-weight: var(--weight-semibold); text-align: center; }
 .source-order-row--off strong { color: var(--muted-strong); }
 /* The handle alone starts a drag, so it takes the touch; the row does not. */
-.source-order-handle { flex: 0 0 auto; width: var(--control-height-md); height: var(--control-height-md); display: grid; place-items: center; border: 0; border-radius: var(--radius-8); background: transparent; color: var(--muted); cursor: grab; touch-action: none; }
+.source-order-handle { flex: 0 0 auto; width: var(--control-height-md); height: var(--control-height-md); display: grid; place-items: center; border: 0; border-radius: var(--radius-8); background: transparent; color: var(--muted); cursor: grab; touch-action: pan-y; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* A finger scrolls from the handle too; holding it still lifts the row
+   (DragOrderList), so a scroll that starts on that edge never moves a run. */
 .source-order-handle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (hover: hover) { .source-order-handle:hover { background: var(--surface-hover); color: var(--text); } }
 /* Lifted: opaque over its neighbours, ringed with a shadow rather than a border so nothing shifts. */
