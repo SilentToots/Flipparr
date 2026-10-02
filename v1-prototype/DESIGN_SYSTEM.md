@@ -260,7 +260,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   out, not shown broken.
 - **Story arc and collection cards** (the owner's mock, 2026-10-02) are built as
   a run's: name, the years alone as the byline, one type badge (Story arc,
-  Collection; an arc on the Runs shelf may add "N runs inside"), then under
+  Collection; no "N runs inside", which the size repeated), then under
   the rule its size, "13 Runs | 29 Issues" (runs, the app's word, not
   series), the owned bar only while something is missing, and "Made by" for
   an arc a profile made ("you", or its maker's name). Collections are always
@@ -543,7 +543,7 @@ Motion tokens:
   Comics' *Story arcs* tab with the same badge, and its drawer lists the issues in order, each
   saying whether it is here, on the way or missing, and whether it is read.
   On the Runs shelf a run kept only for an arc -- not followed, every owned
-  issue an arc's -- is folded into the arc's card ("N runs inside"), as a
+  issue an arc's -- is folded into the arc's card (no badge says so; its size already counts every run it spans), as a
   confirmed collection folds its runs; View & sort's *Story arcs* switch,
   "Collect story arc issues", turns it off, per profile. A search looks through
   everything, folded or not.

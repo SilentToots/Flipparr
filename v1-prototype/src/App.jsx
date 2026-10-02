@@ -7707,8 +7707,8 @@ function arcOwnership(list) {
 }
 
 // A story arc as a card, built as the run cards are so the two read the
-// same: cover, name, how many series and issues, and how much is here. On
-// the Runs shelf it also says how many runs it stands in for.
+// same: cover, name, how many runs and issues, and how much is here. On the
+// Runs shelf it stands in for runs it spans, which its size already counts.
 function ArcCard({ list, index, reading, onOpen, onRead, action = null }) {
   return <article className="series-card" style={{ "--card-index": Math.min(index, 11) }}>
     <span className="series-card-art">
@@ -7717,7 +7717,7 @@ function ArcCard({ list, index, reading, onOpen, onRead, action = null }) {
       {action}
     </span>
     <span className="series-card-identity"><strong>{list.name}</strong>{arcYears(list) ? <span className="series-card-byline">{arcYears(list)}</span> : null}</span>
-    <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge>{list.foldedRunCount ? <StatusBadge tone="muted">{list.foldedRunCount} run{list.foldedRunCount === 1 ? "" : "s"} inside</StatusBadge> : null}</span>
+    <span className="series-card-statuses"><StatusBadge tone="violet">Story arc</StatusBadge></span>
     <CardFoot runCount={list.seriesCount} issueCount={list.issueCount || 0} owned={list.owned || 0} maker={arcMaker(list)} />
     <button type="button" className="discover-open series-card-open" onClick={() => onOpen(list)} aria-label={`${list.name}. Show details`} />
   </article>;
