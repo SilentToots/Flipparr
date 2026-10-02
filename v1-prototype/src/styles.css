@@ -189,7 +189,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .shelf-message span { min-width: 0; display: grid; gap: var(--space-4); }
 .shelf-message strong { color: var(--text); font-size: var(--text-sm); }
 .shelf-message small { color: var(--muted); font-size: var(--text-sm); }
-.shelf-message > button { margin-left: auto; min-height: 30px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: transparent; color: var(--text); cursor: pointer; }
+.shelf-message > button { flex: 0 0 auto; white-space: nowrap; margin-left: auto; min-height: 30px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: transparent; color: var(--text); cursor: pointer; }
 
 /* Search results */
 .discover-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
@@ -1377,6 +1377,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .run-collection-remove { flex: 0 0 auto; }
 /* A collection's Runs tab: how its runs are ordered, and Arrange, above them. */
 .collection-runs { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
+/* A drawer's shelf with its add button under it (an arc's Add issues, a
+   collection's Add runs): one section, not two of the body's. */
+.comic-drawer-shelf-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 .collection-edit-form .arc-cover-choices { margin-top: var(--space-12); }
 .collection-order-field + .settings-card-note { margin: 0; }
 /* A collection drawer's failed save, under its header. */
