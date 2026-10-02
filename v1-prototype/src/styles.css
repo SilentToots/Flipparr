@@ -878,6 +878,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .segmented-tabs > .glass-indicator { background-color: var(--surface-hover); }
 .segmented-tab { position: relative; z-index: 1; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-6); min-height: 36px; padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; cursor: pointer; transition: color var(--motion-duration-fast) ease; }
 .segmented-tab.active { color: var(--text); }
+/* Above the glass in a row that scrolls, as a drawer tab's label is (see .comic-drawer-tabs). */
+.segmented-tab { transform: translateZ(0); }
 .segmented-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .segmented-tab:disabled { opacity: var(--button-disabled-opacity); cursor: default; }
 /* The head of the Wanted list: how much is missing, and the search for it. */
@@ -2643,7 +2645,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    above, where the clamp sits on --text-md. */
 .comic-drawer-tabs.drawer-tabs button { min-height: 48px; padding: var(--space-12) var(--space-16); border: 0; border-radius: var(--radius-pill); color: var(--color-neutral-0); font-size: clamp(var(--text-xs), calc(var(--text-xs) + (100vw - 320px) * 0.0727), var(--text-md)); font-weight: var(--weight-regular); line-height: var(--leading-tight); }
 .comic-drawer-tabs.drawer-tabs { position: relative; isolation: isolate; }
-.comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; }
+/* Each label gets a layer of its own (translateZ). In a tab row that scrolls
+   -- five tabs on a phone, an admin's story arc -- iOS Safari composites the
+   glass's backdrop-filter as a layer above the row's painted content, z-index
+   or not, and the active label sat under the frost (the owner, 2026-10-02). */
+.comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; transform: translateZ(0); }
 .comic-drawer-tabs.drawer-tabs button.active { background: transparent; color: var(--color-neutral-0); }
 /* The sliding glass pill (useGlassIndicator): absolutely placed at the
    selected item's box, and eased there with an iOS-like curve once it has
