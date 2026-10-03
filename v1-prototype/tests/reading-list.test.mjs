@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcMaker, arcsToAddTo, groupsToAddTo, groupOwnerLine, moveToEdge, orderByReleaseDate, issueNumberValue, issuesInRange } from "../src/reading-list.js";
+import { listCard, arcMatches, arcYears, nextInList, skippedLine, arcOnlyRuns, foldArcRuns, arcOwnerLine, arcMaker, arcsToAddTo, groupsToAddTo, groupOwnerLine, communityListLine, moveToEdge, orderByReleaseDate, issueNumberValue, issuesInRange } from "../src/reading-list.js";
 
 test("an arc's years read as one year or a span, and nothing when unknown", () => {
   assert.equal(arcYears({ year: 2002, yearEnd: 2003 }), "2002\u20132003");
@@ -137,4 +137,9 @@ test("a run is added only to collections this profile may change, saying which h
   const choices = groupsToAddTo(groups, ["5"], (group) => group.runIds);
   assert.deepEqual(choices.map((group) => [group.id, group.has]), [["3", false], ["1", true]]);
   assert.equal(groupOwnerLine({ mine: false, ownerName: "Sam" }), "Made by Sam");
+});
+
+test("a community list's line names its publisher, kind, guide and year, not the publisher twice", () => {
+  assert.equal(communityListLine({ publisher: "Marvel", group: "Events", tags: ["Marvel Comics", "LoCG"], year: "2019" }), "Marvel \u00b7 Events \u00b7 LoCG \u00b7 2019");
+  assert.equal(communityListLine({ publisher: "DC", group: "Events", tags: [], year: null }), "DC \u00b7 Events");
 });

@@ -1386,6 +1386,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    2026-10-02, as an arc's), the top right a reading list's remove. */
 .collection-card-mark { position: absolute; right: var(--space-8); bottom: var(--space-8); display: grid; place-items: center; padding: var(--space-4); border-radius: var(--radius-4); background: var(--scrim-strong); color: var(--text); pointer-events: none; }
 .source-order-row > span.rating-review-cover { flex: 0 0 auto; display: grid; }
+/* Import's community search, above the file and link: the field, then the lists it finds. */
+.import-community { display: grid; gap: var(--space-12); margin-bottom: var(--space-16); }
 /* A read group's Arrange screen, a step in from its Advanced card: the order, then the list. */
 .group-arrange { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 /* A drawer's shelf with its add button under it (an arc's Add issues, a

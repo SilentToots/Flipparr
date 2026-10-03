@@ -120,6 +120,17 @@ export function arcMaker(list) {
   return list?.ownerName || "";
 }
 
+/**
+ * A community reading list's small line: its publisher, the kind of list,
+ * the guide it follows and its year -- "Marvel · Events · Official · 2019".
+ * A tag that only repeats the publisher ("Marvel Comics") is left out.
+ */
+export function communityListLine(entry) {
+  const publisher = String(entry?.publisher || "");
+  const tags = (entry?.tags || []).filter((tag) => !publisher || !String(tag).toLowerCase().startsWith(publisher.toLowerCase()));
+  return [publisher, entry?.group, ...tags, entry?.year].filter(Boolean).join(" \u00b7 ");
+}
+
 /** The orders an arc is read in, as its Arrange tab offers them. */
 export const ARC_SORTS = [
   { id: "custom", label: "Your order" },

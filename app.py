@@ -45,6 +45,7 @@ import urllib.parse
 import urllib.request
 
 from reading_list_formats import parse_reading_list, write_reading_list
+import arc_catalog
 import torrent_client
 import zipfile
 import xml.etree.ElementTree as ET
@@ -13658,18 +13659,169 @@ def discovered_issue_detail(provider_issue_id: str) -> dict[str, Any]:
 ARC_MAX_PAGES = 10
 
 
+# ---- Story arc names, kept locally (2026-10-03) ------------------------------
+# Metron's arc names and the community's reading lists (arc_catalog.py), kept
+# in one file beside the catalog and refreshed at most once a day, when a
+# search asks -- so suggesting arcs as someone types asks no remote catalog
+# anything, and "War of Realms" finds "War of the Realms". Metron's list comes
+# whole the first time (2,261 arcs, 23 pages at its 3.2s pace) and after that
+# only what changed since (`modified_gt`, one page a day); the community's is
+# one GitHub tree request. A failed refresh keeps the last list and waits an
+# hour before trying again.
+
+ARC_INDEX_MAX_AGE_SECONDS = 24 * 3600
+ARC_INDEX_RETRY_SECONDS = 3600
+ARC_INDEX_MAX_PAGES = 60
+_ARC_INDEX_LOCK = threading.Lock()
+_ARC_INDEX_REFRESHING = threading.Event()
+
+
+def arc_index_path() -> Path:
+    return _configured_path("ARC_INDEX", catalog_database_path().parent / "arc-index.json")
+
+
+def read_arc_index() -> dict[str, Any]:
+    try:
+        index = json.loads(arc_index_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return index if isinstance(index, dict) else {}
+
+
+def _write_arc_index(index: dict[str, Any]) -> None:
+    path = arc_index_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}-{threading.get_ident()}.tmp")
+    temporary.write_text(json.dumps(index), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _arc_part_stale(part: dict[str, Any] | None, now: float) -> bool:
+    part = part or {}
+    fetched = float(part.get("fetchedAtEpoch") or 0)
+    tried = float(part.get("triedAtEpoch") or 0)
+    return now - fetched > ARC_INDEX_MAX_AGE_SECONDS and now - tried > ARC_INDEX_RETRY_SECONDS
+
+
+def _fetch_metron_arc_names(previous: dict[str, Any]) -> dict[str, Any]:
+    """Every Metron arc's id and name: all of them the first time, then only
+    those changed since the last fetch, merged in."""
+    credential = _provider_credential("metron")
+    since = previous.get("fetchedAt") if previous.get("arcs") else None
+    names = {str(item["id"]): item["name"] for item in previous.get("arcs") or []} if since else {}
+    started = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+    url = f"{METRON_API_BASE}/arc/" + (("?" + urllib.parse.urlencode({"modified_gt": since})) if since else "")
+    for _ in range(ARC_INDEX_MAX_PAGES):
+        page = fetch_provider_json("metron", url, credential) or {}
+        for row in page.get("results") or []:
+            if isinstance(row, dict) and row.get("id") and str(row.get("name") or "").strip():
+                names[str(row["id"])] = str(row["name"]).strip()
+        url = page.get("next")
+        if not url:
+            break
+    return {"fetchedAt": started, "arcs": [{"id": key, "name": value} for key, value in names.items()]}
+
+
+def _fetch_community_lists() -> dict[str, Any]:
+    """The community repository's reading lists, from one request for its tree."""
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{arc_catalog.COMMUNITY_REPO}/git/trees/{arc_catalog.COMMUNITY_BRANCH}?recursive=1",
+        headers={"User-Agent": f"Flipparr/{APP_VERSION}", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        tree = json.loads(response.read(16 * 1024 * 1024))
+    paths = [item["path"] for item in tree.get("tree") or [] if isinstance(item, dict) and item.get("type") == "blob"]
+    return {"fetchedAt": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat(),
+            "lists": arc_catalog.community_lists(paths)}
+
+
+def refresh_arc_index() -> None:
+    """Bring whichever of the two lists is stale up to date. Each is kept or
+    replaced on its own; one failing never empties the other."""
+    now = time.time()
+    with _ARC_INDEX_LOCK:
+        index = read_arc_index()
+    for part, fetch, wanted in (
+        ("metron", lambda previous: _fetch_metron_arc_names(previous), metron_configured()),
+        ("community", lambda _previous: _fetch_community_lists(), True),
+    ):
+        previous = index.get(part) or {}
+        if not wanted or not _arc_part_stale(previous, now):
+            continue
+        try:
+            fresh = fetch(previous)
+        except Exception as exc:  # a slow or down source is not an error for whoever searched
+            log_exception("arc_index_refresh_failed", exc, level="warning", part=part)
+            fresh = {**previous, "triedAtEpoch": now}
+        else:
+            fresh = {**fresh, "fetchedAtEpoch": now, "triedAtEpoch": now}
+            log_event("arc_index_refreshed", part=part,
+                      count=len(fresh.get("arcs") or fresh.get("lists") or []))
+        with _ARC_INDEX_LOCK:
+            index = {**read_arc_index(), part: fresh}
+            _write_arc_index(index)
+
+
+def ensure_arc_index() -> dict[str, Any]:
+    """The kept lists as they are, starting a refresh behind them when one is
+    stale -- once at a time, so a run of searches does not start several."""
+    index = read_arc_index()
+    now = time.time()
+    stale = _arc_part_stale(index.get("community"), now) or (metron_configured() and _arc_part_stale(index.get("metron"), now))
+    if stale and not _ARC_INDEX_REFRESHING.is_set():
+        _ARC_INDEX_REFRESHING.set()
+
+        def run() -> None:
+            try:
+                refresh_arc_index()
+            finally:
+                _ARC_INDEX_REFRESHING.clear()
+
+        threading.Thread(target=run, name="arc-index-refresh", daemon=True).start()
+    return index
+
+
+def _metron_arc(entry: dict[str, Any]) -> dict[str, Any]:
+    return {"provider": "metron", "providerArcId": str(entry["id"]), "name": str(entry["name"])}
+
+
+def arc_suggestions(query: str, *, include_lists: bool) -> dict[str, Any]:
+    """Arcs to offer while someone types, from the kept lists only: Metron's
+    arcs, and -- for the admin, who imports them -- the community's lists."""
+    index = ensure_arc_index()
+    arcs = arc_catalog.search((index.get("metron") or {}).get("arcs") or [], query, limit=6) if metron_configured() else []
+    lists = arc_catalog.search((index.get("community") or {}).get("lists") or [], query, limit=8) if include_lists else []
+    return {"arcs": [_metron_arc(entry) for entry in arcs], "lists": lists,
+            "ready": bool((index.get("metron") or {}).get("arcs") or (index.get("community") or {}).get("lists"))}
+
+
 def discover_story_arcs(query: str) -> dict[str, Any]:
-    """Metron's story arcs whose names match, for Discover's search."""
+    """Metron's story arcs whose names match, for Discover's search: Metron's
+    own name search, joined by the kept list's forgiving one, and -- when
+    neither finds anything -- Metron asked again for the search's most telling
+    word, keeping the arcs whose names hold all of its words."""
     cleaned = " ".join(str(query or "").split())
     if len(cleaned) < 2 or not metron_configured():
         return {"arcs": [], "available": metron_configured()}
-    listing = fetch_provider_json(
-        "metron", f"{METRON_API_BASE}/arc/?" + urllib.parse.urlencode({"name": cleaned}), _provider_credential("metron"))
-    arcs = [
-        {"provider": "metron", "providerArcId": str(row["id"]), "name": str(row.get("name") or "").strip()}
-        for row in (listing or {}).get("results") or [] if isinstance(row, dict) and row.get("id") and row.get("name")
-    ]
-    return {"arcs": arcs[:8], "available": True}
+    credential = _provider_credential("metron")
+
+    def ask(name: str) -> list[dict[str, Any]]:
+        listing = fetch_provider_json("metron", f"{METRON_API_BASE}/arc/?" + urllib.parse.urlencode({"name": name}), credential)
+        return [{"id": str(row["id"]), "name": str(row.get("name") or "").strip()}
+                for row in (listing or {}).get("results") or [] if isinstance(row, dict) and row.get("id") and row.get("name")]
+
+    found = {entry["id"]: entry for entry in ask(cleaned)}
+    # The kept list as it is; refreshing it is the suggestions' to start.
+    for entry in arc_catalog.search((read_arc_index().get("metron") or {}).get("arcs") or [], cleaned, limit=8):
+        found.setdefault(str(entry["id"]), {"id": str(entry["id"]), "name": entry["name"]})
+    words = arc_catalog.query_words(cleaned)
+    if not found and words:
+        for entry in ask(max(words, key=len)):
+            if arc_catalog.name_matches(words, entry["name"]):
+                found[entry["id"]] = entry
+    ranked = arc_catalog.search(found.values(), cleaned, limit=8) if words else list(found.values())[:8]
+    # Metron's own match for a phrase of small words ("The End") still counts.
+    ranked += [entry for entry in found.values() if entry not in ranked][: max(0, 8 - len(ranked))]
+    return {"arcs": [_metron_arc(entry) for entry in ranked], "available": True}
 
 
 def _arc_issue_rows(arc_id: str, credential: str, *, force: bool = False) -> list[dict[str, Any]]:
@@ -16532,6 +16684,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
                 self.send_json({"error": f"This issue's details are unavailable: {exc}"}, 502)
+            return
+        if parsed_url.path == "/api/v1/discover/arc-suggestions":
+            # From the kept lists only: no remote catalog is asked as someone types.
+            query = (urllib.parse.parse_qs(parsed_url.query).get("query") or [""])[0]
+            self.send_json(arc_suggestions(query, include_lists=self._viewer().is_admin))
             return
         if parsed_url.path == "/api/v1/discover/arcs":
             query = (urllib.parse.parse_qs(parsed_url.query).get("query") or [""])[0]

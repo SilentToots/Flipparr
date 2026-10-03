@@ -585,6 +585,16 @@ Motion tokens:
   whoever may change it. A run's Issues tab has *Select* (beside the run's
   menu): a tap ticks an issue, its read/menu/edit buttons step aside, and a
   floating bar says how many, with *Select all* and *Add to story arc*.
+- **Finding story arcs** (since 2026-10-03). Search suggests arcs as you
+  type -- Metron's, and for the admin the community's reading lists
+  (DieselTech/CBL-ReadingLists on GitHub) -- from names the server keeps and
+  refreshes daily, so typing asks no remote catalog. Matching forgives small
+  words, order and a year ("War of Realms" finds "War of the Realms"). A
+  community list is a row with its publisher, kind, guide and year ("Marvel ·
+  Events · Official · 2019") and a download mark; a tap imports it and opens
+  the arc. The Import dialog leads with *Find a community list*. Nothing from
+  that repository is shipped (it has no licence); a list is fetched from
+  GitHub when chosen.
 - **Hand-made story arcs** (since 2026-10-01). Any profile makes its own arc:
   *New story arc* on the Story arcs tab, *Add issues* inside it, *Select* in a
   run, or *Add to story arc…* in any issue's "…" menu, owned or missing, which opens

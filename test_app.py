@@ -8292,6 +8292,49 @@ class StoryArcTests(unittest.TestCase):
         self.assertEqual([(group["title"], group["missing"]) for group in detail["series"]],
                          [("Batman", 1), ("Batman: Gotham Knights", 1)])
 
+    def test_an_arc_search_forgives_missing_small_words(self):
+        asked = []
+
+        def fetch(provider, url, credential, **_):
+            asked.append(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("name", [""])[0])
+            if asked[-1] == "realms":
+                return {"results": [{"id": 70, "name": "War of the Realms"}, {"id": 900, "name": "Realms Fall"}]}
+            return {"results": []}
+        with patch.object(app, "fetch_provider_json", side_effect=fetch), patch.object(app, "_provider_credential", return_value="t"), \
+                patch.object(app, "metron_configured", return_value=True), patch.object(app, "read_arc_index", return_value={}):
+            found = app.discover_story_arcs("War of Realms")["arcs"]
+        self.assertEqual(asked, ["War of Realms", "realms"], "Metron asked again for the telling word")
+        self.assertEqual([arc["name"] for arc in found], ["War of the Realms"], "only arcs holding every word")
+        # With the kept list, the match is found there, without asking again.
+        asked.clear()
+        index = {"metron": {"arcs": [{"id": "70", "name": "War of the Realms"}, {"id": "5", "name": "Secret Wars"}]}}
+        with patch.object(app, "fetch_provider_json", side_effect=fetch), patch.object(app, "_provider_credential", return_value="t"), \
+                patch.object(app, "metron_configured", return_value=True), patch.object(app, "read_arc_index", return_value=index):
+            found = app.discover_story_arcs("realms war 2019")["arcs"]
+        self.assertEqual(([arc["providerArcId"] for arc in found], asked), (["70"], ["realms war 2019"]))
+
+    def test_arc_suggestions_come_from_the_kept_lists_and_lists_only_for_the_admin(self):
+        index = {"metron": {"arcs": [{"id": "70", "name": "War of the Realms"}]},
+                 "community": {"lists": [{"id": "Marvel/x.cbl", "name": "War of the Realms", "publisher": "Marvel"}]}}
+        with patch.object(app, "ensure_arc_index", return_value=index), patch.object(app, "metron_configured", return_value=True), \
+                patch.object(app, "fetch_provider_json", side_effect=AssertionError("no remote catalog while typing")):
+            admin = app.arc_suggestions("war of realms", include_lists=True)
+            reader = app.arc_suggestions("war of realms", include_lists=False)
+        self.assertEqual((admin["arcs"][0]["providerArcId"], [item["name"] for item in admin["lists"]], admin["ready"]),
+                         ("70", ["War of the Realms"], True))
+        self.assertEqual(reader["lists"], [])
+
+    def test_the_kept_arc_list_refreshes_each_part_on_its_own_and_keeps_the_last_on_failure(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"FLIPPARR_ARC_INDEX": str(Path(folder) / "arc-index.json")}), \
+                patch.object(app, "metron_configured", return_value=True), \
+                patch.object(app, "_fetch_metron_arc_names", return_value={"fetchedAt": "2026-10-03T00:00:00+00:00", "arcs": [{"id": "70", "name": "War of the Realms"}]}), \
+                patch.object(app, "_fetch_community_lists", side_effect=OSError("GitHub is down")):
+            app.refresh_arc_index()
+            index = app.read_arc_index()
+            self.assertEqual(index["metron"]["arcs"][0]["name"], "War of the Realms")
+            self.assertTrue(index["community"]["triedAtEpoch"] and not index["community"].get("lists"))
+            self.assertFalse(app._arc_part_stale(index["community"], time.time()), "a failure waits an hour before trying again")
+
     def test_pulling_an_arc_asks_for_what_is_missing_one_series_at_a_time(self):
         library = {"runId": "7", "owned": {app._issue_key("608")}, "queued": set(), "following": False}
         pulls = []
