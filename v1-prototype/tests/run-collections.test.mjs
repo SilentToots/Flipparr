@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  orderedRuns, collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine, collectionReadTarget, collectionPlaces,
+  orderedRuns, collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine, collectionReadTarget, collectionPlaces, libraryGridOrder,
 } from "../src/run-collections.js";
 
 const series = [
@@ -89,4 +89,18 @@ test("a collection's place, to sort by recently read, is its runs' latest", () =
   const places = collectionPlaces(cards, { 1: { lastReadAt: "2026-10-01" }, 2: { lastReadAt: "2026-10-02" } });
   assert.deepEqual(Object.keys(places), ["9"]);
   assert.equal(places["9"].lastReadAt, "2026-10-02");
+});
+
+test("collections sort among the runs in the Library grid, by its one sort", () => {
+  const runs = [
+    { id: "1", title: "Absolute Batman", addedAt: "2026-09-01" },
+    { id: "2", title: "Saga", addedAt: "2026-10-01" },
+  ];
+  const collections = [{ id: "2", key: "collection-2", title: "Locke & Key", addedAt: "2026-09-15", runs: [{ id: "1" }] }];
+  const titles = (sort, reading, runReading) => libraryGridOrder(runs, collections, sort, reading, runReading).map((item) => item.title);
+  assert.deepEqual(titles("title"), ["Absolute Batman", "Locke & Key", "Saga"], "A-Z puts it under L");
+  assert.deepEqual(titles("added"), ["Saga", "Locke & Key", "Absolute Batman"]);
+  // The collection shares id "2" with Saga, but reads by its own runs' places.
+  assert.deepEqual(titles("recent", { 2: { lastReadAt: "2026-10-02" } }, { 1: { lastReadAt: "2026-10-03" } })[0], "Locke & Key");
+  assert.equal(libraryGridOrder(runs, collections, "title")[1].key, "collection-2", "the card itself, unchanged");
 });

@@ -79,7 +79,7 @@ import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPre
 import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, nextProfileColour, pinInput, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, ratingSource, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { ratingRows, limitedProfiles, filterRatingRows, publisherChoices, ratingNote, ratingOutcome } from "./rating-review.js";
 import { keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, localDay } from "./recommended.js";
-import { collectionCards, sortCollections, collectionsFor, collectionMatches, moveRun, countsLine, collectionReadTarget, collectionPlaces, COLLECTION_SORTS } from "./run-collections.js";
+import { collectionCards, libraryGridOrder, collectionsFor, collectionMatches, moveRun, countsLine, collectionReadTarget, collectionPlaces, COLLECTION_SORTS } from "./run-collections.js";
 import { EMPTY_ENTRIES, isOnReadingList, withEntry, readingListItems, sortReadingList } from "./reading-list-tab.js";
 import { READING_DIRECTIONS } from "./reader.js";
 import {
@@ -2994,12 +2994,15 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
   const showLibrary = tab === "all" || searching;
   // The household's collections, drawn from the runs this profile was sent.
   const collectionItems = useMemo(() => collectionCards(catalog?.runCollections, catalog?.series || []), [catalog?.runCollections, catalog?.series]);
-  // They lead the Library grid, as Plex shows "collections and their items",
-  // unless the grid is narrowed to followed or in-progress runs.
-  const leadingCollections = useMemo(() => effectiveScope === "runs" && showCollections && !followingOnly && !inProgressOnly
-    ? sortCollections(collectionItems.filter((card) => card.runCount && collectionMatches(card, searching ? query : "")), "title")
+  // They sit in the Library grid among the runs, as Plex shows "collections
+  // and their items", sorted by the same sort as everything else (a pinned
+  // first place ignored A-Z, the owner 2026-10-03) -- unless the grid is
+  // narrowed to followed or in-progress runs.
+  const gridCollections = useMemo(() => effectiveScope === "runs" && showCollections && !followingOnly && !inProgressOnly
+    ? collectionItems.filter((card) => card.runCount && collectionMatches(card, searching ? query : ""))
     : [], [effectiveScope, showCollections, followingOnly, inProgressOnly, collectionItems, searching, query]);
-  const gridItems = useMemo(() => [...leadingCollections, ...displayedSeries], [leadingCollections, displayedSeries]);
+  const gridItems = useMemo(() => libraryGridOrder(displayedSeries, gridCollections, sort, gridReading, runReading),
+    [gridCollections, displayedSeries, sort, gridReading, runReading]);
   // The View & sort button marks when the library isn't showing its default.
   const viewCustomized = view !== LIBRARY_DEFAULTS.view || sort !== LIBRARY_DEFAULTS.sort || followingOnly || inProgressOnly || effectiveScope !== "runs" || !groupArcRuns || !showCollections;
   const sortedFamilies = useMemo(() => {

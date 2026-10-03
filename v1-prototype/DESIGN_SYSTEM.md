@@ -229,8 +229,9 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   collection is a run card (`.series-card.collection-card`) with the
   collection mark -- MDI's bookmark-box-multiple -- in the cover's corner on
   `--scrim-strong`, its years and run count for a byline, and a muted
-  "Collection" badge. The cards fill the Collections tab and lead the Library
-  grid (View & sort: "Show collections in Library"); since 2026-10-02 the
+  "Collection" badge. The cards fill the Collections tab and sit in the Library
+  grid among the runs, in the grid's own sort (since 2026-10-03; they were
+  pinned first, which A-Z ignored) (View & sort: "Show collections in Library"); since 2026-10-02 the
   mark sits bottom right, Read (as on an arc's card) top left.
 - **Read groups: collections and story arcs** (one pattern since 2026-10-02,
   the owner: "collections are runs read in a sequence, story arcs issues read

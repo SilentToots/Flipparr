@@ -7,6 +7,7 @@
 // Pure: the Collections tab, the Library grid and the drawer draw them.
 
 import { sharedPublisher } from "./run-details.js";
+import { sortLibrary } from "./library.js";
 
 export const COLLECTION_SORTS = [
   { id: "custom", label: "Your order" },
@@ -87,6 +88,21 @@ export function collectionPlaces(cards, runReading) {
     const latest = places.sort((a, b) => String(b.lastReadAt || "").localeCompare(String(a.lastReadAt || "")))[0];
     return [String(card.id), latest];
   }).filter(([, place]) => place));
+}
+
+/**
+ * The Library grid: collection cards among the runs (and folded arcs), all
+ * in the library's one sort -- A-Z puts "Locke & Key" under L, not first
+ * (the owner, 2026-10-03). A collection's id can equal a run's, so each sorts
+ * under its card key, its latest run's place standing for "recently read".
+ */
+export function libraryGridOrder(series, collections, sort, reading = {}, runReading = {}) {
+  if (!collections?.length) return sortLibrary(series || [], sort, reading);
+  const places = { ...reading };
+  for (const [id, place] of Object.entries(collectionPlaces(collections, runReading))) places[`collection-${id}`] = place;
+  const keyed = [...collections.map((card) => ({ ...card, id: card.key || `collection-${card.id}`, card })),
+    ...(series || []).map((item) => ({ ...item, card: item }))];
+  return sortLibrary(keyed, sort, places).map((entry) => entry.card);
 }
 
 /** A card's size: "13 Runs | 29 Issues", one of each in the singular. */
