@@ -1761,7 +1761,7 @@ function AlphaRail({ items, containerRef }) {
         onFocus={() => setFocused(letter)}
         // A pointer has jumped already on its way down; this is the keyboard's.
         onClick={(event) => { if (event.detail === 0 && present) jump(letter, true); }}>
-        {compact && index % 2 === 1 ? "\u2022" : letter}
+        <span>{compact && index % 2 === 1 ? "\u2022" : letter}</span>
       </button>;
     })}
     {bubble ? <span className="alpha-bubble glass-capsule" style={{ top: bubble.y }} aria-hidden="true">{bubble.letter}</span> : null}
