@@ -1390,7 +1390,9 @@ class CatalogStore:
                    are the household's: a refresh from the provider never
                    reorders them. An item keeps its title and number so it
                    outlives its run, and `issue_id` is set again each time the
-                   arc is opened, so a run imported later heals the gap. */
+                   arc is opened, so a run imported later heals the gap.
+                   63: sort_mode is the order it is read in -- as arranged, or
+                   by cover date, so an issue added later falls into place. */
                 CREATE TABLE IF NOT EXISTS reading_lists (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -1415,8 +1417,6 @@ class CatalogStore:
                     backdrop_member TEXT,
                     backdrop_source TEXT,
                     backdrop_signature TEXT,
-                    -- 63: the order it is read in: as arranged, or by cover
-                    -- date, so an issue added later falls into place.
                     sort_mode TEXT NOT NULL DEFAULT 'custom' CHECK(sort_mode IN ('custom', 'release')),
                     UNIQUE(provider, provider_arc_id)
                 );
@@ -1447,6 +1447,12 @@ class CatalogStore:
                 -- what sets them apart from a series family (one per run, and
                 -- tied to monitoring). Made by the admin; a profile sees the
                 -- members its rating allows.
+                -- 63: a collection's owner and its header page, as a story
+                -- arc's (schema 58, 62): NULL owner is the household's, which
+                -- every collection before this stays. normalized_name is
+                -- unique per owner ("u<id>:" before a profile's own). These
+                -- notes stay outside the column list: an older SQLite's DROP
+                -- COLUMN cannot rewrite a definition with comments inside it.
                 CREATE TABLE IF NOT EXISTS run_collections (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -1457,10 +1463,6 @@ class CatalogStore:
                     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    -- 63: whose it is and its header page, as a story arc's
-                    -- (schema 58, 62): NULL owner is the household's, which
-                    -- every collection before this stays. normalized_name is
-                    -- unique per owner ("u<id>:" before a profile's own).
                     owner_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
                     shared INTEGER NOT NULL DEFAULT 0,
                     backdrop_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
