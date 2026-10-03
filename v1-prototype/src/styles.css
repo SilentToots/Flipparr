@@ -171,7 +171,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* The skeletons occupy the loaded card's box exactly, so nothing moves when
    the comics arrive -- which is the moment a reader is most likely to be
    reaching for one. */
-.pull-card-skeleton .discover-cover, .pull-card-skeleton h3 i, .pull-card-skeleton .pull-card-action i,
+.pull-card-skeleton .discover-cover, .pull-card-skeleton h3 i, .pull-card-skeleton .pull-card-action i, .pull-card-skeleton small i, .shelf-heading-skeleton,
 .new-run-skeleton .discover-cover, .new-run-skeleton h3 i, .new-run-skeleton p i,
 .new-run-skeleton .new-run-status i, .new-run-skeleton .new-run-action i,
 .library-match-skeleton .discover-cover, .library-match-skeleton h3 i,
@@ -180,6 +180,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 }
 .pull-card-skeleton h3 i { height: 12px; width: 80%; margin: var(--space-2) auto; }
 .pull-card-skeleton .pull-card-action i { height: 26px; }
+/* A Recommended shelf card's note line, and a shelf's heading, waiting. */
+.pull-card-skeleton small i { height: 12px; width: 55%; margin: var(--space-2) auto; }
+.shelf-heading-skeleton { height: var(--space-20); width: 180px; }
+.shelf-scroll--placeholder { visibility: hidden; }
 .new-run-skeleton h3 i { height: 16px; width: 85%; }
 .new-run-skeleton p i { height: 12px; width: 55%; }
 .new-run-skeleton .new-run-status i { height: 18px; width: 88px; border-radius: var(--radius-pill); }
@@ -2294,6 +2298,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .library-loading-cell,
   .pull-card-skeleton .discover-cover,
   .pull-card-skeleton i,
+  .shelf-heading-skeleton,
   .new-run-skeleton .discover-cover,
   .new-run-skeleton i,
   .library-match-skeleton .discover-cover,

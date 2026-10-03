@@ -3238,7 +3238,9 @@ function RecommendedView({ series, catalog, backendStatus, readingVersion, onOpe
     { id: "issues", title: "Recently Added Issues", items: recentlyAddedIssues(series) },
     { id: "runs", title: "Recently Added Runs", items: recentlyAddedRuns(series), onSeeAll: onSeeAdded },
   ], [carryOn, series, onSeeInProgress, onSeeAdded]);
-  if ((backendStatus === "loading" && !catalog) || carryOn === null) return <LibraryLoadingSkeleton view="grid" />;
+  // Shelves while it loads, as it will be -- the Library's grid skeleton
+  // it showed was another tab's shape (the owner, 2026-10-03).
+  if ((backendStatus === "loading" && !catalog) || carryOn === null) return <RecommendedSkeleton />;
   if (!series.length) return <CatalogEmpty onAdd={onAdd} />;
   const byId = new Map(series.map((run) => [String(run.id), run]));
   function open(card) {
@@ -3253,6 +3255,28 @@ function RecommendedView({ series, catalog, backendStatus, readingVersion, onOpe
   }
   return <div className="recommended-shelves">
     {shelves.map((shelf) => <LibraryShelf key={shelf.id} title={shelf.title} items={shelf.items} onSeeAll={shelf.onSeeAll} onOpen={open} />)}
+  </div>;
+}
+
+/** One Recommended shelf card's box, empty: cover, title, its note. */
+function ShelfCardSkeleton() {
+  return <div className="pull-card shelf-card pull-card-skeleton" aria-hidden="true">
+    <span className="discover-cover" />
+    <div className="pull-card-body"><h3><i /></h3><small><i /></small></div>
+  </div>;
+}
+
+/** The Recommended tab before its shelves arrive: shelves of the same boxes, so nothing moves. */
+function RecommendedSkeleton() {
+  return <div className="recommended-shelves" role="status" aria-busy="true">
+    <span className="sr-only">Loading your shelves</span>
+    {[0, 1, 2].map((shelf) => <section className="release-shelf library-shelf" key={shelf} aria-hidden="true">
+      <header>
+        <div className="release-shelf-heading"><h2><i className="shelf-heading-skeleton" /></h2></div>
+        <div className="shelf-scroll shelf-scroll--placeholder"><button type="button" tabIndex={-1} disabled><ShelfBackIcon /></button><button type="button" tabIndex={-1} disabled><ShelfNextIcon /></button></div>
+      </header>
+      <div className="shelf-row">{[0, 1, 2, 3, 4, 5, 6, 7].map((card) => <ShelfCardSkeleton key={card} />)}</div>
+    </section>)}
   </div>;
 }
 
