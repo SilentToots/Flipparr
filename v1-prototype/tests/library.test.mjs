@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SORT_OPTIONS, LIBRARY_DEFAULTS, SCOPES, recencyOf, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs,
+  sortTitle, titleLetter, alphaSections, ALPHA_LETTERS,
 } from "../src/library.js";
 
 const runs = [
@@ -117,4 +118,23 @@ test("arc grouping is on unless it was switched off", () => {
   assert.equal(loadLibraryPrefs(memory).groupArcRuns, true);
   saveLibraryPrefs({ ...LIBRARY_DEFAULTS, groupArcRuns: false }, memory);
   assert.equal(loadLibraryPrefs(memory).groupArcRuns, false);
+});
+
+test("a title files without a leading article or quote, as Plex files it", () => {
+  assert.equal(sortTitle("The Woods"), "Woods");
+  assert.equal(sortTitle("The 'Burbs"), "Burbs");
+  assert.equal(sortTitle("A Walk in the Woods"), "Walk in the Woods");
+  assert.equal(sortTitle("An Unkindness"), "Unkindness");
+  assert.equal(sortTitle("A-Force"), "A-Force", "an article only before another word");
+  assert.equal(sortTitle("The"), "The");
+  assert.equal(sortTitle("Theory"), "Theory");
+  assert.deepEqual(sortLibrary([{ title: "Saga" }, { title: "The Woods" }, { title: "Tiny Titans" }], "title").map((run) => run.title),
+    ["Saga", "Tiny Titans", "The Woods"]);
+});
+
+test("a title's letter folds accents and files digits and symbols under #", () => {
+  assert.deepEqual(["The Woods", "3 Ninjas", "\u00c9lan", "'Burbs", "", "batman"].map(titleLetter), ["W", "#", "E", "B", "#", "B"]);
+  assert.equal(ALPHA_LETTERS.length, 27);
+  assert.deepEqual(alphaSections([{ title: "3 Ninjas" }, { title: "Batman" }, { title: "The Boys" }, { title: "Saga" }]),
+    { "#": 0, B: 1, S: 3 });
 });

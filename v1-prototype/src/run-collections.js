@@ -7,7 +7,7 @@
 // Pure: the Collections tab, the Library grid and the drawer draw them.
 
 import { sharedPublisher } from "./run-details.js";
-import { sortLibrary } from "./library.js";
+import { sortLibrary, byTitle } from "./library.js";
 
 export const COLLECTION_SORTS = [
   { id: "custom", label: "Your order" },
@@ -15,8 +15,6 @@ export const COLLECTION_SORTS = [
   { id: "year", label: "Year" },
 ];
 
-const byTitle = (a, b) => String(a.title ?? a.name ?? "")
-  .localeCompare(String(b.title ?? b.name ?? ""), undefined, { numeric: true, sensitivity: "base" });
 const yearOf = (run) => (/^\d{4}$/.test(String(run?.year ?? "")) ? Number(run.year) : 9999);
 
 /** A collection's runs, in the order it is set to show them. */

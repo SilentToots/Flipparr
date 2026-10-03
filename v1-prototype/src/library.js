@@ -32,10 +32,45 @@ export const LIBRARY_DEFAULTS = Object.freeze({
 // falls back to runs.
 export const SCOPES = new Set(["runs", "families"]);
 
+/**
+ * A title as it is filed: without a leading "The", "A" or "An" (only before
+ * another word -- "A-Force" and a bare "The" stay) and without leading
+ * quotes or punctuation, so "The 'Burbs" files under B, as Plex and most
+ * libraries file it (the owner, 2026-10-03).
+ */
+export function sortTitle(title) {
+  const text = String(title ?? "").trim();
+  const bare = text.replace(/^(the|a|an)\s+(?=\S)/i, "");
+  return bare.replace(/^[^\p{L}\p{N}]+/u, "") || bare || text;
+}
+
+/**
+ * The letter a title files under, for the A-Z rail: its filed title's first
+ * character, accents folded -- "Élan" is E -- and "#" for a digit or symbol.
+ */
+export function titleLetter(title) {
+  const first = sortTitle(title).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").charAt(0).toUpperCase();
+  return /^[A-Z]$/.test(first) ? first : "#";
+}
+
+/** The rail's letters, in order. */
+export const ALPHA_LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+
+/** Each letter present, with the index of its first item in this (A-Z) order. */
+export function alphaSections(items, titleOf = (item) => item?.title ?? item?.name) {
+  const first = {};
+  (items || []).forEach((item, index) => {
+    const letter = titleLetter(titleOf(item));
+    if (!(letter in first)) first[letter] = index;
+  });
+  return first;
+}
+
 // Collections have a name where runs have a title; both fall back to the
 // title rather than to an arbitrary order that would look like a broken sort.
-const byTitle = (a, b) => String(a.title ?? a.name ?? "")
-  .localeCompare(String(b.title ?? b.name ?? ""), undefined, { numeric: true, sensitivity: "base" });
+// Both are compared as filed (`sortTitle`).
+export const byTitle = (a, b) => sortTitle(a.title ?? a.name ?? "")
+  .localeCompare(sortTitle(b.title ?? b.name ?? ""), undefined, { numeric: true, sensitivity: "base" });
 
 /**
  * When a run was last touched: read, or gained a comic, whichever is newer.

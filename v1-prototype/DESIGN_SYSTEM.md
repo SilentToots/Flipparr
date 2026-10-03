@@ -586,6 +586,18 @@ Motion tokens:
   whoever may change it. A run's Issues tab has *Select* (beside the run's
   menu): a tap ticks an issue, its read/menu/edit buttons step aside, and a
   floating bar says how many, with *Select all* and *Add to story arc*.
+- **A–Z letter rail** (since 2026-10-03, the owner, after Plex). In Title A–Z
+  with 20 or more cards, the Library, Collections and Story arcs grids get a
+  sticky # / A–Z column at their right (`AlphaRail`): a tap jumps to the
+  letter's first card (or the next letter's), landing it just under the
+  header; dragging scrubs, with the letter large in a glass capsule beside
+  the finger; the letter at the top of the screen is lit (the one jumped to
+  stays lit while its card shows). One tab stop, arrows and Home/End.
+  Letters with nothing under them are dimmed. On a phone it takes the page's
+  right edge and stops above the tab bar; under 14px a letter, every other
+  one shows with a dot between. A–Z files titles without a leading The / A /
+  An or quote ("The Woods" under W, "The 'Burbs" under B), everywhere a
+  title sort is (`sortTitle`).
 - **Finding story arcs** (since 2026-10-03). Search suggests arcs as you
   type -- Metron's, and for the admin the community's reading lists
   (DieselTech/CBL-ReadingLists on GitHub) -- from names the server keeps and
