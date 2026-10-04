@@ -11,7 +11,7 @@ responsibility -- the same boundary as the indexers configured in Prowlarr.
 Installs from before 2026-10-03 kept their saved site: the setting, the source
 order and the download records moved to the neutral name `direct_site` in
 schema 64 (`load_acquisition_service_config`, `load_app_settings`,
-`catalog_store.py`), and the staging folder moves the first time it is used.
+`catalog_store.py`), and the staging folder is renamed when Flipparr starts.
 
 ## What a site has to offer
 

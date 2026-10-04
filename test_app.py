@@ -1496,6 +1496,21 @@ class FilenameParserTests(unittest.TestCase):
                              (True, "https://comics.example"))
             self.assertNotIn("direct_site", config)
 
+    def test_the_old_direct_download_folder_moves_to_the_new_name_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ", {"COMICARR_ACQUISITION_STAGING": temp_dir},
+        ):
+            old = Path(temp_dir) / "direct_site" / "356"
+            old.mkdir(parents=True)
+            (old / "Example 002.cbz").write_bytes(b"PK")
+            folder = app.acquisition_staging_dir("direct_site")
+            self.assertEqual(folder, Path(temp_dir) / "direct_site")
+            self.assertTrue((folder / "356" / "Example 002.cbz").exists(), "the records now point here")
+            self.assertFalse((Path(temp_dir) / "direct_site").exists())
+            (Path(temp_dir) / "direct_site").mkdir()
+            app.acquisition_staging_dir("direct_site")
+            self.assertTrue((folder / "356").exists(), "an existing new folder is never replaced")
+
     def test_collected_editions_default_off_and_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             "app.os.environ",

@@ -2053,7 +2053,8 @@ def acquisition_staging_dir(source: str = "manual") -> Path:
     staging = _configured_path("ACQUISITION_STAGING", catalog_database_path().parent / "downloads")
     folder = staging / _safe_path_component(source, "manual")
     # Direct downloads' folder took its neutral name in schema 64; the old one
-    # moves across the first time it is asked for (the records moved with it).
+    # moves across when it is first asked for, which main() does at startup
+    # so the records the migration moved point at a folder that exists.
     legacy = staging / _LEGACY_SOURCE_NAMES.get(source, "")
     if source in _LEGACY_SOURCE_NAMES and not folder.exists() and legacy.is_dir():
         try:
@@ -4073,7 +4074,7 @@ def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
 def _direct_site_candidates(
     job_id: int, context: dict[str, Any], query: str, *, set_aside: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """download-site results for one wanted issue, judged the way any release is.
+    """Direct-download results for one wanted issue, judged the way any release is.
 
     Listed, not grabbable: reading the post page a link lives on needs a
     page fetcher, which is its own piece of work. Knowing the issue is
@@ -5617,7 +5618,7 @@ def _start_direct_fetch(download_id: int, job_id: int, post_url: str, title: str
 
 def recover_interrupted_direct_downloads() -> int:
     """Start again every download Flipparr was fetching itself when it last
-    stopped. World's Finest #36 sat at 'Downloading from the download site's for good
+    stopped. World's Finest #36 sat at 'Downloading' for good
     after a restart: the thread was gone and the row said nothing else."""
     started = 0
     for row in catalog_store().direct_downloads_in_flight():
@@ -7241,7 +7242,7 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         log_event("run_pack_search_failed", level="warning", request_id=request_id, error=str(exc))
         return None
     candidates = list(search.get("candidates") or [])
-    # download-site posts whole runs as packs ("Batman Beyond 2.0 #1-40 + TPBs")
+    # Direct-download sites post whole runs as packs ("Batman Beyond 2.0 #1-40 + TPBs")
     # that Usenet may not carry. For a run that is mostly missing, a pack
     # holding it is the best answer wherever it is, so the download site's packs are
     # weighed here too -- when it can be downloaded from at all. Its single
@@ -18985,6 +18986,7 @@ def main() -> None:
     load_persisted_provider_cache()
     try:
         recovered = catalog_store().recover_interrupted_searches()
+        acquisition_staging_dir("direct_site")
         restarted = recover_interrupted_direct_downloads()
         if restarted:
             log_event("interrupted_direct_downloads_recovered", downloads=restarted)
