@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install --requirement requirements.txt
+      - run: pip install --requirement requirements-dev.txt
       # The app opens non-zip comics (RAR, 7z, tar) with bsdtar, which the
       # Docker image installs from libarchive-tools; the runner does not have
       # it, and the archive-reading tests need it to mean anything.

@@ -641,6 +641,16 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(entry["path"], "/healthz")
         self.assertEqual(entry["status"], 200)
 
+    def test_visitor_addresses_are_logged_only_when_turned_on(self):
+        response, lines = self._captured_log(lambda: self.get("/healthz"))
+        self.assertNotIn("client", self._logged(lines, response)[0])
+        with patch("app.cached_setting", side_effect=lambda key: key == "logClientAddresses"):
+            response, lines = self._captured_log(lambda: self.get("/healthz"))
+        self.assertEqual(self._logged(lines, response)[0]["client"], "127.0.0.1")
+
+    def test_no_response_sends_a_referrer_onward(self):
+        self.assertEqual(self.get("/healthz").headers.get("Referrer-Policy"), "no-referrer")
+
     def test_the_logged_request_id_is_returned_to_the_caller(self):
         """A user quoting the header lands on the exact server-side record."""
         response, lines = self._captured_log(lambda: self.get("/healthz"))

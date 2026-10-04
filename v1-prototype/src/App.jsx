@@ -38,6 +38,7 @@ import {
   Eye,
   FolderOpen,
   Gear,
+  Info,
   Star,
   HardDrive,
   ListBullets,
@@ -4092,7 +4093,25 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
 // paragraph can run long, and in both drawers the issues are the point.
 // `heading` is null where the text sits under a heading of its own already,
 // as the finish drawer's next-issue card does.
-function RunSynopsis({ text, source, sourcePrefix = "From", loading = false, heading = "Story" }) {
+// Where a description or a match came from, linked back to it. Comic Vine
+// asks every page that uses its data to link back; Google Books asks for
+// "Powered by Google" beside its results; the rest are owed the credit.
+const PROVIDER_HOMES = {
+  "Metron": "https://metron.cloud/",
+  "Comic Vine": "https://comicvine.gamespot.com/",
+  "Grand Comics Database": "https://www.comics.org/",
+  "GCD": "https://www.comics.org/",
+  "Open Library": "https://openlibrary.org/",
+  "Google Books": "https://books.google.com/",
+};
+
+function ProviderCredit({ source, url }) {
+  const href = /^https?:\/\//i.test(String(url || "")) ? url : PROVIDER_HOMES[source];
+  const name = source === "Google Books" ? "Google Books · Powered by Google" : source;
+  return href ? <a className="provider-credit" href={href} target="_blank" rel="noopener noreferrer">{name}</a> : name;
+}
+
+function RunSynopsis({ text, source, sourceUrl, sourcePrefix = "From", loading = false, heading = "Story" }) {
   const [open, setOpen] = useState(false);
   if (loading) return <section className="run-synopsis" role="status" aria-busy="true" aria-label="Loading the story">
     <span className="discover-drawer-lines" aria-hidden="true"><i /><i /><i /></span>
@@ -4104,7 +4123,7 @@ function RunSynopsis({ text, source, sourcePrefix = "From", loading = false, hea
     <p className={long && !open ? "clamped" : ""}>{text}</p>
     <footer>
       {long ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>{open ? "Show less" : "Read more"}</button> : null}
-      {source ? <small>{sourcePrefix} {source}</small> : null}
+      {source ? <small>{sourcePrefix} <ProviderCredit source={source} url={sourceUrl} /></small> : null}
     </footer>
   </section>;
 }
@@ -5427,6 +5446,8 @@ const SETTINGS_SECTIONS = [
     detail: "Who reads this library. Each profile keeps its own place, history and ratings." },
   { id: "security", label: "Security", icon: LockSimple, group: "app",
     detail: "Who can reach this app, and how they sign in." },
+  { id: "about", label: "About", icon: Info, group: "app",
+    detail: "Flipparr's licence, where its information comes from, and what leaves this server." },
 ];
 
 // The sections a profile is shown: everything for the admin; a reader's own
@@ -6662,6 +6683,109 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
   </>;
 }
 
+// A setting that is one switch: shown at once, saved, and put back if the
+// save fails.
+function useSettingToggle(key, last) {
+  const [value, setValue] = useState(Boolean(last?.[key]));
+  const [saving, setSaving] = useState(false);
+  async function save(next) {
+    setSaving(true);
+    setValue(next);
+    try {
+      const result = await apiRequest("/api/v1/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [key]: next }),
+      });
+      setValue(Boolean(result?.[key]));
+    } catch {
+      setValue(!next);
+    } finally {
+      setSaving(false);
+    }
+  }
+  return [value, save, saving];
+}
+
+// Settings -> About: the licence, the credits each source asks for, and
+// what leaves this server. NOTICE and docs/PRIVACY.md say the same for
+// whoever reads the repository.
+const DATA_CREDITS = [
+  { name: "Grand Comics Database", href: "https://www.comics.org/",
+    text: "Series, issue and creator data from the Grand Comics Database\u2122, used under the Creative Commons Attribution-ShareAlike 4.0 licence.",
+    licence: { label: "CC BY-SA 4.0", href: "https://creativecommons.org/licenses/by-sa/4.0/" } },
+  { name: "Metron", href: "https://metron.cloud/",
+    text: "Issue details, release dates, age ratings and story arcs, through Metron\u2019s API with your account." },
+  { name: "Comic Vine", href: "https://comicvine.gamespot.com/",
+    text: "Issue and volume details through Comic Vine\u2019s API with your key, for the non-commercial use its terms allow." },
+  { name: "Open Library", href: "https://openlibrary.org/",
+    text: "Book details and covers for collected editions, from the Internet Archive\u2019s Open Library." },
+  { name: "Google Books", href: "https://books.google.com/",
+    text: "Book details for collected editions, when you add a Google Books API key. Powered by Google." },
+  { name: "Community reading lists", href: "https://github.com/DieselTech/CBL-ReadingLists",
+    text: "Story-arc reading lists their authors share on GitHub, fetched when you pick one. Flipparr ships none of them." },
+];
+
+const SOFTWARE_CREDITS = [
+  { name: "React", licences: [["MIT", "/licenses/React-MIT.txt"]] },
+  { name: "Phosphor Icons", licences: [["MIT", "/licenses/Phosphor-Icons-MIT.txt"]] },
+  { name: "Heroicons", licences: [["MIT", "/licenses/Heroicons-MIT.txt"]] },
+  { name: "Material Design Icons", licences: [["Pictogrammers Free License", "/licenses/MaterialDesignIcons-Pictogrammers-License.txt"], ["Apache 2.0", "/licenses/Apache-2.0.txt"]] },
+  { name: "Inter", licences: [["SIL Open Font License 1.1", "/licenses/Inter-OFL-1.1.txt"]] },
+];
+
+const PRIVACY_SECTIONS = [
+  { title: "Stays on this server", points: [
+    "Your library, its catalogue, and each profile\u2019s reading history, ratings and requests.",
+    "Passwords, stored only as scrypt hashes, and API keys, which are never sent back to a browser.",
+    "No analytics, no telemetry, nothing sent to Flipparr\u2019s authors. Fonts and icons are part of the app; it loads no outside scripts.",
+  ] },
+  { title: "Goes to the services you use", points: [
+    "Metadata sources get titles, issue numbers and ISBNs from your files as searches: the Grand Comics Database and Open Library without an account, Metron, Comic Vine and Google Books with yours.",
+    "Prowlarr, your download clients and a direct-download site you enter get the issues you want.",
+    "A vision model, only if you add a key: the pages you read in panel view, sent to Anthropic or OpenAI under your account. Every page only with \u201cAsk about every page\u201d on; readers\u2019 pages only with \u201cReaders\u2019 pages too\u201d on; covers for age ratings only when that is on.",
+    "GitHub, for community reading lists, only when they are turned on.",
+  ] },
+  { title: "In your browser", points: [
+    "A sign-in cookie, and on a shared device a device cookie for its profiles. No tracking cookies.",
+    "Some cover previews load straight from a metadata source. Flipparr sends no referrer with them, or with any link out.",
+  ] },
+  { title: "In the server log", points: [
+    "Each request\u2019s page, result and profile. The address it came from only with \u201cRecord visitor addresses\u201d on, under Security.",
+  ] },
+];
+
+function AboutSettings() {
+  const build = useBuild();
+  return <>
+    <SettingsCard title="Flipparr">
+      <p className="settings-card-lead">Free software under the <a href="/licenses/gpl-3.0.txt" target="_blank" rel="noopener noreferrer">GNU General Public License, version 3</a>. It ships no comics, no catalogue data and no download sources: every service it uses is one whoever runs it sets up.{build ? ` Build ${build}.` : ""}</p>
+    </SettingsCard>
+    <SettingsCard title="Where the information comes from">
+      <ul className="about-list">
+        {DATA_CREDITS.map((item) => <li key={item.name}>
+          <a href={item.href} target="_blank" rel="noopener noreferrer"><strong>{item.name}</strong></a>
+          <span>{item.text}{item.licence ? <> <a href={item.licence.href} target="_blank" rel="noopener noreferrer">{item.licence.label}</a></> : null}</span>
+        </li>)}
+      </ul>
+      <p className="settings-card-note">Flipparr is independent: none of these services makes, endorses or supports it.</p>
+    </SettingsCard>
+    <SettingsCard title="Software">
+      <ul className="about-list">
+        {SOFTWARE_CREDITS.map((item) => <li key={item.name}>
+          <strong>{item.name}</strong>
+          <span>{item.licences.map(([label, href], index) => <span key={href}>{index ? " or " : ""}<a href={href} target="_blank" rel="noopener noreferrer">{label}</a></span>)}</span>
+        </li>)}
+      </ul>
+      <p className="settings-card-note">The server&rsquo;s own components (Python, Pillow, ONNX Runtime, libarchive) are listed with their licences in the NOTICE file that comes with Flipparr.</p>
+    </SettingsCard>
+    <SettingsCard title="Privacy">
+      {PRIVACY_SECTIONS.map((section) => <section className="about-privacy" key={section.title}>
+        <h4>{section.title}</h4>
+        <ul className="about-list">{section.points.map((point) => <li key={point}><span>{point}</span></li>)}</ul>
+      </section>)}
+    </SettingsCard>
+  </>;
+}
+
 function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, onAuthChanged, onSignOut, section, onSectionChange, health, onScanLibrary, scanState, scanProgress, authStatus, onCatalogChanged }) {
   const viewer = useViewer();
   const admin = isAdmin(viewer);
@@ -6677,7 +6801,9 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   const [autoScan, setAutoScan] = useState(settingsLast?.autoScanEnabled ?? true);
   const [autoScanInterval, setAutoScanInterval] = useState(Number(settingsLast?.autoScanIntervalMinutes) || 60);
   const [savingAutoScan, setSavingAutoScan] = useState(false);
-  const [everyPage, setEveryPage] = useState(settingsLast?.visionReadsEveryPage ?? true);
+  const [everyPage, setEveryPage] = useState(settingsLast?.visionReadsEveryPage ?? false);
+  const [communityLists, saveCommunityLists, savingCommunityLists] = useSettingToggle("communityListsEnabled", settingsLast);
+  const [logAddresses, saveLogAddresses, savingLogAddresses] = useSettingToggle("logClientAddresses", settingsLast);
   const [forReaders, setForReaders] = useState(Boolean(settingsLast?.visionForReaders));
   const [savingEveryPage, setSavingEveryPage] = useState(false);
   const [providers, setProviders] = useState(() => lastAnswer("/api/v1/providers")?.providers ?? []);
@@ -6895,7 +7021,14 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             <Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions (trades, hardcovers, omnibuses)" description="Off by default. Turn on to browse and manage collected editions alongside Issues. Their metadata and file availability are less complete than Issues, and they are never used to fulfill Issue ownership or acquisition." />
           </SettingsCard>
         </> : null}
-        {current === "security" ? <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} /> : null}
+        {current === "security" ? <>
+          <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} />
+          <SettingsCard title="Request log">
+            <Toggle checked={logAddresses} onChange={savingLogAddresses ? () => {} : saveLogAddresses} title="Record visitor addresses"
+              description="On, each line of the server log names the address a request came from, which helps trace who reached the app. Off, the log keeps the page, the result and the profile, and no addresses. Sign-in limits work either way." />
+          </SettingsCard>
+        </> : null}
+        {current === "about" ? <AboutSettings /> : null}
         {current === "acquisition" ? <>
           <SettingsCard title="Download order" className="metadata-source-settings">
             <p className="settings-card-lead">Flipparr takes a release from the first source here that has one good enough. Pulling a whole run, a pack still comes first; pulling one issue, a single does.</p>
@@ -6931,6 +7064,10 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
           <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></> : null}
         </> : null}
         {current === "metadata" ? <>
+          <SettingsCard title="Community reading lists">
+            <Toggle checked={communityLists} onChange={savingCommunityLists ? () => {} : saveCommunityLists} title="Suggest community reading lists"
+              description="Story-arc suggestions include reading lists people have shared on GitHub. On, Flipparr fetches the list of them from GitHub once a day; a list itself is downloaded only when you pick it." />
+          </SettingsCard>
           <SettingsCard title="Sources with an account" className="metadata-source-settings">
             <p className="settings-card-lead">Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p>
             {providers.filter((provider) => !provider.builtIn && provider.kind !== "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
@@ -9139,7 +9276,7 @@ function MatchCandidateCard({ candidate, current, selectedKey, busy, onMatch }) 
     ["Pages", edition.number_of_pages || candidate.page_count || "Not supplied"],
     ["Cover", preview.coverEffect],
   ];
-  return <article className={`match-candidate-card ${isSelected ? "selected" : ""}`}><div className="candidate-cover">{candidate.cover ? <img src={candidate.cover} alt={`${candidate.title || "Candidate"} cover`} /> : <span><Books size={28} weight="duotone" />No cover</span>}</div><div className="candidate-body"><header><div><span>{candidate.source || "Catalog candidate"}</span><h3>{candidate.title || "Untitled candidate"}</h3>{candidate.subtitle ? <strong>{candidate.subtitle}</strong> : null}</div><div className="candidate-badges">{isSelected ? <b className="selected-badge"><CheckCircle size={14} weight="fill" /> Current</b> : null}{rank != null ? <b>{candidate.identity_confidence ? `Identity ${rank}%` : `Rank ${rank}`}</b> : null}{candidate.cover ? <b>Cover</b> : null}</div></header>{candidate.verification_status ? <p className="candidate-verification">{volumeTerminology(candidate.verification_status)}</p> : null}<dl className="candidate-facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><section className="candidate-associations"><h4>Issue association</h4>{preview.associations.length ? preview.associations.map((association, index) => <div key={`${association.series}-${association.issueLabel}-${index}`}><strong>{association.series} #{association.issueLabel}</strong><small>{association.source || "Catalog evidence"} · {association.confidence}</small></div>) : <p>No issue or volume coverage association supplied by this match.</p>}</section><section className="candidate-impact"><h4>What selecting this will change</h4>{preview.changes.length ? <div>{preview.changes.map((change) => <span key={change.field}><b>{change.label}</b><del>{candidateValue(change.from)}</del><ArrowRight size={13} /><ins>{candidateValue(change.to)}</ins></span>)}</div> : <p>This candidate matches the currently applied fields.</p>}<small>{candidate.cover ? "Its provider image will also become available in the Cover picker; automatic cover priority will not be changed." : "No provider cover will be added by this candidate."}</small></section>{candidate.match_reasons?.length || candidate.description ? <details className="candidate-evidence"><summary>Evidence and description</summary>{candidate.match_reasons?.length ? <ul>{candidate.match_reasons.map((reason) => <li key={reason}>{volumeTerminology(reason)}</li>)}</ul> : null}{candidate.description ? <p>{candidate.description}</p> : null}</details> : null}<button className="candidate-select" disabled={busy || isSelected} onClick={() => onMatch(candidate.key)}>{isSelected ? "Currently selected" : `Use this match · ${preview.changes.length} change${preview.changes.length === 1 ? "" : "s"}`}</button></div></article>;
+  return <article className={`match-candidate-card ${isSelected ? "selected" : ""}`}><div className="candidate-cover">{candidate.cover ? <img src={candidate.cover} alt={`${candidate.title || "Candidate"} cover`} /> : <span><Books size={28} weight="duotone" />No cover</span>}</div><div className="candidate-body"><header><div><span>{candidate.source ? <ProviderCredit source={candidate.source} url={candidate.url} /> : "Catalog candidate"}</span><h3>{candidate.title || "Untitled candidate"}</h3>{candidate.subtitle ? <strong>{candidate.subtitle}</strong> : null}</div><div className="candidate-badges">{isSelected ? <b className="selected-badge"><CheckCircle size={14} weight="fill" /> Current</b> : null}{rank != null ? <b>{candidate.identity_confidence ? `Identity ${rank}%` : `Rank ${rank}`}</b> : null}{candidate.cover ? <b>Cover</b> : null}</div></header>{candidate.verification_status ? <p className="candidate-verification">{volumeTerminology(candidate.verification_status)}</p> : null}<dl className="candidate-facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><section className="candidate-associations"><h4>Issue association</h4>{preview.associations.length ? preview.associations.map((association, index) => <div key={`${association.series}-${association.issueLabel}-${index}`}><strong>{association.series} #{association.issueLabel}</strong><small>{association.source || "Catalog evidence"} · {association.confidence}</small></div>) : <p>No issue or volume coverage association supplied by this match.</p>}</section><section className="candidate-impact"><h4>What selecting this will change</h4>{preview.changes.length ? <div>{preview.changes.map((change) => <span key={change.field}><b>{change.label}</b><del>{candidateValue(change.from)}</del><ArrowRight size={13} /><ins>{candidateValue(change.to)}</ins></span>)}</div> : <p>This candidate matches the currently applied fields.</p>}<small>{candidate.cover ? "Its provider image will also become available in the Cover picker; automatic cover priority will not be changed." : "No provider cover will be added by this candidate."}</small></section>{candidate.match_reasons?.length || candidate.description ? <details className="candidate-evidence"><summary>Evidence and description</summary>{candidate.match_reasons?.length ? <ul>{candidate.match_reasons.map((reason) => <li key={reason}>{volumeTerminology(reason)}</li>)}</ul> : null}{candidate.description ? <p>{candidate.description}</p> : null}</details> : null}<button className="candidate-select" disabled={busy || isSelected} onClick={() => onMatch(candidate.key)}>{isSelected ? "Currently selected" : `Use this match · ${preview.changes.length} change${preview.changes.length === 1 ? "" : "s"}`}</button></div></article>;
 }
 
 function MetadataWorkbench({ data, mode, busy, error, onClose, onSave, onMatch, onSearch, onReset }) {

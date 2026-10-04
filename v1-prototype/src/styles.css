@@ -4097,6 +4097,15 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .panel-editor-actions { display: flex; flex-wrap: wrap; gap: var(--space-8); }
 /* A measured aside at the foot of a settings card. */
 .settings-card-note { margin: var(--space-12) 0 0; color: var(--muted); font-size: var(--text-sm); }
+/* Settings -> About: credits and the privacy notice, each a name over its
+   line. A source named under a description links back to it. */
+.about-list { display: grid; gap: var(--space-12); margin: 0; padding: 0; list-style: none; }
+.about-list li { display: grid; gap: var(--space-4); max-width: 72ch; }
+.about-list li > span { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.about-list a, .settings-card-lead a, .provider-credit { color: var(--violet-text); text-decoration: underline; text-underline-offset: 2px; }
+.about-list li > a { justify-self: start; }
+.about-privacy + .about-privacy { margin-top: var(--space-16); }
+.about-privacy h4 { margin: 0 0 var(--space-8); font-size: var(--text-sm); }
 @media (prefers-reduced-motion: reduce) {
   .reader, .reader-page, .reader-bar { animation: none; transition: none; }
 }

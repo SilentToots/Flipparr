@@ -1,0 +1,5 @@
+# Test-only; not installed in the image.
+-r requirements.txt
+
+# Finds names that do not exist -- see test_no_undefined_names.py.
+pyflakes>=3.2

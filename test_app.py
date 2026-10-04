@@ -1490,24 +1490,24 @@ class FilenameParserTests(unittest.TestCase):
             {"COMICARR_ACQUISITION_CONFIG": str(Path(temp_dir) / "acquisition-services.json")},
         ):
             (Path(temp_dir) / "acquisition-services.json").write_text(json.dumps(
-                {"direct_site": {"enabled": True, "url": "https://comics.example"}}))
+                {"getcomics": {"enabled": True, "url": "https://comics.example"}}))
             config = app.load_acquisition_service_config()
             self.assertEqual((config["direct_site"]["enabled"], config["direct_site"]["url"]),
                              (True, "https://comics.example"))
-            self.assertNotIn("direct_site", config)
+            self.assertNotIn("getcomics", config)
 
     def test_the_old_direct_download_folder_moves_to_the_new_name_once(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             "app.os.environ", {"COMICARR_ACQUISITION_STAGING": temp_dir},
         ):
-            old = Path(temp_dir) / "direct_site" / "356"
+            old = Path(temp_dir) / "getcomics" / "356"
             old.mkdir(parents=True)
             (old / "Example 002.cbz").write_bytes(b"PK")
             folder = app.acquisition_staging_dir("direct_site")
             self.assertEqual(folder, Path(temp_dir) / "direct_site")
             self.assertTrue((folder / "356" / "Example 002.cbz").exists(), "the records now point here")
-            self.assertFalse((Path(temp_dir) / "direct_site").exists())
-            (Path(temp_dir) / "direct_site").mkdir()
+            self.assertFalse((Path(temp_dir) / "getcomics").exists())
+            (Path(temp_dir) / "getcomics").mkdir()
             app.acquisition_staging_dir("direct_site")
             self.assertTrue((folder / "356").exists(), "an existing new folder is never replaced")
 
@@ -7317,12 +7317,20 @@ class VisionInPanelPipelineTests(PagePanelTests):
         self.assertEqual([block.get("text") for block in a_content if block["type"] == "text"], ["Example 1", "read it"])
         self.assertEqual([block["type"] for block in o_content], ["image_url", "text", "image_url", "text"])
 
-    def test_reading_every_page_is_the_default_with_a_connector_on(self):
+    def test_nothing_beyond_the_operators_services_is_shared_until_turned_on(self):
+        """Every page to a vision model, the community lists' GitHub fetch and
+        visitor addresses in the log are each off until the operator says so
+        (2026-10-03)."""
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             "app.os.environ", {"COMICARR_SETTINGS_CONFIG": str(Path(temp_dir) / "settings.json")},
         ):
-            self.assertIs(app.load_app_settings()["visionReadsEveryPage"], True)
-            self.assertIs(app.save_app_settings({"visionReadsEveryPage": False})["visionReadsEveryPage"], False)
+            settings = app.load_app_settings()
+            self.assertEqual((settings["visionReadsEveryPage"], settings["communityListsEnabled"], settings["logClientAddresses"]),
+                             (False, False, False))
+            self.assertIs(app.save_app_settings({"visionReadsEveryPage": True})["visionReadsEveryPage"], True)
+            self.assertIs(app.cached_setting("logClientAddresses"), False)
+            app.save_app_settings({"logClientAddresses": True})
+            self.assertIs(app.cached_setting("logClientAddresses"), True, "a saved change is read at once")
             with self.assertRaises(ValueError):
                 app.save_app_settings({"visionReadsEveryPage": "yes"})
 
@@ -8360,8 +8368,12 @@ class StoryArcTests(unittest.TestCase):
                  "community": {"lists": [{"id": "Marvel/x.cbl", "name": "War of the Realms", "publisher": "Marvel"}]}}
         with patch.object(app, "ensure_arc_index", return_value=index), patch.object(app, "metron_configured", return_value=True), \
                 patch.object(app, "fetch_provider_json", side_effect=AssertionError("no remote catalog while typing")):
-            admin = app.arc_suggestions("war of realms", include_lists=True)
-            reader = app.arc_suggestions("war of realms", include_lists=False)
+            with patch.object(app, "cached_setting", return_value=True):
+                admin = app.arc_suggestions("war of realms", include_lists=True)
+                reader = app.arc_suggestions("war of realms", include_lists=False)
+            with patch.object(app, "cached_setting", return_value=False):
+                self.assertEqual(app.arc_suggestions("war of realms", include_lists=True)["lists"], [],
+                                 "community lists are offered only once they are turned on")
         self.assertEqual((admin["arcs"][0]["providerArcId"], [item["name"] for item in admin["lists"]], admin["ready"]),
                          ("70", ["War of the Realms"], True))
         self.assertEqual(reader["lists"], [])
@@ -8370,8 +8382,12 @@ class StoryArcTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"FLIPPARR_ARC_INDEX": str(Path(folder) / "arc-index.json")}), \
                 patch.object(app, "metron_configured", return_value=True), \
                 patch.object(app, "_fetch_metron_arc_names", return_value={"fetchedAt": "2026-10-03T00:00:00+00:00", "arcs": [{"id": "70", "name": "War of the Realms"}]}), \
-                patch.object(app, "_fetch_community_lists", side_effect=OSError("GitHub is down")):
-            app.refresh_arc_index()
+                patch.object(app, "_fetch_community_lists", side_effect=OSError("GitHub is down")) as community:
+            with patch.object(app, "cached_setting", return_value=False):
+                app.refresh_arc_index()
+            community.assert_not_called()
+            with patch.object(app, "cached_setting", return_value=True):
+                app.refresh_arc_index()
             index = app.read_arc_index()
             self.assertEqual(index["metron"]["arcs"][0]["name"], "War of the Realms")
             self.assertTrue(index["community"]["triedAtEpoch"] and not index["community"].get("lists"))
@@ -9752,7 +9768,7 @@ class SourcePriorityTests(unittest.TestCase):
                 app.save_app_settings({"sourcePriority": ["usenet", "usenet", "torrent"]})
             (Path(folder) / "settings.json").write_text(json.dumps({"sourcePriority": ["usenet"]}))
             self.assertEqual(app.source_priority(), ["usenet", "torrent", "direct_site"], "a broken list is the default")
-            (Path(folder) / "settings.json").write_text(json.dumps({"sourcePriority": ["direct_site", "usenet", "torrent"]}))
+            (Path(folder) / "settings.json").write_text(json.dumps({"sourcePriority": ["getcomics", "usenet", "torrent"]}))
             self.assertEqual(app.source_priority(), ["direct_site", "usenet", "torrent"],
                              "an order saved under direct downloads' old name is kept")
 

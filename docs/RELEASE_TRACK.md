@@ -120,7 +120,9 @@ release-ready until its gates pass.
 - The applicable OWASP ASVS controls are verified for the supported
   trusted-network deployment.
 - What leaves the instance, and to whom, is stated in Settings → About and
-  `docs/PRIVACY.md`; anything beyond the operator's own services is opt-in.
+  `docs/PRIVACY.md`; optional sharing (every page to a vision model, the
+  community lists' GitHub fetch, visitor addresses in the log) is off until
+  turned on.
 - Core workflows are keyboard operable with visible focus, labels, contrast
   and reflow at the documented breakpoints, and respect reduced motion.
 - Setup, providers, import, backup/restore, troubleshooting and known

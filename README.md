@@ -214,3 +214,9 @@ are listed with their licences in [`NOTICE`](NOTICE).
 Flipparr organises and reads comics you have the right to use. It ships no
 comics, catalogue data or download sources; every indexer, downloader and site
 it talks to is one you configure.
+
+## Privacy
+
+What Flipparr keeps and what leaves your server, service by service, is in
+[`docs/PRIVACY.md`](docs/PRIVACY.md) and in the app under **Settings → About**.
+Nothing is sent to Flipparr's authors.

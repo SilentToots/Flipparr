@@ -483,6 +483,15 @@ point your health check at `/healthz`.
 
 ---
 
+### Privacy settings
+
+Three things beyond your own services are off until you turn them on: a vision
+model reading every page (*Settings → Reader → Ask about every page*), the
+community reading lists' daily GitHub fetch (*Settings → Metadata sources*),
+and visitor addresses in the log (*Settings → Security → Record visitor
+addresses*). The full account of what leaves the server is
+[`docs/PRIVACY.md`](PRIVACY.md).
+
 ## 6. Known limitations
 
 - **Filename parsing is heuristic.** It reports ambiguity rather than silently

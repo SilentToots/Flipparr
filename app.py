@@ -365,8 +365,9 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # can be wrong while sure -- a patch of sky as a panel -- and nothing
     # questions a reading that exists; a model does, and the page corrects
     # its edges. Off, the model is a fallback only. Each page is still sent
-    # once.
-    "visionReadsEveryPage": True,
+    # once. Off by default (2026-10-03): with it on, every page opened is
+    # sent to the model's company, which is the operator's choice to make.
+    "visionReadsEveryPage": False,
     # Whether a reader profile's page opens may ask the vision connector too.
     # Off, readers get what the local finder reads and whatever the admin's
     # reading already asked or corrected; the connector spends the admin's key.
@@ -381,11 +382,20 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # a weak match is never taken for its source. Packs keep their own rule:
     # pulling a run they lead, pulling one issue a single does.
     "sourcePriority": ["usenet", "torrent", "direct_site"],
+    # Whether story-arc suggestions include the community's reading lists,
+    # whose file list is fetched from GitHub once a day while this is on.
+    # Off until asked (2026-10-03): it is a call to a third party the
+    # operator did not configure.
+    "communityListsEnabled": False,
+    # Whether each request's log line names the address it came from. Off,
+    # the Docker log holds no visitor addresses; sign-in throttling keeps its
+    # own count in memory either way.
+    "logClientAddresses": False,
 }
 RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
     "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
-    "ratingsFromCovers",
+    "ratingsFromCovers", "communityListsEnabled", "logClientAddresses",
 })
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
@@ -419,6 +429,23 @@ def load_app_settings() -> dict[str, Any]:
                     settings[key] = value
         settings["sourcePriority"] = list(settings["sourcePriority"])
         return settings
+
+
+_SETTING_CACHE: dict[str, Any] = {"stamp": None, "settings": {}}
+
+
+def cached_setting(key: str) -> Any:
+    """One setting, for code that asks on every request: the file is read
+    again only when it has changed."""
+    path = settings_config_path()
+    try:
+        stamp: Any = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        stamp = (str(path), None)
+    if _SETTING_CACHE["stamp"] != stamp:
+        _SETTING_CACHE["settings"] = load_app_settings()
+        _SETTING_CACHE["stamp"] = stamp
+    return _SETTING_CACHE["settings"].get(key, _APP_SETTINGS_DEFAULTS.get(key))
 
 
 def _is_source_order(value: Any) -> bool:
@@ -462,6 +489,7 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
         tmp = config_path.parent / (config_path.name + ".tmp")
         tmp.write_text(json.dumps(current, indent=2, sort_keys=True))
         tmp.replace(config_path)
+        _SETTING_CACHE["stamp"] = None
         return current
 
 
@@ -2066,7 +2094,7 @@ def acquisition_staging_dir(source: str = "manual") -> Path:
 
 # Names direct downloads went by before they took their neutral one
 # (2026-10-03, schema 64), read so an existing install keeps its settings.
-_LEGACY_SOURCE_NAMES = {"direct_site": "direct_site"}
+_LEGACY_SOURCE_NAMES = {"direct_site": "getcomics"}
 
 
 def _adopt_legacy_user_covers(destination: Path) -> None:
@@ -13761,7 +13789,7 @@ def refresh_arc_index() -> None:
         index = read_arc_index()
     for part, fetch, wanted in (
         ("metron", lambda previous: _fetch_metron_arc_names(previous), metron_configured()),
-        ("community", lambda _previous: _fetch_community_lists(), True),
+        ("community", lambda _previous: _fetch_community_lists(), bool(cached_setting("communityListsEnabled"))),
     ):
         previous = index.get(part) or {}
         if not wanted or not _arc_part_stale(previous, now):
@@ -13785,7 +13813,8 @@ def ensure_arc_index() -> dict[str, Any]:
     stale -- once at a time, so a run of searches does not start several."""
     index = read_arc_index()
     now = time.time()
-    stale = _arc_part_stale(index.get("community"), now) or (metron_configured() and _arc_part_stale(index.get("metron"), now))
+    stale = (cached_setting("communityListsEnabled") and _arc_part_stale(index.get("community"), now)) \
+        or (metron_configured() and _arc_part_stale(index.get("metron"), now))
     if stale and not _ARC_INDEX_REFRESHING.is_set():
         _ARC_INDEX_REFRESHING.set()
 
@@ -13808,7 +13837,8 @@ def arc_suggestions(query: str, *, include_lists: bool) -> dict[str, Any]:
     arcs, and -- for the admin, who imports them -- the community's lists."""
     index = ensure_arc_index()
     arcs = arc_catalog.search((index.get("metron") or {}).get("arcs") or [], query, limit=6) if metron_configured() else []
-    lists = arc_catalog.search((index.get("community") or {}).get("lists") or [], query, limit=8) if include_lists else []
+    lists = arc_catalog.search((index.get("community") or {}).get("lists") or [], query, limit=8) \
+        if include_lists and cached_setting("communityListsEnabled") else []
     return {"arcs": [_metron_arc(entry) for entry in arcs], "lists": lists,
             "ready": bool((index.get("metron") or {}).get("arcs") or (index.get("community") or {}).get("lists"))}
 
@@ -16188,6 +16218,10 @@ class Handler(BaseHTTPRequestHandler):
         request_id = current_request_id()
         if request_id:
             self.send_header("X-Request-Id", request_id)
+        # No page or image request tells another site where it came from: a
+        # cover loaded from a provider would otherwise carry this instance's
+        # address with it.
+        self.send_header("Referrer-Policy", "no-referrer")
 
     def _client_address(self) -> str:
         """The caller's real address, believing a forwarded header only from a
@@ -16541,7 +16575,7 @@ class Handler(BaseHTTPRequestHandler):
                 path=path,
                 status=self._status,
                 duration_ms=round((time.monotonic() - started) * 1000, 1),
-                client=self._client_address(),
+                **({"client": self._client_address()} if cached_setting("logClientAddresses") else {}),
                 user=self.viewer.id if self.viewer is not None else None,
             )
             _REQUEST_CONTEXT.request_id = None

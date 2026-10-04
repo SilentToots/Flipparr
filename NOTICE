@@ -31,11 +31,23 @@ Third-party software in the server image:
   /usr/share/doc/*/copyright in the image)
 
 Data and services Flipparr can use, each under its own terms, which the
-operator accepts when enabling it:
+operator accepts when enabling it. Flipparr ships none of their data and is
+not affiliated with or endorsed by any of them; the app credits each one in
+Settings -> About and beside the data it shows.
 
-  Grand Comics Database (comics.org)   data under CC BY-SA 4.0; attribution required
-  Open Library                         Internet Archive terms
-  Metron (metron.cloud)                its API terms; account required
-  Comic Vine                           its API terms (non-commercial, attribution)
-  Community reading lists              fetched from their authors' repositories
-                                       when chosen; none are shipped
+  Grand Comics Database (www.comics.org)
+      Data from the Grand Comics Database(TM), licensed under the Creative
+      Commons Attribution-ShareAlike 4.0 International licence
+      (https://creativecommons.org/licenses/by-sa/4.0/).
+  Metron (metron.cloud)        its API terms; the operator's account
+  Comic Vine                   its API terms: non-commercial use, a link back
+                               on every page using its data; the operator's key
+  Open Library                 Internet Archive terms; covers API not crawled
+  Google Books                 Google's API terms and branding ("Powered by
+                               Google" beside its results); the operator's key
+  Anthropic, OpenAI            optional vision models, on the operator's key
+  Community reading lists      fetched from their authors' GitHub repository
+                               (DieselTech/CBL-ReadingLists) when turned on and
+                               chosen; none are shipped
+
+What leaves the server, and when, is in docs/PRIVACY.md.

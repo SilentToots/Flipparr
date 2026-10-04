@@ -82,7 +82,7 @@ export function migrateLegacyKeys(storage, viewerId, keys = LEGACY_KEYS) {
 
 const READER_SURFACES = new Set([
   "nav.search", "nav.library", "nav.discover", "nav.requests", "nav.settings",
-  "settings.profile", "settings.reader",
+  "settings.profile", "settings.reader", "settings.about",
 ]);
 
 // Discover and the catalogs' search show every new cover, rated or not, so a
