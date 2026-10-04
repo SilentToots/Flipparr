@@ -40,20 +40,15 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --requirement requirements.txt
-# The reader's optional panel detector: a YOLO26-nano fine-tuned for comic
-# panels, run through ONNX Runtime on the CPU, used only to refine pages the
-# gutter finder left coarse. Off by default -- `--build-arg PANEL_MODEL=1`
-# installs the runtime and fetches the model. The weights are published as
-# Apache-2.0 on Hugging Face but carry Ultralytics' AGPL-3.0 notice in their
-# metadata; they are fetched at build time, never shipped in this repository.
-ARG PANEL_MODEL=0
+# The reader's optional panel detector runs through ONNX Runtime (MIT) on the
+# CPU, used only to refine pages the gutter finder left coarse. No model ships
+# in this image: the operator may place one at /config/models/panels.onnx
+# (docs/OPERATING.md says where models come from and that their licences are
+# the operator's to accept). Without one the gutter finder and the optional
+# vision assistant still work.
 COPY requirements-panels.txt ./
-RUN if [ "$PANEL_MODEL" = "1" ]; then \
-      pip install --no-cache-dir --requirement requirements-panels.txt \
-      && mkdir -p models \
-      && python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/mednasserallah/manga-panel-detector-yolo26n-onnx/resolve/main/manga_panel_detector_fp32_1024.onnx', 'models/panels.onnx')"; \
-    fi
-ENV FLIPPARR_PANEL_MODEL=/app/models/panels.onnx
+RUN pip install --no-cache-dir --requirement requirements-panels.txt
+ENV FLIPPARR_PANEL_MODEL=/config/models/panels.onnx
 COPY app.py catalog_store.py page_panels.py access_policy.py content_rating.py reading_list_formats.py torrent_client.py arc_catalog.py ./
 COPY catalog_core_v2/ ./catalog_core_v2/
 COPY --from=web-build /build/v1-prototype/dist/client ./web

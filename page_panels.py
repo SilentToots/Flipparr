@@ -209,8 +209,8 @@ def load_model_session(path: str | None) -> Any:
     """An ONNX Runtime session for the detector at `path`, or None.
 
     None whenever the tier is not there -- no path, no file, no runtime -- so
-    the caller carries on with the gutter finder alone. The runtime is an
-    optional install (requirements-panels.txt), never a requirement.
+    the caller carries on with the gutter finder alone. No model ships with
+    Flipparr; the operator may place one at the configured path.
     """
     if not path:
         return None

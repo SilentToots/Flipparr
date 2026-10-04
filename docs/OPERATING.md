@@ -339,6 +339,20 @@ carries bulk enrichment comfortably while GCD stays the zero-configuration
 default and the stronger source for independent and small-press material.
 Nothing breaks without it; enrichment simply proceeds in hourly bursts.
 
+### Panel view's optional detector
+
+The reader's panel view finds panels with its own gutter finder, and can ask
+an optional vision assistant (Settings › Metadata providers) to check them.
+It can also use a panel-detection model, which no Flipparr image includes.
+To use one, place an ONNX object-detection model trained for comic panels at
+`/config/models/panels.onnx` (the `FLIPPARR_PANEL_MODEL` setting changes the
+path) and restart the container; without one, nothing changes.
+
+Models carry their own licences and training-data terms. Some published
+panel detectors are built on AGPL-licensed architectures or trained on
+research-only datasets, so check a model's terms before you use it -- they
+are yours to accept, and Flipparr does not redistribute any model.
+
 ---
 
 ## 4. Library import, backup and upgrade
