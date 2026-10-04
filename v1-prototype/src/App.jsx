@@ -114,37 +114,40 @@ const NAV_COUNT_LABELS = {
   settings: (n) => `${n} item${n === 1 ? "" : "s"} in Library health need${n === 1 ? "s" : ""} a decision`,
 };
 
+// Shown only when the server cannot be reached ("Showing sample comics"):
+// invented titles and publishers, and no cover art -- Flipparr ships no
+// comics or publishers' artwork (2026-10-03).
 const DEMO_SERIES = [
   {
-    id: "absolute-batman", title: "Absolute Batman", year: "2024", publisher: "DC Comics",
-    run: "2024 – Ongoing", tags: ["Superhero", "Detective"], owned: 3, total: 3,
+    id: "sample-starlight-couriers", title: "Starlight Couriers", year: "2024", publisher: "Sample Press",
+    run: "2024 – Ongoing", tags: ["Science fiction"], owned: 3, total: 3,
     ownership: "Complete to date", format: "Single issues", updated: "Aug 26, 2026", time: "10:14 AM",
-    cover: "/covers/absolute-batman.jpg", status: "complete",
+    cover: null, status: "complete",
   },
   {
-    id: "birthright", title: "Birthright", year: "2014", publisher: "Image Comics",
+    id: "sample-hollow-lantern", title: "The Hollow Lantern", year: "2014", publisher: "Sample Press",
     run: "2014 – 2017", tags: ["Fantasy", "Adventure"], owned: 2, total: 50,
     ownership: "48 issues missing", format: "Single issues", updated: "Aug 26, 2026", time: "10:02 AM",
-    cover: "/covers/birthright.jpg", status: "partial",
+    cover: null, status: "partial",
   },
   {
-    id: "locke-key", title: "Locke & Key", year: "2008", publisher: "IDW Publishing",
-    run: "Head Games · Volume 2", tags: ["Horror", "Volume"], owned: 1, total: 1,
+    id: "sample-ironwood", title: "Ironwood", year: "2008", publisher: "Example Comics",
+    run: "Volume 2", tags: ["Horror", "Volume"], owned: 1, total: 1,
     ownership: "Volume owned", format: "EPUB volume", updated: "Aug 26, 2026", time: "9:58 AM",
-    cover: "/covers/locke-key.jpg", status: "complete",
+    cover: null, status: "complete",
   },
   {
-    id: "southern-bastards", title: "Southern Bastards", year: "2014", publisher: "Image Comics",
-    run: "Gridiron · Volume 2", tags: ["Crime", "Volume"], owned: 1, total: 1,
+    id: "sample-night-shift", title: "Night Shift", year: "2014", publisher: "Example Comics",
+    run: "Volume 2", tags: ["Crime", "Volume"], owned: 1, total: 1,
     ownership: "Needs a metadata fix", format: "CBZ volume", updated: "Aug 26, 2026", time: "9:41 AM",
-    cover: "/covers/southern-bastards.jpg", status: "warning",
+    cover: null, status: "warning",
   },
 ];
 
 const DEMO_META_ITEMS = [
-  { file: "strangetalentoflutherstrode_vol2.cbz", issue: "Empty archive", detail: "The archive is only 22 bytes and contains no comic pages.", severity: "error", category: "file", code: "empty_archive" },
-  { file: "southernbastards_vol1.cbz", issue: "No image pages", detail: "Metadata exists, but the archive has no readable cover or pages.", severity: "error", category: "file", code: "no_image_pages" },
-  { file: "southernbastards_vol2.cbz", issue: "Conflicting volume metadata", detail: "The filename and external catalog disagree with ComicInfo.xml.", severity: "warning", category: "metadata", code: "metadata_conflict" },
+  { file: "ironwood_vol1.cbz", issue: "Empty archive", detail: "The archive is only 22 bytes and contains no comic pages.", severity: "error", category: "file", code: "empty_archive" },
+  { file: "nightshift_vol1.cbz", issue: "No image pages", detail: "Metadata exists, but the archive has no readable cover or pages.", severity: "error", category: "file", code: "no_image_pages" },
+  { file: "nightshift_vol2.cbz", issue: "Conflicting volume metadata", detail: "The filename and external catalog disagree with ComicInfo.xml.", severity: "warning", category: "metadata", code: "metadata_conflict" },
 ];
 
 const EDITION_KIND_LABELS = {
