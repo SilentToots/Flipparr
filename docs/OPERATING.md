@@ -2,10 +2,9 @@
 
 Install, configure, back up and troubleshoot a Flipparr instance.
 
-Every procedure here was executed against a real 963-file library on a Synology
-NAS before being written down; the verification results are in
-`docs/V1_PIVOT_ASSESSMENT.md`. Where behaviour is surprising, the reason is
-given rather than just the workaround.
+Every procedure here was executed against a real 963-file library on a NAS
+before being written down. Where behaviour is surprising, the reason is given
+rather than just the workaround.
 
 ---
 

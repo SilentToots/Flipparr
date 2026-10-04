@@ -16,7 +16,7 @@ pages are drawn.
 Written down after looking at what it would take, so the assessment did not
 have to be made twice.
 
-At the time, `PROJECT.md` put an integrated reader out of the initial user
+At the time, the project plan put an integrated reader out of the initial user
 release, and `AGENTS.md` positioned Kavita and friends as optional downstream
 readers rather than something to replace. Building one was therefore a scope
 decision rather than a gap to fill — and the decision was taken on 2026-09-20.

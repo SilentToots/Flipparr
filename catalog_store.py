@@ -16,7 +16,7 @@ import sqlite3
 import threading
 import urllib.parse
 import unicodedata
-from catalog_core_v2.language import detect_language, language_name, normalize_language
+from comic_language import detect_language, language_name, normalize_language
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
@@ -1972,16 +1972,16 @@ class CatalogStore:
             for table in ("acquisition_downloads", "acquisition_release_failures"):
                 columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
                 if "source" in columns:
-                    connection.execute(f"UPDATE {table} SET source='direct_site' WHERE source='direct_site'")
+                    connection.execute(f"UPDATE {table} SET source='direct_site' WHERE source='getcomics'")
                 if "sab_nzo_id" in columns:
                     connection.execute(
                         f"UPDATE {table} SET sab_nzo_id='direct_site:' || substr(sab_nzo_id, 11) "
-                        "WHERE sab_nzo_id LIKE 'direct_site:%'")
+                        "WHERE sab_nzo_id LIKE 'getcomics:%'")
                 for column in ("sab_storage", "local_source"):
                     if column in columns:
                         connection.execute(
-                            f"UPDATE {table} SET {column}=replace({column}, '/downloads/direct_site/', '/downloads/direct_site/') "
-                            f"WHERE {column} LIKE '%/downloads/direct_site/%'")
+                            f"UPDATE {table} SET {column}=replace({column}, '/downloads/getcomics/', '/downloads/direct_site/') "
+                            f"WHERE {column} LIKE '%/downloads/getcomics/%'")
             # 55: member_requests loses its CHECK on kind (story arcs are a new
             # kind; kinds are validated in Python). SQLite cannot drop a
             # constraint in place, so the table is copied, counted and swapped.

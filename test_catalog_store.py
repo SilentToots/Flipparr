@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from app import ParsedFile, _metron_reprint_coverage
-from catalog_core_v2.provider_evidence import native_issue_evidence
+from provider_evidence import native_issue_evidence
 import catalog_store
 from catalog_store import ADMIN_USER_ID, CatalogStore, CollectionNameTaken, _parse_timestamp, _utc_now
 
@@ -2353,14 +2353,14 @@ class CatalogStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             store, _series_id, job_id = self._one_wanted_job(root)
-            row = store.record_acquisition_download(job_id, f"direct_site:abc123:{job_id}", "Example 002", "k1",
-                                                    source="direct_site")
+            row = store.record_acquisition_download(job_id, f"getcomics:abc123:{job_id}", "Example 002", "k1",
+                                                    source="getcomics")
             store.update_acquisition_download(int(row["id"]), "imported",
-                                              sab_storage="/config/downloads/direct_site/7",
-                                              local_source="/config/downloads/direct_site/7/Example 002.cbz")
+                                              sab_storage="/config/downloads/getcomics/7",
+                                              local_source="/config/downloads/getcomics/7/Example 002.cbz")
             store.record_acquisition_release_failure(job_id, "k2", "Example 002 (other)", "refused",
-                                                     sab_nzo_id=f"direct_site:def456:{job_id}",
-                                                     sab_storage="/config/downloads/direct_site/8")
+                                                     sab_nzo_id=f"getcomics:def456:{job_id}",
+                                                     sab_storage="/config/downloads/getcomics/8")
             with sqlite3.connect(store.database_path) as connection:
                 connection.execute("UPDATE schema_info SET version=63")
             reopened = CatalogStore(store.database_path)

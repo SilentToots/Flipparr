@@ -58,12 +58,12 @@ from access_policy import ADMIN, HOUSEHOLD, Viewer, allows, route_access
 from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogStore, CollectionNameTaken, _issue_release_state, normalized_person
 import page_panels as panel_finder
 import content_rating
-from catalog_core_v2.language import (
+from comic_language import (
     LANGUAGE_NAMES,
     detect_language as detect_release_language,
     language_name,
 )
-from catalog_core_v2.provider_evidence import (
+from provider_evidence import (
     COMIC_VINE_ISSUE_FIELDS,
     COMIC_VINE_VOLUME_FIELDS,
     metron_reprint_evidence,

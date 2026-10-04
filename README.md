@@ -17,19 +17,10 @@ metadata and file availability are markedly weaker. Release gates and the
 supported first-release target are in
 [`docs/RELEASE_TRACK.md`](docs/RELEASE_TRACK.md).
 
-### Direction, 2026-09-03
-
-The product is built forward from the implementation in `app.py`,
-`catalog_store.py` and `v1-prototype/`, on the `v1-forward` branch. A separate
-"V2" catalog rewrite (`sonicboom_v2/`, `catalog_core_v2/`, `sonicboom_ui/`) was
-parked at tag `v2-parked`; those trees and the `*_V2.md` design documents are
-historical reference, not the build target. The reasoning, with measurements, is
-in [`docs/V1_PIVOT_ASSESSMENT.md`](docs/V1_PIVOT_ASSESSMENT.md).
-
 The `v1-prototype/` directory name is repository continuity only. It is the
 production frontend.
 
-## Current V1 reference implementation
+## How it works
 
 The catalog stores its local database at `.data/flipparr.db` by default. A library inventory records roots, scan runs, file size/mtime fingerprints, enrichment results, series groups, and resolved review items. Subsequent scans only enrich files whose fingerprint changed; deleted files are removed from the active inventory without deleting the source file.
 
@@ -37,7 +28,7 @@ Initial setup is progressive. The first pass reads only local filenames, embedde
 
 ## Acquisition services
 
-Prowlarr and SABnzbd (and optionally qBittorrent, for torrents) are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
+Prowlarr and SABnzbd (and optionally qBittorrent, for torrents) are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. A container on the same Docker network as those services can reach them by name (for example `http://prowlarr:9696` and `http://sabnzbd:8080`) without publishing either to the LAN.
 
 API keys are stored only in `.data/acquisition-services.json`, which is excluded from source control and written with owner-only permissions. They are never returned to the browser after saving. The equivalent environment variables are `PROWLARR_URL`, `PROWLARR_API_KEY`, `SABNZBD_URL`, `SABNZBD_API_KEY`, and the optional `SABNZBD_CATEGORY`.
 
@@ -47,7 +38,7 @@ Start the API from the repository root:
 python3 app.py
 ```
 
-Start the V1 interface in another terminal:
+Start the interface in another terminal:
 
 ```bash
 cd v1-prototype
@@ -56,27 +47,9 @@ npm run dev
 
 Open <http://127.0.0.1:4173>. The Vite development server proxies `/api` to the local service on port 8787. Use **Add comics** to select a folder through Finder or enter an absolute path. The inventory remains read-only.
 
-## QA deployment on a NAS with Docker Compose
+## Running it with Docker Compose
 
-The current QA container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the writable library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`. This deployment is useful for regression and integration testing but is not the supported user release described in `docs/RELEASE_TRACK.md`.
-
-1. Copy `.env.example` to `.env` on the NAS.
-2. Set the media identity (`PUID`/`PGID`) and your own storage paths in `.env`; the example's paths are placeholders.
-3. Keep `.env` private and confirm `V2_CONFIG_PATH`, `COMICS_PATH`, `SAB_COMPLETE_PATH`, `ACQUISITION_CONFIG_PATH`, and `METADATA_CONFIG_PATH` before starting the container. The QA interface also requires the prepared V2 reference database at `${V2_CONFIG_PATH}/reference.db`. Metadata-provider credentials are mounted from `METADATA_CONFIG_PATH` read-only; never copy token or API-key values into Compose, `.env`, logs, or source control. Set `SONICBOOM_V2_TRUSTED_CLIENTS` to only the exact private gateway reported for `home-services-proxy`; never use a subnet or wildcard. Loopback publishing for this unauthenticated boundary requires Docker Engine 28 or newer.
-4. From the project directory, run:
-
-   ```bash
-   docker compose -f compose.v2.yaml -f compose.v2.qa.yaml up -d --build
-   ```
-
-5. Keep the unauthenticated QA interface loopback-only. From your workstation, open an SSH tunnel matching `SONICBOOM_V2_UI_ORIGIN`:
-
-   ```bash
-   ssh -N -L 127.0.0.1:8795:127.0.0.1:8788 <nas-host>
-   ```
-
-   Open <http://127.0.0.1:8795>, choose **Add comics**, enter `/comics`, and scan it. Do not publish this QA interface through a reverse proxy.
-6. Connect Prowlarr and SABnzbd under **Settings → Acquisition services** with `http://prowlarr:9696` and `http://sabnzbd:8080`.
+Install with `compose.yaml` as described in [`docs/OPERATING.md`](docs/OPERATING.md): copy `.env.example` to `.env`, set your own paths and media identity, and `docker compose up -d`. The container serves the interface and the API from one process, keeps its state under `/config`, reads your comics at `/comics`, and reads SABnzbd's completed folder read-only.
 
 The checked-in Compose example runs as an unprivileged media user, keeps state in its config directory, mounts your comics directory, attaches to a reverse-proxy network, uses a loopback-only host port, drops privilege escalation, and limits container logs.
 
@@ -88,9 +61,9 @@ Damaged-file replacement uses the same durable acquisition jobs, but it does not
 
 The same naming policy is intended to power a future **Organize library** function. Existing files will be handled separately through an explicit preview of old path → proposed path, conflict checks, and an undo manifest; intake does not silently reorganize a user's current library.
 
-Docker runtime state, `.env`, the SQLite catalog, and locally stored API keys are excluded from Git. Before publishing this project, use a private repository and verify `git status --ignored` does not show any credential or comic-library files staged for commit.
+Docker runtime state, `.env`, the SQLite catalog, and locally stored API keys are excluded from Git. Before committing, verify `git status --ignored` shows no credential or comic-library files staged.
 
-Current functional V1 reference scope (maintenance only):
+What it does today:
 
 - Persistent SQLite catalog with schema versioning.
 - Canonical series runs, normalized aliases, and per-file identity assignments with source evidence.
@@ -105,7 +78,7 @@ Current functional V1 reference scope (maintenance only):
 - A collection-contents workbench that shows source-attributed issue claims and stores manual inclusions or exclusions without destroying provider evidence.
 - Background scan runs with progress and failure state.
 - Incremental rescans based on size and nanosecond modification time.
-- Real series, file, cover, health, and metadata-inbox data in the V1 UI.
+- Real series, file, cover, health, and metadata-inbox data in the interface.
 - Durable review resolutions tied to a file fingerprint, so changed files return to review.
 - Local-cover priority, external-cover fallback, and a non-broken placeholder when every source fails.
 - Exact issue publication dates when available, with released, upcoming, and release-date-unknown acquisition states.
@@ -130,7 +103,7 @@ The cover picker presents every retained cover source for that file: an image re
 
 The UI still reports raw catalog ownership separately from acquisition state. Exact dates returned by the provider classify unowned issues as released gaps or upcoming releases; current-year or undated issues remain visible as release-metadata exceptions instead of being falsely queued as missing. **Acquire missing** persists monitoring and the canonical issue target set, while the Requests page recalculates covered, wanted, upcoming, and unknown counts from the current library. Schema V15 adds one durable acquisition job per released, unowned target, groups those jobs by publication run in Requests, and automatically closes them when library coverage appears. Upcoming and date-unknown targets remain monitored without becoming search jobs. Requests become active immediately; there is no requester/admin approval step. Individual jobs can search Prowlarr interactively, send an explicitly selected Usenet result to SABnzbd, show download/import progress, and finish only after a verified library copy exists. Automatic grabbing remains disabled until release matching has been QA'd against representative downloads.
 
-Canonical identity endpoints used by the V1 interface:
+Canonical identity endpoints used by the interface:
 
 ```text
 POST /api/v1/series/{series_id}/aliases
