@@ -543,7 +543,7 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(store.update_acquisition_job.call_args_list[-1].args[1], "queued")
 
     def test_a_release_set_aside_can_be_taken_by_hand(self):
-        """the owner (2026-09-29): "staring right at the file I need and can't
+        """The owner (2026-09-29): "staring right at the file I need and can't
         download it" -- the Flashpoint tie-ins under batch-numbered names."""
         context = {
             "id": "12", "requestId": "4", "status": "queued", "issueId": "8", "issueNumber": "1",
@@ -844,7 +844,7 @@ class FilenameParserTests(unittest.TestCase):
         comic_vine.assert_called_once_with("Saga", "key", empty)
         gcd.assert_not_called()
         self.assertEqual(result["providersChecked"], ["Metron", "Comic Vine"],
-                         "GCD is the fallback, asked only when the others lack the title (the owner, 2026-09-30)")
+                         "GCD is the fallback, asked only when the others lack the title (owner, 2026-09-30)")
 
     def test_a_provider_that_fails_does_not_take_the_search_with_it(self):
         comic_result = {
@@ -6324,7 +6324,7 @@ class ReleaseCalendarTests(unittest.TestCase):
         """"Green Lantern" (2011) on disk said the 2023 run's #39 was in the
         library, because a title alone was accepted whenever the year did
         not match. A year either side is a cover-date-versus-release drift;
-        twelve years is another comic (the owner, 2026-09-28)."""
+        twelve years is another comic (owner, 2026-09-28)."""
         owned = [{"number": "39", "ownership": "direct"}]
         library = [{"id": "10", "title": "Green Lantern", "year": "2011", "publisher": "DC",
                     "monitoringStatus": "monitored", "issues": owned}]
@@ -8014,7 +8014,7 @@ class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
                 return app.select_downloaded_comic(source, self.supergirl, root, release_title=release, vouched=True)
 
     def test_a_release_taken_by_hand_is_on_the_persons_word(self):
-        """the owner (2026-09-29): "your word wins on names" -- the release
+        """The owner (2026-09-29): "your word wins on names" -- the release
         name, the file's name, its year and its language are not judged."""
         self.assertEqual(self.vouch(["swot.cbr"])["acceptedOn"], "hand", "a silent file under an unmatched release")
         self.assertEqual(self.vouch(["Batman 002 (2021).cbr"])["acceptedOn"], "file", "another series' name, the right number")
@@ -9157,7 +9157,7 @@ class FakeQbittorrent:
 
 class TorrentAcquisitionTests(unittest.TestCase):
     """qBittorrent beside SABnzbd: torrents for manga and for whole runs as
-    packs, which DirectSite kept losing (the owner, 2026-09-30). Only the wanted
+    packs, which DirectSite kept losing (owner, 2026-09-30). Only the wanted
     files of a pack are downloaded, the run's other issues ride along on rows
     of their own, and a torrent seeds on after import until the client stops
     it."""
@@ -9696,7 +9696,7 @@ class ProviderPauseTests(unittest.TestCase):
 
 
 class SourcePriorityTests(unittest.TestCase):
-    """Where releases are taken from first is the admin's to say (the owner,
+    """Where releases are taken from first is the admin's to say (owner,
     2026-09-30), and among releases good enough to take the order decides."""
 
     def test_the_order_is_a_setting_with_the_old_order_as_its_default(self):

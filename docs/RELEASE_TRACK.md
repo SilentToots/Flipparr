@@ -99,7 +99,7 @@ They require a measured constraint or approved product requirement before
 adoption.
 
 **Amended 2026-09-25: household reader profiles are an approved product
-requirement** (the owner; plan in the project's reader-profiles plan). One
+requirement** (owner; plan in the project's reader-profiles plan). One
 install is still one household on a trusted network: one admin, and optional
 reader profiles, Plex-Home style, each with its own reading history, place and
 ratings, chosen on a shared device ("Who's reading?", optional PIN) or signed
@@ -786,7 +786,7 @@ for accepted issues and volumes placed in duplicate provisional runs. It preview
 only compatible existing title/era runs, requires a fresh optimistic state token,
 and applies one audited transaction without changing source files or cross-format
 ownership. Provider-confirmed identities and acquisition history fail closed and
-require separate recovery work. the NAS passes the focused correction tests, the
+require separate recovery work. The NAS passes the focused correction tests, the
 25-test intake/API suite and 182 adjacent identity regressions; the React/Tailwind
 dialog passes eight UI tests and production build. See
 `docs/RUN_CORRECTION_V2.md`. Whole-run consolidation, explicit unmatch and the
@@ -824,7 +824,7 @@ independently reviewed representative formats and numbers are correct; three
 remain unmeasured. Exact run attribution is 27/63 (42.9%), primarily because era
 evidence is missing or uncertain, and remains progressive enrichment rather than
 an intake blocker. The complete 916-test warnings-as-errors suite passes on
-the NAS. See `docs/GROUPING_REVIEW_V2.md` and
+The NAS. See `docs/GROUPING_REVIEW_V2.md` and
 `docs/evidence/nas-20260902-grouping-review-p29.json`.
 
 This satisfies the agreed useful-grouping floor with no demonstrated unsafe merge
@@ -1022,7 +1022,7 @@ Gate 4 storage preflight found that the Debian Bookworm release image provides
 SQLite 3.40.1, which predates SQLite's documented WAL-reset race fix. The user
 and reference catalogs now default to the rollback journal and reject an
 explicit WAL configuration unless the runtime contains an upstream fixed line.
-the NAS passes 950 warnings-as-errors tests. A clean 962-file replay completed
+The NAS passes 950 warnings-as-errors tests. A clean 962-file replay completed
 in 115.805 seconds with the established 833 accepted, 128 health-blocked and one
 review outcome, stable restart projection, clean integrity/foreign keys and no
 resource warning. This supports SQLite for the single-user/single-host release
@@ -1059,7 +1059,7 @@ modes, so the deliberately unprivileged standard rsync sender returned code 23.
 The security boundary behaved correctly. The 17-node, no-symlink scope was
 enumerated before repair; only those two trees were normalized to the NAS's
 SonicBoom service identity (`1000:10`) while retaining `0700` directories and
-`0600` files. No broad `/srv/docker` permission or backup-reader privilege
+`0600` files. No broad the NAS's Docker directory permission or backup-reader privilege
 was added. The grouping-review CLI now refuses artifact-writing commands as UID
 0 or with a UID/GID that differs from the managed output parent, and directs
 Docker callers to select the configured service UID/GID. Ten
@@ -1124,7 +1124,7 @@ total to 97. The V2 intake interface now presents provider availability,
 cooldown timing, connection failures and the bounded retry action through a
 shared mobile-first component with polite status updates and scoped loading
 feedback. All 12 frontend tests and the type-checked production build pass in
-the NAS Node 22 Docker. This completes provider-outage persistence and visible
+The NAS Node 22 Docker. This completes provider-outage persistence and visible
 recovery behavior; the broader full-page responsive/accessibility matrix remains
 part of Gate 4. See
 `docs/V2_PROVIDER_OUTAGE_RUNBOOK.md` and

@@ -1400,7 +1400,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .alpha-rail button { flex: 1 1 0; min-height: 0; max-height: var(--space-24); display: grid; place-items: center; padding: 0 var(--space-2); border: 0; background: transparent; color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-semibold); line-height: var(--leading-tight); cursor: pointer; }
 .alpha-rail button.empty { color: var(--muted-weak); cursor: default; }
 /* The lit letter is a filled violet disc with white type: the pale violet
-   text it began as did not stand out (the owner, 2026-10-03). The disc is the
+   text it began as did not stand out (owner, 2026-10-03). The disc is the
    letter's own span, as tall as its slot (20px at most) and as wide. */
 .alpha-rail button > span { height: min(100%, var(--space-20)); aspect-ratio: 1; display: grid; place-items: center; border-radius: var(--radius-pill); }
 .alpha-rail button.current { color: var(--color-neutral-0); font-weight: var(--weight-bold); }
@@ -1762,7 +1762,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    issue's is: "In progress" on a run that has been started, "Read" once every
    issue is; nothing before. */
 /* Black glass, white type, a step larger than an issue's: a run's cover is
-   bigger and busier, and a tint was overlooked on it (the owner, 2026-09-28).
+   bigger and busier, and a tint was overlooked on it (owner, 2026-09-28).
    "Read" is the same glass with a check in front. */
 .series-card-mark { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); white-space: nowrap; display: inline-flex; align-items: center; gap: var(--space-4); padding: calc(var(--space-6) - 1px) var(--space-12) calc(var(--space-6) + 1px); border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: var(--leading-none); box-shadow: 0 2px 8px var(--shadow-soft); pointer-events: none; }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -2683,7 +2683,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 /* Each label gets a layer of its own (translateZ). In a tab row that scrolls
    -- five tabs on a phone, an admin's story arc -- iOS Safari composites the
    glass's backdrop-filter as a layer above the row's painted content, z-index
-   or not, and the active label sat under the frost (the owner, 2026-10-02). */
+   or not, and the active label sat under the frost (owner, 2026-10-02). */
 .comic-drawer-tabs.drawer-tabs button { position: relative; z-index: 1; background: transparent; transform: translateZ(0); }
 .comic-drawer-tabs.drawer-tabs button.active { background: transparent; color: var(--color-neutral-0); }
 /* The sliding glass pill (useGlassIndicator): absolutely placed at the
@@ -3054,7 +3054,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   .backdrop-workbench-tools label { flex-basis: 100%; min-width: 0; }
   .backdrop-workbench-tools .secondary-button { width: 100%; justify-content: center; }
   /* The sheet already scrolls; a second scroll region inside it cut the
-     page grid off after two and a half rows (the owner, 2026-09-29). */
+     page grid off after two and a half rows (owner, 2026-09-29). */
   .backdrop-page-grid { max-height: none; overflow: visible; }
 
   /* Settings: Manage folders and Scan library stacked at two different widths;

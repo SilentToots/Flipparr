@@ -36,7 +36,7 @@ export const SCOPES = new Set(["runs", "families"]);
  * A title as it is filed: without a leading "The", "A" or "An" (only before
  * another word -- "A-Force" and a bare "The" stay) and without leading
  * quotes or punctuation, so "The 'Burbs" files under B, as Plex and most
- * libraries file it (the owner, 2026-10-03).
+ * libraries file it (owner, 2026-10-03).
  */
 export function sortTitle(title) {
   const text = String(title ?? "").trim();

@@ -91,7 +91,7 @@ export function collectionPlaces(cards, runReading) {
 /**
  * The Library grid: collection cards among the runs (and folded arcs), all
  * in the library's one sort -- A-Z puts "Locke & Key" under L, not first
- * (the owner, 2026-10-03). A collection's id can equal a run's, so each sorts
+ * (owner, 2026-10-03). A collection's id can equal a run's, so each sorts
  * under its card key, its latest run's place standing for "recently read".
  */
 export function libraryGridOrder(series, collections, sort, reading = {}, runReading = {}) {

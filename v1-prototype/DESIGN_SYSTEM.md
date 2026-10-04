@@ -234,7 +234,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   pinned first, which A-Z ignored) (View & sort: "Show collections in Library"); since 2026-10-02 the
   mark sits bottom right, Read (as on an arc's card) top left.
 - **Read groups: collections and story arcs** (one pattern since 2026-10-02,
-  the owner: "collections are runs read in a sequence, story arcs issues read
+  The owner: "collections are runs read in a sequence, story arcs issues read
   in a sequence"). Any profile makes either, private until shared; the
   household's (every collection made before schema 63, arcs saved from
   Metron or a CBL) are the admin's. Cards, rows and drawers say "Made by
@@ -247,7 +247,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   runs* / *Add issues* under it), Runs (n) / Issues (n), Files (an arc, the
   admin), Advanced for everyone. For whoever may change it, Advanced's first
   card (`GroupArrangeCard`: how it is read now) steps into the Arrange
-  screen, as Edit's pickers do, Back returning to Advanced (the owner,
+  screen, as Edit's pickers do, Back returning to Advanced (owner,
   2026-10-02: out of the tab row, which five tabs made scroll on a phone,
   and not a long list over the other cards). Arrange (`GroupArrange`) is the Order `GlassSelect` (a collection: Your
   order / Title / Year; an arc: Your order / Release date, saved, so an
@@ -289,7 +289,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   Their drawers' headers say the same: the byline is the publisher (when one)
   and the years, and *Story arc* / *Collection* is the first badge, as on the
   card -- runs, collections and arcs share their information and patterns
-  wherever that makes sense (the owner, 2026-10-02).
+  wherever that makes sense (owner, 2026-10-02).
 - **The header's cover leads** (2026-10-01): on a phone it is 140x196 from
   a 390px screen up (120x168 on a 320px one, so the badges still fit), and
   the copy beside it stays shorter than it -- a run's stars moved out of the
@@ -371,7 +371,7 @@ was last opened has a violet dot. Titles wrap; nothing is truncated.
 Settings chosen from a few (grid or list, runs or collections) are
 `GlassSegmented`: SegmentedTabs' track and sliding glass thumb, as radios.
 Comics has no tools row: one *View & sort* button in the header on every
-width (the owner, 2026-09-29) opens the same controls -- scope, grid or list,
+width (owner, 2026-09-29) opens the same controls -- scope, grid or list,
 sort, the Following / In progress / arc-grouping switches -- as a sheet from
 the bottom on a phone and as a drawer from the right above 640px
 (`LibraryViewSheet`). The button carries a dot while anything is off its
@@ -381,7 +381,7 @@ Liquid Glass is for the navigation layer only: page-header controls, the
 search field, the tab bars, the drawer tabs and a drawer's top bar. Never cards, rows or covers,
 and never glass on glass. One written exception: a run card's reading badge
 (`.series-card-mark`) is black glass over the cover, so it reads on any art
-without hiding it (the owner, 2026-09-28). `.glass-button` (a capsule, or a circle with
+without hiding it (owner, 2026-09-28). `.glass-button` (a capsule, or a circle with
 `--icon`), `.glass-button--primary` (one per page), `.glass-field`,
 `.glass-capsule` (related controls in one pill: its segments are plain, never
 glass on glass, divided by a hairline; a segment that is on fills violet) and
@@ -586,7 +586,7 @@ Motion tokens:
   whoever may change it. A run's Issues tab has *Select* (beside the run's
   menu): a tap ticks an issue, its read/menu/edit buttons step aside, and a
   floating bar says how many, with *Select all* and *Add to story arc*.
-- **A–Z letter rail** (since 2026-10-03, the owner, after Plex). In Title A–Z
+- **A–Z letter rail** (since 2026-10-03, owner, after Plex). In Title A–Z
   with 20 or more cards, the Library, Collections and Story arcs grids get a
   sticky # / A–Z column at their right (`AlphaRail`): a tap jumps to the
   letter's first card (or the next letter's), landing it just under the

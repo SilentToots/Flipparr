@@ -58,7 +58,7 @@ export function normalizedPublisher(name) {
 /**
  * The one publisher every run shares, spelled as the first run has it, or ""
  * -- for a story arc's or a collection's card, which names the house as a
- * run's does only when it is one house (the owner, 2026-10-02). "Publisher
+ * run's does only when it is one house (owner, 2026-10-02). "Publisher
  * unknown" is the catalog's placeholder, so a run without one rules it out.
  */
 export function sharedPublisher(runs) {

@@ -954,7 +954,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
   // While the bar folds or opens, the glass pill sits out: its blur was
   // being re-placed and re-animated on every frame of the width animation,
   // and a phone could not keep that smooth. It pops in, in place, once the
-  // bar has finished moving -- the owner's suggestion.
+  // bar has finished moving -- The owner's suggestion.
   const [morphing, setMorphing] = useState(false);
   const morphingRef = useRef(false);
   const firstMorph = useRef(true);
@@ -1028,7 +1028,7 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
       </div>
       <div className="sidebar-session">
         {/* Who is reading is the header's avatar, which opens the profile;
-            the sidebar no longer repeats it (the owner, 2026-09-29). */}
+            the sidebar no longer repeats it (owner, 2026-09-29). */}
         {authStatus?.method === "forms" && authStatus?.authenticated && !authStatus?.household
           ? <button type="button" className="sign-out-button" onClick={() => onSignOut()}><SignOut size={16} /> Sign out</button>
           : null}
@@ -1654,7 +1654,7 @@ function CardFoot({ runCount, issueCount, owned, maker = "" }) {
 }
 
 /**
- * The A-Z rail beside a title-sorted grid, as Plex has it (the owner,
+ * The A-Z rail beside a title-sorted grid, as Plex has it (owner,
  * 2026-10-03): # and A-Z down the right edge. A letter jumps to its first
  * card, or the next letter's when it has none (iOS's section index);
  * dragging along the rail scrubs, with the letter large beside the finger;
@@ -1869,7 +1869,7 @@ function ReadingListTab({ items, reading, listReading = {}, loading, onOpen, onR
 
 // ---- Read groups ------------------------------------------------------------
 // A collection is runs read in an order; a story arc is issues read in an
-// order. One pattern for both (the owner, 2026-10-02): the same drawer frame,
+// order. One pattern for both (owner, 2026-10-02): the same drawer frame,
 // Edit (name and summary on the screen, cover and header background a step
 // in), Arrange tab, Advanced cards, Add sheet and New dialog, differing only
 // where their content does.
@@ -2149,7 +2149,7 @@ function GroupDeleteCard({ group, noun, name, onDelete }) {
 }
 
 /**
- * A collection, in the comic drawers' frame as a story arc is (the owner,
+ * A collection, in the comic drawers' frame as a story arc is (owner,
  * 2026-10-02): Overview, Runs, Arrange for whoever may change it, Advanced
  * for everyone; Edit is its name and summary, with Cover and Header
  * background a step in. Whose it is decides who changes it, as an arc's.
@@ -2229,7 +2229,7 @@ function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES
               <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button></div>} />;
   const advanced = <div className="advanced-tools">
     <div className="drawer-facts"><span><strong>{card.runCount}</strong>Runs</span><span><strong>{issueTotals.owned}</strong>Issues here</span><span><strong>{started}</strong>In progress</span></div>
-    {/* Arrange lives in Advanced, for whoever may change it (the owner, 2026-10-02). */}
+    {/* Arrange lives in Advanced, for whoever may change it (owner, 2026-10-02). */}
     {/* Arrange is a card here that steps into its own screen, as Edit's
         pickers do, rather than a long list over the rest (2026-10-02). */}
     {canEdit && runs.length ? <GroupArrangeCard noun="run" count={runs.length} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} onOpen={() => setEdit("arrange")} /> : null}
@@ -3127,7 +3127,7 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
   const collectionItems = useMemo(() => collectionCards(catalog?.runCollections, catalog?.series || []), [catalog?.runCollections, catalog?.series]);
   // They sit in the Library grid among the runs, as Plex shows "collections
   // and their items", sorted by the same sort as everything else (a pinned
-  // first place ignored A-Z, the owner 2026-10-03) -- unless the grid is
+  // first place ignored A-Z, owner 2026-10-03) -- unless the grid is
   // narrowed to followed or in-progress runs.
   const gridCollections = useMemo(() => effectiveScope === "runs" && showCollections && !followingOnly && !inProgressOnly
     ? collectionItems.filter((card) => card.runCount && collectionMatches(card, searching ? query : ""))
@@ -3175,7 +3175,7 @@ function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleRea
           {tabActions ? <div className="page-header-tab-actions" data-count={tab === "arcs" && libraryAdmin ? 2 : 1}>{tabActions}</div> : null}</>}
         actions={phone ? viewButton : null}
       />
-      {/* One button on every width (the owner, 2026-09-29): view, sort and the
+      {/* One button on every width (owner, 2026-09-29): view, sort and the
           filters are a sheet on a phone and a drawer on a desktop, with the
           same controls in each. The desktop's row of segmented controls and
           its glass capsule are gone. */}
@@ -3242,7 +3242,7 @@ function RecommendedView({ series, catalog, backendStatus, readingVersion, onOpe
     { id: "runs", title: "Recently Added Runs", items: recentlyAddedRuns(series), onSeeAll: onSeeAdded },
   ], [carryOn, series, onSeeInProgress, onSeeAdded]);
   // Shelves while it loads, as it will be -- the Library's grid skeleton
-  // it showed was another tab's shape (the owner, 2026-10-03).
+  // it showed was another tab's shape (owner, 2026-10-03).
   if ((backendStatus === "loading" && !catalog) || carryOn === null) return <RecommendedSkeleton />;
   if (!series.length) return <CatalogEmpty onAdd={onAdd} />;
   const byId = new Map(series.map((run) => [String(run.id), run]));
@@ -4150,7 +4150,7 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
   const saved = Boolean(data?.readingListId);
   // One action. Pulling keeps the arc as well -- the issues without their
   // order would be the gap a saved arc exists to close -- so a second "save
-  // only" card read as the same thing minus something (the owner, 2026-09-28).
+  // only" card read as the same thing minus something (owner, 2026-09-28).
   // With nothing left to pull, the one thing to do is keep it; pruning
   // tie-ins happens in the arc's own drawer afterwards.
   const saveOnly = nothingLeft && !reader;
@@ -5064,7 +5064,7 @@ function ReplacementRequestRow({ request, progress = {}, openByDefault = false, 
 
 // Stop on an issue that rides in a torrent pack: each of the pack's issues
 // has its own row, and stopping one only leaves its file out -- so a slow
-// pack of a long run took a Stop per issue (the owner, 2026-10-01). It asks
+// pack of a long run took a Stop per issue (owner, 2026-10-01). It asks
 // whether to stop the whole pack or this issue alone; either way what is
 // stopped is looked for again at once.
 function StopDownloadButton({ job, busy, onStop }) {
@@ -5250,7 +5250,7 @@ function formatReleaseSize(bytes) {
 /**
  * One release the matcher set aside, with the way through for the person who
  * can see it is the right file: "Take anyway" asks once, in the row, saying
- * what taking it means (the owner, 2026-09-29). The server refuses the same id
+ * what taking it means (owner, 2026-09-29). The server refuses the same id
  * without "anyway", so nothing here can grab by accident.
  */
 function SetAsideRow({ item, job, admin, busy, onTake }) {
@@ -7212,7 +7212,7 @@ function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
   }
   // A finger lifts a row by holding its handle still (Reminders, Keep): a
   // touch on the handle used to start a drag at once, so scrolling a long
-  // list with a thumb on that edge moved runs (the owner, 2026-10-01). Until
+  // list with a thumb on that edge moved runs (owner, 2026-10-01). Until
   // the hold completes the handle scrolls like the rest of the row; once it
   // has, the page holds still and the row follows. A mouse drags at once.
   const startHold = useRef(null);
@@ -7679,7 +7679,7 @@ function FileActionButtons({ file, readable, onRead, onOpenWorkbench, onOpenCove
 }
 
 // A phone's file row: the same tools as the desktop's buttons, from a "..."
-// beside the file, as an issue row's menu is (the owner, 2026-10-01: the old
+// beside the file, as an issue row's menu is (owner, 2026-10-01: the old
 // labelled Actions button sat on a row of its own under every file).
 function FileMenu({ file, readable, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
   const editionsOn = useCollectedEditions();
@@ -7955,7 +7955,7 @@ function SeriesEditPanel({
           ...RATINGS.map((id) => ({ value: id, label: RATING_LABELS[id] }))]} />
     </section>
     {/* Small enough to edit where it is: only the cover and background
-        pickers are big enough to step into (the owner, 2026-10-01). */}
+        pickers are big enough to step into (owner, 2026-10-01). */}
     <section className="advanced-card edit-titles">
       <div><strong>Alternate titles</strong><p>Other names this run&rsquo;s comics are filed under. Scans use these automatically; add one only if a scan keeps missing a file.</p></div>
       {alternateTitles.length ? <div className="alias-list">{alternateTitles.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>)}</div> : null}
@@ -7992,7 +7992,7 @@ function ReadRunOverlay({ run, reading, onRead }) {
   // run resolves to the next unread -- or, once every issue is read, to #1.
   // The marker says the same words an issue's badge does: "Read" once every
   // issue is, "In progress" on a run that has been started. A bare count of
-  // what was left said nothing on its own (the owner, 2026-09-28).
+  // what was left said nothing on its own (owner, 2026-09-28).
   return <>
     <ReadingMark place={place} />
     <button type="button" className="series-card-read" title={verb}
@@ -8702,7 +8702,7 @@ function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
 
 // A saved story arc, drawn as a run is: the same top bar, hero, Read button,
 // tabs, issue tiles and menus, files and Advanced tools -- so knowing one
-// drawer is knowing the other (the owner, 2026-09-28). Its issues are in the
+// drawer is knowing the other (owner, 2026-09-28). Its issues are in the
 // household's order across runs; each says whether it is here, on the way
 // or missing, and whether this profile has read it. The admin can rename it,
 // choose its cover from its own comics, put the issues in another order or

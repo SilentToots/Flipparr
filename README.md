@@ -37,7 +37,7 @@ Initial setup is progressive. The first pass reads only local filenames, embedde
 
 ## Acquisition services
 
-Prowlarr and SABnzbd (and optionally qBittorrent, for torrents) are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The the NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
+Prowlarr and SABnzbd (and optionally qBittorrent, for torrents) are configured under **Settings → Acquisition services**. Enter the service URL and use **Test connection** before saving. The Mac development server needs host addresses reachable from the Mac. The NAS container joins `home-services-proxy`, so it can use the private service endpoints `http://prowlarr:9696` and `http://sabnzbd:8080` without publishing either service to the LAN.
 
 API keys are stored only in `.data/acquisition-services.json`, which is excluded from source control and written with owner-only permissions. They are never returned to the browser after saving. The equivalent environment variables are `PROWLARR_URL`, `PROWLARR_API_KEY`, `SABNZBD_URL`, `SABNZBD_API_KEY`, and the optional `SABNZBD_CATEGORY`.
 
@@ -61,7 +61,7 @@ Open <http://127.0.0.1:4173>. The Vite development server proxies `/api` to the 
 The current QA container builds the React interface and serves it from the same Python process as the API. It stores the catalog and API credentials under `/config`, sees the writable library at `/comics`, and sees SABnzbd's completed comics directory read-only at `/downloads/complete/comics`. This deployment is useful for regression and integration testing but is not the supported user release described in `docs/RELEASE_TRACK.md`.
 
 1. Copy `.env.example` to `.env` on the NAS.
-2. Review the NAS media identity (`1000:10`) and verified storage paths already provided in `.env.example`.
+2. Set the media identity (`PUID`/`PGID`) and your own storage paths in `.env`; the example's paths are placeholders.
 3. Keep `.env` private and confirm `V2_CONFIG_PATH`, `COMICS_PATH`, `SAB_COMPLETE_PATH`, `ACQUISITION_CONFIG_PATH`, and `METADATA_CONFIG_PATH` before starting the container. The QA interface also requires the prepared V2 reference database at `${V2_CONFIG_PATH}/reference.db`. Metadata-provider credentials are mounted from `METADATA_CONFIG_PATH` read-only; never copy token or API-key values into Compose, `.env`, logs, or source control. Set `SONICBOOM_V2_TRUSTED_CLIENTS` to only the exact private gateway reported for `home-services-proxy`; never use a subnet or wildcard. Loopback publishing for this unauthenticated boundary requires Docker Engine 28 or newer.
 4. From the project directory, run:
 
@@ -78,7 +78,7 @@ The current QA container builds the React interface and serves it from the same 
    Open <http://127.0.0.1:8795>, choose **Add comics**, enter `/comics`, and scan it. Do not publish this QA interface through a reverse proxy.
 6. Connect Prowlarr and SABnzbd under **Settings → Acquisition services** with `http://prowlarr:9696` and `http://sabnzbd:8080`.
 
-The checked-in Compose example follows the NAS's home-services conventions: it runs as media user `1000:10`, stores state under `/srv/docker/sonicboom`, mounts `/srv/books/comics`, attaches to `home-services-proxy`, uses a loopback-only host port, drops privilege escalation, and limits container logs.
+The checked-in Compose example runs as an unprivileged media user, keeps state in its config directory, mounts your comics directory, attaches to a reverse-proxy network, uses a loopback-only host port, drops privilege escalation, and limits container logs.
 
 Flipparr retrieves a selected NZB from Prowlarr through the private configured service URL, validates the bounded XML payload, and uploads the NZB file to SABnzbd under a clean release name. Prowlarr download URLs and API keys are never handed to SABnzbd. A successful SAB queue response is only the start of the request lifecycle, not completion.
 

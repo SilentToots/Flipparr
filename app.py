@@ -375,7 +375,7 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # connector for the rating printed there (DC's "13+ TEEN", Marvel's
     # "RATED T+"). One cover per run, on the admin's key; off until asked.
     "ratingsFromCovers": False,
-    # Where releases are taken from first (the owner, 2026-09-30). Among releases
+    # Where releases are taken from first (owner, 2026-09-30). Among releases
     # good enough to take on their own, the source earlier here wins even over
     # a few more points of match elsewhere; score ranks within one source, and
     # a weak match is never taken for its source. Packs keep their own rule:
@@ -2317,7 +2317,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
     },
     # Torrents, for what Usenet does not carry: manga volumes, and whole runs
     # as packs -- which DirectSite loses to file-host pages and corrupt archives
-    # (the owner, 2026-09-30). It signs in with a username rather than a key,
+    # (owner, 2026-09-30). It signs in with a username rather than a key,
     # and neither is required: a client that lets its own network in needs
     # no sign-in at all.
     "qbittorrent": {
@@ -2611,7 +2611,7 @@ def _wait_for_provider_slot(provider_id: str) -> None:
     asked for is not: the Grand Comics Database answered a burst of pulls with
     "try again in 620 seconds", and every catalog search then slept ten
     minutes on its GCD half while Metron and Comic Vine had long since
-    answered, the page stuck on its skeleton (the owner, 2026-09-30). The
+    answered, the page stuck on its skeleton (owner, 2026-09-30). The
     request fails as rate-limited instead, and its caller answers without it
     -- or with a cached copy, which `fetch_provider_json` falls back to.
     """
@@ -3636,7 +3636,7 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
         for category in (release.get("categories") or [])
     }
     # EBook counts as much as Comics: a graphic novel with no issues is filed
-    # there as a matter of course (The Adventure Zone, the owner, 2026-09-30).
+    # there as a matter of course (The Adventure Zone, owner, 2026-09-30).
     # What rules out a novel of the same name is the import's look inside.
     if "7030" in category_ids:
         score += 5
@@ -4959,7 +4959,7 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     # "Blue Lock v01-39" is thirty-nine volumes. It is never this volume --
     # it scores below one -- but it holds it, and for a volume nobody posts on
     # its own, or a run pulled whole, a pack holding it is the answer
-    # (the owner, 2026-09-30). The torrent client then fetches only the wanted
+    # (owner, 2026-09-30). The torrent client then fetches only the wanted
     # volumes out of it. A chapter run is still not a volume.
     span = _manga_pack_range(name)
     if span:
@@ -5052,7 +5052,7 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     # World's Finest" is posted as "Batman-Superman - Worlds Finest", and an
     # indexer given the slash, the colon and the apostrophe found none of it
     # while the same words alone found it twice. An indexer matches words, so
-    # the marks never help; only the plain wording is asked (the owner, 2026-09-28).
+    # the marks never help; only the plain wording is asked (owner, 2026-09-28).
     titles = [_plain_query_title(series) or series]
     for title in list(titles):
         without_article = _without_leading_article(title)
@@ -5336,7 +5336,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
     )[:8]
     # What was set aside can still be taken by hand: a person who is looking
     # at the right file under a name the matcher did not read is not sent to
-    # a developer (the owner, 2026-09-29). Each row is registered like a
+    # a developer (owner, 2026-09-29). Each row is registered like a
     # candidate, marked set aside, so a grab without "anyway" still refuses it.
     set_aside = []
     for entry in ordered:
@@ -5657,7 +5657,7 @@ def stop_acquisition_pack(job_id: int) -> dict[str, Any]:
     looked for again at once -- another run pack first, else singles.
 
     Stopping one issue of a pack only leaves its file out, so a slow pack of
-    a long run meant stopping every issue in turn (the owner, 2026-10-01).
+    a long run meant stopping every issue in turn (owner, 2026-10-01).
     """
     store = catalog_store()
     download = store.acquisition_download_for_job(job_id)
@@ -6317,7 +6317,7 @@ def _choose_downloaded_comic(
 
     A release the person took by hand (`vouched`) is on their word: what it
     or its file calls itself, its year and its language are not judged
-    (the owner, 2026-09-29: "your word wins on names"). The file still has to
+    (owner, 2026-09-29: "your word wins on names"). The file still has to
     be a readable comic, and a download holding several comics still has to
     name the issue on one of them -- guessing between files is never done.
 
@@ -7446,7 +7446,7 @@ def _automatic_grab_order(
             refused = f"{candidate.get('title') or 'A pack'} — {why}"
     # Pulling one issue, a pack is the last resort -- taken only when nothing
     # else has the issue at all -- and then only a torrent, the one pack that
-    # can be fetched for that issue alone (the owner, 2026-09-30). Marked, so
+    # can be fetched for that issue alone (owner, 2026-09-30). Marked, so
     # the caller asks DirectSite for a single before settling for it.
     last_resort = [] if singles or eligible else [
         {**candidate, "lastResort": True} for candidate in packs if candidate.get("source") == "torrent"
@@ -10801,7 +10801,7 @@ def _discover_series_with(
         searches.append(("comic_vine", "Comic Vine", functools.partial(
             discover_comic_vine_series, cleaned, str(comic_vine["apiKey"]), library)))
     # GCD is the fallback, asked only when the catalogs above do not find the
-    # title itself (the owner, 2026-09-30). It is the one used without an
+    # title itself (owner, 2026-09-30). It is the one used without an
     # account and throttles hardest: asked on every search, a busy afternoon
     # of pulls had it refusing Flipparr for ten minutes. Asking it whenever
     # the others fail to find the exact title keeps why it was added -- a
@@ -11388,7 +11388,7 @@ def _library_run_for(
     title alone matches only a library run with no year to disagree, since
     "Green Lantern" (2011) and "Green Lantern" (2023) share a name and nothing
     else, and calling the 2023 issues "In library" because the 2011 run is
-    put the wrong era on the shelf (the owner, 2026-09-28).
+    put the wrong era on the shelf (owner, 2026-09-28).
     """
     if provider and provider_run_id:
         entry = relevance.get(f"{provider}:{provider_run_id}")

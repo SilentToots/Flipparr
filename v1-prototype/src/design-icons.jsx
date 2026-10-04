@@ -76,7 +76,7 @@ export const FollowingIcon = sized(CheckCircleIcon, 20);        // heroicons-out
 // Card badges
 export const ActiveRunIcon = sized(BoltIcon, 12);   // heroicons-micro/bolt
 // Following is an eye, watching for new issues; the bookmark is the reading
-// list's, as Plex's watchlist is (the owner, 2026-10-01).
+// list's, as Plex's watchlist is (owner, 2026-10-01).
 export const FollowedIcon = sized(EyeIcon, 12);         // heroicons-micro/eye
 export const ReadingListIcon = sized(BookmarkIcon, 12); // heroicons-micro/bookmark
 

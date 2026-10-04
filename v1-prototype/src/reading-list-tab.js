@@ -1,7 +1,7 @@
 // Comics' Reading list tab (since 2026-10-01): what this profile added to
 // read -- runs, story arcs and collections -- and nothing else. What it is in
 // the middle of is Recommended's Keep Reading; this is what it chose to come
-// back to (the owner, 2026-10-01).
+// back to (owner, 2026-10-01).
 //
 // The server keeps the entries (`/api/v1/me/reading-list`); everything drawn
 // here comes from the catalog and arcs this profile was sent, so an entry for

@@ -116,7 +116,7 @@ export function releaseSearchSummary(result, label) {
   }
   // Each row carries the id the server registered it under, so the person
   // who can see the right file under a name the matcher did not read can
-  // take it anyway (the owner, 2026-09-29).
+  // take it anyway (owner, 2026-09-29).
   const setAside = misses.map((miss) => ({
     id: miss.id || null, title: miss.title, copies: miss.copies || 1,
     score: miss.score ?? null, refused: miss.score == null,

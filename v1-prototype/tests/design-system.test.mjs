@@ -235,7 +235,7 @@ const GLASS = new Map([
   [".sidebar nav", "the phone's floating tab bar"],
   [".page-header::before", "the header's scroll edge, which blurs content passing under it"],
   [".comic-drawer-bar::before", "a drawer's pinned top bar, frosted once the title scrolls under it"],
-  [".series-card-mark", "the one exception on content: a run card's reading badge, black glass over the cover (the owner, 2026-09-28)"],
+  [".series-card-mark", "the one exception on content: a run card's reading badge, black glass over the cover (owner, 2026-09-28)"],
 ]);
 
 test("backdrop blur is only on the navigation layer", () => {

@@ -6,7 +6,7 @@ import {
 
 const harrison = { id: 2, name: "Harrison", role: "reader", maxRating: "teen", allowUnrated: true };
 const strict = { id: 3, name: "Ada", role: "reader", maxRating: "everyone", allowUnrated: false };
-const admin = { id: 1, name: "the owner", role: "admin", maxRating: null };
+const admin = { id: 1, name: "Sam", role: "admin", maxRating: null };
 
 const series = [
   { id: 1, title: "Something Is Killing the Children", year: 2019, publisher: "Boom! Studios", ageRating: null },
