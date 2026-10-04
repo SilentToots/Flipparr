@@ -1,0 +1,41 @@
+Flipparr
+Copyright (C) 2026 The Flipparr authors
+
+Flipparr is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License, version 3, as published by the Free
+Software Foundation (see LICENSE). It is distributed in the hope that it will
+be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Flipparr is a tool for organising and reading comics you have the right to
+use. It ships no comics, no catalogue data and no download sources: every
+indexer, downloader and site it talks to is one its operator configures.
+
+Third-party software shipped in the web app (licence texts are served with
+the app at /licenses/ and kept in v1-prototype/public/licenses/):
+
+  React, React DOM            MIT          Copyright (c) Meta Platforms, Inc. and affiliates
+  Phosphor Icons (React)      MIT          Copyright (c) 2020 Phosphor Icons
+  Heroicons (React)           MIT          Copyright (c) Tailwind Labs, Inc.
+  Material Design Icons       Pictogrammers Free License / Apache-2.0
+  Inter (font)                SIL Open Font License 1.1, Copyright 2016 The Inter Project Authors
+
+Third-party software in the server image:
+
+  Python and its standard library   PSF License
+  Pillow                            MIT-CMU (HPND)
+  ONNX Runtime                      MIT (Microsoft), used only to run a panel
+                                    model the operator supplies; no model ships
+  libarchive (bsdtar)               BSD-2-Clause
+  Debian packages in the base image under their own licences (see
+  /usr/share/doc/*/copyright in the image)
+
+Data and services Flipparr can use, each under its own terms, which the
+operator accepts when enabling it:
+
+  Grand Comics Database (comics.org)   data under CC BY-SA 4.0; attribution required
+  Open Library                         Internet Archive terms
+  Metron (metron.cloud)                its API terms; account required
+  Comic Vine                           its API terms (non-commercial, attribution)
+  Community reading lists              fetched from their authors' repositories
+                                       when chosen; none are shipped

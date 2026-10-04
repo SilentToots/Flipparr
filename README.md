@@ -231,3 +231,13 @@ GET /api/batch?folder=/absolute/path/to/comics&recursive=1
 ```bash
 python3 -m unittest -v
 ```
+
+## Licence
+
+Flipparr is free software under the GNU General Public License, version 3
+([`LICENSE`](LICENSE)). Third-party software, fonts, icons and data sources
+are listed with their licences in [`NOTICE`](NOTICE).
+
+Flipparr organises and reads comics you have the right to use. It ships no
+comics, catalogue data or download sources; every indexer, downloader and site
+it talks to is one you configure.
