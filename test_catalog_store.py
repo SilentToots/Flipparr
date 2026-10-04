@@ -2349,6 +2349,31 @@ class CatalogStoreTests(unittest.TestCase):
             store.reconcile_acquisition_jobs()
             self.assertEqual(self._job(root, job_id)["status"], "cancelled")
 
+    def test_direct_downloads_recorded_under_their_old_name_take_the_neutral_one(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            row = store.record_acquisition_download(job_id, f"direct_site:abc123:{job_id}", "Example 002", "k1",
+                                                    source="direct_site")
+            store.update_acquisition_download(int(row["id"]), "imported",
+                                              sab_storage="/config/downloads/direct_site/7",
+                                              local_source="/config/downloads/direct_site/7/Example 002.cbz")
+            store.record_acquisition_release_failure(job_id, "k2", "Example 002 (other)", "refused",
+                                                     sab_nzo_id=f"direct_site:def456:{job_id}",
+                                                     sab_storage="/config/downloads/direct_site/8")
+            with sqlite3.connect(store.database_path) as connection:
+                connection.execute("UPDATE schema_info SET version=63")
+            reopened = CatalogStore(store.database_path)
+            with sqlite3.connect(reopened.database_path) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT source, sab_nzo_id, sab_storage, local_source FROM acquisition_downloads").fetchone(),
+                    ("direct_site", f"direct_site:abc123:{job_id}", "/config/downloads/direct_site/7",
+                     "/config/downloads/direct_site/7/Example 002.cbz"))
+                self.assertEqual(connection.execute(
+                    "SELECT sab_nzo_id, sab_storage FROM acquisition_release_failures").fetchone(),
+                    (f"direct_site:def456:{job_id}", "/config/downloads/direct_site/8"))
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+
     def test_a_torrent_is_in_use_while_an_issue_downloads_from_it_or_keeps_it_as_evidence(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -4764,7 +4789,7 @@ class ReadingListTests(LibraryFixture):
             self.assertEqual(reopened.reading_list_meta(int(arc["id"]))["sortMode"], "custom", "every arc keeps its order")
             self.assertIsNone(reopened.run_collection_backdrop_preference(int(made["id"])))
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 63)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
 
     def test_a_profiles_collection_names_are_its_own(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -4796,7 +4821,7 @@ class ReadingListTests(LibraryFixture):
             meta = reopened.reading_list_meta(int(arc["id"]))
             self.assertEqual((meta["ownerId"], meta["shared"]), (None, False), "every arc saved before is the household's")
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 63)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
 
     def test_an_arc_read_by_release_date_serves_its_issues_by_cover_date(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -4924,7 +4949,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 63)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
@@ -4938,7 +4963,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=59")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 63)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
             self.assertEqual(reopened.run_collections(), [])
             self.assertEqual(reopened.catalog()["runCollections"], [])
 
@@ -4970,7 +4995,7 @@ class ReadingListTests(LibraryFixture):
             with sqlite3.connect(store.database_path) as connection:
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")}
                 self.assertIn("taken_by_hand", columns)
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 63)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
 
     def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
         with tempfile.TemporaryDirectory() as folder:

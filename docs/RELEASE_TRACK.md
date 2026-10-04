@@ -931,28 +931,27 @@ product decision is whether to add a demonstrably stronger comic-release source
 or defer the live-Volume proof while keeping Gate 3 open.
 
 A subsequent torrent feasibility pilot tested that alternative before building
-it. the NAS's TrackerA (`7030`) and TrackerB (`7000` Books) indexers were
-healthy and FlareSolverr-tagged, but returned zero candidates for both missing
-Volume targets across three established naming forms. TrackerF and TrackerG lack useful
-Books/Comics categories and were excluded. No torrent or magnet was submitted.
+it. Two public torrent indexers configured in Prowlarr (one in Comics `7030`,
+one in Books `7000`) were healthy but returned zero candidates for both missing
+Volume targets across three established naming forms; indexers without useful
+Books/Comics categories were excluded. No torrent or magnet was submitted.
 This two-target sample does not justify a qBittorrent adapter: it adds no measured
 coverage benefit while introducing seeding and stalled-swarm lifecycle work.
 Keep the transport seam, and reconsider only after a representative read-only
-cohort demonstrates material exact-match gain. See
-`docs/evidence/torrent-coverage-20260902-p39.json`.
+cohort demonstrates material exact-match gain.
 
-That cohort was run for manga on 2026-09-29 with PublicTracker added to Prowlarr: of
-23 missing manga volumes, 19 already had exact Usenet matches and were simply
-unrequested, and the other four exist on PublicTracker only inside multi-volume packs the
+That cohort was run for manga on 2026-09-29 with a public manga torrent indexer
+added to Prowlarr: of 23 missing manga volumes, 19 already had exact Usenet
+matches and were simply unrequested, and the other four exist there only inside
+multi-volume packs the
 manga matcher refuses. No volume is found only by a single-volume torrent, so
 the adapter alone is still not justified; the open question is a client with
 manga pack handling and per-file selection. See
-`docs/evidence/torrent-coverage-20260929-manga.json` and
 `docs/ACQUISITION_INTENT_V2.md`.
 
 Product decision 2026-09-30: the adapter was built with manga and run packs
 and per-file selection, on the grounds that whole-run packs had no reliable
-source (DirectSite packs failed four times in eight refusals). Release gates for
+source (direct-download packs failed four times in eight refusals). Release gates for
 it: provider-outage behaviour for qBittorrent (runbook), restart recovery (a
 torrent's download is never restarted as a direct fetch), and the read-only
 torrents mount in clean install and upgrade.

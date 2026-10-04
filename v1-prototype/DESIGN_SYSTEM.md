@@ -190,8 +190,8 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   inside a section returns to the list.
 - **Acquisition services** (since 2026-09-30) are grouped by what they do:
   the **Download order** first, then **Search** (Prowlarr), **Download
-  clients** (SABnzbd, qBittorrent) and **Direct downloads** (DirectSite, then
-  FlareSolverr, which only serves it). The order is a numbered list, one row
+  clients** (SABnzbd, qBittorrent) and **Direct downloads** (the site you
+  enter, then the page fetcher, which only serves it). The order is a numbered list, one row
   per source with its client's Ready / Not connected pill; a source whose
   client is missing stays in the list, muted, and is skipped. Rows are
   dragged by a `DotsSixVertical` handle at their start: only the handle
@@ -455,16 +455,16 @@ Motion tokens:
   series. Taking it imports it as Saga #4. The file still has to be a
   readable comic." -- with Cancel and the primary "Take it". With no
   candidates the same list stands open inside the empty state, as before. A
-  DirectSite row without a solver reads "Not fetchable yet", disabled, as its
-  candidates do.
+  direct-download row without a page fetcher reads "Not fetchable yet",
+  disabled, as its candidates do.
 - **A release row says how it travels** (since 2026-09-30): its fact line
-  reads "PublicTracker · Torrent · 30 seeders · 14.5 GB" (`releaseTransport`), and
+  reads "Indexer · Torrent · 30 seeders · 14.5 GB" (`releaseTransport`), and
   its button names the client that takes it -- "Send to SABnzbd", "Send to
-  qBittorrent", or "Download" for DirectSite (`releaseSendLabel`). A torrent
+  qBittorrent", or "Download" for a direct download (`releaseSendLabel`). A torrent
   pack adds "Only the issues wanted are downloaded from it" to its reasons,
   because its size is the whole pack's. A torrent row with no client
   connected reads "Not fetchable yet" with the reason in its hint, as a
-  DirectSite row without a solver does.
+  direct-download row without a page fetcher does.
 - **Age ratings** (since 2026-09-27) are one scale everywhere -- Everyone,
   Teen, Teen+, Mature -- whatever the source said. A run's shows in its drawer
   as a badge in the rating colours; its Edit sheet has an "Age rating" card

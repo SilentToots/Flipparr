@@ -280,7 +280,7 @@ test("a set-aside row keeps the id it can be taken by, and the server's wording"
     "Set aside: Not this series. Taking it imports it as Flashpoint: Secret Seven #1. The file still has to be a readable comic.");
   assert.equal(takeAnywayCopy(summary.setAside[1], "Flashpoint: Secret Seven", "1"),
     "Refused before: Aborted. Taking it tries this release again and imports it as Flashpoint: Secret Seven #1. The file still has to be a readable comic.");
-  // DirectSite alone: nothing from Usenet, still something to show.
+  // the download site alone: nothing from Usenet, still something to show.
   const only = releaseSearchSummary({ resultCount: 0, nearMisses: [{ id: "gc-1", title: "X", score: 10, reason: "Not this issue" }] }, "#1");
   assert.equal(only.headline, "Nothing usable came back for #1");
   assert.equal(only.setAside.length, 1);
@@ -314,7 +314,7 @@ test("the download order is each source once, moved a step at a time", async () 
   const services = [{ id: "sabnzbd", enabled: true }, { id: "qbittorrent", enabled: false },
     { id: "direct_site", enabled: true }, { id: "flaresolverr", enabled: false }];
   assert.deepEqual(sourceRows(DEFAULT_SOURCE_ORDER, services).map((row) => [row.id, row.ready]),
-    [["usenet", true], ["torrent", false], ["direct_site", false]], "DirectSite needs its solver too");
+    [["usenet", true], ["torrent", false], ["direct_site", false]], "direct downloads need the page fetcher too");
 });
 
 test("services are grouped by what they do", async () => {

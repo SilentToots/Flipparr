@@ -411,6 +411,8 @@ def load_app_settings() -> dict[str, Any]:
                     if isinstance(value, int) and not isinstance(value, bool) and value in AUTO_SCAN_INTERVALS:
                         settings[key] = value
                 elif key == "sourcePriority":
+                    legacy = {old: new for new, old in _LEGACY_SOURCE_NAMES.items()}
+                    value = [legacy.get(item, item) for item in value] if isinstance(value, list) else value
                     if _is_source_order(value):
                         settings[key] = list(value)
                 elif isinstance(value, str):
@@ -443,7 +445,7 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Choose one of the scan intervals Flipparr offers")
         if key == "sourcePriority":
             if not _is_source_order(value):
-                raise ValueError("List Usenet, torrents and DirectSite once each")
+                raise ValueError("List Usenet, torrents and direct downloads once each")
             value = list(value)
         clean[key] = value
     with _SETTINGS_CONFIG_LOCK:
@@ -2049,7 +2051,21 @@ def acquisition_staging_dir(source: str = "manual") -> Path:
     mounted, so this is the one place a new file can be written.
     """
     staging = _configured_path("ACQUISITION_STAGING", catalog_database_path().parent / "downloads")
-    return staging / _safe_path_component(source, "manual")
+    folder = staging / _safe_path_component(source, "manual")
+    # Direct downloads' folder took its neutral name in schema 64; the old one
+    # moves across the first time it is asked for (the records moved with it).
+    legacy = staging / _LEGACY_SOURCE_NAMES.get(source, "")
+    if source in _LEGACY_SOURCE_NAMES and not folder.exists() and legacy.is_dir():
+        try:
+            legacy.rename(folder)
+        except OSError:
+            pass
+    return folder
+
+
+# Names direct downloads went by before they took their neutral one
+# (2026-10-03, schema 64), read so an existing install keeps its settings.
+_LEGACY_SOURCE_NAMES = {"direct_site": "direct_site"}
 
 
 def _adopt_legacy_user_covers(destination: Path) -> None:
@@ -2316,7 +2332,7 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "needsApiKey": True,
     },
     # Torrents, for what Usenet does not carry: manga volumes, and whole runs
-    # as packs -- which DirectSite loses to file-host pages and corrupt archives
+    # as packs -- which the download site loses to file-host pages and corrupt archives
     # (owner, 2026-09-30). It signs in with a username rather than a key,
     # and neither is required: a client that lets its own network in needs
     # no sign-in at all.
@@ -2329,27 +2345,26 @@ ACQUISITION_SERVICE_DEFINITIONS = {
         "group": "clients",
         "needsApiKey": False,
     },
-    # A public site rather than a service of yours: nothing to authenticate to,
-    # which is why `needsApiKey` exists. Searching it is open; fetching from it
-    # is not, and that is a separate piece of work.
-    # Reading a DirectSite post means getting past a Cloudflare challenge, which
-    # takes a real browser. Rather than carry one in this image, Flipparr asks
-    # a solver the user runs -- the same answer Omnibus and Mylar3 arrived at.
+    # Direct downloads are a site the operator chooses and enters (2026-10-03):
+    # Flipparr names none and has no default address, as it names no indexer.
+    # It reads a site that publishes comics as posts with download links in a
+    # WordPress-style feed. Some such sites only answer a full browser; for
+    # those the operator may run a page fetcher (FlareSolverr's API).
     "flaresolverr": {
-        "name": "FlareSolverr", "kind": "Cloudflare solver",
-        "capabilities": ["Solves Cloudflare challenges", "Reads DirectSite post pages"],
-        "description": "Needed to download from DirectSite: it reads the pages DirectSite protects.",
-        "setupSummary": "Reads pages DirectSite protects, so links can be found.",
-        "defaultUrl": "http://flaresolverr:8191/v1", "defaultEnabled": False,
+        "name": "Page fetcher", "kind": "Browser page fetcher",
+        "capabilities": ["Fetches pages through a browser you run", "FlareSolverr-compatible API"],
+        "description": "Optional: fetches the direct download site's pages through a browser you run, for a site that answers only browsers.",
+        "setupSummary": "Fetches the site's pages through a browser you run.",
+        "defaultUrl": "", "defaultEnabled": False,
         "group": "direct",
         "needsApiKey": False,
     },
     "direct_site": {
-        "name": "DirectSite", "kind": "Direct download site",
+        "name": "Direct download site", "kind": "Direct download site",
         "capabilities": ["Search", "Direct download links"],
-        "description": "Search DirectSite for issues your indexers do not carry.",
-        "setupSummary": "Searches DirectSite and lists what it has.",
-        "defaultUrl": "https://comics.example", "defaultEnabled": False,
+        "description": "A site you choose that publishes comics as posts with download links. Searched for issues your indexers do not carry.",
+        "setupSummary": "Searches the site you entered and lists what it has.",
+        "defaultUrl": "", "defaultEnabled": False,
         "group": "direct",
         "needsApiKey": False,
     },
@@ -3015,6 +3030,9 @@ def load_acquisition_service_config() -> dict[str, dict[str, Any]]:
         except (OSError, ValueError, json.JSONDecodeError):
             saved = {}
         if isinstance(saved, dict):
+            for new_id, old_id in _LEGACY_SOURCE_NAMES.items():
+                if old_id in saved and new_id not in saved:
+                    saved[new_id] = saved.pop(old_id)
             for service_id, values in saved.items():
                 if service_id in config and isinstance(values, dict):
                     config[service_id].update(values)
@@ -3055,7 +3073,7 @@ def public_acquisition_service_config() -> dict[str, Any]:
             "setupSummary": definition.get("setupSummary") or definition["description"],
             "capabilities": definition["capabilities"],
             # Settings shows the services in what they do: finding releases,
-            # downloading them, and DirectSite with the solver it needs.
+            # downloading them, and the download site with the page fetcher it needs.
             "group": definition.get("group") or "search",
             "configured": configured, "enabled": bool(values.get("enabled")) and configured,
             "url": _redacted_upstream_url(
@@ -3130,7 +3148,7 @@ def test_acquisition_service_connection(
         endpoint = _solver_endpoint(url)
         answer = solver_request({"cmd": "sessions.list"}, url=url, timeout=30.0)
         version = str(answer.get("version") or "").strip()
-        detail = f"Connected to the solver at {endpoint}"
+        detail = f"Connected to the page fetcher at {endpoint}"
         detail += f" (version {version})." if version else "."
         if not str(url or "").rstrip("/").endswith("/v1"):
             # Saying so now rather than letting every grab fail in silence,
@@ -3163,10 +3181,10 @@ def test_acquisition_service_connection(
     if service_id == "direct_site":
         found = direct_site_search("batman", limit=3, base_url=url)
         detail = (
-            f"Reached DirectSite; its search answered with {len(found)} result"
+            f"Reached the download site; its search answered with {len(found)} result"
             f"{'' if len(found) == 1 else 's'}."
             if found else
-            "Reached DirectSite, but its search returned nothing to read."
+            "Reached the download site, but its search returned nothing to read."
         )
         return {"service": service_id, "status": "connected", "detail": detail}
     if service_id == "prowlarr":
@@ -3278,7 +3296,7 @@ def _release_issue_matches(title: str, issue_number: Any) -> bool:
     # "02 of 04" counts the run; a year is never a count.
     cleaned = re.sub(r"\bof\s*\d{1,3}\b", " ", cleaned, flags=re.I)
     # A stated range is a pack's bounds, not an issue number. "Chew 001-060"
-    # answered a job for #60, and DirectSite writes "#1 - 8" the same way -- in
+    # answered a job for #60, and the download site writes "#1 - 8" the same way -- in
     # both the wanted number is only there as the end of a range.
     cleaned = _ISSUE_RANGE.sub(" ", cleaned)
     return bool(re.search(rf"{pattern}{_NOT_GLUED_TO_A_TAG}", cleaned, re.I))
@@ -3727,7 +3745,7 @@ _SIZE_SCALE = {"kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
 def _plain_dashes(value: Any) -> str:
     """En and em dashes as hyphens.
 
-    DirectSite writes "Supergirl – Woman of Tomorrow #8"; every matcher here was
+    the download site writes "Supergirl – Woman of Tomorrow #8"; every matcher here was
     written against Usenet names, which use a plain hyphen or nothing at all.
     """
     return str(value or "").replace("–", "-").replace("—", "-")
@@ -3741,17 +3759,17 @@ def _direct_site_size_bytes(text: Any) -> int:
 
 
 def direct_site_search(query: str, limit: int = 20, base_url: str | None = None) -> list[dict[str, Any]]:
-    """What DirectSite lists for a query, read from its search feed.
+    """What the download site lists for a query, read from its search feed.
 
     The feed rather than the page: it parses without guessing at markup, and it
     carries the size and year the scoring wants. Measured 2026-09-15, it also
-    answers a plain request, while the post pages behind it are Cloudflare
+    answers a plain request, while the post pages behind it are browser-only
     challenged -- so finding things needs nothing, and fetching them will.
     """
-    base = str(base_url or "").strip() or str(
-        (load_acquisition_service_config().get("direct_site") or {}).get("url")
-        or ACQUISITION_SERVICE_DEFINITIONS["direct_site"]["defaultUrl"]
-    )
+    # No site is built in: it is the one the operator entered and switched on.
+    base = str(base_url or "").strip() or str(_enabled_acquisition_service("direct_site").get("url") or "")
+    if not base:
+        raise ValueError("Enter the direct download site's address in Settings first")
     url = base.rstrip("/") + "/?" + urllib.parse.urlencode({"s": query, "feed": "rss2"})
     body = fetch_bytes_with_headers(
         url,
@@ -3761,12 +3779,12 @@ def direct_site_search(query: str, limit: int = 20, base_url: str | None = None)
     try:
         root = ET.fromstring(body)
     except ET.ParseError as exc:
-        raise ValueError(f"DirectSite returned something that is not a feed: {exc}") from exc
+        raise ValueError(f"The download site returned something that is not a feed: {exc}") from exc
     # A challenge page is often well-formed enough to parse, and would then read
     # as a search that found nothing. An empty feed and a blocked one are not
     # the same answer, so the root element has to actually be a feed.
     if root.tag.lower() != "rss" and root.find("channel") is None:
-        raise ValueError("DirectSite answered with a page, not a feed")
+        raise ValueError("The download site answered with a page, not a feed")
     found: list[dict[str, Any]] = []
     for item in root.iter("item"):
         title = html.unescape(str(item.findtext("title") or "")).strip()
@@ -3786,11 +3804,11 @@ def direct_site_search(query: str, limit: int = 20, base_url: str | None = None)
 
 SOLVER_TIMEOUT_MS = 60_000
 DIRECT_SITE_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
-_DIRECT_SITE_LINK = re.compile(r"href=.(https://[a-z0-9.-]*direct_site[a-z0-9.-]*/dls/[^\s\"'>]+)")
+_DIRECT_SITE_LINK = re.compile(r"href=.(https://[a-z0-9.-]+/dls/[^\s\"'>]+)")
 
 
 def _solver_endpoint(url: Any) -> str:
-    """The solver's API address, with the path it actually answers on.
+    """The page fetcher's API address, with the path it actually answers on.
 
     FlareSolverr serves its API at /v1 and returns 405 for a POST anywhere
     else. Mylar3 logs that exact mistake: a URL without /v1 makes every DDL
@@ -3798,12 +3816,12 @@ def _solver_endpoint(url: Any) -> str:
     """
     address = str(url or "").strip().rstrip("/")
     if not address:
-        raise ValueError("Enter the solver's address first")
+        raise ValueError("Enter the page fetcher's address first")
     return address if address.endswith("/v1") else address + "/v1"
 
 
 def solver_request(payload: dict[str, Any], *, url: str | None = None, timeout: float = 90.0) -> dict[str, Any]:
-    """Ask the solver for something, and fail with what it actually said."""
+    """Ask the page fetcher for something, and fail with what it actually said."""
     endpoint = _solver_endpoint(url or _enabled_acquisition_service("flaresolverr").get("url"))
     request = urllib.request.Request(
         endpoint, data=json.dumps(payload).encode(),
@@ -3815,21 +3833,21 @@ def solver_request(payload: dict[str, Any], *, url: str | None = None, timeout: 
     except urllib.error.HTTPError as exc:
         if exc.code == 405:
             raise ValueError(
-                f"{endpoint} refused a POST: the solver's API lives at /v1, so check the address"
+                f"{endpoint} refused a POST: the page fetcher's API lives at /v1, so check the address"
             ) from exc
-        raise ValueError(f"The solver answered {exc.code}") from exc
+        raise ValueError(f"The page fetcher answered {exc.code}") from exc
     if str(answer.get("status") or "").casefold() != "ok":
-        raise ValueError(str(answer.get("message") or "The solver could not fetch that page"))
+        raise ValueError(str(answer.get("message") or "The page fetcher could not fetch that page"))
     return answer
 
 
 def solver_fetch_html(url: str) -> str:
-    """One page, fetched through the solver's browser."""
+    """One page, fetched through the page fetcher's browser."""
     answer = solver_request({"cmd": "request.get", "url": url, "maxTimeout": SOLVER_TIMEOUT_MS})
     solution = answer.get("solution") or {}
     html_text = str(solution.get("response") or "")
     if "just a moment" in html_text[:4000].casefold():
-        raise ValueError("The solver came back with Cloudflare's challenge page")
+        raise ValueError("The page fetcher returned a browser check instead of the page")
     return html_text
 
 
@@ -3917,10 +3935,10 @@ def direct_site_download_links(page: str) -> list[dict[str, Any]]:
 
 
 def direct_site_download_link(post_url: str, issue_number: Any = None, years: Any = None) -> str:
-    """The direct link a DirectSite post offers -- for a post in parts, the
+    """The direct link a download-site post offers -- for a post in parts, the
     part whose issues include the one wanted, from this run's years.
 
-    The post page is what Cloudflare protects, so the solver reads it; the link
+    The post page is what only a browser can load, so the page fetcher reads it; the link
     it carries is then an ordinary URL that redirects to a file host, which
     plain HTTP can fetch (measured 2026-09-15). Taking the first link of a
     post in parts fetched "#1 – 12" for a wanted #21 (The Woods, 2026-09-28),
@@ -3929,7 +3947,7 @@ def direct_site_download_link(post_url: str, issue_number: Any = None, years: An
     """
     links = direct_site_download_links(solver_fetch_html(post_url))
     if not links:
-        raise ValueError("That DirectSite post offers no direct download link")
+        raise ValueError("That download-site post offers no direct download link")
     wanted = _issue_number(issue_number)
     parts = [link for link in links if link["first"] is not None]
     # No parts, or one part: the post is the download, and the importer
@@ -3946,12 +3964,12 @@ def direct_site_download_link(post_url: str, issue_number: Any = None, years: An
     if holding:
         labels = list(dict.fromkeys(link["label"] for link in holding))
         raise ValueError(
-            f"The part of that DirectSite post holding #{issue_number} is from other years than this run: "
+            f"The part of that download-site post holding #{issue_number} is from other years than this run: "
             + "; ".join(labels[:3])
         )
     labels = list(dict.fromkeys(link["label"] for link in parts))
     raise ValueError(
-        f"That DirectSite post is in parts, and none says it holds #{issue_number}: " + "; ".join(labels[:6])
+        f"That download-site post is in parts, and none says it holds #{issue_number}: " + "; ".join(labels[:6])
     )
 
 
@@ -3973,7 +3991,7 @@ def _direct_site_names_series(title: str, context: dict[str, Any]) -> bool:
 
 
 def _direct_site_post_parts(post_url: str) -> list[dict[str, Any]]:
-    """A post's parts, read once per half hour: the solver is slow and a
+    """A post's parts, read once per half hour: the page fetcher is slow and a
     person searches the same issue more than once."""
     now = time.time()
     with _DIRECT_SITE_PARTS_LOCK:
@@ -3992,12 +4010,12 @@ def _direct_site_collection_part(post_url: str, title: str, context: dict[str, A
     """The part of a collection post that holds this issue, judged as a
     release in its own right, or None.
 
-    R.E.B.E.L.S. #12 was on DirectSite only inside "R.E.B.E.L.S. Vol. 1 – 2
+    R.E.B.E.L.S. #12 was on the download site only inside "R.E.B.E.L.S. Vol. 1 – 2
     (Collection) (1994-2011)", a title that names no issue and so scored
     nothing -- while its part "R.E.B.E.L.S. Vol. 2 #1 – 28 + Annual
     (2009-2011)" is exactly the release wanted (2026-09-29). Reading the post
     is what a person does by hand; it is done only for a post that says it is
-    a collection of the wanted series, since each read is a solver round trip.
+    a collection of the wanted series, since each read is a page fetcher round trip.
     """
     if not _DIRECT_SITE_COLLECTION.search(_plain_dashes(title)) or not _direct_site_names_series(title, context):
         return None
@@ -4023,12 +4041,12 @@ def _direct_site_collection_part(post_url: str, title: str, context: dict[str, A
 
 
 def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
-    """What to ask DirectSite for one wanted issue.
+    """What to ask the download site for one wanted issue.
 
     Its feed matches words literally and lists only its dozen newest matches,
     so the series title alone buries an older single issue under recent posts:
     "Farmhand" listed #18-#26 and a #1-20 pack, never "Farmhand #3 (2018)".
-    DirectSite titles a single issue "Series #N", so that is asked first, and
+    download-site titles a single issue "Series #N", so that is asked first, and
     the title alone still finds the packs. A query someone typed is theirs.
     """
     series = str(context.get("seriesTitle") or "").strip()
@@ -4055,15 +4073,15 @@ def _direct_site_queries(context: dict[str, Any], query: str) -> list[str]:
 def _direct_site_candidates(
     job_id: int, context: dict[str, Any], query: str, *, set_aside: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """DirectSite results for one wanted issue, judged the way any release is.
+    """download-site results for one wanted issue, judged the way any release is.
 
     Listed, not grabbable: reading the post page a link lives on needs a
-    Cloudflare solver, which is its own piece of work. Knowing the issue is
+    page fetcher, which is its own piece of work. Knowing the issue is
     there is worth having on its own -- it is what a person checks by hand.
 
     With `set_aside`, a post below the bar that still names the series or the
     issue is appended there, registered so a person can take it by hand --
-    only while the solver is ready, since otherwise nothing could be taken.
+    only while the page fetcher is ready, since otherwise nothing could be taken.
     """
     found: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
@@ -4110,8 +4128,8 @@ def _direct_site_candidates(
         if score is None or (score < 85 and not (pack and score >= 70)):
             part = None
             # A collection of the series names its issues in its parts, not
-            # its title. Read at most a few posts a search: each is a solver
-            # round trip, and without a solver the post cannot be read at all.
+            # its title. Read at most a few posts a search: each is a page fetcher
+            # round trip, and without a page fetcher the post cannot be read at all.
             if score is not None and solver_ready and reads < 3:
                 try:
                     reads += 1
@@ -4146,7 +4164,7 @@ def _direct_site_candidates(
             }
         candidates.append({
             "id": candidate_id, "title": shown, "postTitle": item["title"],
-            "indexer": "DirectSite", "sizeBytes": size,
+            "indexer": "The download site", "sizeBytes": size,
             "publishDate": item.get("publishDate"), "protocol": "Direct download",
             "matchScore": score, "matchReasons": reasons,
             "matchStrength": (
@@ -4155,11 +4173,11 @@ def _direct_site_candidates(
             ),
             "formatTags": _release_format_tags(shown),
             "source": "direct_site", "postUrl": item["url"],
-            # Without a solver this is a sighting rather than an offer: the page
+            # Without a page fetcher this is a sighting rather than an offer: the page
             # the link lives on cannot be read at all.
             "grabbable": solver_ready,
             **({} if solver_ready else {
-                "grabHint": "Downloading from DirectSite needs a Cloudflare solver; add one in Settings.",
+                "grabHint": "Downloading from this site needs a page fetcher; add one in Settings.",
             }),
             **({"pack": {"first": pack[0], "last": pack[1]}} if pack else {}),
         })
@@ -4175,7 +4193,7 @@ def search_release_candidates(job_id: int, query: str | None = None) -> dict[str
     try:
         result = search_prowlarr_releases(job_id, query)
     except ValueError as exc:
-        # No indexer configured is not a reason to hide what DirectSite has.
+        # No indexer configured is not a reason to hide what the download site has.
         context = catalog_store().get_acquisition_job_context(job_id)
         result = {
             "job": context, "query": str(query or context.get("seriesTitle") or ""),
@@ -4504,8 +4522,8 @@ def manga_edition(publisher: Any) -> str | None:
 COMIC_CATEGORIES = ("7030", "7020")
 # Manga is posted in Comics and in EBook --
 # and some of it under TV/Anime: Blue Lock v02 and v24 exist only there, and
-# every other volume was found, so those two looked unposted. PublicTracker files its
-# English volumes under Books as a whole (7000), not under a child of it.
+# every other volume was found, so those two looked unposted. Some torrent
+# indexers file English volumes under Books as a whole (7000), not a child of it.
 MANGA_CATEGORIES = ("7030", "7020", "5070", "7000")
 # CBZ and CBR only: the library reads comic archives, and an EPUB would sit
 # there looking like the volume without being one it can show.
@@ -5020,7 +5038,7 @@ def _plain_query_title(title: str, *, cut_at_apostrophe: bool = False) -> str:
     asked for the stem alone ("World", which "World's" and "World’s" both
     contain). A hyphen inside a name stays ("Spider-Man"), and so does a
     dotted acronym: split at its dots "R.E.B.E.L.S." is six letters no search
-    can use -- DirectSite listed nothing for "R E B E L S" and the run's
+    can use -- the download site listed nothing for "R E B E L S" and the run's
     collection at once for the dotted name (2026-09-29). Every other mark is
     a space, one space between words."""
     text = str(title or "")
@@ -5213,7 +5231,7 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
                 continue
             protocol = str(release.get("protocol") or "").casefold()
             title = str(release.get("title") or "").strip()
-            # PublicTracker's default is a magnet link only, so a torrent with no
+            # Some indexers give a magnet link only, so a torrent with no
             # download link is still one -- through Prowlarr's magnet proxy.
             download_url = str(release.get("downloadUrl") or "").strip() or (
                 str(release.get("magnetUrl") or "").strip() if protocol == "torrent" else ""
@@ -5541,7 +5559,7 @@ def send_release_to_qbittorrent(job_id: int, candidate_id: str, *, anyway: bool 
 
 
 def grab_direct_site_release(job_id: int, candidate_id: str, *, anyway: bool = False) -> dict[str, Any]:
-    """Start fetching a DirectSite post, and let the row show it happening.
+    """Start fetching a download-site post, and let the row show it happening.
 
     The bytes are fetched on a thread of their own: a comic is tens or hundreds
     of megabytes, and the page that asked for it should not wait for them. The
@@ -5551,7 +5569,7 @@ def grab_direct_site_release(job_id: int, candidate_id: str, *, anyway: bool = F
     candidate = _claim_release_candidate(job_id, candidate_id, anyway=anyway)
     _enabled_acquisition_service("flaresolverr")
     post_url = str(candidate.get("postUrl") or "")
-    title = str(candidate.get("title") or "DirectSite download")
+    title = str(candidate.get("title") or "download-site download")
     store = catalog_store()
     if anyway:
         _lift_release_refusal(store, job_id, post_url, title)
@@ -5564,7 +5582,7 @@ def grab_direct_site_release(job_id: int, candidate_id: str, *, anyway: bool = F
         **({"taken_by_hand": True} if anyway else {}),
     )
     store.update_acquisition_job(
-        job_id, "grabbed", f"Taken by hand: {title}" if anyway else f"Downloading from DirectSite: {title}",
+        job_id, "grabbed", f"Taken by hand: {title}" if anyway else f"Downloading from the download site: {title}",
     )
     _start_direct_fetch(int(download["id"]), int(job_id), post_url, title)
     return {"status": "grabbed", "source": "direct_site", "release": {"title": title}, "download": download,
@@ -5599,7 +5617,7 @@ def _start_direct_fetch(download_id: int, job_id: int, post_url: str, title: str
 
 def recover_interrupted_direct_downloads() -> int:
     """Start again every download Flipparr was fetching itself when it last
-    stopped. World's Finest #36 sat at 'Downloading from DirectSite' for good
+    stopped. World's Finest #36 sat at 'Downloading from the download site's for good
     after a restart: the thread was gone and the row said nothing else."""
     started = 0
     for row in catalog_store().direct_downloads_in_flight():
@@ -5610,7 +5628,7 @@ def recover_interrupted_direct_downloads() -> int:
                 _DIRECT_FETCHES_RESTARTED.add(download_id)
         if live or not row.get("release_key"):
             continue
-        _start_direct_fetch(download_id, int(row["job_id"]), str(row["release_key"]), str(row["release_title"] or "DirectSite download"))
+        _start_direct_fetch(download_id, int(row["job_id"]), str(row["release_key"]), str(row["release_title"] or "download-site download"))
         started += 1
     return started
 
@@ -5665,7 +5683,7 @@ def stop_acquisition_pack(job_id: int) -> dict[str, Any]:
         raise ValueError("Nothing is downloading for this issue")
     info_hash_ = _torrent_hash(download)
     if download.get("source") != "qbittorrent" or not info_hash_:
-        # Usenet and DirectSite packs are one download already.
+        # Usenet and download-site packs are one download already.
         return {**stop_acquisition_download(job_id), "stopped": [str(job_id)]}
     job_ids = store.torrent_jobs(info_hash_)
     stopped: list[str] = []
@@ -5735,7 +5753,7 @@ def _looks_like_a_page(content_type: str, first_bytes: bytes) -> bool:
 def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, title: str) -> None:
     """Resolve a post's link and stream the file into staging.
 
-    Only the page needs the solver. The link it carries redirects to a plain
+    Only the page needs the page fetcher. The link it carries redirects to a plain
     file host that answers an ordinary request, so the transfer itself is
     normal HTTP and its progress is real rather than a spinner.
     """
@@ -5786,7 +5804,7 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
                     if first and _looks_like_a_page(content_type, chunk):
                         host = urllib.parse.urlsplit(str(response.geturl() or link)).hostname or "another site"
                         raise DirectSiteNotAFile(
-                            f"DirectSite' link for this release opens a page on {host}, not a file, "
+                            f"the download site's link for this release opens a page on {host}, not a file, "
                             "so Flipparr can't fetch it. Download it there and use Upload a file."
                         )
                     first = False
@@ -5807,7 +5825,7 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
         shutil.rmtree(folder, ignore_errors=True)
         return
     except Exception as exc:  # noqa: BLE001 -- every failure belongs on the row
-        message = f"DirectSite download failed: {exc}"
+        message = f"download-site download failed: {exc}"
         log_event("direct_site_download_failed", level="warning", job_id=job_id, error=str(exc)[:200])
         shutil.rmtree(folder, ignore_errors=True)
         try:
@@ -6104,7 +6122,7 @@ def _zero_filled_megabytes(path: Path) -> int:
 
 # ---- Packs ------------------------------------------------------------------
 #
-# A pack is several comics zipped into one file -- DirectSite' "Batman Beyond
+# A pack is several comics zipped into one file -- the download site's "Batman Beyond
 # 2.0 #1 - 40 + TPBs" arrived as one 479 MB ".cbz" holding twenty .cbr issues
 # and not one page, and was refused as unreadable while the issue it was
 # grabbed for sat inside it. A pack is opened: only the files whose names say
@@ -7060,12 +7078,12 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
     if not isinstance(candidates, list):
         candidates = []
     candidates, held_back = _automatic_grab_order(context, candidates) if candidates else ([], "")
-    # A DirectSite single is asked for when the indexers have no single or
+    # A download-site single is asked for when the indexers have no single or
     # pack worth taking -- it comes before settling for a torrent pack -- and
-    # when DirectSite comes before the best single's source in the admin's
-    # order. Otherwise it is not asked: each ask is a solver round trip.
+    # when the download site comes before the best single's source in the admin's
+    # order. Otherwise it is not asked: each ask is a page fetcher round trip.
     # World's Finest #32 sat at "No release found yet" while Find release
-    # showed the issue, confidently, from DirectSite -- a list a person had to
+    # showed the issue, confidently, from the download site -- a list a person had to
     # go and act on.
     firsts = [item for item in candidates if not item.get("lastResort")]
     single_ranks = [_source_rank(item.get("source")) for item in firsts if not item.get("pack")]
@@ -7078,7 +7096,7 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
                 log_event("direct_site_single_grab_failed", level="warning", job_id=job_id,
                           release=str(fallback.get("title") or ""), error=str(exc)[:200])
                 if not firsts:
-                    _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on DirectSite but could not fetch it: {exc}")
+                    _say_on_the_row(job_id, f"Found {fallback.get('title') or 'a release'} on the download site but could not fetch it: {exc}")
                     return None
             else:
                 return {**grabbed, "release": fallback}
@@ -7088,7 +7106,7 @@ def _auto_grab_release(job_id: int) -> dict[str, Any] | None:
         return None
     # The same release is usually posted on several indexers, and one of them
     # handing back something that is not an NZB says nothing about the others.
-    # Once & Future #30 sat at "4 release candidates found": Indexer A's copy
+    # Once & Future #30 sat at "4 release candidates found": one indexer's copy
     # was ranked first, its NZB was broken, and the three good copies were never
     # tried. The release itself is not marked unusable -- that goes by title,
     # and would take the good copies down with the broken one.
@@ -7130,10 +7148,10 @@ def _client_name(candidate: dict[str, Any]) -> str:
 
 
 def _direct_site_single_to_take(job_id: int, context: dict[str, Any]) -> dict[str, Any] | None:
-    """The one DirectSite release the automatic search may take for an issue
+    """The one download-site release the automatic search may take for an issue
     Usenet has nothing for: a strong match for that issue alone (a pack is
     the run's question, asked elsewhere), not refused before, and only while
-    DirectSite can be downloaded from."""
+    the download site can be downloaded from."""
     try:
         _enabled_acquisition_service("flaresolverr")
     except ValueError:
@@ -7144,7 +7162,7 @@ def _direct_site_single_to_take(job_id: int, context: dict[str, Any]) -> dict[st
     try:
         found = _direct_site_candidates(job_id, context, title)
         refused = set(catalog_store().rejected_acquisition_release_keys(job_id))
-    except Exception as exc:  # noqa: BLE001 -- DirectSite down is not a reason to stop
+    except Exception as exc:  # noqa: BLE001 -- the download site down is not a reason to stop
         log_event("direct_site_single_search_failed", level="info", job_id=job_id, error=str(exc)[:160])
         return None
     for candidate in sorted(found, key=lambda item: -int(item.get("matchScore") or 0)):
@@ -7162,7 +7180,7 @@ def _resume_run_after_pack(job_id: int, release_title: str) -> None:
 
     Grabbing a pack stops the per-issue searches -- the rest of the run rides
     on it -- so a pack that fails left every other issue waiting for the next
-    scheduled sweep. Y: The Last Man's sixty issues did, behind a DirectSite
+    scheduled sweep. Y: The Last Man's sixty issues did, behind a download site
     pack whose link opened a file host's page. The job the pack was grabbed
     against is left to its own fallback.
     """
@@ -7223,9 +7241,9 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         log_event("run_pack_search_failed", level="warning", request_id=request_id, error=str(exc))
         return None
     candidates = list(search.get("candidates") or [])
-    # DirectSite posts whole runs as packs ("Batman Beyond 2.0 #1-40 + TPBs")
+    # download-site posts whole runs as packs ("Batman Beyond 2.0 #1-40 + TPBs")
     # that Usenet may not carry. For a run that is mostly missing, a pack
-    # holding it is the best answer wherever it is, so DirectSite' packs are
+    # holding it is the best answer wherever it is, so the download site's packs are
     # weighed here too -- when it can be downloaded from at all. Its single
     # issues stay a person's choice, as before.
     try:
@@ -7235,7 +7253,7 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         pass
     except Exception as exc:  # noqa: BLE001 -- Usenet's packs still stand
         log_event("run_pack_direct_site_failed", level="warning", request_id=request_id, error=str(exc)[:160])
-    # A pack that already failed for this run -- a DirectSite link that opens
+    # A pack that already failed for this run -- a download-site link that opens
     # a file host's page, an NZB that would not complete -- is not tried again.
     # Judged against every issue of the run: after a failure the issue the
     # pack was grabbed against falls back to a single and another leads, and
@@ -7264,7 +7282,7 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
         pack = candidate["pack"]
         covered = sum(1 for number in numbers if pack["first"] <= number <= pack["last"])
         # Most of the run first; between equals the admin's order of sources
-        # (Usenet, a torrent, then DirectSite unless changed), then the smaller
+        # (Usenet, a torrent, then the download site unless changed), then the smaller
         # download.
         rank = _source_rank(candidate.get("source"), order)
         offers.append((-covered, rank, int(candidate.get("sizeBytes") or 0), candidate))
@@ -7274,7 +7292,7 @@ def _grab_run_pack(store: Any, request_id: int, job_ids: list[int]) -> dict[str,
     covered, _rank, _size, candidate = offers[0]
     try:
         # SABnzbd for Usenet, qBittorrent for a torrent, Flipparr's own
-        # download for DirectSite.
+        # download for the download site.
         grab_release_candidate(lead_job, str(candidate["id"]))
     except Exception as exc:  # noqa: BLE001 -- a pack that cannot be sent is not a reason to stop
         log_event(
@@ -7292,7 +7310,7 @@ def _grab_other_direct_site_parts(
     store: Any, candidate: dict[str, Any], lead: dict[str, Any],
     wanted: list[dict[str, Any]], context: dict[str, Any],
 ) -> int:
-    """The rest of a DirectSite run pack posted in parts, one download a part.
+    """The rest of a download site run pack posted in parts, one download a part.
 
     A grab fetches the part holding its own issue, so "Descender #1 – 32 +
     TPBs" brought "#1 – 8" and nothing else: #9 to #32 were left to singles
@@ -7343,7 +7361,7 @@ def _grab_other_direct_site_parts(
                 job_id, f"direct_site:{hashlib.sha256(post_url.encode()).hexdigest()[:20]}:{job_id}",
                 title, release_key=post_url, source="direct_site",
             )
-            store.update_acquisition_job(job_id, "grabbed", f"Downloading from DirectSite: {title}")
+            store.update_acquisition_job(job_id, "grabbed", f"Downloading from the download site: {title}")
             _start_direct_fetch(int(download["id"]), job_id, post_url, title)
             started += 1
         except Exception as exc:  # noqa: BLE001 -- its issues fall to singles
@@ -7447,7 +7465,7 @@ def _automatic_grab_order(
     # Pulling one issue, a pack is the last resort -- taken only when nothing
     # else has the issue at all -- and then only a torrent, the one pack that
     # can be fetched for that issue alone (owner, 2026-09-30). Marked, so
-    # the caller asks DirectSite for a single before settling for it.
+    # the caller asks the download site for a single before settling for it.
     last_resort = [] if singles or eligible else [
         {**candidate, "lastResort": True} for candidate in packs if candidate.get("source") == "torrent"
     ]
@@ -7851,7 +7869,7 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
                     _DIRECT_FETCHES_RESTARTED.add(download_id)
             if orphaned and download.get("release_key"):
                 _start_direct_fetch(download_id, int(download.get("job_id") or 0), str(download["release_key"]),
-                                    str(download.get("release_title") or "DirectSite download"))
+                                    str(download.get("release_title") or "download-site download"))
             return {"status": "downloading"}
         if status != "completed":
             return {"status": status or "unknown"}

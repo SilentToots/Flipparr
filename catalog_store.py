@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 63
+SCHEMA_VERSION = 64
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -1966,6 +1966,22 @@ class CatalogStore:
                                  ("backdrop_member", "TEXT"), ("backdrop_source", "TEXT"), ("backdrop_signature", "TEXT")):
                 if collection_columns and column not in collection_columns:
                     connection.execute(f"ALTER TABLE run_collections ADD COLUMN {column} {kind}")
+            # 64: direct downloads take their neutral name, "direct_site", in
+            # the records that carry it: the source, the download identity and
+            # the staging paths (the folder moves when it is next used).
+            for table in ("acquisition_downloads", "acquisition_release_failures"):
+                columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+                if "source" in columns:
+                    connection.execute(f"UPDATE {table} SET source='direct_site' WHERE source='direct_site'")
+                if "sab_nzo_id" in columns:
+                    connection.execute(
+                        f"UPDATE {table} SET sab_nzo_id='direct_site:' || substr(sab_nzo_id, 11) "
+                        "WHERE sab_nzo_id LIKE 'direct_site:%'")
+                for column in ("sab_storage", "local_source"):
+                    if column in columns:
+                        connection.execute(
+                            f"UPDATE {table} SET {column}=replace({column}, '/downloads/direct_site/', '/downloads/direct_site/') "
+                            f"WHERE {column} LIKE '%/downloads/direct_site/%'")
             # 55: member_requests loses its CHECK on kind (story arcs are a new
             # kind; kinds are validated in Python). SQLite cannot drop a
             # constraint in place, so the table is copied, counted and swapped.
@@ -8281,7 +8297,7 @@ class CatalogStore:
         Nothing outside the process knows about them, so after a restart the
         rows are all that is left of them. A download client's rows are its
         own to answer for: a torrent's "fetch" restarted here would treat its
-        release key as a DirectSite post and refuse it."""
+        release key as a download-site post and refuse it."""
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT id, job_id, source, status, release_key, release_title FROM acquisition_downloads

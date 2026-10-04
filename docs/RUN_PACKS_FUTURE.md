@@ -1,7 +1,7 @@
 # Complete-run packs as a source — deferred
 
 Not scheduled; the UI comes first. Worth picking up beside
-[DirectSite (DDL)](DIRECT_DOWNLOADS.md), which posts whole runs as a matter
+[direct downloads](DIRECT_DOWNLOADS.md), whose sites post whole runs as a matter
 of course, so half the work below is shared.
 
 ## What happens today

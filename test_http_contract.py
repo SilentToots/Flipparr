@@ -188,7 +188,7 @@ class HttpContractTests(unittest.TestCase):
         before = config.read_text() if config.exists() else None
         try:
             response = self.post("/api/v1/acquisition-services/qbittorrent", {
-                "url": "http://vpn:8080", "username": "admin", "password": "hunter2", "category": "comics",
+                "url": "http://qbittorrent:8080", "username": "admin", "password": "hunter2", "category": "comics",
             })
             self.assertEqual(response.status, 200)
             body = response.body.decode()

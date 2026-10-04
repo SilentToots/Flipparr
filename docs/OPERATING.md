@@ -266,9 +266,9 @@ qBittorrent is a second download client, for what Usenet does not carry:
 manga volumes, and whole runs as packs. Automatic search works with either
 client, and prefers Usenet when a Usenet and a torrent release match equally.
 
-1. **Indexers.** Add torrent indexers in Prowlarr. For English manga, PublicTracker
-   (public, no account) files volumes under *Books*; Flipparr asks that
-   category for manga runs.
+1. **Indexers.** Add the torrent indexers you choose in Prowlarr. Some file
+   English manga volumes under *Books*, so Flipparr asks that category too
+   for manga runs.
 2. **qBittorrent 4.5.5 or later.** Older versions cannot stop a torrent until
    its file list arrives, so they would download a whole pack; Flipparr still
    uses them for single releases but never sends them a pack.
@@ -288,7 +288,7 @@ client, and prefers Usenet when a Usenet and a torrent release match equally.
    ever removes torrents it added (tagged `flipparr`).
 
 How packs are used: pulling a whole run, one pack answers it, and between packs
-of the same reach Usenet comes first, then a torrent, then DirectSite. Pulling a
+of the same reach Usenet comes first, then a torrent, then direct downloads. Pulling a
 single issue, every single release from every source is tried first, and a
 torrent pack is the last resort. Either way only the wanted issues' files are
 downloaded from a torrent pack; the run's other wanted issues it holds come in

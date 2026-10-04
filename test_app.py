@@ -1484,6 +1484,18 @@ class FilenameParserTests(unittest.TestCase):
             self.assertNotIn("prowlarr-secret", str(public))
             self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
 
+    def test_direct_download_settings_saved_under_the_old_name_are_kept(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "app.os.environ",
+            {"COMICARR_ACQUISITION_CONFIG": str(Path(temp_dir) / "acquisition-services.json")},
+        ):
+            (Path(temp_dir) / "acquisition-services.json").write_text(json.dumps(
+                {"direct_site": {"enabled": True, "url": "https://comics.example"}}))
+            config = app.load_acquisition_service_config()
+            self.assertEqual((config["direct_site"]["enabled"], config["direct_site"]["url"]),
+                             (True, "https://comics.example"))
+            self.assertNotIn("direct_site", config)
+
     def test_collected_editions_default_off_and_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             "app.os.environ",
@@ -3598,7 +3610,7 @@ class PackEligibilityTests(unittest.TestCase):
 
 FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
-  <title>You searched for Supergirl &#8211; DirectSite</title>
+  <title>You searched for Supergirl &#8211; the download site</title>
   <item>
     <title>Supergirl &#8211; Woman of Tomorrow #8 (2022)</title>
     <link>https://comics.example/dc/supergirl-woman-of-tomorrow-8-2022/</link>
@@ -3620,17 +3632,32 @@ FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 class DirectSiteSearchTests(unittest.TestCase):
-    """Finding things on DirectSite is open; fetching them is not.
+    """Finding things on the download site is open; fetching them is not.
 
     The feed answers a plain request (measured 2026-09-15) while the post pages
-    behind it are Cloudflare challenged, so results are listed and labelled but
-    cannot be grabbed until the solver work lands.
+    behind it are answered only to a full browser, so results are listed and labelled but
+    cannot be grabbed until the page fetcher work lands.
     """
 
     CONTEXT = {
         "seriesTitle": "Supergirl Woman of Tomorrow", "issueNumber": "8",
         "publicationYear": 2022, "runIssueCount": 8, "requestId": "9",
     }
+
+    def setUp(self):
+        # No site is built in: these tests run against one the operator entered.
+        site = patch("app.load_acquisition_service_config",
+                     return_value={"direct_site": {"enabled": True, "url": "https://comics.example"}})
+        site.start()
+        self.addCleanup(site.stop)
+
+    def test_no_site_is_searched_until_one_is_entered_and_on(self):
+        for saved in ({}, {"direct_site": {"enabled": False, "url": "https://comics.example"}},
+                      {"direct_site": {"enabled": True, "url": ""}}):
+            with patch("app.load_acquisition_service_config", return_value=saved), \
+                 patch("app.fetch_bytes_with_headers", return_value=FEED) as fetch:
+                self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl"), [])
+            fetch.assert_not_called()
 
     def test_the_feed_is_read_into_results(self):
         with patch("app.fetch_bytes_with_headers", return_value=FEED) as fetch:
@@ -3650,7 +3677,7 @@ class DirectSiteSearchTests(unittest.TestCase):
                 app.direct_site_search("Supergirl")
 
     def test_results_are_scored_despite_the_en_dash(self):
-        """DirectSite writes "Supergirl – Woman of Tomorrow"; matchers expect a hyphen."""
+        """The download site writes "Supergirl – Woman of Tomorrow"; matchers expect a hyphen."""
         with patch("app.fetch_bytes_with_headers", return_value=FEED):
             candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
         titles = [item["title"] for item in candidates]
@@ -3658,7 +3685,7 @@ class DirectSiteSearchTests(unittest.TestCase):
         self.assertNotIn("Batman – The Long Halloween #3 (1997)", titles, "another series")
         first = candidates[0]
         self.assertEqual(first["source"], "direct_site")
-        self.assertEqual(first["indexer"], "DirectSite")
+        self.assertEqual(first["indexer"], "The download site")
         self.assertEqual(first["protocol"], "Direct download")
         self.assertGreaterEqual(first["matchScore"], 85)
 
@@ -3666,13 +3693,13 @@ class DirectSiteSearchTests(unittest.TestCase):
         with patch("app.fetch_bytes_with_headers", return_value=FEED):
             candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
         self.assertTrue(all(item["grabbable"] is False for item in candidates))
-        self.assertTrue(all("solver" in item["grabHint"] for item in candidates))
+        self.assertTrue(all("page fetcher" in item["grabHint"] for item in candidates))
 
     def test_grabbing_one_without_a_solver_says_which_is_missing(self):
         with patch("app.fetch_bytes_with_headers", return_value=FEED), \
              patch("app.load_acquisition_service_config", return_value={"direct_site": {"enabled": True, "url": "https://comics.example"}}):
             candidates = app._direct_site_candidates(7, self.CONTEXT, "Supergirl")
-            with self.assertRaisesRegex(ValueError, "FlareSolverr"):
+            with self.assertRaisesRegex(ValueError, "Page fetcher"):
                 app.grab_release_candidate(7, candidates[0]["id"])
 
     def test_sabnzbd_is_never_handed_a_direct_download(self):
@@ -3690,7 +3717,7 @@ class DirectSiteSearchTests(unittest.TestCase):
         self.assertEqual(packs[0]["pack"], {"first": 1, "last": 8})
 
     def test_an_older_single_issue_is_found_even_when_newer_posts_bury_it(self):
-        # DirectSite lists only its newest matches. "Farmhand" returned #18-#26
+        # the download site lists only its newest matches. "Farmhand" returned #18-#26
         # and a #1-20 pack; only "Farmhand #3" found the single issue.
         context = {"seriesTitle": "Farmhand", "issueNumber": "003", "publicationYear": 2018,
                    "runIssueCount": 20, "requestId": "57"}
@@ -3727,16 +3754,16 @@ class DirectSiteSearchTests(unittest.TestCase):
         aside = []
         with patch("app.fetch_bytes_with_headers", return_value=feed):
             self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl", set_aside=aside), [])
-        self.assertEqual(aside, [], "without a solver nothing could be taken, so nothing is offered")
+        self.assertEqual(aside, [], "without a page fetcher nothing could be taken, so nothing is offered")
         with patch("app.fetch_bytes_with_headers", return_value=feed), \
-             patch("app._enabled_acquisition_service", return_value={}):
+             patch("app._enabled_acquisition_service", return_value={"url": "https://comics.example"}):
             self.assertEqual(app._direct_site_candidates(7, self.CONTEXT, "Supergirl", set_aside=aside), [])
         self.assertEqual([(m["title"], m["reason"], m["source"], m["setAside"]) for m in aside],
                          [("Supergirl – Woman of Tomorrow #3 (2022)", "Not this issue", "direct_site", True)],
                          "the post naming the series is offered; the unrelated one is not")
         self.assertEqual(_RELEASE_CANDIDATES[aside[0]["id"]]["postUrl"], "https://comics.example/dc/swot-3/")
         with patch("app.fetch_bytes_with_headers", return_value=feed), \
-             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app._enabled_acquisition_service", return_value={"url": "https://comics.example"}), \
              patch("app.search_prowlarr_releases", return_value={
                  "job": self.CONTEXT, "query": "Supergirl", "candidateCount": 0, "candidates": [],
                  "resultCount": 0, "nearMisses": [{"id": "u1", "title": "Other 008", "score": 35, "reasons": [],
@@ -3747,7 +3774,7 @@ class DirectSiteSearchTests(unittest.TestCase):
                          ["Other 008", "Supergirl – Woman of Tomorrow #3 (2022)"], "both lists, best first")
 
     def test_a_collection_posts_part_stands_in_for_the_post(self):
-        # R.E.B.E.L.S. #12 was on DirectSite only inside "R.E.B.E.L.S. Vol. 1 – 2
+        # R.E.B.E.L.S. #12 was on the download site only inside "R.E.B.E.L.S. Vol. 1 – 2
         # (Collection) (1994-2011)", whose title names no issue (2026-09-29).
         context = {"seriesTitle": "R.E.B.E.L.S.", "seriesYear": 2009, "issueNumber": "12", "publicationYear": 2010,
                    "publisher": "DC Comics", "runIssueCount": 28, "requestId": "3"}
@@ -3759,7 +3786,7 @@ class DirectSiteSearchTests(unittest.TestCase):
         app._DIRECT_SITE_PARTS.clear()
         self.addCleanup(app._DIRECT_SITE_PARTS.clear)
         with patch("app.fetch_bytes_with_headers", return_value=feed) as fetch, \
-             patch("app._enabled_acquisition_service", return_value={}), \
+             patch("app._enabled_acquisition_service", return_value={"url": "https://comics.example"}), \
              patch("app.solver_fetch_html", return_value=DirectSitePartsTests.COLLECTION) as solver:
             candidates = app._direct_site_candidates(3, context, "R.E.B.E.L.S.")
             again = app._direct_site_candidates(3, context, "R.E.B.E.L.S.")
@@ -3778,7 +3805,7 @@ class DirectSiteSearchTests(unittest.TestCase):
         with patch("app.fetch_bytes_with_headers", return_value=feed), \
              patch("app.solver_fetch_html", return_value=DirectSitePartsTests.COLLECTION) as solver:
             self.assertEqual(app._direct_site_candidates(3, context, "R.E.B.E.L.S."), [],
-                             "without a solver the post cannot be read, so it is not offered")
+                             "without a page fetcher the post cannot be read, so it is not offered")
             solver.assert_not_called()
 
     def test_a_search_that_fails_leaves_usenet_results_alone(self):
@@ -3826,7 +3853,7 @@ class SolverTests(unittest.TestCase):
     """Reading the post page needs a browser; fetching the file does not."""
 
     def test_the_api_path_is_added_rather_than_failing_silently(self):
-        """mylar3 #1815: without /v1 the solver 405s and every grab dies quietly."""
+        """mylar3 #1815: without /v1 the page fetcher 405s and every grab dies quietly."""
         self.assertEqual(app._solver_endpoint("http://flaresolverr:8191"), "http://flaresolverr:8191/v1")
         self.assertEqual(app._solver_endpoint("http://flaresolverr:8191/v1/"), "http://flaresolverr:8191/v1")
         with self.assertRaises(ValueError):
@@ -3857,7 +3884,7 @@ class SolverTests(unittest.TestCase):
 
     def test_a_challenge_page_is_not_mistaken_for_the_post(self):
         with patch("app.solver_request", return_value={"solution": {"response": "<html><title>Just a moment...</title>"}}):
-            with self.assertRaisesRegex(ValueError, "challenge page"):
+            with self.assertRaisesRegex(ValueError, "browser check"):
                 app.solver_fetch_html("https://comics.example/dc/supergirl-8/")
 
 
@@ -4104,7 +4131,7 @@ class ManualImportTests(unittest.TestCase):
 
 class ComicPackDownloadTests(unittest.TestCase):
     """A pack -- comics zipped into one file -- gives up the issue it was grabbed
-    for. DirectSite' "Batman Beyond 2.0 #1 - 40 + TPBs" came as one .cbz of
+    for. the download site's "Batman Beyond 2.0 #1 - 40 + TPBs" came as one .cbz of
     twenty .cbr issues, and was refused as unreadable with #2 inside it."""
 
     JOB = {"seriesTitle": "Batman Beyond 2.0", "seriesYear": 2013, "issueNumber": "2",
@@ -4242,7 +4269,7 @@ class RunPackPassTests(unittest.TestCase):
         send.assert_called_once_with(101, "big-lean")
 
     def test_a_direct_site_pack_holding_the_run_is_taken_when_usenet_has_none(self):
-        """Batman Beyond 2.0's forty issues were on DirectSite as one pack, and
+        """Batman Beyond 2.0's forty issues were on the download site as one pack, and
         the run went out as forty singles because only Usenet was asked."""
         store = self._store()
         jobs = [100 + n for n in range(1, 41)]
@@ -7675,7 +7702,7 @@ def _image_epub(path, pages, *, text_pages=0):
 
 
 class RunPackInPartsTests(unittest.TestCase):
-    """Descender (2026-09-30): a DirectSite run pack in five parts brought only
+    """Descender (2026-09-30): a download site run pack in five parts brought only
     its first, and the backlog sweep searched the rest one by one without
     knowing a pack was on its way."""
 
@@ -8654,7 +8681,7 @@ class ReadingListImportTests(ReadingListTests):
 
 
 class DirectSitePartsTests(unittest.TestCase):
-    """A DirectSite post in parts: the part that holds the wanted issue is the
+    """A download-site post in parts: the part that holds the wanted issue is the
     one taken, not the first button on the page."""
 
     PAGE = (
@@ -8869,7 +8896,7 @@ class DirectDownloadRecoveryTests(unittest.TestCase):
 
 
 class DirectSiteSingleFallbackTests(unittest.TestCase):
-    """Usenet has nothing; DirectSite has the very issue, strongly. Taken --
+    """Usenet has nothing; the download site has the very issue, strongly. Taken --
     as a run's pack from there already is -- rather than left on a list."""
 
     def _run(self, found, flaresolverr=True):
@@ -9157,7 +9184,7 @@ class FakeQbittorrent:
 
 class TorrentAcquisitionTests(unittest.TestCase):
     """qBittorrent beside SABnzbd: torrents for manga and for whole runs as
-    packs, which DirectSite kept losing (owner, 2026-09-30). Only the wanted
+    packs, which the download site kept losing (owner, 2026-09-30). Only the wanted
     files of a pack are downloaded, the run's other issues ride along on rows
     of their own, and a torrent seeds on after import until the client stops
     it."""
@@ -9177,12 +9204,12 @@ class TorrentAcquisitionTests(unittest.TestCase):
             "app.os.environ", {"COMICARR_ACQUISITION_CONFIG": str(Path(folder) / "services.json")},
         ):
             public = save_acquisition_service_config("qbittorrent", {
-                "url": "http://vpn:8080/", "username": "admin", "password": "hunter2",
+                "url": "http://qbittorrent:8080/", "username": "admin", "password": "hunter2",
                 "category": "comics", "enabled": True,
             })
             qbt = next(service for service in public["services"] if service["id"] == "qbittorrent")
             self.assertEqual((qbt["url"], qbt["username"], qbt["category"], qbt["credentialHint"]),
-                             ("http://vpn:8080", "admin", "comics", "Saved locally"))
+                             ("http://qbittorrent:8080", "admin", "comics", "Saved locally"))
             self.assertTrue(qbt["configured"] and qbt["enabled"], "credentials are optional")
             self.assertNotIn("hunter2", str(public))
             self.assertNotIn("password", json.dumps(public).lower(), "the word itself never reaches the page")
@@ -9203,7 +9230,7 @@ class TorrentAcquisitionTests(unittest.TestCase):
         client.default_save_path.return_value = "/data/torrents/complete"
         client.ensure_category.return_value = "/data/torrents/complete/comics"
         client.supports_selection.return_value = True
-        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://vpn:8080", "category": "comics"}}), \
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://qbittorrent:8080", "category": "comics"}}), \
              patch("app.torrent_client.QBittorrent", return_value=client):
             result = test_acquisition_service_connection("qbittorrent", {"username": "admin", "password": "x"})
         client.ensure_category.assert_called_once_with("comics", "/data/torrents/complete/comics")
@@ -9211,13 +9238,13 @@ class TorrentAcquisitionTests(unittest.TestCase):
         self.assertIn("saves to /data/torrents/complete/comics", result["detail"])
         client.ensure_category.return_value = "/data/torrents/complete/manga"
         client.supports_selection.return_value = False
-        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://vpn:8080"}}), \
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://qbittorrent:8080"}}), \
              patch("app.torrent_client.QBittorrent", return_value=client):
             detail = test_acquisition_service_connection("qbittorrent")["detail"]
         self.assertIn("has to end in that name", detail)
         self.assertIn("downloads a pack whole", detail)
         client.version.side_effect = app.torrent_client.TorrentAuthError("qBittorrent rejected this username and password")
-        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://vpn:8080"}}), \
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://qbittorrent:8080"}}), \
              patch("app.torrent_client.QBittorrent", return_value=client):
             with self.assertRaisesRegex(ValueError, "rejected this username"):
                 test_acquisition_service_connection("qbittorrent")
@@ -9243,7 +9270,7 @@ class TorrentAcquisitionTests(unittest.TestCase):
         store.rejected_acquisition_releases.return_value = []
         services = {"prowlarr": {"enabled": True, "url": "http://prowlarr", "apiKey": "secret"}}
         if qbittorrent:
-            services["qbittorrent"] = {"enabled": True, "url": "http://vpn:8080"}
+            services["qbittorrent"] = {"enabled": True, "url": "http://qbittorrent:8080"}
         with patch("app.catalog_store", return_value=store), \
              patch("app.load_acquisition_service_config", return_value=services), \
              patch("app.fetch_json_with_headers", return_value=releases) as fetch:
@@ -9251,16 +9278,16 @@ class TorrentAcquisitionTests(unittest.TestCase):
 
     def test_a_magnet_only_torrent_is_a_candidate_with_its_swarm(self):
         releases = [
-            {"guid": "publictracker-1", "title": "Blue Lock v34 (2025) (Digital) (Stick)", "protocol": "torrent",
+            {"guid": "torrent-1", "title": "Blue Lock v34 (2025) (Digital) (Stick)", "protocol": "torrent",
              "magnetUrl": "http://prowlarr/16/download?apikey=secret&link=abc&file=Blue+Lock", "infoHash": "AB" * 20,
-             "seeders": 12, "leechers": 3, "indexer": "PublicTracker", "size": 400_000_000, "categories": [{"id": 7000}]},
+             "seeders": 12, "leechers": 3, "indexer": "Public tracker", "size": 400_000_000, "categories": [{"id": 7000}]},
             {"guid": "usenet-1", "title": "Blue Lock v34 (2025) (Digital) (1r0n)", "protocol": "usenet",
              "downloadUrl": "http://prowlarr/9/download?id=1", "indexer": "One", "size": 400_000_000,
              "categories": [{"id": 7030}]},
         ]
         result, fetch = self.search(releases)
         self.assertIn(("categories", "7000"), urllib.parse.parse_qsl(urllib.parse.urlsplit(fetch.call_args.args[0]).query),
-                      "manga is asked of Books too, where PublicTracker files it")
+                      "manga is asked of Books too, where some indexers file it")
         usenet, torrent = result["candidates"]
         self.assertEqual((usenet["source"], usenet["protocol"]), ("usenet", "Usenet"), "Usenet first at an equal score")
         self.assertEqual((torrent["source"], torrent["protocol"], torrent["seeders"], torrent["grabbable"]),
@@ -9710,6 +9737,9 @@ class SourcePriorityTests(unittest.TestCase):
                 app.save_app_settings({"sourcePriority": ["usenet", "usenet", "torrent"]})
             (Path(folder) / "settings.json").write_text(json.dumps({"sourcePriority": ["usenet"]}))
             self.assertEqual(app.source_priority(), ["usenet", "torrent", "direct_site"], "a broken list is the default")
+            (Path(folder) / "settings.json").write_text(json.dumps({"sourcePriority": ["direct_site", "usenet", "torrent"]}))
+            self.assertEqual(app.source_priority(), ["direct_site", "usenet", "torrent"],
+                             "an order saved under direct downloads' old name is kept")
 
     def test_the_order_decides_among_strong_matches_and_never_lifts_a_weak_one(self):
         key = app._release_order_key(["torrent", "usenet", "direct_site"])

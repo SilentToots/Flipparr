@@ -5268,7 +5268,7 @@ function SetAsideRow({ item, job, admin, busy, onTake }) {
         <button type="button" className={`primary-button ${busy ? "loading" : ""}`} aria-busy={busy} disabled={busy} onClick={() => onTake(item)}>{busy ? <LoadingSpinner size={14} /> : <CloudArrowDown size={14} />} {busy ? "Sending…" : "Take it"}</button>
       </span>
     </div> : takeable ? <span className="release-set-aside-actions">
-      <button type="button" className="ghost-button" disabled={!item.grabbable} title={item.grabbable ? undefined : item.source === "torrent" ? "Connect qBittorrent in Settings to download torrents." : "Downloading from DirectSite needs a Cloudflare solver; add one in Settings."} onClick={() => setConfirming(true)}>{item.grabbable ? "Take anyway" : "Not fetchable yet"}</button>
+      <button type="button" className="ghost-button" disabled={!item.grabbable} title={item.grabbable ? undefined : item.source === "torrent" ? "Connect qBittorrent in Settings to download torrents." : "Downloading from this site needs a page fetcher; add one in Settings."} onClick={() => setConfirming(true)}>{item.grabbable ? "Take anyway" : "Not fetchable yet"}</button>
     </span> : null}
   </li>;
 }
@@ -7313,7 +7313,7 @@ function SourceOrderList({ rows, onReorder }) {
       if (!source) return null;
       return <>
         <b className="source-order-position" aria-hidden="true">{index + 1}</b>
-        <span><span className="provider-title-line"><strong>{source.name}</strong><b className={`provider-state ${source.ready ? "connected" : "optional"}`}>{source.ready ? "Ready" : "Not connected"}</b></span><small>{source.ready ? `Downloaded through ${source.via}.` : `Skipped until ${source.id === "direct_site" ? "DirectSite and FlareSolverr are" : `${source.via} is`} connected below.`}</small></span>
+        <span><span className="provider-title-line"><strong>{source.name}</strong><b className={`provider-state ${source.ready ? "connected" : "optional"}`}>{source.ready ? "Ready" : "Not connected"}</b></span><small>{source.ready ? `Downloaded through ${source.via}.` : `Skipped until ${source.id === "direct_site" ? "the site and a page fetcher are" : `${source.via} is`} connected below.`}</small></span>
       </>;
     }} />;
 }

@@ -283,7 +283,7 @@ export const tabCount = (bucket) => bucket.length;
 export const RELEASE_SOURCES = [
   { id: "usenet", name: "Usenet", via: "SABnzbd", needs: ["sabnzbd"] },
   { id: "torrent", name: "Torrents", via: "qBittorrent", needs: ["qbittorrent"] },
-  { id: "direct_site", name: "DirectSite", via: "direct download", needs: ["direct_site", "flaresolverr"] },
+  { id: "direct_site", name: "Direct downloads", via: "direct download", needs: ["direct_site", "flaresolverr"] },
 ];
 export const DEFAULT_SOURCE_ORDER = RELEASE_SOURCES.map((source) => source.id);
 
@@ -326,11 +326,11 @@ export function sourceRows(order, services) {
 }
 
 /** Services by what they do: finding releases, downloading them, and
- * DirectSite with the solver it needs. */
+ * the download site with the page fetcher it needs. */
 export const SERVICE_GROUPS = [
   { id: "search", title: "Search", lead: "Finds releases on your Usenet and torrent indexers." },
   { id: "clients", title: "Download clients", lead: "Download what is chosen and report back while they work." },
-  { id: "direct", title: "Direct downloads", lead: "DirectSite, for what the indexers do not carry. Downloading from it needs FlareSolverr." },
+  { id: "direct", title: "Direct downloads", lead: "A site you choose, searched for what your indexers do not carry. Downloading from it needs a page fetcher." },
 ];
 const DIRECT_ORDER = ["direct_site", "flaresolverr"];
 
