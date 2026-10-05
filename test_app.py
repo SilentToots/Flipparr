@@ -8146,18 +8146,40 @@ class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
         self.assertNotIn("format", app.DownloadContentMismatch.UNPROVEN, "no copy of this release will open")
         self.assertIn("password-protected", str(refused.exception))
 
-    def test_a_rar_that_will_not_give_up_a_page_without_a_password_is_locked(self):
+    @unittest.skipUnless(app.shutil.which("bsdtar"), "needs bsdtar, as the image has")
+    def test_the_archive_tool_is_believed_on_everything_it_says_not_its_last_line(self):
+        # Review of Gate 3 (2026-10-05): the first version read the tool's last
+        # line, which for an encrypted entry is "Error exit delayed from
+        # previous errors", and its test made the message up. This asks the
+        # real tool about a really encrypted archive. bsdtar cannot write an
+        # encrypted RAR or 7-Zip (nothing free can write RAR), so the archive
+        # is an encrypted zip; reading it goes through the same libarchive
+        # passphrase path RAR and 7-Zip do.
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            page = Path(folder) / "001.jpg"
+            page.write_bytes(b"\xff\xd8\xff\xe0 a page")
+            locked, plain = Path(folder) / "locked.cbr", Path(folder) / "plain.cbr"
+            made = subprocess.run(["bsdtar", "-cf", str(locked), "--format", "zip", "--options", "zip:encryption=zipcrypt",
+                                   "--passphrase", "secret", "-C", folder, "001.jpg"], capture_output=True)
+            if made.returncode != 0:
+                self.skipTest("this bsdtar cannot write an encrypted zip")
+            subprocess.run(["bsdtar", "-cf", str(plain), "--format", "zip", "-C", folder, "001.jpg"], check=True)
+            self.assertEqual(app._archive_tool_says_locked(locked), "The archive is password-protected")
+            self.assertIsNone(app._archive_tool_says_locked(plain))
+            # And what the reader's own call reports for it says nothing, which
+            # is why it cannot be the test.
+            with self.assertRaises(ValueError) as said:
+                app._run_archive_tool(["-xOf", str(locked), "001.jpg"], 1 << 20)
+            self.assertNotRegex(str(said.exception), "(?i)passphrase|encrypt|password")
+
+    def test_a_rar_or_7zip_is_asked_of_the_archive_tool(self):
         with tempfile.TemporaryDirectory() as folder:
             rar = Path(folder) / "Saga 001.cbr"
             rar.write_bytes(b"Rar!\x1a\x07\x01\x00" + b"\x00" * 64)
-            with patch("app.archive_member_names", return_value=["001.jpg"]), \
-                    patch("app.read_archive_member", side_effect=ValueError("bsdtar: Passphrase required for this entry")):
+            with patch("app._archive_tool_says_locked", return_value="The archive is password-protected") as asked:
                 self.assertEqual(app.archive_is_locked(rar), "The archive is password-protected")
-            with patch("app.archive_member_names", return_value=["001.jpg"]), \
-                    patch("app.read_archive_member", side_effect=ValueError("Truncated RAR file data")):
-                self.assertIsNone(app.archive_is_locked(rar), "damaged is not locked")
-            with patch("app.archive_member_names", return_value=["001.jpg"]), patch("app.read_archive_member", return_value=b"jpeg"):
-                self.assertIsNone(app.archive_is_locked(rar))
+            asked.assert_called_once_with(rar)
 
     def test_a_download_labelled_in_another_language_is_refused_at_import(self):
         # Gate 3 (2026-10-05): scored away at search time and tested there; the
@@ -9434,6 +9456,20 @@ class TorrentAcquisitionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "rejected this username"):
                 test_acquisition_service_connection("qbittorrent")
 
+    def test_a_test_that_connects_lets_the_workers_sign_in_again(self):
+        # The workers' client holds refused credentials until told otherwise.
+        client = Mock()
+        client.version.return_value = "v5.0.2"
+        client.default_save_path.return_value = "/data/torrents/complete"
+        client.ensure_category.return_value = "/data/torrents/complete/comics"
+        client.supports_selection.return_value = True
+        app._QBITTORRENT_CLIENTS[("http://qbittorrent:8080", "admin", "hash")] = Mock()
+        self.addCleanup(app._QBITTORRENT_CLIENTS.clear)
+        with patch("app.load_acquisition_service_config", return_value={"qbittorrent": {"url": "http://qbittorrent:8080"}}), \
+                patch("app.torrent_client.QBittorrent", return_value=client):
+            test_acquisition_service_connection("qbittorrent")
+        self.assertEqual(app._QBITTORRENT_CLIENTS, {})
+
     def test_the_connection_test_says_when_flipparr_cannot_read_the_torrents_folder(self):
         client = Mock()
         client.version.return_value = "v5.0.2"
@@ -10359,6 +10395,26 @@ class ImportRestartSafetyTests(unittest.TestCase):
             self.assertEqual(Path(result["destination"]).read_bytes(), source.read_bytes())
             self.assertEqual(sorted(path.name for path in run.iterdir()), ["Saga (2012) #001 - Chapter One.cbz"])
 
+    def test_copies_nobody_will_import_again_are_cleared_at_start(self):
+        # Review of Gate 3: only a re-import of the same comic cleared one.
+        with tempfile.TemporaryDirectory() as folder:
+            library = Path(folder)
+            stale = library / "Image Comics" / "Saga (2012)" / ".Saga (2012) #009.flipparr-1-77.partial.cbz"
+            live = library / "Image Comics" / "Saga (2012)" / ".Saga (2012) #010.flipparr-1-78.partial.cbz"
+            kept = self._comic(library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbz")
+            held = library / ".flipparr" / "quarantine" / "9" / ".Saga (2012) #002.flipparr-1-79.partial.cbz"
+            for path in (stale, live, held):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"half")
+            before = app.PROCESS_STARTED_AT - 60
+            for path in (stale, held):
+                os.utime(path, (before, before))
+            self.assertEqual(app.clear_abandoned_import_partials(library), 1)
+            self.assertFalse(stale.exists())
+            self.assertTrue(live.exists(), "one being written now is left")
+            self.assertTrue(held.exists(), "Flipparr's own folders are not walked")
+            self.assertTrue(kept.exists())
+
     def test_a_copy_this_process_is_writing_is_left_alone(self):
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder) / "Saga (2012) #001.cbz"
@@ -10501,26 +10557,130 @@ class ServiceOutageTests(unittest.TestCase):
         with patch("app.catalog_store", return_value=store), patch("app._auto_grab_release", side_effect=search), \
                 patch("app._issues_awaiting_a_pack", return_value=set()), patch("app.log_event"):
             app._automatic_release_grabs(None, backoff=True)
-        self.assertEqual(asked, [1], "one question, not one deadline per issue")
+        self.assertEqual(asked, [1, 2], "a second issue confirms it; then no more deadlines are waited out")
+        store.count_unanswered_search.assert_not_called()
 
-    def test_the_import_worker_notes_which_client_is_silent_and_when_it_answers(self):
-        stop = _QuickStop()
+    def test_one_issue_prowlarr_cannot_search_does_not_hold_up_the_rest(self):
+        # Review of Gate 3 (2026-10-05): put back uncounted and due at once,
+        # an issue whose own query Prowlarr errors on was asked first on every
+        # pass, the pass stopped there, and nothing behind it was searched.
         store = Mock()
-        store.pending_acquisition_downloads.return_value = [
-            {"id": 1, "job_id": 11, "source": "qbittorrent"}, {"id": 2, "job_id": 12, "source": "sabnzbd"}]
+        store.acquisition_jobs_awaiting_release.return_value = [1, 2, 3]
+        asked = []
 
-        def reconcile(download):
-            if download["source"] == "qbittorrent":
-                raise ConnectionResetError(54, "Connection reset by peer")
-            stop.set()
-            return {"status": "downloading"}
+        def search(job_id):
+            asked.append(job_id)
+            if job_id == 1:
+                app.service_trouble("prowlarr", urllib.error.HTTPError("http://p", 500, "Internal Server Error", None, None))
+            else:
+                app.service_answered("prowlarr")
+            return None
 
-        app.service_trouble("sabnzbd", "earlier")
+        with patch("app.catalog_store", return_value=store), patch("app._auto_grab_release", side_effect=search), \
+                patch("app._issues_awaiting_a_pack", return_value=set()), patch("app.log_event"):
+            app._automatic_release_grabs(None, backoff=True)
+        self.assertEqual(asked, [1, 2, 3])
+        store.count_unanswered_search.assert_called_once()
+        self.assertEqual(store.count_unanswered_search.call_args.args[0], 1, "its failure is its own, and its backoff applies")
+        self.assertEqual(app.service_troubles(), [], "Prowlarr answered: it is not in trouble")
+
+    def _one_pass(self, downloads, reconcile):
+        """The import worker, for one whole pass."""
+        stop = _StopAfterOnePass()
+        store = self._store()
+        store.pending_acquisition_downloads.return_value = downloads
         with patch("app.catalog_store", return_value=store), patch("app.log_event"), \
+                patch("app.clear_abandoned_import_partials"), \
                 patch("app.reconcile_acquisition_download", side_effect=reconcile), \
                 patch.object(app, "_KEPT_SWEPT_AT", [time.monotonic()]):
             app.acquisition_import_worker(stop)
+        return store
+
+    def test_the_import_worker_notes_which_client_is_silent_and_when_it_answers(self):
+        def reconcile(download):
+            if download["source"] == "qbittorrent":
+                raise ConnectionResetError(54, "Connection reset by peer")
+            return {"status": "downloading"}
+
+        app.service_trouble("sabnzbd", "earlier")
+        self._one_pass([{"id": 1, "job_id": 11, "source": "qbittorrent"}, {"id": 2, "job_id": 12, "source": "sabnzbd"}],
+                       reconcile)
         self.assertEqual([entry["service"] for entry in app.service_troubles()], ["qbittorrent"])
+
+    def test_trouble_goes_when_the_download_that_was_waiting_is_gone(self):
+        # Review of Gate 3: a folder Flipparr could not see stayed listed after
+        # its download was stopped, until the next import or a restart.
+        app.service_trouble("qbittorrent_folder", "not visible")
+        app.service_trouble("sabnzbd", ConnectionRefusedError(61, "refused"))
+        self._one_pass([], lambda download: {"status": "downloading"})
+        self.assertEqual(app.service_troubles(), [])
+
+    def test_a_refused_qbittorrent_sign_in_is_told_at_once_and_says_what_to_do(self):
+        # Review of Gate 3: this was swallowed, qBittorrent marked as
+        # answering, and nobody told.
+        refusal = app.torrent_client.TorrentCredentialsRefused("qBittorrent rejected this username and password")
+
+        def refused(download):
+            raise refusal
+
+        store = self._one_pass([{"id": 1, "job_id": 11, "source": "qbittorrent"}], refused)
+        store.update_acquisition_download.assert_not_called()
+        store.record_notification.assert_called_once()
+        payload = store.record_notification.call_args.args[3]
+        self.assertEqual((payload["service"], payload["reason"]), ("qbittorrent", "refused"))
+        entry = app.service_troubles()[0]
+        self.assertEqual(entry["title"], "qBittorrent refused Flipparr's sign-in")
+        self.assertIn("will not try again until you save", entry["detail"])
+        view = app.notification_view({"id": 7, "updatedAt": "2026-10-05T12:00:00+00:00", "readAt": None,
+                                      "kind": "service_trouble", "payload": payload}, Mock(is_admin=True, max_rating=None))
+        self.assertEqual(view["title"], "qBittorrent refused Flipparr's sign-in")
+
+    def test_a_client_turned_off_is_said_as_turned_off(self):
+        def off(download):
+            raise app.AcquisitionServiceOff("Connect and enable SABnzbd in Settings first")
+
+        self._one_pass([{"id": 1, "job_id": 11, "source": "sabnzbd"}], off)
+        entry = app.service_troubles()[0]
+        self.assertEqual((entry["reason"], entry["title"]), ("off", "SABnzbd is turned off"))
+        self.assertEqual(app.service_trouble_words("qbittorrent_folder", "folder")[0], "Flipparr can't see the torrents folder")
+
+    def test_qbittorrent_off_or_refusing_is_left_to_the_worker_not_swallowed(self):
+        store = Mock()
+        download = {"id": 1, "job_id": 11, "source": "qbittorrent", "status": "downloading", "sab_nzo_id": "torrent:abc:11"}
+        client = Mock()
+        client.info.side_effect = app.torrent_client.TorrentCredentialsRefused("rejected")
+        with patch("app._qbittorrent_client", return_value=client):
+            with self.assertRaises(app.torrent_client.TorrentCredentialsRefused):
+                app._qbt_download_storage(store, download)
+        with patch("app._qbittorrent_client", side_effect=app.AcquisitionServiceOff("off")):
+            with self.assertRaises(app.AcquisitionServiceOff):
+                app._qbt_download_storage(store, download)
+        self.assertTrue(issubclass(app.torrent_client.TorrentClientError, app.SERVICE_HICCUPS))
+
+    def test_a_json_error_from_inside_an_import_is_the_downloads_own(self):
+        # Review of Gate 3: by type alone it read as SABnzbd being silent, and
+        # the download would have been retried for ever.
+        self.assertFalse(issubclass(json.JSONDecodeError, app.SERVICE_HICCUPS))
+
+        def broken(download):
+            raise json.JSONDecodeError("Expecting value", "{", 0)
+
+        store = self._one_pass([{"id": 1, "job_id": 11, "source": "sabnzbd"}], broken)
+        self.assertEqual(store.update_acquisition_download.call_args.args[1], "failed")
+        self.assertEqual(app.service_troubles(), [])
+        # ... while a reply from SABnzbd that is not JSON is SABnzbd's.
+        with patch("app._enabled_acquisition_service", return_value={"url": "http://sab", "apiKey": "k"}), \
+                patch("app.fetch_json_with_headers", side_effect=json.JSONDecodeError("Expecting value", "<html>", 0)):
+            with self.assertRaisesRegex(app.DownloadClientUnanswered, "not JSON"):
+                app._sab_history_slot({"sab_nzo_id": "x"})
+
+
+class _StopAfterOnePass(threading.Event):
+    """A stop event that lets a worker loop finish one whole pass."""
+
+    def wait(self, timeout=None):
+        self.set()
+        return True
 
 
 class _QuickStop(threading.Event):
@@ -10631,11 +10791,10 @@ class SystemStatusTests(unittest.TestCase):
         # Gate 3 (2026-10-05): a reset connection or half a reply was "Import
         # coordinator failed" -- the download and its issue failed for good.
         import http.client
-        import json as json_module
         for hiccup in (ConnectionResetError(54, "Connection reset by peer"),
                        http.client.RemoteDisconnected("Remote end closed connection without response"),
                        http.client.IncompleteRead(b"{\"queue\""),
-                       json_module.JSONDecodeError("Expecting value", "<html>", 0),
+                       app.DownloadClientUnanswered("SABnzbd answered with something that is not JSON"),
                        app.AcquisitionServiceOff("Connect and enable SABnzbd in Settings first")):
             with self.subTest(type(hiccup).__name__):
                 app._WORKER_PROBLEMS.clear()

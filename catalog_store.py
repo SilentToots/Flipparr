@@ -8503,6 +8503,20 @@ class CatalogStore:
                     (int(job_id), detail, now),
                 )
 
+    def count_unanswered_search(self, job_id: int, detail: str) -> None:
+        """Count, after all, a search that went unanswered and was put back
+        uncounted: the indexer answered for the next issue, so the failure
+        was this issue's own, and its backoff applies. Left uncounted and due
+        at once, it was first in every sweep and held up all behind it."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE acquisition_jobs
+                   SET attempt_count=attempt_count+1, last_attempt_at=?, queue_reason=?, updated_at=?
+                   WHERE id=? AND status='queued'""",
+                (now, detail, now, int(job_id)),
+            )
+
     def recover_interrupted_searches(self) -> int:
         """Put back every search a restart cut short.
 

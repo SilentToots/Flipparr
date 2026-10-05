@@ -6821,8 +6821,8 @@ function SystemSettings({ onNavigate, onSectionChange }) {
     <SettingsCard title="Waiting work">
       {rows.length || cooling.length || silent.length || scan ? <ul className="about-list">
         {silent.map((item) => <li key={item.service}>
-          <span className="system-row-head"><strong>{item.name} isn't answering</strong><StatusBadge tone="amber">since {new Date(item.since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</StatusBadge></span>
-          <span>{item.service === "prowlarr" ? "Searches wait for it, and none counts against an issue meanwhile" : "Downloads in it wait for it; none is given up meanwhile"}{item.lastProblem ? `. Last: ${item.lastProblem}` : ""}.</span>
+          <span className="system-row-head"><strong>{item.title}</strong><StatusBadge tone="amber">since {new Date(item.since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</StatusBadge></span>
+          <span>{item.detail}{item.lastProblem && item.reason === "silent" ? ` Last: ${item.lastProblem}` : ""}</span>
         </li>)}
         {rows.map((row) => <li key={row.id}>
           <span className="system-row-head"><strong>{row.label}</strong>{row.tone ? <StatusBadge tone={row.tone}>{row.value}</StatusBadge> : <b>{row.value}</b>}</span>

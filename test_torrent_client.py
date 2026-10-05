@@ -145,19 +145,33 @@ class SessionTests(unittest.TestCase):
         with self.assertRaisesRegex(TorrentAuthError, "blocked this address"):
             banned.version()
 
-    def test_a_refused_sign_in_is_not_asked_again_until_the_wait_is_over(self):
-        # Gate 3 (2026-10-05): a wrong password asked every 15 seconds walked
-        # into qBittorrent's ban on an address after five failed sign-ins.
+    def test_refused_credentials_are_never_tried_again_by_a_client_that_holds_them(self):
+        # Review of Gate 3 (2026-10-05): the first version retried every 15
+        # minutes "under the ban". qBittorrent's count of failed sign-ins
+        # never runs down with time (webapplication.cpp), so any retry on a
+        # clock is banned in the end. A worker's client asks once.
         qbt = FakeClient([(403, b"", None), (200, b"Fails.", None)])
-        client = QBittorrent("http://qbt:8080", "admin", "wrong", opener=qbt, refused_wait=900)
+        client = QBittorrent("http://qbt:8080", "admin", "wrong", opener=qbt, refused_wait=900, hold_refused_credentials=True)
+        with patch("torrent_client.time.monotonic", return_value=time.monotonic()) as clock:
+            for hours in (0, 1, 24, 24 * 30):
+                clock.return_value += hours * 3600
+                with self.assertRaisesRegex(torrent_client.TorrentCredentialsRefused, "rejected this username and password"):
+                    client.version()
+        self.assertEqual(len(qbt.requests), 2, "one try and one sign-in, ever")
+
+    def test_a_ban_is_waited_out_and_then_asked_again(self):
+        # Nothing counts while a ban is served, so asking after it is safe.
+        qbt = FakeClient([(403, b"", None), (403, b"", None)])
+        client = QBittorrent("http://qbt:8080", "admin", "right", opener=qbt, refused_wait=900, hold_refused_credentials=True)
         for _ in range(3):
-            with self.assertRaisesRegex(TorrentAuthError, "rejected this username and password"):
+            with self.assertRaisesRegex(TorrentAuthError, "blocked this address"):
                 client.version()
-        self.assertEqual(len(qbt.requests), 2, "one try and one sign-in, then the refusal is repeated without asking")
+        self.assertEqual(len(qbt.requests), 2)
         with patch("torrent_client.time.monotonic", return_value=time.monotonic() + 901):
             qbt.answers += [(403, b"", None), ok(cookies=["SID=abc; path=/"]), ok(b"v4.6.7")]
-            self.assertEqual(client.version(), "v4.6.7", "asked again once the wait is over")
-        # A person's Test (no wait) always asks.
+            self.assertEqual(client.version(), "v4.6.7")
+
+    def test_a_persons_test_always_asks(self):
         tester = QBittorrent("http://qbt:8080", "admin", "wrong",
                              opener=FakeClient([(403, b"", None), (200, b"Fails.", None), (403, b"", None), (200, b"Fails.", None)]))
         for _ in range(2):

@@ -54,6 +54,8 @@ class Fakes:
     def __init__(self) -> None:
         self.sab_mode = "ok"            # ok | down (drops the line) | refuse_key
         self.prowlarr_mode = "ok"       # ok | down
+        self.prowlarr_poison = ""       # a query Prowlarr answers 500 to, and no other
+        self.queries: list[str] = []
         self.slots: dict[str, dict[str, Any]] = {}   # nzo -> {"phase", "storage"}
         self.asked: list[str] = []
 
@@ -103,6 +105,12 @@ class Fakes:
                 if url.path.startswith("/prowlarr/"):
                     if fakes.prowlarr_mode == "down":
                         return self._drop()
+                    fakes.queries.append(str(query.get("query") or ""))
+                    if fakes.prowlarr_poison and query.get("query") == fakes.prowlarr_poison:
+                        self.send_response(500)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return None
                     return self._json([])
                 self.send_response(404)
                 self.end_headers()
@@ -399,6 +407,31 @@ def run(seeded: dict[str, Any], fakes: Fakes, server: Server) -> list[dict[str, 
             broken.append(f"the row does not say why: {download(job_id).get('error')}")
         if any(path.name.startswith("Drill Comic (2026) #007") for path in (WORK / "comics").rglob("*.cbz")):
             broken.append("the locked file reached the library")
+        return broken
+
+    @scenario("one issue prowlarr cannot search", "its failure is counted as its own, and the issues behind it are still searched")
+    def _() -> list[str]:
+        poisoned, behind = seeded["jobs"]["6"], seeded["jobs"]["8"]
+        if not settle(lambda: job(poisoned).get("status") == "queued" and job(behind).get("status") == "queued", 30):
+            return [f"#6 is {job(poisoned).get('status')} and #8 is {job(behind).get('status')} before the search"]
+        before = int(job(poisoned).get("attempt_count") or 0)
+        fakes.prowlarr_poison = "Drill Comic 006"
+        fakes.queries.clear()
+        status, body = post("/api/v1/requests/search-missing", {"confirmed": True})
+        searched_behind = settle(lambda: any(query.startswith("Drill Comic 008") for query in fakes.queries), 60)
+        counted = settle(lambda: int(job(poisoned).get("attempt_count") or 0) == before + 1, 20)
+        fakes.prowlarr_poison = ""
+        broken = []
+        if status >= 400:
+            broken.append(f"the search for missing issues answered {status}: {body}")
+        if "Drill Comic 006" not in fakes.queries:
+            broken.append("#6 was never asked about")
+        if not searched_behind:
+            broken.append("#8, behind it, was not searched")
+        if not counted:
+            broken.append(f"#6's failed search did not count: {before} -> {job(poisoned).get('attempt_count')}")
+        if "prowlarr" in silent_services():
+            broken.append("Prowlarr is named as silent though it answered for the others")
         return broken
 
     @scenario("prowlarr down while searching by hand", "the person is told, the issue stays queued, and the try does not count")

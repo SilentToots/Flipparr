@@ -2306,6 +2306,20 @@ class CatalogStoreTests(unittest.TestCase):
             store.return_unanswered_search(job_id, "late")
             self.assertEqual(self._job(root, job_id)["status"], "grabbed")
 
+    def test_an_unanswered_search_that_was_the_issues_own_is_counted_after_all(self):
+        """Review of Gate 3 (2026-10-05): left uncounted and due at once, one
+        issue Prowlarr errors on was first in every sweep."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            store.return_unanswered_search(job_id, "Prowlarr did not answer")
+            self.assertIn(job_id, store.acquisition_jobs_awaiting_release(backoff=True))
+            store.count_unanswered_search(job_id, "Prowlarr could not search for this issue")
+            self.assertEqual(self._job(root, job_id)["attemptCount"], 1)
+            self.assertNotIn(job_id, store.acquisition_jobs_awaiting_release(backoff=True), "its backoff applies")
+            self.assertIn(job_id, store.acquisition_jobs_awaiting_release(), "a person can still search it now")
+
     def test_the_wait_grows_with_each_empty_search(self):
         now = _parse_timestamp(_utc_now())
         due = CatalogStore._search_is_due

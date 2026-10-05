@@ -1527,13 +1527,11 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
         if not viewer.is_admin:
             return None
         service = str(payload.get("service"))
-        name = SERVICE_NAMES.get(service, "A download service")
-        folder = service.endswith("_folder")
+        title, detail = service_trouble_words(
+            service, str(payload.get("reason") or ("folder" if service.endswith("_folder") else "silent")))
         return {**base,
-                "title": f"Flipparr can't see {name[0].lower() + name[1:]}" if folder else f"{name} isn't answering",
-                "detail": ("Finished downloads wait there until it is mounted where Flipparr reads it."
-                           if folder else "Searches wait for it; none is given up or counted against an issue meanwhile."
-                           if service == "prowlarr" else "Downloads in it wait for it; none is given up meanwhile."),
+                "title": title,
+                "detail": detail,
                 "tone": "warning",
                 "target": {"view": "settings", "section": "acquisition"}}
     if row["kind"] == "connector_trouble":
@@ -3278,6 +3276,10 @@ def test_acquisition_service_connection(
         if not selective:
             detail += (" This version downloads a pack whole, so packs are not taken from it;"
                        " qBittorrent 4.5.5 or later downloads only the issues wanted.")
+        # The workers hold a refused sign-in until told otherwise; this is
+        # the telling (see QBITTORRENT_HOLDS_A_REFUSAL).
+        with _QBITTORRENT_CLIENTS_LOCK:
+            _QBITTORRENT_CLIENTS.clear()
         if not (TORRENT_COMPLETE_ROOT.is_dir() and os.access(TORRENT_COMPLETE_ROOT, os.R_OK | os.X_OK)):
             # Gate 3 (2026-10-05): checked nowhere before, so a missing mount
             # showed only as finished torrents waiting for good.
@@ -3341,10 +3343,15 @@ _QBITTORRENT_CLIENTS: dict[tuple[str, str, str], torrent_client.QBittorrent] = {
 _QBITTORRENT_CLIENTS_LOCK = threading.Lock()
 
 
-# How long the workers wait after qBittorrent refuses Flipparr's sign-in
-# before trying again: four tries an hour stay under its default ban (five
-# failures). Saving new credentials makes a new client, which asks at once.
-QBITTORRENT_REFUSED_WAIT_SECONDS = 900
+# After qBittorrent refuses Flipparr's username and password, the workers do
+# not sign in again until the credentials are saved anew or a Test connects
+# (either makes a new client). qBittorrent bans an address after a number of
+# failed sign-ins (WebUI "ban client after consecutive failures", 5 by
+# default, for an hour), and its count never runs down with time -- only a
+# successful sign-in or a served ban clears it (webapplication.cpp,
+# read 2026-10-05) -- so any retry on a clock ends in a ban, however slow.
+# A ban itself is waited out and asked again: nothing counts while it lasts.
+QBITTORRENT_BLOCKED_WAIT_SECONDS = 900
 
 
 def _qbittorrent_client() -> torrent_client.QBittorrent:
@@ -3357,7 +3364,7 @@ def _qbittorrent_client() -> torrent_client.QBittorrent:
             _QBITTORRENT_CLIENTS.clear()
             client = torrent_client.QBittorrent(
                 key[0], key[1], str(config.get("password") or ""), user_agent=f"Flipparr/{APP_VERSION}",
-                refused_wait=QBITTORRENT_REFUSED_WAIT_SECONDS,
+                refused_wait=QBITTORRENT_BLOCKED_WAIT_SECONDS, hold_refused_credentials=True,
             )
             _QBITTORRENT_CLIENTS[key] = client
     return client
@@ -5301,7 +5308,7 @@ def _prowlarr_search(
         [("query", query), ("type", "search"),
          *(("categories", category) for category in categories), ("limit", 100)]
     )
-    payload = _with_deadline(
+    payload = _service_json("Prowlarr", lambda: _with_deadline(
         lambda: fetch_json_with_headers(
             endpoint,
             {"Accept": "application/json", "X-Api-Key": str(prowlarr["apiKey"]),
@@ -5309,7 +5316,7 @@ def _prowlarr_search(
             timeout=45.0,
         ),
         PROWLARR_SEARCH_DEADLINE_SECONDS, "Prowlarr",
-    )
+    ))
     return payload if isinstance(payload, list) else []
 
 
@@ -7003,7 +7010,16 @@ def _sab_job_folder(storage: str, completed_root: Path) -> Path | None:
 
 
 class DownloadClientUnanswered(Exception):
-    """A download client that answered, but not with what was asked for."""
+    """A service that answered, but not with what was asked for."""
+
+
+def _service_json(name: str, ask: Callable[[], Any]) -> Any:
+    """What `ask` returns, with a reply that is not JSON said as the
+    service's own trouble."""
+    try:
+        return ask()
+    except json.JSONDecodeError as exc:
+        raise DownloadClientUnanswered(f"{name} answered with something that is not JSON") from exc
 
 
 def _sab_slots(payload: Any, part: str) -> list[dict[str, Any]]:
@@ -7029,9 +7045,9 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
         "mode": "history", "start": 0, "limit": 1,
         "nzo_ids": str(download["sab_nzo_id"]), "output": "json", "apikey": sab["apiKey"],
     })
-    payload = fetch_json_with_headers(
+    payload = _service_json("SABnzbd", lambda: fetch_json_with_headers(
         endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0
-    )
+    ))
     return next(
         (slot for slot in _sab_slots(payload, "history") if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
         None,
@@ -7734,12 +7750,15 @@ def _automatic_release_grabs(
             # issue as well would grab the same comics twice over.
             return
     grabbed = 0
-    started = time.time()
+    # The issue whose search Prowlarr did not answer, until the next issue
+    # says whether that was Prowlarr or the issue. Two in a row is Prowlarr:
+    # the rest would each wait out its deadline for the same silence. An
+    # answer for the next one makes the failure the issue's own, and it is
+    # counted -- uncounted and due at once, it was asked first on every pass
+    # and nothing behind it was ever searched (review, 2026-10-05).
+    suspect: int | None = None
     for job_id in job_ids:
-        if service_failed_since("prowlarr", started):
-            # Prowlarr stopped answering during this pass: the rest would each
-            # wait out its deadline for the same silence.
-            break
+        asked_at = time.time()
         # Another pass may be on this issue, or have finished it since this one
         # read its list. Searching it again sends a second copy to SABnzbd.
         with _JOBS_IN_FLIGHT_LOCK:
@@ -7758,6 +7777,17 @@ def _automatic_release_grabs(
         finally:
             with _JOBS_IN_FLIGHT_LOCK:
                 _JOBS_IN_FLIGHT.discard(job_id)
+        if service_failed_since("prowlarr", asked_at):
+            if suspect is not None:
+                break
+            suspect = job_id
+        elif suspect is not None and service_answered_since("prowlarr", asked_at):
+            try:
+                store.count_unanswered_search(
+                    suspect, "Prowlarr could not search for this issue; it will be tried again later")
+            except Exception as exc:  # noqa: BLE001
+                log_exception("unanswered_search_count_failed", exc, level="warning", job_id=suspect)
+            suspect = None
     log_event(
         "automatic_release_grabs",
         request_id=None if request_id is None else int(request_id),
@@ -7935,9 +7965,9 @@ def _sab_queue_slot(download: dict[str, Any]) -> dict[str, Any] | None:
         "mode": "queue", "nzo_ids": str(download["sab_nzo_id"]), "output": "json",
         "apikey": sab["apiKey"],
     })
-    payload = fetch_json_with_headers(
+    payload = _service_json("SABnzbd", lambda: fetch_json_with_headers(
         endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0
-    )
+    ))
     return next(
         (slot for slot in _sab_slots(payload, "queue") if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
         None,
@@ -8122,14 +8152,16 @@ def _qbt_download_storage(store: Any, download: dict[str, Any]) -> str | dict[st
     gone, or dead."""
     info_hash_ = _torrent_hash(download)
     status = str(download.get("status") or "")
+    # A client that is off, refuses the sign-in or answers with an error is
+    # left to the import worker, which waits and names it on Settings ->
+    # System. Swallowed here, as it was, a refused password was told to nobody.
     try:
         client = _qbittorrent_client()
-        found = client.info(hashes=[info_hash_]) if info_hash_ else []
+    except AcquisitionServiceOff:
+        raise
     except ValueError:
         return {"status": status or "downloading", "detail": "qBittorrent is not connected"}
-    except torrent_client.TorrentClientError as exc:
-        log_event("qbittorrent_unavailable", level="warning", error=str(exc)[:160])
-        return {"status": status or "downloading"}
+    found = client.info(hashes=[info_hash_]) if info_hash_ else []
     if not found:
         if _sab_just_sent(download):
             return {"status": "downloading"}
@@ -8680,15 +8712,49 @@ _SERVICE_TROUBLE_LOCK = threading.Lock()
 SERVICE_TROUBLE_NOTICE_SECONDS = 1800
 
 
+def _trouble_reason(service: str, problem: BaseException | str) -> str:
+    """Why a service is in trouble, as the words for it differ: "refused"
+    (it will not take Flipparr's sign-in), "off" (turned off in Settings),
+    "folder" (its finished files are not where Flipparr reads them), or
+    "silent"."""
+    if service.endswith("_folder"):
+        return "folder"
+    if isinstance(problem, torrent_client.TorrentCredentialsRefused):
+        return "refused"
+    if isinstance(problem, AcquisitionServiceOff):
+        return "off"
+    return "silent"
+
+
+def service_trouble_words(service: str, reason: str) -> tuple[str, str]:
+    """The title and the line under it, for the bell and Settings -> System."""
+    name = SERVICE_NAMES.get(service, "A download service")
+    if reason == "folder":
+        return (f"Flipparr can't see {name[0].lower() + name[1:]}",
+                "Finished downloads wait there until it is mounted where Flipparr reads it.")
+    if reason == "refused":
+        return (f"{name} refused Flipparr's sign-in",
+                "Its downloads wait. Flipparr will not try again until you save the right username and password, "
+                "or press Test, in Settings.")
+    if reason == "off":
+        return (f"{name} is turned off",
+                "Downloads already in it wait until it is turned back on in Settings; stop one to search for it elsewhere.")
+    if service == "prowlarr":
+        return (f"{name} isn't answering", "Searches wait for it; none is given up or counted against an issue meanwhile.")
+    return (f"{name} isn't answering", "Downloads in it wait for it; none is given up meanwhile.")
+
+
 def service_trouble(service: str, problem: BaseException | str) -> None:
     """Note that `service` did not answer, and tell the admins once it has
-    been so long enough to need them. Never raises."""
+    been so long enough to need them -- at once for a refused sign-in, which
+    only they can put right and Flipparr does not retry. Never raises."""
     now = time.time()
     message = support_safe(f"{type(problem).__name__}: {problem}" if isinstance(problem, BaseException) else str(problem))[:300]
+    reason = _trouble_reason(service, problem)
     with _SERVICE_TROUBLE_LOCK:
         trouble = _SERVICE_TROUBLE.setdefault(service, {"since": now, "told": False})
-        trouble.update(last=now, message=message)
-        tell = not trouble["told"] and now - trouble["since"] >= SERVICE_TROUBLE_NOTICE_SECONDS
+        trouble.update(last=now, message=message, reason=reason)
+        tell = not trouble["told"] and (reason == "refused" or now - trouble["since"] >= SERVICE_TROUBLE_NOTICE_SECONDS)
         if tell:
             trouble["told"] = True
         since = trouble["since"]
@@ -8698,16 +8764,27 @@ def service_trouble(service: str, problem: BaseException | str) -> None:
             for user in store.list_users():
                 if user["role"] == "admin" and not user["disabled"]:
                     store.record_notification(int(user["id"]), "service_trouble", f"service:{service}:{int(since)}",
-                                              {"service": service, "since": _iso(since)}, merge=True)
+                                              {"service": service, "reason": reason, "since": _iso(since)}, merge=True)
         except Exception as exc:  # noqa: BLE001
             log_exception("service_notification_failed", exc, level="warning", service=service)
 
 
+# When each service last answered, for telling one issue's failed search from
+# the indexer's silence (`_automatic_release_grabs`).
+_SERVICE_ANSWERED_AT: dict[str, float] = {}
+
+
 def service_answered(service: str) -> None:
     with _SERVICE_TROUBLE_LOCK:
+        _SERVICE_ANSWERED_AT[service] = time.time()
         trouble = _SERVICE_TROUBLE.pop(service, None)
     if trouble and trouble.get("told"):
         log_event("service_answering_again", service=service)
+
+
+def service_answered_since(service: str, moment: float) -> bool:
+    with _SERVICE_TROUBLE_LOCK:
+        return _SERVICE_ANSWERED_AT.get(service, 0.0) >= moment
 
 
 def service_failed_since(service: str, moment: float) -> bool:
@@ -8720,9 +8797,16 @@ def service_troubles() -> list[dict[str, Any]]:
     """For Settings -> System: the services not answering right now."""
     with _SERVICE_TROUBLE_LOCK:
         return [{"service": service, "name": SERVICE_NAMES.get(service, service),
+                 "reason": trouble.get("reason") or "silent",
+                 "title": service_trouble_words(service, trouble.get("reason") or "silent")[0],
+                 "detail": service_trouble_words(service, trouble.get("reason") or "silent")[1],
                  "since": _iso(trouble["since"]), "lastProblem": trouble.get("message")}
                 for service, trouble in sorted(_SERVICE_TROUBLE.items())]
 
+
+# The import worker's own: what it asks, and the folders it reads from.
+DOWNLOAD_SOURCES_WATCHED = ("sabnzbd", "qbittorrent", "direct_site",
+                            "sabnzbd_folder", "qbittorrent_folder", "direct_site_folder")
 
 SERVICE_NAMES = {"prowlarr": "Prowlarr", "sabnzbd": "SABnzbd", "qbittorrent": "qBittorrent",
                  "direct_site": "The download site",
@@ -8732,13 +8816,22 @@ SERVICE_NAMES = {"prowlarr": "Prowlarr", "sabnzbd": "SABnzbd", "qbittorrent": "q
 # What a service's trouble looks like from here -- an indexer or download
 # client not answering, or answering half a reply -- as against a download's
 # or a search's own failure.
+# By where it happens, not only by type: a reply that is not JSON is turned
+# into DownloadClientUnanswered where the service is asked (a JSON error from
+# inside a comic being imported is that comic's, and must not read as SABnzbd
+# being silent).
 SERVICE_HICCUPS = (
     urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException,
-    json.JSONDecodeError, AcquisitionServiceOff, DownloadClientUnanswered,
+    AcquisitionServiceOff, DownloadClientUnanswered, torrent_client.TorrentClientError,
 )
 
 
 def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> None:
+    # Once a start: nothing this process imports is in flight yet.
+    try:
+        clear_abandoned_import_partials(COMIC_LIBRARY_ROOT)
+    except Exception as exc:  # noqa: BLE001 -- tidying must not stop imports
+        log_exception("import_partial_sweep_failed", exc, level="warning")
     while not stop_event.is_set():
         worker_beat("imports")
         if time.monotonic() - _KEPT_SWEPT_AT[0] >= 3600:
@@ -8755,6 +8848,7 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
             downloads = catalog_store().pending_acquisition_downloads()
             imported_any = False
             unanswered: list[BaseException] = []
+            troubled: set[str] = set()
             for download in downloads:
                 if stop_event.is_set():
                     break
@@ -8762,16 +8856,15 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                 try:
                     result = reconcile_acquisition_download(download)
                     imported_any = imported_any or result.get("status") == "imported"
-                    service_answered(service)
                     # Finished, but not where Flipparr reads it: a mount that is
                     # missing or points elsewhere. It waits for good otherwise,
                     # saying so only on its own row.
-                    folder = f"{service}_folder"
                     if result.get("status") == "waiting_for_files":
-                        service_trouble(folder, str(result.get("detail") or "The finished download is not visible to Flipparr"))
-                    elif result.get("status") == "imported":
-                        service_answered(folder)
+                        troubled.add(f"{service}_folder")
+                        service_trouble(f"{service}_folder",
+                                        str(result.get("detail") or "The finished download is not visible to Flipparr"))
                 except SERVICE_HICCUPS as exc:
+                    troubled.add(service)
                     service_trouble(service, exc)
                     # A download client that did not answer, or answered half a
                     # reply, says nothing about the download: it waits for the
@@ -8796,6 +8889,13 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                         )
                     except Exception as nested:
                         log_exception("acquisition_failure_record_failed", nested)
+            if not stop_event.is_set():
+                # A whole pass with nothing wrong for a client or its folder
+                # clears it -- including when the download that was waiting
+                # has been stopped, which left the trouble listed for good.
+                for service in DOWNLOAD_SOURCES_WATCHED:
+                    if service not in troubled:
+                        service_answered(service)
             if unanswered:
                 # Once a pass, not once a download every 15 seconds; and on
                 # Settings -> System, where it was invisible before.
@@ -9259,7 +9359,9 @@ def _run_archive_tool(arguments: list[str], limit: int) -> bytes:
             "This comic is a RAR archive, which needs bsdtar (libarchive-tools) to read."
         )
     completed = subprocess.run(  # noqa: S603 - argv list, never a shell string
+        # No stdin: for an encrypted entry bsdtar asks it for a passphrase.
         [tool, *arguments], capture_output=True, timeout=_ARCHIVE_READ_TIMEOUT_SECONDS,
+        stdin=subprocess.DEVNULL,
     )
     if len(completed.stdout) > limit:
         raise ValueError("Archive entry is larger than the limit")
@@ -9298,17 +9400,43 @@ def archive_is_locked(path: Path) -> str | None:
         return None
     if kind not in {"rar", "rar5", "7z"}:
         return None
-    try:
-        names = archive_member_names(path)
-        pages = sorted(name for name in names if Path(name).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS)
-        if pages:
-            read_archive_member(path, pages[0])
-    except ArchiveToolMissing:
+    return _archive_tool_says_locked(path)
+
+
+def _archive_tool_says_locked(path: Path) -> str | None:
+    """Ask bsdtar for the archive's first page and read everything it says.
+
+    All of it, not the last line: for an encrypted entry libarchive 3.6
+    prints "Enter passphrase:" (it has nobody to ask), then "Too many
+    incorrect passphrases", and ends on "Error exit delayed from previous
+    errors" -- which is all `_run_archive_tool` reports, and says nothing
+    (checked against the image's bsdtar, 2026-10-05). An archive whose names
+    are encrypted too cannot even be listed, and says so the same way.
+    """
+    tool = _external_archive_tool()
+    if not tool:
         return None
-    except (ValueError, OSError, subprocess.SubprocessError) as exc:
-        if _LOCKED_ARCHIVE_WORDS.search(str(exc)):
+
+    def complaint(arguments: list[str]) -> tuple[bytes, str]:
+        completed = subprocess.run(  # noqa: S603 - argv list, never a shell string
+            [tool, *arguments], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=_ARCHIVE_READ_TIMEOUT_SECONDS,
+        )
+        return completed.stdout, completed.stderr.decode("utf-8", "replace")
+
+    try:
+        listing, said = complaint(["-tf", str(path)])
+        if _LOCKED_ARCHIVE_WORDS.search(said):
             return "The archive is password-protected"
-    return None
+        pages = sorted(
+            name for name in listing.decode("utf-8", "replace").splitlines()
+            if Path(name).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS and not name.startswith("-"))
+        if not pages:
+            return None
+        _page, said = complaint(["-xOf", str(path), pages[0]])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return "The archive is password-protected" if _LOCKED_ARCHIVE_WORDS.search(said) else None
 
 
 def archive_member_names(path: Path) -> list[str]:
@@ -9843,6 +9971,33 @@ def _clear_stale_partials(destination: Path) -> None:
                 log_event("import_partial_removed", path=str(leftover))
         except OSError as exc:
             log_event("import_partial_unremovable", level="warning", path=str(leftover), error=str(exc))
+
+
+def clear_abandoned_import_partials(root: Path) -> int:
+    """Remove every half-written import copy an earlier process left in the
+    library. `_clear_stale_partials` does this for a comic being imported
+    again; this is for the one that never is -- it arrived another way, or
+    its request was cancelled -- whose copy would otherwise stay, hidden,
+    for good. Run once per start, by the import worker. Returns how many."""
+    removed = 0
+    try:
+        for folder, folders, files in os.walk(root):
+            folders[:] = [name for name in folders if name not in MANAGED_LIBRARY_DIRS]
+            for name in files:
+                if not _is_import_partial(name):
+                    continue
+                leftover = Path(folder) / name
+                try:
+                    if leftover.stat().st_mtime < PROCESS_STARTED_AT:
+                        leftover.unlink()
+                        removed += 1
+                except OSError as exc:
+                    log_event("import_partial_unremovable", level="warning", path=str(leftover), error=str(exc))
+    except OSError as exc:
+        log_event("import_partial_sweep_failed", level="warning", error=str(exc))
+    if removed:
+        log_event("import_partials_removed", removed=removed)
+    return removed
 
 
 def scan_folder(folder: str, recursive: bool = True) -> list[ParsedFile]:

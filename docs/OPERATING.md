@@ -520,8 +520,8 @@ provider's own billing page for that.
 ### When a download service stops answering
 
 If Prowlarr, SABnzbd or qBittorrent stops answering -- it is restarting,
-its address changed, or it refuses Flipparr's API key or password --
-nothing is given up:
+its address changed, it refuses Flipparr's API key, or it has been turned
+off in Settings -- nothing is given up:
 
 - downloads already in SABnzbd or qBittorrent wait, and carry on when it
   answers again;
@@ -530,11 +530,22 @@ nothing is given up:
 - Settings → System lists the service under **Waiting work** ("SABnzbd isn't
   answering, since 3:20 PM") with what it last said;
 - after half an hour, every admin gets one notification in the bell, which
-  opens Settings → Acquisition. The next answer clears it.
+  opens Settings → Acquisition. The next answer clears the System page's
+  line; the notification stays until it is read.
 
-A wrong qBittorrent password is tried at most once every fifteen minutes,
-so Flipparr never trips qBittorrent's own ban on an address after five
-failed sign-ins. Saving new credentials, or pressing Test, asks at once.
+One issue whose own search Prowlarr answers with an error is not an outage:
+when the next issue's search is answered, the failed one is counted and
+waits its turn like any search that found nothing.
+
+**qBittorrent refuses the username and password.** Flipparr tries them once
+and then stops: the bell says "qBittorrent refused Flipparr's sign-in"
+straight away, and torrents wait. It does not try again on a clock, because
+qBittorrent bans an address after a number of failed sign-ins in a row (5 by
+default, for an hour) and that count never runs down by itself. Save the
+right username and password in Settings → Acquisition, or press Test once
+qBittorrent's side is fixed, and Flipparr signs in again at once. If
+qBittorrent has already banned the address, Flipparr waits fifteen minutes
+at a time for the ban to end.
 
 **Finished torrents wait for good.** Flipparr cannot see qBittorrent's
 "comics" folder. Settings → Acquisition → qBittorrent → Test says so when

@@ -34,6 +34,11 @@ jobs:
         run: python -B -m unittest test_app test_catalog_store test_http_contract test_page_panels test_content_rating test_reading_list_formats test_torrent_client test_arc_catalog test_provider_evidence test_no_undefined_names test_secret_hygiene
       # The suites share a process and previously depended on which module
       # imported `app` first. Running a second order proves that stays fixed.
+      # Gate 3's drill: the real server as its own process beside fake
+      # SABnzbd and Prowlarr -- outages, a refused key, a SIGKILL, a locked
+      # download. No network and no library; see docs/FULFILLMENT_PROOFS.md.
+      - name: Fulfillment drill
+        run: python -B tools/fulfillment_drill.py --out "$RUNNER_TEMP/drill"
       - name: Test suites, reversed order
         run: python -B -m unittest test_secret_hygiene test_no_undefined_names test_provider_evidence test_arc_catalog test_torrent_client test_reading_list_formats test_content_rating test_page_panels test_http_contract test_catalog_store test_app
 

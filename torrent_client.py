@@ -44,6 +44,11 @@ class TorrentAuthError(TorrentClientError):
     """The client would not let Flipparr in."""
 
 
+class TorrentCredentialsRefused(TorrentAuthError):
+    """The client said the username and password are wrong. Trying them
+    again changes nothing and counts towards its ban."""
+
+
 # A torrent whose wanted data is all here. `moving` is not: qBittorrent is
 # still carrying the files from its incomplete folder, and `content_path`
 # points at where they were. `checkingUP` is a recheck of finished data --
@@ -212,6 +217,7 @@ class QBittorrent:
         self, url: str, username: str = "", password: str = "", *,
         timeout: float = 20.0, user_agent: str = "Flipparr",
         opener: Callable[..., Any] | None = None, refused_wait: float = 0.0,
+        hold_refused_credentials: bool = False,
     ) -> None:
         self.url = str(url or "").rstrip("/")
         self.username = str(username or "")
@@ -221,13 +227,18 @@ class QBittorrent:
         self._open = opener or urllib.request.urlopen
         self._cookie = ""
         self._webapi: tuple[int, ...] | None = None
-        # After a refused sign-in, how long before trying again; meanwhile the
-        # refusal is repeated without asking. qBittorrent bans an address
-        # after a few failed sign-ins (five, by default, for an hour), and a
-        # wrong password asked every 15 seconds -- once per torrent a pass --
-        # walked straight into it. Zero, as for a person's Test, always asks.
+        # What a worker's client does after a refused sign-in, so that asking
+        # every few seconds -- once per torrent a pass -- does not walk into
+        # qBittorrent's ban on an address after consecutive failed sign-ins.
+        # Its count never runs down with time, so wrong credentials are not
+        # tried again at all by a client that holds them
+        # (`hold_refused_credentials`): the refusal is repeated without
+        # asking, for as long as this client lives. Any other refusal -- a ban
+        # being served, above all -- is asked again after `refused_wait`.
+        # A person's Test uses neither and always asks.
         self.refused_wait = refused_wait
-        self._refused: tuple[float, str] | None = None
+        self.hold_refused_credentials = hold_refused_credentials
+        self._refused: tuple[float, TorrentAuthError] | None = None
 
     # ---- transport --------------------------------------------------------
 
@@ -281,13 +292,17 @@ class QBittorrent:
         try:
             self._sign_in()
         except TorrentAuthError as exc:
-            self._refused = (time.monotonic(), str(exc))
+            self._refused = (time.monotonic(), exc)
             raise
         self._refused = None
 
     def _still_refused(self) -> None:
-        if self._refused and time.monotonic() - self._refused[0] < self.refused_wait:
-            raise TorrentAuthError(self._refused[1])
+        if not self._refused:
+            return
+        since, refusal = self._refused
+        held = self.hold_refused_credentials and isinstance(refusal, TorrentCredentialsRefused)
+        if held or time.monotonic() - since < self.refused_wait:
+            raise type(refusal)(str(refusal))
 
     def _sign_in(self) -> None:
         self._cookie = ""
@@ -300,7 +315,7 @@ class QBittorrent:
         if status == 403:
             raise TorrentAuthError("qBittorrent has blocked this address after too many failed sign-ins")
         if status == 401 or text.casefold().startswith("fails"):
-            raise TorrentAuthError("qBittorrent rejected this username and password")
+            raise TorrentCredentialsRefused("qBittorrent rejected this username and password")
         if status >= 400:
             raise TorrentClientError(f"qBittorrent could not sign Flipparr in ({status})")
         cookies = []
