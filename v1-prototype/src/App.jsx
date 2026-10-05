@@ -68,7 +68,7 @@ import { creatorRoleLabel, orderedCreators, relatedRuns, arcPublisher } from "./
 import { nextTabBarState, canTuck } from "./tab-bar.js";
 import { sheetPullDecision } from "./sheet.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, quadrantPanels, pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, readablePanels, pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -9816,6 +9816,22 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
   </div>;
 }
 
+// How long a page may take to have its panels found before the reader says
+// it is finding them: an answer within it is not worth a word.
+const FINDING_PANELS_DELAY_MS = 400;
+
+// True once `on` has held for `delay` ms, so a status for an answer that
+// comes at once never flashes up and away.
+function useShownAfter(on, delay) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!on) { setShown(false); return undefined; }
+    const timer = setTimeout(() => setShown(true), delay);
+    return () => clearTimeout(timer);
+  }, [on, delay]);
+  return on && shown;
+}
+
 function ReaderView({
   fileId, title, medium, directionOverride, startPage = null, behind = false,
   onFinish, onOpenRun, onProgressSaved, onClose,
@@ -9927,13 +9943,10 @@ function ReaderView({
   const at = useRef(0);
   at.current = index;
   const direction = readingDirection(medium, directionOverride);
-  // What a page's panels are for stepping: the server's, or four quadrants
-  // while its answer is on its way or when it had none -- so there is never
-  // a page that cannot be stepped through.
-  const pagePanels = useCallback((number) => {
-    const entry = panelsRef.current[number];
-    return entry?.segmented && entry.panels.length ? entry.panels : quadrantPanels(direction);
-  }, [direction]);
+  // What a page's panels are for stepping: the whole page while they are
+  // being found, then the server's, or four quadrants when it had none --
+  // so there is never a page that cannot be stepped through.
+  const pagePanels = useCallback((number) => readablePanels(panelsRef.current[number], direction), [direction]);
   // The steps a page takes: its panels, and -- when asked for -- the whole
   // page before and after them, the way Guided View can. `panel` is a step;
   // what it shows is read through stepAt.
@@ -9952,6 +9965,10 @@ function ReaderView({
     setPan({ x: 0, y: 0 });
   }, []);
   const count = pages.list.length;
+  // The page in view is having its panels found: it reads whole meanwhile
+  // (`readablePanels`), and says so once that takes long enough to notice.
+  const findingPanels = panelMode && !overview && pages.state === "done" && count > 0 && !panels[index];
+  const showFinding = useShownAfter(findingPanels, FINDING_PANELS_DELAY_MS);
   const spread = Boolean(spreads[index]);
 
   useEffect(() => {
@@ -10021,7 +10038,7 @@ function ReaderView({
           const resuming = resumingPanel.current;
           if (resuming && resuming.page === number) {
             resumingPanel.current = null;
-            const rects = data?.segmented && data.panels.length ? data.panels : quadrantPanels(direction);
+            const rects = readablePanels(data ?? { segmented: false, panels: [] }, direction);
             setPanel(stepOf(resuming.panel, rects.length, stepPrefsRef.current));
           }
         })
@@ -10586,12 +10603,14 @@ function ReaderView({
       {pages.state === "done" && !pages.error && !count ? <div className="reader-status" role="status">
         <WarningCircle size={22} /><span>This file has no pages to read.</span>
       </div> : null}
+      {/* Present always, so the words are announced when they arrive. */}
+      <div className="reader-finding" role="status">{showFinding ? <><LoadingSpinner size={16} /><span>Finding panels…</span></> : null}</div>
       {window_.map((number) => {
         const item = pages.list[number];
         const shown = number === index;
         // The page dims around the panel in view; the whole page, asked for
         // with a double-tap, is shown undimmed.
-        const scrim = shown && panelMode && panelScrim && !overview && !wholePageStep;
+        const scrim = shown && panelMode && panelScrim && !overview && !wholePageStep && Boolean(panels[number]);
         const hole = scrim ? panelMask(pagePanels(number)[shownStep.panel]) : null;
         return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
           className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}`}
@@ -10699,7 +10718,7 @@ function ReaderView({
     <footer className="reader-bar reader-bar--bottom" onPointerDown={wakeChrome} onFocusCapture={wakeChrome} {...hold(held)}>
       <span className="reader-count">{count
         ? (panelMode && !overview
-          ? `${wholePageStep ? "Whole page" : `Panel ${shownStep.panel + 1} of ${pagePanels(index).length}`} · ${index + 1} of ${count}`
+          ? `${findingPanels ? "Finding panels" : wholePageStep ? "Whole page" : `Panel ${shownStep.panel + 1} of ${pagePanels(index).length}`} · ${index + 1} of ${count}`
           : `${index + 1} of ${count}`)
         : "—"}{spread ? " · spread" : ""}</span>
       {count ? <div className="reader-scrubber">

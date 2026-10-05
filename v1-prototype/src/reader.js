@@ -188,8 +188,9 @@ export function pageFilter({ dim = 1, warm = 0 } = {}) {
 // Reading a page one panel at a time, the way Kindle's Panel View and
 // Comixology's Guided View do. The server says where the panels are, in
 // reading order; these decide where the page has to sit to show one, and
-// where the next one is. A page the server could not read gets four
-// quadrants, Kindle's own fallback, so there is never a dead page.
+// where the next one is. A page still being read shows whole; one the server
+// could not read gets four quadrants, Kindle's own fallback, so there is
+// never a dead page (`readablePanels`).
 
 /** The margin left around a panel, so its border is not the screen's edge. */
 export const PANEL_MARGIN = 0.04;
@@ -299,6 +300,22 @@ export function pinchZoom(startZoom, startDistance, distance) {
 /** Whether a pinch that ended at `zoomAfter` asked for the whole page: in panel view, on a panel, in past its framing. */
 export function pinchLeavesPanel(zoomAfter, panelZoom, panelMode, overview) {
   return Boolean(panelMode) && !overview && panelZoom > 0 && zoomAfter < panelZoom * PINCH_OUT_OF_PANEL;
+}
+
+/** The whole page as its one panel. */
+export const WHOLE_PAGE = Object.freeze([Object.freeze({ x: 0, y: 0, w: 1, h: 1 })]);
+
+/**
+ * The panels a page is stepped through, from the server's answer for it
+ * (`entry`). Until it has answered -- the first time a page is opened, its
+ * panels are being found -- the page reads whole, as one step, and moves
+ * into its first panel when they arrive: Kindle's four quadrants in the
+ * meantime read as panels that were never there. A page the server answered
+ * without panels gets the quadrants, Kindle's fallback, so no page is dead.
+ */
+export function readablePanels(entry, direction) {
+  if (!entry) return WHOLE_PAGE;
+  return entry.segmented && entry.panels?.length ? entry.panels : quadrantPanels(direction);
 }
 
 /** Kindle's Virtual Panels: the page in four, in reading order. */

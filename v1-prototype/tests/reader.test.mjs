@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, panelMask,
+  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, readablePanels, WHOLE_PAGE, panelMask,
   pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, PINCH_OUT_OF_PANEL, MIN_ZOOM, MAX_ZOOM, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
@@ -190,6 +190,18 @@ test("stepping walks the panels, then the pages, and stops at the ends", () => {
 
 test("a page with no answer yet counts as one panel", () => {
   assert.deepEqual(panelStep({ page: 0, panel: 0 }, "next", [undefined, 2]), { page: 1, panel: 0 });
+});
+
+test("a page whose panels are still being found reads whole, then by its panels", () => {
+  const found = [{ x: 0, y: 0, w: 1, h: 0.3 }, { x: 0, y: 0.3, w: 1, h: 0.7 }];
+  assert.deepEqual(readablePanels(undefined, "ltr"), WHOLE_PAGE, "no answer yet: the whole page, one step");
+  assert.equal(stepCount(readablePanels(undefined, "ltr").length, { start: true, end: true }), 1, "no whole-page steps around it");
+  const viewport = { width: 390, height: 844 };
+  const page = { width: 390, height: 600 };
+  assert.deepEqual(panelFocus(WHOLE_PAGE[0], viewport, page), { zoom: 1, pan: { x: 0, y: 0 } }, "nothing zoomed");
+  assert.deepEqual(readablePanels({ segmented: true, panels: found }, "ltr"), found);
+  assert.deepEqual(readablePanels({ segmented: false, panels: [] }, "rtl"), quadrantPanels("rtl"), "unreadable: quadrants");
+  assert.deepEqual(readablePanels({ segmented: true, panels: [] }, "ltr"), quadrantPanels("ltr"));
 });
 
 test("quadrants read the way the run does", () => {
