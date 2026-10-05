@@ -13217,7 +13217,14 @@ def _vision_error(exc: urllib.error.HTTPError) -> tuple[str, str]:
         return "", ""
     if not isinstance(error, dict):
         return "", ""
-    return str(error.get("code") or error.get("type") or ""), str(error.get("message") or "")
+    code, said = str(error.get("code") or error.get("type") or ""), str(error.get("message") or "")
+    # Anthropic says an empty balance as a 400 "invalid_request_error" whose
+    # only tell is its message ("Your credit balance is too low..."). Taken
+    # for an ordinary refusal, every page opened asked again and waited on a
+    # call that could not succeed (2026-10-05).
+    if code == "invalid_request_error" and "credit balance" in said.lower():
+        code = "credit_balance_exhausted"
+    return code, said
 
 
 def _vision_error_code(exc: urllib.error.HTTPError) -> str:

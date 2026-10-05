@@ -7240,6 +7240,26 @@ class VisionConnectorTests(unittest.TestCase):
             self.assertFalse(app.vision_model_ready(), "not ready while cooling down: the reader must not wait it out")
             with patch("app.log_event"):
                 self.assertFalse(app.vision_model_ready())
+        # Anthropic says the same thing as a 400 with a generic type; only the
+        # message tells (the owner's account at zero, 2026-10-05).
+        claude = {"anthropic": {"enabled": True, "apiKey": "a-key"}}
+        empty = (b'{"type": "error", "error": {"type": "invalid_request_error", "message": "Your credit balance is too low '
+                 b'to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}')
+        with patch("app.load_provider_config", return_value=claude), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
+            with patch("urllib.request.urlopen", side_effect=self._refusal(400, empty)), patch("app.log_event") as log:
+                with self.assertRaises(app.VisionUnavailable):
+                    app.ask_vision_model(b"jpeg", "boxes?")
+            self.assertEqual(log.call_args.kwargs.get("code"), "credit_balance_exhausted")
+            self.assertIn("credit balance is too low", log.call_args.kwargs.get("detail"))
+            held = app._PROVIDER_NEXT_REQUEST_AT["anthropic"] - time.monotonic()
+            self.assertGreater(held, app.VISION_QUOTA_COOLDOWN_SECONDS - 5, "left alone, not asked again on every page")
+            with patch("urllib.request.urlopen", side_effect=self._refusal(400, b'{"error": {"type": "invalid_request_error", "message": "image too large"}}')), \
+                    patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True), patch("app.log_event") as log:
+                with self.assertRaises(app.VisionUnavailable):
+                    app.ask_vision_model(b"jpeg", "boxes?")
+                self.assertEqual(log.call_args.kwargs.get("code"), "invalid_request_error", "another refusal stays what it is")
+                self.assertNotIn("anthropic", app._PROVIDER_NEXT_REQUEST_AT)
         with patch("app.load_provider_config", return_value=keyed), patch("app._wait_for_provider_slot"), \
              patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
             with patch("urllib.request.urlopen", side_effect=self._refusal(429, b"{}", {"Retry-After": "7"})), patch("app.log_event"):
