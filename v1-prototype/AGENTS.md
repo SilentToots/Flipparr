@@ -1,6 +1,6 @@
-# SonicBoom frontend instructions
+# Flipparr frontend instructions
 
-This directory name is retained for repository continuity, but SonicBoom is a
+This directory name is retained for repository continuity, but Flipparr is a
 pre-release product on a production track. Frontend work must satisfy the
 product-stage rules and release gates in `../AGENTS.md` and
 `../docs/RELEASE_TRACK.md`; a screen is not complete merely because it works in
@@ -12,7 +12,7 @@ Before making substantial visual changes, use the Product Design plugin's `get-c
 
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
 
-Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same frontend build can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+Build app UI in `src/`. `npm run build` leaves the app in `dist/client`, which the image serves.
 
 ## Product direction
 

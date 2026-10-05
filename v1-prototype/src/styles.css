@@ -358,7 +358,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
   background: currentColor;
   opacity: var(--loader-muted-opacity);
   transform-origin: 50% 158%;
-  animation: sonicboom-loader-fade var(--motion-duration-loader) linear infinite;
+  animation: flipparr-loader-fade var(--motion-duration-loader) linear infinite;
 }
 .loading-indicator__mark:nth-child(1) { transform: rotate(0deg); animation-delay: 0ms; }
 .loading-indicator__mark:nth-child(2) { transform: rotate(45deg); animation-delay: -110ms; }
@@ -384,7 +384,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .ui-button--danger { min-height: 38px; border: 1px solid var(--button-danger-border); background: var(--button-danger-bg); color: var(--button-danger-text); }
 .ui-button:disabled { opacity: var(--button-disabled-opacity); cursor: default; transform: none; }
 .ui-button__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@keyframes sonicboom-loader-fade {
+@keyframes flipparr-loader-fade {
   0%, 12.5% { opacity: 1; }
   50%, 100% { opacity: var(--loader-muted-opacity); }
 }

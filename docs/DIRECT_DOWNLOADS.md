@@ -19,8 +19,10 @@ schema 64 (`load_acquisition_service_config`, `load_app_settings`,
   each item's title, link and size (`direct_site_search`). An answer that is
   not a feed -- a browser check, an error page -- is refused, never read as
   "found nothing".
-- **Posts with download links** under a `/dls/` path, read by
-  `_DIRECT_SITE_LINK`. Links to file-hosting mirrors are not followed.
+- **Posts with download links** under a `/dls/` path on the site itself or a
+  subdomain of it, read by `_DIRECT_SITE_LINK` and checked by `_on_site`. A
+  search result or link that points at any other host is ignored, so a page
+  cannot send the downloader elsewhere; file-hosting mirrors are not followed.
 
 Results are scored like any release (`_release_candidate_score`), so the
 language, year and issue checks apply unchanged, and a post below the bar that

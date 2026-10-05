@@ -3867,6 +3867,28 @@ POST_PAGE = """<html><body>
 class SolverTests(unittest.TestCase):
     """Reading the post page needs a browser; fetching the file does not."""
 
+    def setUp(self):
+        # Links are taken only from the site the operator entered.
+        home = patch("app._direct_site_home", return_value="https://comics.example")
+        home.start()
+        self.addCleanup(home.stop)
+
+    def test_a_link_off_the_site_is_never_followed(self):
+        """A post page cannot send the downloader to another host -- least of
+        all one inside the network Flipparr runs on (2026-10-05)."""
+        page = ('<a href="https://192.168.1.10/dls/internal">Main Server</a>'
+                '<a href="https://evil.example/dls/elsewhere">Mirror</a>'
+                '<a href="https://comics.example.evil.example/dls/lookalike">Mirror</a>'
+                '<a href="https://files.comics.example/dls/good">Main Server</a>')
+        self.assertEqual([link["url"] for link in app.direct_site_download_links(page, "https://www.comics.example")],
+                         ["https://files.comics.example/dls/good"])
+        self.assertEqual(app.direct_site_download_links(page, ""), [], "no site entered: nothing is taken")
+        feed = (b"<rss><channel><item><title>Example #1 (2020)</title><link>https://evil.example/example-1/</link></item>"
+                b"<item><title>Example #2 (2020)</title><link>https://comics.example/example-2/</link></item></channel></rss>")
+        with patch("app.fetch_bytes_with_headers", return_value=feed):
+            found = app.direct_site_search("Example", base_url="https://comics.example")
+        self.assertEqual([item["title"] for item in found], ["Example #2 (2020)"])
+
     def test_the_api_path_is_added_rather_than_failing_silently(self):
         """mylar3 #1815: without /v1 the page fetcher 405s and every grab dies quietly."""
         self.assertEqual(app._solver_endpoint("http://flaresolverr:8191"), "http://flaresolverr:8191/v1")
@@ -8714,6 +8736,12 @@ class ReadingListImportTests(ReadingListTests):
 class DirectSitePartsTests(unittest.TestCase):
     """A download-site post in parts: the part that holds the wanted issue is the
     one taken, not the first button on the page."""
+
+    def setUp(self):
+        # Links are taken only from the site the operator entered.
+        home = patch("app._direct_site_home", return_value="https://comics.example")
+        home.start()
+        self.addCleanup(home.stop)
 
     PAGE = (
         '<p><strong>The Woods #1 &#8211; 36 + TPB Vol. 1 &#8211; 9</strong></p><p>Language : English | Year : 2014-2018 | Size : 3.6 GB</p>'

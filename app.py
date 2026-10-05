@@ -107,7 +107,7 @@ ARCHIVE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".
 COVER_THUMBNAIL_MAX_DIMENSION = 600
 COVER_THUMBNAIL_QUALITY = 82
 COVER_SOURCE_MAX_BYTES = 50_000_000
-COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "comic-metadata-poc-cover-cache-v1"
+COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "flipparr-cover-cache-v1"
 # The run drawer's header is 606px wide; a page behind it is drawn at twice
 # that for high-density screens.
 BACKDROP_MAX_DIMENSION = 1200
@@ -3830,8 +3830,8 @@ def direct_site_search(query: str, limit: int = 20, base_url: str | None = None)
     for item in root.iter("item"):
         title = html.unescape(str(item.findtext("title") or "")).strip()
         link = str(item.findtext("link") or "").strip()
-        if not title or not link.startswith("http"):
-            continue
+        if not title or not _on_site(link, base):
+            continue  # a result that points off the site is not one of its posts
         description = html.unescape(str(item.findtext("description") or ""))
         found.append({
             "title": title, "url": link,
@@ -3925,7 +3925,28 @@ def _direct_site_part_fits_years(label: Any, years: Any) -> bool:
     return any(stated[0] - 1 <= year <= stated[1] + 1 for year in known)
 
 
-def direct_site_download_links(page: str) -> list[dict[str, Any]]:
+def _on_site(url: Any, site: Any) -> bool:
+    """Whether a link is on the direct-download site the operator entered (or
+    a subdomain of it). Only the site itself is asked for anything: a page
+    cannot send the downloader to another host, least of all one inside the
+    network Flipparr runs on."""
+    try:
+        host = (urllib.parse.urlsplit(str(url or "")).hostname or "").lower()
+        home = (urllib.parse.urlsplit(str(site or "")).hostname or "").lower()
+    except ValueError:
+        return False
+    home = home[4:] if home.startswith("www.") else home
+    return bool(host and home) and (host == home or host.endswith("." + home))
+
+
+def _direct_site_home() -> str:
+    try:
+        return str(_enabled_acquisition_service("direct_site").get("url") or "")
+    except ValueError:
+        return ""
+
+
+def direct_site_download_links(page: str, site: str | None = None) -> list[dict[str, Any]]:
     """Every direct link a post offers, each with the part it belongs to.
 
     A run's post is in parts -- "The Woods #1 – 12 (474 MB) : :" and its
@@ -3939,6 +3960,8 @@ def direct_site_download_links(page: str) -> list[dict[str, Any]]:
     last_end = 0
     label = ""
     for match in _DIRECT_SITE_LINK.finditer(page or ""):
+        if site is not None and not _on_site(match.group(1), site):
+            continue
         raw = page[last_end:match.start()]
         # The match ends inside the previous button's tag; the rest of that
         # tag is not text.
@@ -3986,7 +4009,7 @@ def direct_site_download_link(post_url: str, issue_number: Any = None, years: An
     and the first part holding a #12 of R.E.B.E.L.S. was the 1994 run's
     (2026-09-29).
     """
-    links = direct_site_download_links(solver_fetch_html(post_url))
+    links = direct_site_download_links(solver_fetch_html(post_url), _direct_site_home())
     if not links:
         raise ValueError("That download-site post offers no direct download link")
     wanted = _issue_number(issue_number)
@@ -4039,7 +4062,7 @@ def _direct_site_post_parts(post_url: str) -> list[dict[str, Any]]:
         cached = _DIRECT_SITE_PARTS.get(post_url)
         if cached and cached[0] > now:
             return cached[1]
-    parts = direct_site_download_links(solver_fetch_html(post_url))
+    parts = direct_site_download_links(solver_fetch_html(post_url), _direct_site_home())
     with _DIRECT_SITE_PARTS_LOCK:
         for key in [key for key, (expires, _) in _DIRECT_SITE_PARTS.items() if expires <= now]:
             _DIRECT_SITE_PARTS.pop(key, None)
@@ -19393,13 +19416,17 @@ def make_server(host: str, port: int) -> tuple[Any, int]:
 def serving_temp_dir() -> Path | None:
     """Temporary files beside the library's data, not in the container's
     256 MB /tmp: uploads Waitress holds until they are complete, and comic packs
-    being unpacked. FLIPPARR_TEMP_DIR, else <config>/tmp; emptied at start, since
-    anything left there belongs to a process that has gone.
+    being unpacked. <config>/tmp, or a `flipparr-tmp` folder inside
+    FLIPPARR_TEMP_DIR; emptied at start, since anything left there belongs to
+    a process that has gone. Only ever a folder of Flipparr's own is emptied:
+    the setting names where to put it, so pointing it at /config or the
+    library cannot delete either.
 
     None when the folder cannot be made -- a config folder the app may not
     write, as in a container started without its volume. The server still
     starts and says what is wrong; large uploads then fall back on /tmp."""
-    folder = _configured_path("TEMP_DIR", catalog_database_path().parent / "tmp")
+    chosen = _env("TEMP_DIR")
+    folder = Path(chosen) / "flipparr-tmp" if chosen else catalog_database_path().parent / "tmp"
     try:
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)

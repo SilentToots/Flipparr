@@ -28,7 +28,7 @@ python -B app.py serve --port 8801
 and from `v1-prototype/`, a Vite server proxying `/api` to it:
 
 ```
-SONICBOOM_API_ORIGIN=http://127.0.0.1:8801 npx vite --port 4199 --strictPort
+FLIPPARR_API_ORIGIN=http://127.0.0.1:8801 npx vite --port 4199 --strictPort
 ```
 
 Point the scripts at both — `VISUAL_APP_ORIGIN` for every state and

@@ -17,7 +17,7 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": [
         "-c",
-        "cd v1-prototype && SONICBOOM_API_ORIGIN=http://127.0.0.1:8794 npx vite --port 4180 --strictPort"
+        "cd v1-prototype && FLIPPARR_API_ORIGIN=http://127.0.0.1:8794 npx vite --port 4180 --strictPort"
       ],
       "port": 4180
     },

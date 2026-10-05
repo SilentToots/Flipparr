@@ -56,8 +56,7 @@ jobs:
         working-directory: v1-prototype
       - run: npm run build
         working-directory: v1-prototype
-      # After the build: one test checks the files the build emits for Sites
-      # packaging. Includes tests/design-system.test.mjs, which fails on a font
+      # Includes tests/design-system.test.mjs, which fails on a font
       # size, weight, line height, spacing, radius, colour or breakpoint that
       # is not one of the design system's; it reads the stylesheets as text, so
       # it needs no browser.

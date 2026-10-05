@@ -855,11 +855,11 @@ class HttpContractTests(unittest.TestCase):
     def test_a_trusted_proxy_may_be_named_by_its_network(self):
         """Docker hands bridge addresses out in start order, so a proxy's address
         changes across restarts while its network's subnet does not."""
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
-            self.assertTrue(app.is_trusted_proxy("192.168.16.2"))
-            self.assertTrue(app.is_trusted_proxy("192.168.31.254"))
-            self.assertFalse(app.is_trusted_proxy("192.168.32.1"))
-            self.assertEqual(app.resolve_client_address("192.168.16.2", "203.0.113.9"), "203.0.113.9")
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "172.30.0.0/20"}):
+            self.assertTrue(app.is_trusted_proxy("172.30.0.2"))
+            self.assertTrue(app.is_trusted_proxy("172.30.15.254"))
+            self.assertFalse(app.is_trusted_proxy("172.30.16.1"))
+            self.assertEqual(app.resolve_client_address("172.30.0.2", "203.0.113.9"), "203.0.113.9")
 
     def test_a_single_address_is_still_trusted_exactly(self):
         with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "10.0.0.5"}):
@@ -870,36 +870,36 @@ class HttpContractTests(unittest.TestCase):
         """nginx's $proxy_add_x_forwarded_for appends the real client to whatever
         the client sent, so the left end of the header is the client's to write.
         Only the right end, walked past our own proxies, can be believed."""
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "172.30.0.0/20"}):
             # A routable address: Python counts the documentation ranges
             # (203.0.113.0/24 and friends) as private.
-            resolved = app.resolve_client_address("192.168.16.2", "127.0.0.1, 8.8.8.8")
+            resolved = app.resolve_client_address("172.30.0.2", "127.0.0.1, 8.8.8.8")
         self.assertEqual(resolved, "8.8.8.8")
         self.assertFalse(app.is_local_address(resolved))
 
     def test_a_chain_of_trusted_proxies_is_walked_to_the_client(self):
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "10.0.0.0/8, 192.168.16.2"}):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "10.0.0.0/8, 172.30.0.2"}):
             self.assertEqual(
-                app.resolve_client_address("192.168.16.2", "203.0.113.9, 10.1.2.3"), "203.0.113.9")
+                app.resolve_client_address("172.30.0.2", "203.0.113.9, 10.1.2.3"), "203.0.113.9")
 
     def test_forwarded_for_from_an_untrusted_peer_is_ignored(self):
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "172.30.0.0/20"}):
             self.assertEqual(app.resolve_client_address("203.0.113.9", "127.0.0.1"), "203.0.113.9")
 
     def test_a_malformed_forwarded_hop_never_resolves_to_a_local_address(self):
         """Falling back to the proxy's own, private, address would let a garbled
         header pass the local-address bypass."""
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
-            resolved = app.resolve_client_address("192.168.16.2", "not-an-address")
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "172.30.0.0/20"}):
+            resolved = app.resolve_client_address("172.30.0.2", "not-an-address")
         self.assertFalse(app.is_local_address(resolved))
 
     def test_a_trusted_proxy_with_no_forwarded_header_is_the_caller(self):
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
-            self.assertEqual(app.resolve_client_address("192.168.16.5", ""), "192.168.16.5")
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "172.30.0.0/20"}):
+            self.assertEqual(app.resolve_client_address("172.30.0.5", ""), "172.30.0.5")
 
     def test_an_ipv4_mapped_peer_matches_an_ipv4_network(self):
-        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "192.168.16.0/20"}):
-            self.assertTrue(app.is_trusted_proxy("::ffff:192.168.16.2"))
+        with patch.dict("app.os.environ", {"FLIPPARR_TRUSTED_PROXIES": "172.30.0.0/20"}):
+            self.assertTrue(app.is_trusted_proxy("::ffff:172.30.0.2"))
 
     def test_an_unparseable_entry_trusts_nothing_and_is_reported_once(self):
         app._BAD_PROXY_ENTRIES_WARNED.clear()
@@ -1795,15 +1795,19 @@ class TransportTests(unittest.TestCase):
                       headers={"X-Filename": "padded.cbl"})
         self.assertEqual((raw.status, raw.json().get("name")), (201, "Padded"), raw.body[:200])
 
-    def test_temporary_files_live_in_a_folder_emptied_at_start(self):
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"FLIPPARR_TEMP_DIR": str(Path(folder) / "tmp")}):
-            leftover = Path(folder) / "tmp" / "upload-from-a-crash"
+    def test_temporary_files_live_in_a_folder_of_their_own_emptied_at_start(self):
+        """Only Flipparr's own folder is ever emptied: FLIPPARR_TEMP_DIR says
+        where to put it, so naming /config or the library deletes nothing."""
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"FLIPPARR_TEMP_DIR": folder}):
+            precious = Path(folder) / "flipparr.db"
+            precious.write_bytes(b"the library")
+            leftover = Path(folder) / "flipparr-tmp" / "upload-from-a-crash"
             leftover.parent.mkdir()
             leftover.write_bytes(b"x")
             made = app.serving_temp_dir()
-            self.assertEqual(made, Path(folder) / "tmp")
-            self.assertTrue(made.is_dir())
-            self.assertEqual(list(made.iterdir()), [])
+            self.assertEqual(made, Path(folder) / "flipparr-tmp")
+            self.assertEqual(list(made.iterdir()), [], "what a dead process left is cleared")
+            self.assertEqual(precious.read_bytes(), b"the library", "nothing beside it is touched")
 
     def test_a_temporary_folder_that_cannot_be_made_does_not_stop_the_server(self):
         """A container started without its config volume has a /config it may
@@ -1813,7 +1817,7 @@ class TransportTests(unittest.TestCase):
             locked.mkdir()
             locked.chmod(0o500)
             try:
-                with patch.dict(os.environ, {"FLIPPARR_TEMP_DIR": str(locked / "tmp")}), \
+                with patch.dict(os.environ, {"FLIPPARR_TEMP_DIR": str(locked)}), \
                         patch("app.log_event") as logged:
                     self.assertIsNone(app.serving_temp_dir())
             finally:
