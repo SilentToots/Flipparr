@@ -10138,6 +10138,20 @@ class IntakeEraCompatibilityTests(unittest.TestCase):
         self.assertEqual({key for key in runs if key[0] == "Hawkeye"}, {("Hawkeye", 2012), ("Hawkeye", 2016)})
         self.assertEqual(files["Hawkeye (2012) #004.cbz"][1], 2012)
 
+    def test_a_comicinfo_volume_picks_the_nearest_existing_run(self):
+        # Production (2026-10-05): Justice League #056, ComicInfo Volume 2018,
+        # with runs from 2016 and 2018 both within the slack.
+        with tempfile.TemporaryDirectory() as folder:
+            # The 2016 run comes first, so the title's alias points at it.
+            self._comic(folder, "comics/Justice League (2016)/Justice League #001.cbz")
+            self._intake(folder)
+            self._comic(folder, "comics/Justice League (2018)/Justice League #002.cbz")
+            self._intake(folder)
+            self._comic(folder, "comics/Justice League #056.cbz", {"Series": "Justice League", "Number": "56", "Volume": "2018"})
+            runs, files = self._intake(folder)
+        self.assertEqual(set(runs), {("Justice League", 2016), ("Justice League", 2018)})
+        self.assertEqual(files["Justice League #056.cbz"][:2], ("Justice League", 2018))
+
     def test_a_comicinfo_volume_that_is_a_cover_year_splits_nothing(self):
         # Production (2026-10-05): DIE: Loaded #9, a 2025 series, carries
         # ComicInfo Volume 2026 -- its own year, not the run's.

@@ -2527,11 +2527,16 @@ class CatalogStore:
                     earliest,
                     -int(candidate["id"]),
                 )
+            # The year the claim gives its run picks the run nearest it: a
+            # ComicInfo Volume of 2018 fits 2016 too, within the slack, but
+            # is Justice League (2018)'s.
+            anchor_distance = abs(anchor_year - start_year) if start_year is not None else 9999
             return (
                 placed,
                 1 if publisher_match else 0,
                 1,
                 1 if plausible else 0,
+                -anchor_distance,
                 -distance,
                 -int(candidate["id"]),
             )
@@ -2583,10 +2588,17 @@ class CatalogStore:
             candidates = matching_runs()
             if provider_anchored:
                 pass
-            elif anchor_year is not None and not _years_compatible(series["start_year"], anchor_year, era_slack):
+            elif anchor_year is not None and (
+                not _years_compatible(series["start_year"], anchor_year, era_slack)
+                or (series["start_year"] is not None and any(
+                    candidate["start_year"] is not None
+                    and abs(candidate["start_year"] - anchor_year) < abs(series["start_year"] - anchor_year)
+                    for candidate in candidates))
+            ):
                 # Identical titles are routinely relaunched decades apart. A
                 # global title alias is useful for discovery but must never be
-                # sufficient to merge two publication eras.
+                # sufficient to merge two publication eras, nor to pass over
+                # a run of the title nearer the claim's year.
                 compatible = max(candidates, key=candidate_rank) if candidates else None
                 row = {"series_run_id": int(compatible["id"])} if compatible else None
             elif anchor_year is None and len(candidates) > 1:
