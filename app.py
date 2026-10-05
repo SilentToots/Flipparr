@@ -19109,14 +19109,23 @@ def make_server(host: str, port: int) -> tuple[Any, int]:
     return server, int(server.effective_port)
 
 
-def serving_temp_dir() -> Path:
+def serving_temp_dir() -> Path | None:
     """Temporary files beside the library's data, not in the container's
     256 MB /tmp: uploads Waitress holds until they are complete, and comic packs
     being unpacked. FLIPPARR_TEMP_DIR, else <config>/tmp; emptied at start, since
-    anything left there belongs to a process that has gone."""
+    anything left there belongs to a process that has gone.
+
+    None when the folder cannot be made -- a config folder the app may not
+    write, as in a container started without its volume. The server still
+    starts and says what is wrong; large uploads then fall back on /tmp."""
     folder = _configured_path("TEMP_DIR", catalog_database_path().parent / "tmp")
-    shutil.rmtree(folder, ignore_errors=True)
-    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log_event("temp_dir_unavailable", level="warning", path=str(folder), error=str(exc),
+                  detail="Uploads larger than the free space in the default temporary folder will fail.")
+        return None
     return folder
 
 
@@ -19176,7 +19185,9 @@ def main() -> None:
     start_release_research_worker()
     start_auto_scan_worker()
     start_ratings_worker()
-    tempfile.tempdir = str(serving_temp_dir())
+    temp_dir = serving_temp_dir()
+    if temp_dir is not None:
+        tempfile.tempdir = str(temp_dir)
     server, port = make_server(args.host, args.port)
 
     def stop(signum: int, _frame: Any) -> None:
@@ -19188,7 +19199,7 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     log_event("server_started", host=args.host, port=port, threads=http_thread_count(),
-              tempDir=tempfile.tempdir, version=APP_VERSION, build=APP_BUILD)
+              tempDir=tempfile.gettempdir(), version=APP_VERSION, build=APP_BUILD)
     try:
         server.run()
     finally:

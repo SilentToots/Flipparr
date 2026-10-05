@@ -1767,6 +1767,21 @@ class TransportTests(unittest.TestCase):
             self.assertTrue(made.is_dir())
             self.assertEqual(list(made.iterdir()), [])
 
+    def test_a_temporary_folder_that_cannot_be_made_does_not_stop_the_server(self):
+        """A container started without its config volume has a /config it may
+        not write: the server must still come up and say so (CI, 2026-10-05)."""
+        with tempfile.TemporaryDirectory() as folder:
+            locked = Path(folder) / "locked"
+            locked.mkdir()
+            locked.chmod(0o500)
+            try:
+                with patch.dict(os.environ, {"FLIPPARR_TEMP_DIR": str(locked / "tmp")}), \
+                        patch("app.log_event") as logged:
+                    self.assertIsNone(app.serving_temp_dir())
+            finally:
+                locked.chmod(0o700)
+            self.assertEqual(logged.call_args.args[0], "temp_dir_unavailable")
+
 
 class RouteCensusTests(unittest.TestCase):
     def test_every_route_has_a_class_and_only_the_reviewed_ones_are_open(self):
