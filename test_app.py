@@ -10109,6 +10109,17 @@ class IntakeEraCompatibilityTests(unittest.TestCase):
         self.assertEqual(runs[("Nightwing", 2016)], {("issue", "1"), ("issue", "50"), ("issue", "100")})
         self.assertIsNone(files["Ironwood #02.cbz"][1], "a folder that is not the run's own says nothing of its year")
 
+    def test_the_folder_outranks_a_book_year_in_the_name(self):
+        # Gate 2 re-run (2026-10-05): a graphic-novel series names each book
+        # by its own year, and the folder holds the series' year.
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("The Adventure Zone (2019) #001 - Here There Be Gerblins.cbz",
+                         "The Adventure Zone (2018) #002 - Murder on the Rockport Limited!.cbz",
+                         "The Adventure Zone (2019) #006 - The Suffering Game.cbz"):
+                self._comic(folder, f"comics/The Adventure Zone (2018)/{name}")
+            runs, _ = self._intake(folder)
+        self.assertEqual(runs, {("The Adventure Zone", 2018): {("issue", "1"), ("issue", "2"), ("issue", "6")}})
+
     def test_a_year_after_the_number_is_a_cover_date_and_splits_nothing(self):
         with tempfile.TemporaryDirectory() as folder:
             for name in ("Saga 015 (2013).cbz", "Saga 030 (2015).cbz", "Saga 054 (2018).cbz"):

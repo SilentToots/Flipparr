@@ -8892,32 +8892,34 @@ def _separators_to_spaces(text: str) -> str:
 def _run_year_clue(path: Path, raw: str, title: str, number_match: re.Match[str] | None) -> int | None:
     """The year a publication run began, where the file's name says so.
 
-    Three ways a library names it, after the conventions Mylar and
-    ComicTagger write (2026-10-05):
+    Three ways a library names it, after the conventions Mylar, ComicTagger
+    and Komga write (2026-10-05), strongest first:
 
+    - the folder -- "Captain America (2011)/Captain America #010.cbr" --
+      when the folder's title is the file's own. It is the grouping the
+      owner made, and outranks a year in the name: a book series files
+      "The Adventure Zone (2019) #001" (that book's year) under "The
+      Adventure Zone (2018)";
+    - "V2011" -- "Batman V2011 #001";
     - a year before the number -- "Captain America (2011) #010": the
       series' year. A year after the number -- "Batman #015 (2017)" -- is
-      the issue's cover date and is not read here;
-    - "V2011" -- "Batman V2011 #001";
-    - the folder -- "Captain America (2011)/Captain America #010.cbr" --
-      when the folder's title is the file's own.
+      the issue's cover date and is not read here.
 
     It is what tells relaunches apart: without it a library of Batman's
     1940, 2011, 2016 and 2025 runs, none with its #1, was one run of 245
     files. `year` keeps the issue's date either way.
     """
-    stated = VOLUME_YEAR.search(raw)
-    if stated:
-        return int(stated.group(1))
-    if number_match is not None:
-        before = raw[:number_match.start()]
-        years = re.findall(r"\(\s*((?:19|20)\d{2})\s*\)", before)
-        if years:
-            return int(years[-1])
     folder = re.sub(r"\s+", " ", _separators_to_spaces(urllib.parse.unquote(path.parent.name))).strip()
     found = re.fullmatch(r"(.+?)\s*\(\s*((?:19|20)\d{2})\s*\)", folder)
     if found and title and normalized_title(found.group(1)) == normalized_title(title):
         return int(found.group(2))
+    stated = VOLUME_YEAR.search(raw)
+    if stated:
+        return int(stated.group(1))
+    if number_match is not None:
+        years = re.findall(r"\(\s*((?:19|20)\d{2})\s*\)", raw[:number_match.start()])
+        if years:
+            return int(years[-1])
     return None
 
 
