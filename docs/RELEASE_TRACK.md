@@ -166,9 +166,37 @@ and the NAS checks recorded in the commits.
 ### Gate 2 — Catalog correctness
 
 The original application's intake, grouping, filename parsing and naming are
-the baseline. Open: a measured clean and repeated intake of the real library
-against a stated cohort, reported per the AGENTS.md checkpoint rules, and the
-era guard and "merge runs" action.
+the baseline. The era guard and "merge runs" are in place and tested.
+
+**Measured (2026-10-05):** `tools/intake_checkpoint.py` on the owner's real
+library -- 2,821 files, local evidence only (no provider calls), read-only, in
+a throwaway container, two clean intakes into separate databases and a rescan,
+against a copy of production's catalog as a reference (not as truth). Outputs
+that name the owner's comics stay outside the repository.
+
+| Stage | Baseline | After the fixes |
+|---|---|---|
+| Inventory: files healthy | 100% | 100% |
+| Discovery: enough local evidence to identify | 98.3% | 100% |
+| Grouping: numbered issue or volume | 97.6% | 99.9% |
+| Grouping: runs merging several eras | 11 | 0 |
+| Grouping: runs with exactly production's files | 181 of 218 | 206 of 229 |
+| Ownership: issues credited | 2,493 | 2,649 |
+| Intervention: items needing a decision | 0 | 0 |
+| Two clean intakes / rescan, files that differ | 0 / 0 | 0 / 0 |
+| Owner's spot-check of 40 random files | -- | 40 of 40 correct |
+
+Fixed: a run's year stated by its folder, a `V2011`, or a year before the
+number now separates relaunches (exactly; ComicInfo's Volume guides with the
+catalog's slack, since some taggers write the issue's year there), and
+`v05`-style manga volumes are numbered. Opening production's catalog with the
+new build moves no file (checked on a copy before deploying).
+
+Remaining, user-fixable and none wrong-era: 23 runs are part of a larger run
+in production -- leading-article and embedded-title variants ("The X" beside
+"X", "X (2020-)") and spin-offs, which "merge runs" repairs. A file whose
+number appears only in its ComicInfo comes out unnumbered (none in this
+library).
 
 ### Gate 3 — Fulfillment correctness
 
