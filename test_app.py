@@ -10050,6 +10050,94 @@ class QuietSweepAndCoverCacheTests(unittest.TestCase):
             self.assertEqual(sweep.call_args.args[1], app.COVER_CACHE_MAX_BYTES, "and swept to its budget")
 
 
+
+class IntakeEraCompatibilityTests(unittest.TestCase):
+    """Intake against the cases AGENTS.md names, through the real scan. The
+    Gate 2 checkpoint (2026-10-05) found a clean install merging Batman's
+    1940, 2011, 2016 and 2025 runs into one: every file stated its run's
+    year, before the number or in its folder, and none was an opening issue,
+    the only kind once allowed to set an era."""
+
+    def _comic(self, folder, relative, info=None):
+        path = Path(folder) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        page = io.BytesIO()
+        from PIL import Image
+        Image.new("RGB", (8, 12), "blue").save(page, format="PNG")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("001.png", page.getvalue())
+            if info:
+                fields = "".join(f"<{key}>{value}</{key}>" for key, value in info.items())
+                archive.writestr("ComicInfo.xml", f"<ComicInfo>{fields}</ComicInfo>")
+        return path
+
+    def _intake(self, folder):
+        store = CatalogStore(Path(folder) / "catalog.db")
+        scan_id = store.begin_scan(str(Path(folder) / "comics"), True)
+        store.perform_scan(scan_id, app.scan_folder, app.inventory_file)
+        with sqlite3.connect(store.database_path) as connection:
+            rows = connection.execute(
+                """SELECT files.filename, series_runs.canonical_title, series_runs.start_year,
+                          file_identities.identity_kind, file_identities.issue_number, file_identities.volume_number
+                   FROM files JOIN file_identities ON file_identities.file_id=files.id
+                   JOIN series_runs ON series_runs.id=file_identities.series_run_id""").fetchall()
+        runs = {}
+        for filename, title, year, kind, issue, volume in rows:
+            runs.setdefault((title, year), set()).add((kind, issue or volume))
+        return runs, {filename: (title, year, kind, issue, volume) for filename, title, year, kind, issue, volume in rows}
+
+    def test_eras_stated_in_the_name_stay_apart_without_an_opening_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("Captain America (2005) #010.cbz", "Captain America (2011) #010 - Powerless, Part 5.cbz",
+                         "Captain America (2012) #003.cbz", "Captain America (2011) #011.cbz"):
+                self._comic(folder, f"comics/{name}")
+            runs, _ = self._intake(folder)
+        self.assertEqual(runs, {("Captain America", 2005): {("issue", "10")},
+                                ("Captain America", 2011): {("issue", "10"), ("issue", "11")},
+                                ("Captain America", 2012): {("issue", "3")}},
+                         "2011 and 2012 are two series: a stated year has no slack")
+
+    def test_eras_stated_by_folder_stay_apart_and_one_era_stays_together(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("Batman (1940)/Batman #04.cbz", "Batman (2016)/Batman #04.cbz", "Batman (2016)/Batman #05.cbz",
+                         "Nightwing (2016)/Nightwing #001.cbz", "Nightwing (2016)/Nightwing #050.cbz",
+                         "Nightwing (2016)/Nightwing #100.cbz", "Publisher (2020)/Ironwood #02.cbz"):
+                self._comic(folder, f"comics/{name}")
+            runs, files = self._intake(folder)
+        self.assertEqual(runs[("Batman", 1940)], {("issue", "4")})
+        self.assertEqual(runs[("Batman", 2016)], {("issue", "4"), ("issue", "5")})
+        self.assertEqual(runs[("Nightwing", 2016)], {("issue", "1"), ("issue", "50"), ("issue", "100")})
+        self.assertIsNone(files["Ironwood #02.cbz"][1], "a folder that is not the run's own says nothing of its year")
+
+    def test_a_year_after_the_number_is_a_cover_date_and_splits_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("Saga 015 (2013).cbz", "Saga 030 (2015).cbz", "Saga 054 (2018).cbz"):
+                self._comic(folder, f"comics/{name}")
+            runs, _ = self._intake(folder)
+        self.assertEqual(len(runs), 1, "later issues' dates do not invent eras")
+
+    def test_embedded_only_and_conflicting_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self._comic(folder, "comics/scan0001.cbz", {"Series": "Hawkeye", "Number": "3", "Volume": "2012"})
+            self._comic(folder, "comics/scan0002.cbz", {"Series": "Hawkeye", "Number": "3", "Volume": "2016"})
+            # The name says 2012, ComicInfo 2016: the name is the run's own clue
+            # and wins; the disagreement does not create a third run.
+            self._comic(folder, "comics/Hawkeye (2012) #004.cbz", {"Series": "Hawkeye", "Number": "4", "Volume": "2016"})
+            runs, files = self._intake(folder)
+        self.assertEqual({key for key in runs if key[0] == "Hawkeye"}, {("Hawkeye", 2012), ("Hawkeye", 2016)})
+        self.assertEqual(files["Hawkeye (2012) #004.cbz"][1], 2012)
+
+    def test_manga_volumes_keep_their_numbers_and_issues_and_volumes_share_a_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("Blue Lock (2021) v18.cbz", "Blue Lock (2021) v19.cbz",
+                         "Saga (2012) #001.cbz", "Saga (2012) Vol. 1.cbz"):
+                self._comic(folder, f"comics/{name}")
+            runs, files = self._intake(folder)
+        self.assertEqual(runs[("Blue Lock", 2021)], {("edition", 18), ("edition", 19)})
+        self.assertEqual(runs[("Saga", 2012)], {("issue", "1"), ("edition", 1)},
+                         "both formats under one run, each owned on its own")
+
+
 class _QuickStop(threading.Event):
     """A stop event whose waits return at once, so a worker loop runs a turn."""
 

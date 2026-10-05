@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import contextlib
 import datetime as dt
@@ -393,15 +394,33 @@ def _issue_number_value(value: Any) -> float | None:
     return float(match.group(1)) if match else None
 
 
+def _stated_run_year(parsed: dict[str, Any], identity: dict[str, Any], embedded: dict[str, Any]) -> int | None:
+    """The run year a file states: its name or folder (parse_filename's
+    `run_year`), else ComicInfo's Volume when that is a year -- the field
+    ComicRack and Mylar fill with the series' start year."""
+    for value in (parsed.get("run_year"), identity.get("run_year")):
+        year = _valid_year(value)
+        if year is not None:
+            return year
+    volume = str(embedded.get("volume") or "").strip()
+    return _valid_year(volume) if re.fullmatch(r"(?:19|20)\d{2}", volume) else None
+
+
 def _claim_run_anchor_year(claim: dict[str, Any]) -> int | None:
     """Return a year that can identify a publication run's starting era.
 
-    A later issue's publication year is useful for choosing between already
-    known runs, but it is not the run's start year. Collected-edition years are
-    even less useful because trades are routinely published years after their
-    underlying series began. Only an opening numbered issue may create or move
-    a run's era boundary.
+    A year the file states as its run's -- "Captain America (2011) #010", a
+    "Batman (2016)" folder, ComicInfo's Volume -- does, for any issue or
+    volume (`run_year`, 2026-10-05). Otherwise: a later issue's publication
+    year is useful for choosing between already known runs, but it is not
+    the run's start year. Collected-edition years are even less useful
+    because trades are routinely published years after their underlying
+    series began. Only an opening numbered issue may create or move a run's
+    era boundary.
     """
+    stated = _valid_year(claim.get("run_year"))
+    if stated is not None:
+        return stated
     if claim.get("kind") != "issue":
         return None
     issue_number = _issue_number_value(claim.get("issue"))
@@ -2262,6 +2281,7 @@ class CatalogStore:
             "normalized_title": _normalized(raw_title),
             "kind": "issue" if is_issue else "edition",
             "issue": str(issue) if issue is not None else None,
+            "run_year": _stated_run_year(parsed, identity, embedded),
             "volume": override.get("volumeNumber") if "volumeNumber" in override else identity.get("volume") or parsed.get("volume"),
             "year": override.get("publicationYear") if "publicationYear" in override else recommendation.get("publication_year") or identity.get("year"),
             "publisher": override.get("publisher") if "publisher" in override else recommendation.get("publisher") or embedded.get("publisher"),
@@ -2294,6 +2314,13 @@ class CatalogStore:
                  AND files.present=1""",
             (series_run_id,),
         ).fetchall()
+        stated = [year for year in (
+            _stated_run_year(_load_json(row["parsed_json"], {}), {},
+                             _load_json(row["result_json"], {}).get("embedded_metadata") or {})
+            for row in rows) if year is not None]
+        if stated:
+            # What the files say their run is outranks any issue's cover date.
+            return collections.Counter(stated).most_common(1)[0][0]
         for row in rows:
             issue_number = _issue_number_value(row["issue_number"])
             if issue_number is None or not 1 <= issue_number <= 3:
@@ -2389,6 +2416,10 @@ class CatalogStore:
         canonical_key = _normalized(claim["series_title"])
         observed_year = _valid_year(claim.get("year"))
         anchor_year = _claim_run_anchor_year(claim)
+        # A stated run year is the run's own: 2011 and 2012 are two Captain
+        # America series, not one with a year's slack. A year inferred from
+        # an opening issue's cover date keeps the slack it needs.
+        era_slack = 0 if anchor_year is not None and anchor_year == _valid_year(claim.get("run_year")) else 3
         normalized_publisher = _normalized_publisher(claim.get("publisher"))
         claim_provider = str(claim.get("provider") or "").strip()
         claim_provider_series_id = str(claim.get("provider_series_id") or "").strip()
@@ -2403,7 +2434,7 @@ class CatalogStore:
             if anchor_year is not None:
                 candidates = [
                     candidate for candidate in candidates
-                    if _years_compatible(candidate["start_year"], anchor_year)
+                    if _years_compatible(candidate["start_year"], anchor_year, era_slack)
                 ]
             return candidates
 
@@ -2539,7 +2570,7 @@ class CatalogStore:
             candidates = matching_runs()
             if provider_anchored:
                 pass
-            elif anchor_year is not None and not _years_compatible(series["start_year"], anchor_year):
+            elif anchor_year is not None and not _years_compatible(series["start_year"], anchor_year, era_slack):
                 # Identical titles are routinely relaunched decades apart. A
                 # global title alias is useful for discovery but must never be
                 # sufficient to merge two publication eras.

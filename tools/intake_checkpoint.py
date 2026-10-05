@@ -111,11 +111,14 @@ def measure(database: Path) -> dict[str, Any]:
         """SELECT file_identities.file_id, file_identities.identity_kind, file_identities.issue_number,
                   file_identities.volume_number, series_runs.id AS run_id, series_runs.canonical_title AS run_title,
                   series_runs.start_year AS run_year, series_runs.format AS run_format
-           FROM file_identities JOIN series_runs ON series_runs.id=file_identities.series_run_id""")}
+           FROM file_identities JOIN series_runs ON series_runs.id=file_identities.series_run_id
+           JOIN files ON files.id=file_identities.file_id WHERE files.present=1""")}
     runs = connection.execute(
         """SELECT series_runs.id, series_runs.canonical_title, series_runs.start_year,
                   COUNT(file_identities.file_id) AS files
-           FROM series_runs LEFT JOIN file_identities ON file_identities.series_run_id=series_runs.id
+           FROM series_runs
+           LEFT JOIN file_identities ON file_identities.series_run_id=series_runs.id
+               AND file_identities.file_id IN (SELECT id FROM files WHERE present=1)
            GROUP BY series_runs.id""").fetchall()
     kinds = collections.Counter(str(row["identity_kind"]) for row in identities.values())
     numbered = sum(1 for row in identities.values()
@@ -164,6 +167,8 @@ def measure(database: Path) -> dict[str, Any]:
                          "needAttention": stats.get("needAttention"), "metadataReview": stats.get("metadataReview"),
                          "damaged": stats.get("damaged")},
         "_identities": {str(row["path"]): _identity_signature(identities.get(int(row["id"]))) for row in files},
+        "_runOf": {str(row["path"]): int(identities[int(row["id"])]["run_id"]) for row in files
+                   if int(row["id"]) in identities},
         "_sameTitleRuns": same_title_runs,
     }
 
@@ -180,6 +185,33 @@ def compare(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
     a, b = first["_identities"], second["_identities"]
     differ = sorted(path for path in set(a) | set(b) if a.get(path) != b.get(path))
     return {"filesCompared": len(set(a) | set(b)), "filesThatDiffer": len(differ), "examples": differ[:20]}
+
+
+def grouping_agreement(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """Whether the same files end up together, whatever the runs are called
+    (a provider renames "Action Comics" to "Action Comics (1938)"). For each
+    run of `first`: the same file set in `second`, spread over several of
+    `second`'s runs (eras merged in `first`), or part of a larger one
+    (split in `first`)."""
+    runs_a: dict[int, set[str]] = collections.defaultdict(set)
+    runs_b: dict[int, set[str]] = collections.defaultdict(set)
+    for path, run in first["_runOf"].items():
+        runs_a[run].add(path)
+    for path, run in second["_runOf"].items():
+        runs_b[run].add(path)
+    titles = {run: first["_identities"][next(iter(paths))][0] for run, paths in runs_a.items()}
+    same, spread, part = 0, [], []
+    for run, paths in runs_a.items():
+        targets = {second["_runOf"].get(path) for path in paths} - {None}
+        if len(targets) > 1:
+            spread.append([titles[run], len(paths), len(targets)])
+        elif targets and runs_b[next(iter(targets))] == paths:
+            same += 1
+        else:
+            part.append([titles[run], len(paths)])
+    return {"runs": len(runs_a), "sameFiles": same,
+            "holdsSeveralOfTheOthersRuns": len(spread), "spreadExamples": sorted(spread, key=lambda x: -x[1])[:15],
+            "partOfALargerRun": len(part), "partExamples": sorted(part, key=lambda x: -x[1])[:15]}
 
 
 def spot_check(database: Path, out: Path, size: int, seed: int = 20261005) -> int:
@@ -248,7 +280,9 @@ def main() -> int:
     report["rescanChangesNothing"] = compare(measured_a, measured_rescan)
     report["sameTitleRuns"] = measured_a["_sameTitleRuns"]
     if args.reference:
-        report["reference"] = _public(measure(args.reference))
+        measured_reference = measure(args.reference)
+        report["reference"] = _public(measured_reference)
+        report["groupingAgainstReference"] = grouping_agreement(measured_a, measured_reference)
         report["referenceNote"] = "a copy of an existing catalog, built over time with provider data: a reference, not truth"
     report["spotCheckFiles"] = spot_check(first / "flipparr.db", args.out / "spot-check.csv", args.sample)
 

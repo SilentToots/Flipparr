@@ -2258,6 +2258,12 @@ YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?![\dA-Za-z])")
 ISBN_13 = re.compile(r"(?<!\d)(97[89](?:[ -]?\d){10})(?!\d)")
 ISBN_10 = re.compile(r"(?<!\d)(\d(?:[ -]?\d){8}[ -]?[\dXx])(?!\d)")
 VOLUME = re.compile(r"\b(?:vol(?:ume)?\.?|book)\s*[-#:]?\s*(\d+)\b", re.I)
+# Manga's "Blue Lock (2021) v18": a bare v and up to three digits. Read as a
+# volume only when no issue number is present -- "Nightwing v3 #023" is the
+# third Nightwing series, issue 23 -- and never a v and a year (V2011).
+SHORT_VOLUME = re.compile(r"(?<![A-Za-z0-9])v(\d{1,3})(?![\dA-Za-z])", re.I)
+# "Batman V2011 #001": the series that began in 2011.
+VOLUME_YEAR = re.compile(r"(?<![A-Za-z0-9])v((?:19|20)\d{2})(?![\dA-Za-z])", re.I)
 # "No 19" is how scene releases mark the issue: American.Vampire.Vol.1.No.19.
 ISSUE = re.compile(r"(?:^|\s)(?:#|issue\s*[-#:]?\s*|no\s*)(\d+(?:\.\w+)?)\b", re.I)
 # An unmarked issue number is only believable when a year follows it, which is
@@ -2303,6 +2309,9 @@ class ParsedFile:
     format: str | None = None
     isbn: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # The year the publication run began, where the name states one -- kept
+    # apart from `year`, which is the issue's own date. See _run_year_clue.
+    run_year: int | None = None
 
 
 def catalog_store() -> CatalogStore:
@@ -8880,6 +8889,38 @@ def _separators_to_spaces(text: str) -> str:
     return re.sub(r"[._]+", " ", kept).replace("\x00", ".")
 
 
+def _run_year_clue(path: Path, raw: str, title: str, number_match: re.Match[str] | None) -> int | None:
+    """The year a publication run began, where the file's name says so.
+
+    Three ways a library names it, after the conventions Mylar and
+    ComicTagger write (2026-10-05):
+
+    - a year before the number -- "Captain America (2011) #010": the
+      series' year. A year after the number -- "Batman #015 (2017)" -- is
+      the issue's cover date and is not read here;
+    - "V2011" -- "Batman V2011 #001";
+    - the folder -- "Captain America (2011)/Captain America #010.cbr" --
+      when the folder's title is the file's own.
+
+    It is what tells relaunches apart: without it a library of Batman's
+    1940, 2011, 2016 and 2025 runs, none with its #1, was one run of 245
+    files. `year` keeps the issue's date either way.
+    """
+    stated = VOLUME_YEAR.search(raw)
+    if stated:
+        return int(stated.group(1))
+    if number_match is not None:
+        before = raw[:number_match.start()]
+        years = re.findall(r"\(\s*((?:19|20)\d{2})\s*\)", before)
+        if years:
+            return int(years[-1])
+    folder = re.sub(r"\s+", " ", _separators_to_spaces(urllib.parse.unquote(path.parent.name))).strip()
+    found = re.fullmatch(r"(.+?)\s*\(\s*((?:19|20)\d{2})\s*\)", folder)
+    if found and title and normalized_title(found.group(1)) == normalized_title(title):
+        return int(found.group(2))
+    return None
+
+
 def parse_filename(path: Path) -> ParsedFile:
     decoded_filename = urllib.parse.unquote(path.name)
     stem = Path(decoded_filename).stem
@@ -8899,6 +8940,9 @@ def parse_filename(path: Path) -> ParsedFile:
     issue_match = ISSUE.search(raw) or PADDED_ISSUE.search(raw)
     if issue_match is None and volume_match is None:
         issue_match = UNMARKED_ISSUE.search(raw)
+    if issue_match is None and volume_match is None:
+        volume_match = SHORT_VOLUME.search(raw)
+        volume = int(volume_match.group(1)) if volume_match else None
     issue = issue_match.group(1) if issue_match else None
     if issue:
         # "006 AU" is written 6AU, as the catalog has it.
@@ -8945,8 +8989,11 @@ def parse_filename(path: Path) -> ParsedFile:
     # stripping legitimate punctuation inside a comic title.
     title = re.sub(r"\s+[\(\[\{][^\)\]\}]*$", " ", title)
     title = NOISE.sub(" ", title)
+    title = VOLUME_YEAR.sub(" ", title)   # before YEAR, which would leave the V
     title = YEAR.sub(" ", title)
     title = VOLUME.sub(" ", title)
+    if volume_match is not None and volume_match.re is SHORT_VOLUME:
+        title = SHORT_VOLUME.sub(" ", title)
     # Scanner and upload pipelines leave bare identifiers in filenames
     # (Saga_vol2_1398374447.cbz). Left in the title they split one run into
     # several. Real years are already removed above and issue/volume numbers are
@@ -8980,6 +9027,7 @@ def parse_filename(path: Path) -> ParsedFile:
         format=detected_format,
         isbn=isbn,
         warnings=warnings,
+        run_year=_run_year_clue(path, raw, title, issue_match or volume_match),
     )
 
 
