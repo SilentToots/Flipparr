@@ -18375,15 +18375,16 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return
+            # Said to the person, and nothing else: the search has already put
+            # the issue back on the queue, uncounted. Marked failed here, an
+            # issue searched by hand during an outage was never searched again
+            # (Gate 3, 2026-10-05).
             except urllib.error.HTTPError as exc:
                 message = "Prowlarr rejected the request" if exc.code in {401, 403} else f"Prowlarr search failed ({exc.code})"
-                catalog_store().update_acquisition_job(job_id, "failed", message)
                 self.send_json({"error": message}, 502)
                 return
-            except (urllib.error.URLError, TimeoutError) as exc:
-                message = "Could not reach Prowlarr"
-                catalog_store().update_acquisition_job(job_id, "failed", message)
-                self.send_json({"error": message}, 502)
+            except SERVICE_HICCUPS:
+                self.send_json({"error": "Could not reach Prowlarr; the issue will be searched again when it answers"}, 502)
                 return
             self.send_json(result)
             return

@@ -1079,6 +1079,20 @@ class HttpContractTests(unittest.TestCase):
         grab.assert_called_once_with(7, "aside-1", anyway=False)
         self.assertIn("take it anyway", json.loads(response.body)["error"])
 
+    def test_a_search_by_hand_during_an_outage_does_not_fail_the_issue(self):
+        """Gate 3 (2026-10-05): the route marked the issue failed, and a failed
+        issue with no release on record was never searched again."""
+        import urllib.error
+        for problem, said in ((urllib.error.URLError("Connection refused"), "Could not reach Prowlarr"),
+                              (ConnectionResetError(54, "reset"), "Could not reach Prowlarr"),
+                              (urllib.error.HTTPError("http://p", 401, "no", None, None), "Prowlarr rejected the request")):
+            with self.subTest(type(problem).__name__), patch("app.catalog_store") as store, \
+                    patch("app.search_release_candidates", side_effect=problem):
+                response = self.post("/api/v1/acquisition-jobs/7/search", {})
+                self.assertEqual(response.status, 502)
+                self.assertIn(said, json.loads(response.body)["error"])
+                store.return_value.update_acquisition_job.assert_not_called()
+
     def test_replacing_a_file_searches_for_its_own_request(self):
         """The replacement's number is not its acquisition request's."""
         with patch("app.catalog_store") as store, patch("app._start_automatic_release_grabs") as grabs:
