@@ -8,10 +8,13 @@ server is under test.
 
 Written before the port, against the stdlib ThreadingHTTPServer, so the port has
 something to be verified against: the routing table is 54 branches and only one
-existing test touched the transport layer at all.
+existing test touched the transport layer at all. Since 2026-10-04 it runs
+against the production server, Waitress (app.make_server).
 """
 
 import gzip
+import http.client
+import socket
 import contextlib
 import io
 import datetime as dt
@@ -29,7 +32,6 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -53,13 +55,19 @@ import app  # noqa: E402  (import after the environment is prepared)
 
 def _start_server() -> str:
     """Boot the server under test and return its base URL."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    server, port = app.make_server("127.0.0.1", 0)
+    threading.Thread(target=server.run, daemon=True).start()
     _SERVERS.append(server)
-    return f"http://127.0.0.1:{server.server_address[1]}"
+    return f"http://127.0.0.1:{port}"
 
 
 _SERVERS: list = []
+
+
+def tearDownModule():
+    for server in _SERVERS:
+        server.close()
+        server.task_dispatcher.shutdown(timeout=1)
 
 
 class Response:
@@ -1695,6 +1703,69 @@ NOT_ADMIN = {
     ("POST", "/api/v1/notifications/clear"): "reader",
     ("POST", "/api/v1/notifications/dismissed"): "reader",
 }
+
+
+class TransportTests(unittest.TestCase):
+    """What the production server (Waitress) does that the routes cannot:
+    measured against http.server on 2026-10-04, which gave every connection
+    its own thread and never dropped one that stalled."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = _start_server()
+        cls.port = int(cls.base.rsplit(":", 1)[1])
+
+    def test_stalled_clients_neither_starve_a_real_request_nor_add_threads(self):
+        before = threading.active_count()
+        stalled = []
+        try:
+            for _ in range(60):  # past the 16 workers, within a default 256-file limit
+                sock = socket.create_connection(("127.0.0.1", self.port), timeout=3)
+                sock.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\n")  # never finished
+                stalled.append(sock)
+            time.sleep(0.3)
+            started = time.monotonic()
+            self.assertEqual(request("GET", self.base + "/healthz").status, 200)
+            self.assertLess(time.monotonic() - started, 2, "a real request is not queued behind stalled ones")
+            self.assertLessEqual(threading.active_count(), before + 2, "a stalled client costs no thread")
+        finally:
+            for sock in stalled:
+                sock.close()
+
+    def test_the_server_names_itself_without_a_python_version(self):
+        server = request("GET", self.base + "/healthz").headers.get("Server", "")
+        self.assertEqual(server, "flipparr")
+
+    def test_one_connection_carries_several_requests(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            for _ in range(3):
+                connection.request("GET", "/healthz")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                response.read()
+        finally:
+            connection.close()
+
+    def test_a_body_past_the_in_memory_limit_still_reaches_its_route(self):
+        """Waitress keeps 512 KB of a body in memory and spills the rest to a
+        temporary file; a route reading it sees the whole body either way."""
+        padding = b"<!--" + b"x" * (1024 * 1024) + b"-->"
+        cbl = (b'<ReadingList>' + padding + b'<Name>Padded</Name><Books><Book Series="Example" Number="1" Volume="2020"/>'
+               b'</Books></ReadingList>')
+        raw = request("POST", self.base + "/api/v1/reading-lists/import", cbl, "application/octet-stream",
+                      headers={"X-Filename": "padded.cbl"})
+        self.assertEqual((raw.status, raw.json().get("name")), (201, "Padded"), raw.body[:200])
+
+    def test_temporary_files_live_in_a_folder_emptied_at_start(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"FLIPPARR_TEMP_DIR": str(Path(folder) / "tmp")}):
+            leftover = Path(folder) / "tmp" / "upload-from-a-crash"
+            leftover.parent.mkdir()
+            leftover.write_bytes(b"x")
+            made = app.serving_temp_dir()
+            self.assertEqual(made, Path(folder) / "tmp")
+            self.assertTrue(made.is_dir())
+            self.assertEqual(list(made.iterdir()), [])
 
 
 class RouteCensusTests(unittest.TestCase):

@@ -24,6 +24,7 @@ Third-party software in the server image:
 
   Python and its standard library   PSF License
   Pillow                            MIT-CMU (HPND)
+  Waitress                          Zope Public License 2.1 (the HTTP server)
   ONNX Runtime                      MIT (Microsoft), used only to run a panel
                                     model the operator supplies; no model ships
   libarchive (bsdtar)               BSD-2-Clause

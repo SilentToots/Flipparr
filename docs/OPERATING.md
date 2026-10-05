@@ -69,6 +69,16 @@ All settings have working defaults; you only need these if you are changing path
 | `FLIPPARR_GCD_MIN_INTERVAL_SECONDS` | `1.5` | minimum gap between Grand Comics Database requests |
 | `FLIPPARR_METRON_MIN_INTERVAL_SECONDS` | `3.2` | Metron documents 20 requests/minute |
 | `FLIPPARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
+| `FLIPPARR_HTTP_THREADS` | `16` | worker threads answering requests (4-128) |
+| `FLIPPARR_TEMP_DIR` | `/config/tmp` | temporary files: uploads while they arrive, comic packs being unpacked; emptied at start |
+
+Flipparr is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/).
+A connection that goes quiet is closed after 30 seconds, up to 1,000 can be
+open at once, and a slow or stalled client never holds one of the threads
+that answer requests. A comic upload is held whole in `FLIPPARR_TEMP_DIR`
+before the import reads it, so that folder needs free space for the largest
+file you upload (up to 2 GB). On `docker stop`, requests already running get
+up to 5 seconds to finish.
 
 `GET /healthz` is unauthenticated and is what the container health check uses.
 

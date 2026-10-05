@@ -34,6 +34,7 @@ import re
 import secrets
 import functools
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -51,7 +52,7 @@ import torrent_client
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -18982,6 +18983,143 @@ class Handler(BaseHTTPRequestHandler):
         log_event("http_error", level="warning", detail=format % args)
 
 
+# ---- Serving -----------------------------------------------------------------
+#
+# Python documents http.server as not for production: ThreadingHTTPServer
+# starts a thread for every connection, without limit, and never times out a
+# client that stops halfway through a request. Measured 2026-10-04 with 300
+# stalled connections: http.server grew to 300 threads and dropped none;
+# Cheroot stayed at 19 threads but real requests timed out behind the stalls;
+# Waitress stayed at 18, answered a real request in 0.02 s and dropped all 300
+# at its timeout. Flipparr is served by Waitress (Pylons, ZPL 2.1): network I/O
+# runs in one asynchronous loop, so a slow or silent client never holds one of
+# the worker threads that run the routes. It runs in this process, beside the
+# background workers and the state they share.
+#
+# Waitress reads a whole request before handing it to a worker, spilling a body
+# over 512 KB to a temporary file. A comic upload can be 2 GB and the container's
+# /tmp is a 256 MB RAM disk, so main() points temporary files at the config
+# volume (serving_temp_dir).
+#
+# The routes stay as they are: _WSGIHandler gives Handler the request a socket
+# would have, and takes back the status, headers and body it writes.
+
+_HOP_BY_HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+                         "te", "trailers", "transfer-encoding", "upgrade"})
+
+
+class _WSGIHandler(Handler):
+    """Handler, fed from a WSGI environ rather than a socket of its own."""
+
+    def __init__(self, environ: dict[str, Any]) -> None:  # noqa: D107 -- no socket to read
+        self.command = str(environ.get("REQUEST_METHOD") or "GET").upper()
+        raw = environ.get("REQUEST_URI")
+        if not raw:
+            raw = urllib.parse.quote(str(environ.get("PATH_INFO") or "/").encode("latin-1"), safe="/:@!$&'()*+,;=~-._")
+            if environ.get("QUERY_STRING"):
+                raw += "?" + str(environ["QUERY_STRING"])
+        self.path = str(raw)
+        self.request_version = str(environ.get("SERVER_PROTOCOL") or "HTTP/1.1")
+        self.requestline = f"{self.command} {self.path} {self.request_version}"
+        headers = email.message.Message()
+        for key, value in environ.items():
+            if key.startswith("HTTP_"):
+                headers[key[5:].replace("_", "-").title()] = str(value)
+        for key, name in (("CONTENT_TYPE", "Content-Type"), ("CONTENT_LENGTH", "Content-Length")):
+            if environ.get(key):
+                headers[name] = str(environ[key])
+        self.headers = headers
+        self.rfile = environ["wsgi.input"]
+        self.wfile = io.BytesIO()
+        self.client_address = (str(environ.get("REMOTE_ADDR") or ""), int(environ.get("REMOTE_PORT") or 0))
+        self.close_connection = False
+        self._headers_buffer = []
+        self.wsgi_status: str | None = None
+        self.wsgi_headers: list[tuple[str, str]] = []
+
+    def send_response_only(self, code: int, message: str | None = None) -> None:
+        if message is None:
+            message = self.responses[code][0] if code in self.responses else ""
+        self.wsgi_status = f"{int(code)} {message}".strip()
+
+    def send_header(self, keyword: str, value: str) -> None:
+        # Hop-by-hop headers are the server's (PEP 3333). So is Server: the
+        # stdlib's names the exact Python version; Waitress says "flipparr".
+        if keyword.lower() not in _HOP_BY_HOP and keyword.lower() != "server":
+            self.wsgi_headers.append((str(keyword), str(value)))
+
+    def end_headers(self) -> None:
+        pass
+
+    def respond(self) -> tuple[str, list[tuple[str, str]], bytes]:
+        method = getattr(self, f"do_{self.command}", None)
+        if method is None:
+            self.send_error(501, f"Unsupported method ({self.command!r})")
+        else:
+            method()
+        if self.wsgi_status is None:
+            return "500 Internal Server Error", [("Content-Length", "0")], b""
+        return self.wsgi_status, self.wsgi_headers, self.wfile.getvalue()
+
+
+def wsgi_app(environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
+    status, headers, body = _WSGIHandler(environ).respond()
+    start_response(status, headers)
+    return [body]
+
+
+def http_thread_count() -> int:
+    """Worker threads running routes: FLIPPARR_HTTP_THREADS, else 16. A page
+    of covers asks for many images at once; a household is a few people."""
+    try:
+        return max(4, min(int(_env("HTTP_THREADS", "16")), 128))
+    except ValueError:
+        return 16
+
+
+def make_server(host: str, port: int) -> tuple[Any, int]:
+    """The production server, bound and ready to run(). Returns it with the
+    port it bound (port 0 picks a free one, for tests)."""
+    import waitress
+
+    server = waitress.create_server(
+        wsgi_app, host=host, port=port,
+        threads=http_thread_count(),
+        ident="flipparr",
+        # Idle connections cost a file descriptor, not a thread, so the limit
+        # sits well above what a household opens: at Waitress's default of 100,
+        # 100 stalled connections lock everyone else out. poll(), not select(),
+        # which cannot watch more than 1,024 sockets.
+        connection_limit=1000,
+        asyncore_use_poll=True,
+        # Seconds a connection may sit with nothing happening before it is closed.
+        channel_timeout=30,
+        max_request_header_size=64 * 1024,
+        # The largest body any route takes (a manual comic import), plus room
+        # for its framing; each route still checks its own, smaller limit.
+        max_request_body_size=MANUAL_IMPORT_MAX_BYTES + 1024 * 1024,
+        # Responses are built in memory already (a page image is a few MB);
+        # copying them to a temporary file on the way out would only add disk I/O.
+        outbuf_overflow=64 * 1024 * 1024,
+        # X-Forwarded-For and friends are judged by Flipparr itself, against
+        # FLIPPARR_TRUSTED_PROXIES (resolve_client_address); Waitress must pass
+        # them through untouched rather than strip them.
+        clear_untrusted_proxy_headers=False,
+    )
+    return server, int(server.effective_port)
+
+
+def serving_temp_dir() -> Path:
+    """Temporary files beside the library's data, not in the container's
+    256 MB /tmp: uploads Waitress holds until they are complete, and comic packs
+    being unpacked. FLIPPARR_TEMP_DIR, else <config>/tmp; emptied at start, since
+    anything left there belongs to a process that has gone."""
+    folder = _configured_path("TEMP_DIR", catalog_database_path().parent / "tmp")
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
 def reset_password_command(username: str | None, password_stdin: bool) -> int:
     """`app.py reset-password`: the way back in for an owner who has lost the
     password. There is no email to send a reset link to, so the proof of
@@ -19038,17 +19176,25 @@ def main() -> None:
     start_release_research_worker()
     start_auto_scan_worker()
     start_ratings_worker()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    log_event("server_started", host=args.host, port=args.port,
-              version=APP_VERSION, build=APP_BUILD)
+    tempfile.tempdir = str(serving_temp_dir())
+    server, port = make_server(args.host, args.port)
+
+    def stop(signum: int, _frame: Any) -> None:
+        # `docker stop` sends SIGTERM. Waitress's loop answers SystemExit by
+        # letting the requests already running finish (up to 5 s) before it
+        # returns, instead of the process dying mid-write.
+        log_event("server_stopping", signal=signal.Signals(signum).name)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    log_event("server_started", host=args.host, port=port, threads=http_thread_count(),
+              tempDir=tempfile.tempdir, version=APP_VERSION, build=APP_BUILD)
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        server.run()
     finally:
         _ENRICHMENT_STOP.set()
         _IMPORT_STOP.set()
-        server.server_close()
+        log_event("server_stopped")
 
 
 if __name__ == "__main__":

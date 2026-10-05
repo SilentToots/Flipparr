@@ -140,8 +140,17 @@ backend suites in two orders, the web tests, the build and the secret check;
 pinned base images; non-root user; health check; structured logs with request
 ids; numbered schema migrations.
 
-Open: the HTTP layer is still Python's `http.server`, which Python documents
-as not recommended for production; durable job inspection for support.
+**HTTP layer (2026-10-04):** served by Waitress instead of Python's
+`http.server`, which Python documents as not for production. Measured with
+300 stalled connections: `http.server` grew to 300 threads and dropped none;
+Waitress stayed at 18 threads, answered a real request in 0.02 s and dropped
+all 300 after its 30 s timeout (Cheroot, also evaluated, bounded its threads
+but let the stalls starve real requests). The routes run unchanged through a
+WSGI adapter (`app._WSGIHandler`) and the 152 HTTP contract tests pass on it;
+`TransportTests` keep the stalled-client, keep-alive, large-body and
+server-header behaviour in CI. SIGTERM now lets running requests finish.
+
+Open: durable job inspection for support.
 
 ### Gate 2 — Catalog correctness
 
