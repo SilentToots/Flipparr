@@ -5,6 +5,8 @@ on:
   pull_request:
   push:
     branches: [main, v1-forward]
+    # A release tag publishes the image (the `publish` job below).
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -95,14 +97,69 @@ jobs:
           BUILD=$(docker run --rm --entrypoint printenv flipparr:ci FLIPPARR_BUILD)
           echo "image build stamp: $BUILD"
           test "$BUILD" = "${{ github.sha }}"
-      # And that it starts and serves, which compiling does not prove.
+      # And that it starts and serves, which compiling does not prove. With
+      # a config folder it can write, as an install has: without one the
+      # server used to come up "healthy" with every page a 500 (Gate 4,
+      # 2026-10-05), and this step proved nothing about the catalog. The
+      # install drill (next step) covers the root-owned case on purpose.
       - name: Image starts and reports its version
         run: |
-          docker run -d --name flipparr-ci -p 8787:8787 flipparr:ci
+          mkdir -p "$RUNNER_TEMP/config" && chmod 777 "$RUNNER_TEMP/config"
+          docker run -d --name flipparr-ci -p 8787:8787 -v "$RUNNER_TEMP/config:/config" flipparr:ci
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then break; fi
             sleep 1
           done
           curl -fsS http://127.0.0.1:8787/healthz | tee /tmp/health.json
           grep -q '"build": "${{ github.sha }}"' /tmp/health.json
+          grep -q '"catalog": "ok"' /tmp/health.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/v1/catalog)" = 200
           docker rm -f flipparr-ci
+      # Clean install, a root-owned config folder, upgrade from the previous
+      # published image, rollback and restore -- real containers, a made-up
+      # library (docs/INSTALL_PROOFS.md). The previous image is the latest
+      # published one; on a fork or before the first release there is none,
+      # and the upgrade scenarios say so rather than fail.
+      - name: Install drill
+        run: |
+          OLD=ghcr.io/${{ github.repository_owner }}/flipparr:latest
+          docker pull "$OLD" >/dev/null 2>&1 || OLD=""
+          python3 -B tools/install_drill.py --image flipparr:ci ${OLD:+--previous "$OLD"} --out "$RUNNER_TEMP/install-drill"
+
+  # The published image: ghcr.io/<owner>/flipparr:<version> and :latest for
+  # a release tag (v0.1.0 -> 0.1.0), after the tests, the web build and the
+  # image checks have passed on that commit. Pushes to the development
+  # branch publish :edge, for installs that follow the branch; a release is
+  # a tag. The package is private until its owner makes it public.
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [image]
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/v1-forward')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/flipparr
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/v1-forward' }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: FLIPPARR_BUILD=${{ github.sha }}
+          provenance: false

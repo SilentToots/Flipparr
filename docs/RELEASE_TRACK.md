@@ -247,9 +247,24 @@ upgrade.
 
 ### Gate 4 — Release candidate
 
-Open: clean install, upgrade, backup/restore and rollback against
-representative data; realistic-library performance; provider outages; the
-responsive and accessibility matrix; security; operations; documentation.
+**Install, upgrade, backup/restore and rollback (2026-10-05):** proven by
+`tools/install_drill.py` with real containers, in CI and on the NAS (5 of 5
+against the build of 2026-09-07, schema 28, upgraded to this one, schema 64);
+see [INSTALL_PROOFS.md](INSTALL_PROOFS.md). What that work fixed first: an
+older image opening a newer catalog, and a config folder the container could
+not write, both came up "healthy" with every page a 500 (the schema check ran
+after the tables were touched, and `/healthz` never looked at the catalog);
+only the move to schema 49 kept a pre-upgrade copy; nothing was published, so
+the documented upgrade and rollback could not be followed. Now: the start-up
+checks refuse with one plain line and a non-zero exit; a newer catalog is
+refused before a byte is touched; every schema upgrade keeps a copy (the last
+three); `/healthz` reports the catalog and goes 503 without it; CI publishes
+`ghcr.io/silenttoots/flipparr` on release tags (and `:edge` from the branch)
+and compose pulls it; the owner's proxy network, time zone and group are out
+of the shipped compose file.
+
+Open: realistic-library performance; the responsive and accessibility matrix;
+security; operations; documentation. From Gate 3: qBittorrent end to end.
 
 ## Carried-forward findings
 

@@ -23,19 +23,22 @@ curl -s http://localhost:8787/healthz
 ```
 
 ```json
-{ "status": "ok", "version": "0.1.0", "build": "6a7a4b2…" }
+{ "status": "ok", "version": "0.1.0", "build": "6a7a4b2…", "catalog": "ok" }
 ```
+
+`catalog` says whether the database can be read; when it cannot, the answer
+is 503 and Docker's health check reports the container unhealthy.
 
 The same pair is on the first log line at start-up. The build stamp is the one
 that matters when something is wrong: it names the exact commit, where the app
 version only names the release.
 
 An image built without the argument reports `build: "source"`. That is expected
-for a local build; a release image should never say it. Compose passes the
-argument through, so a stamped build from a checkout is:
+for a local build; a release image should never say it. `compose.build.yaml`
+passes the argument through, so a stamped build from a checkout is:
 
 ```bash
-FLIPPARR_BUILD=$(git rev-parse HEAD) docker compose up -d --build
+FLIPPARR_BUILD=$(git rev-parse HEAD) docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
 ---
@@ -48,26 +51,33 @@ FLIPPARR_BUILD=$(git rev-parse HEAD) docker compose up -d --build
 3. **Note whether `SCHEMA_VERSION` moved** since the last release. If it did,
    the release notes must say so — that single fact decides whether a rollback
    needs a restore.
-4. **Build with the commit stamped in:**
+4. **Point `compose.yaml` at the new tag** (`image:` default), as part of the
+   same commit, so a fresh checkout installs the release it belongs to.
+5. **Tag the commit and push the tag:** `git tag v0.1.0 && git push origin v0.1.0`.
+   CI (`.github/workflows/v1-forward.yml`) runs both test orders, secret
+   hygiene, the fulfillment drill, the web build from the lockfile, the image
+   checks and the install drill on that commit, and then the `publish` job
+   builds the image with the commit stamped in and pushes it as
+   `ghcr.io/silenttoots/flipparr:0.1.0` and `:latest`. Pushes to the
+   development branch publish `:edge` the same way. Nothing is published
+   unless everything before it passed.
+6. **Verify the published artefact, not just the build:**
 
    ```bash
-   docker build --build-arg FLIPPARR_BUILD=$(git rev-parse HEAD) \
-                -t flipparr:0.1.0 -t flipparr:latest .
+   docker pull ghcr.io/silenttoots/flipparr:0.1.0
+   docker run --rm --entrypoint printenv ghcr.io/silenttoots/flipparr:0.1.0 FLIPPARR_BUILD
+   python3 -B tools/install_drill.py --image ghcr.io/silenttoots/flipparr:0.1.0 \
+       --previous ghcr.io/silenttoots/flipparr:<the release before> --out ./install-drill
    ```
 
-5. **Verify the artefact, not just the build:**
+   The drill installs it clean, upgrades the previous release to it, rolls
+   back by restoring the backup, and checks that a config folder it cannot
+   write and a catalog from a newer build are refused with a plain message
+   (docs/INSTALL_PROOFS.md).
+7. **Write the release notes below**, including the migration line.
 
-   ```bash
-   docker run --rm --entrypoint printenv flipparr:0.1.0 FLIPPARR_BUILD
-   docker run -d --name fp-check -p 8787:8787 flipparr:0.1.0
-   curl -s http://127.0.0.1:8787/healthz && docker rm -f fp-check
-   ```
-
-6. **Write the release notes below**, including the migration line.
-
-CI does 1–5 on every push (`.github/workflows/v1-forward.yml`): both test
-orders, secret hygiene, the web build from the lockfile, then the image — and
-it fails if the built image is not stamped with the commit under test.
+The package on GitHub is private until its owner makes it public; a release
+anyone can install needs that done once.
 
 ### What makes the build reproducible
 
@@ -108,24 +118,28 @@ because *rolling back* needs it — see below.
 
 ## 4. Migration and rollback
 
-Migrations run forward automatically and only forward. There is no downgrade
-path, by design: a build refuses to open a catalog newer than itself rather
-than writing to a shape it does not understand.
+Migrations run forward automatically and only forward. Before a build raises
+the schema it keeps the catalog as it was beside the database
+(`flipparr.db.pre-v<N>`, the last three kept). There is no downgrade path, by
+design: a build refuses to open a catalog newer than itself, before touching
+it, rather than writing to a shape it does not understand:
 
 ```
-RuntimeError: Unsupported catalog schema version 28
+Flipparr cannot start: This library's catalog is at schema 70, newer than this build's 64: it was last opened by a newer Flipparr. Run that version, or restore the backup taken before it.
 ```
 
-That is what the previous image prints if you roll back to it after an upgrade
-that raised the schema. It stops before touching the file.
+That is what the previous image prints, and it exits, if you roll back to it
+after an upgrade that raised the schema (from 0.1.0 on; earlier builds
+started and answered errors instead).
 
 **So a rollback across a schema change is: restore the backup, then run the
 previous tag.** Not just the previous tag.
 
 ```bash
 docker compose down
-tar -xzf flipparr-backup-YYYY-MM-DD.tgz -C /path/to
-docker compose up -d          # previous image tag pinned
+tar -xzf flipparr-backup-YYYY-MM-DD.tgz -C /path/to     # as the config folder's owner
+FLIPPARR_IMAGE=ghcr.io/silenttoots/flipparr:<previous>  # in .env
+docker compose up -d
 ```
 
 Rolling back a release that did *not* raise the schema needs no restore — the
@@ -143,8 +157,15 @@ You lose manual corrections, aliases and request history — not files.
 
 First release of the V1-forward line.
 
-**Schema:** 28. Upgrading from any earlier build raises the schema, so a
-rollback to a pre-0.1.0 image requires restoring a `/config` backup.
+**Schema:** 64. Upgrading from any earlier build raises the schema, so a
+rollback to a pre-0.1.0 image requires restoring a `/config` backup. A
+pre-0.1.0 build opening the upgraded catalog does not refuse it cleanly; it
+starts and answers errors, which is why the restore comes first.
+
+**Image:** `ghcr.io/silenttoots/flipparr:0.1.0`, built by CI from the tagged
+commit and stamped with it. The container runs as 1000:1000 unless
+`PUID`/`PGID` say otherwise; create the config folder owned by that user
+before the first start, or the container says so and stops.
 
 **Included**
 

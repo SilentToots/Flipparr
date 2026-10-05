@@ -26,6 +26,18 @@ from typing import Any, Callable, Iterable, Sequence
 SCHEMA_VERSION = 64
 
 
+class CatalogNewerThanBuild(RuntimeError):
+    """The database was written by a newer Flipparr than this one. Opening
+    it would mean changing it; the way back is the previous build's own
+    backup (docs/OPERATING.md, "Upgrading and rolling back")."""
+
+    def __init__(self, stored: int) -> None:
+        super().__init__(
+            f"This library's catalog is at schema {stored}, newer than this build's {SCHEMA_VERSION}: "
+            f"it was last opened by a newer Flipparr. Run that version, or restore the backup taken before it.")
+        self.stored = stored
+
+
 def journal_mode_for(version_info: Sequence[int]) -> str:
     """WAL where this SQLite is safe in it, the rollback journal elsewhere.
 
@@ -813,32 +825,59 @@ class CatalogStore:
         with self._connect() as owned:
             yield owned
 
-    def _keep_a_copy_before(self, version: int) -> Path | None:
-        """A copy of the library as it was, before a migration that rewrites rows.
-
-        v1 has no backup of its own, and schema 49 rebuilds the tables that
-        hold everyone's reading history. The copy is taken once, beside the
-        database, through SQLite's backup API (safe with WAL), and is the way
-        back if the rebuild is ever doubted.
-        """
+    def stored_schema_version(self) -> int | None:
+        """The schema the file is at, read without changing anything: None
+        for a new or pre-schema file."""
         if not self.database_path.is_file():
+            return None
+        try:
+            with contextlib.closing(sqlite3.connect(f"file:{self.database_path}?mode=ro", uri=True)) as connection:
+                row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return int(row[0]) if row else None
+
+    # How many pre-upgrade copies stay beside the database. Each is the whole
+    # library as it was; three cover the last few upgrades without the
+    # folder growing by a copy every release for ever.
+    PRE_UPGRADE_COPIES_KEPT = 3
+
+    def _keep_a_copy_before(self, version: int, stored: int | None) -> Path | None:
+        """A copy of the library as it was, before this build's schema is
+        applied to it: `<db>.pre-v<version>`, beside the database, through
+        SQLite's backup API (safe with WAL). The way back if an upgrade is
+        ever doubted, since v1 has no backup of its own. Taken once per
+        target version; the oldest copies go once there are more than
+        PRE_UPGRADE_COPIES_KEPT (Gate 4, 2026-10-05: before, only the move to
+        49 kept one).
+        """
+        if stored is None or stored >= version or not self.database_path.is_file():
             return None
         copy = self.database_path.with_name(f"{self.database_path.name}.pre-v{version}")
         if copy.exists():
             return None
-        with self._connect() as connection:
+        with self._connect() as connection, contextlib.closing(sqlite3.connect(copy)) as target:
+            connection.backup(target)
+        copies = sorted(
+            (path for path in self.database_path.parent.glob(f"{self.database_path.name}.pre-v*")
+             if re.fullmatch(r"\d+", path.name.rsplit("pre-v", 1)[-1])),
+            key=lambda path: int(path.name.rsplit("pre-v", 1)[-1]))
+        for old in copies[:-self.PRE_UPGRADE_COPIES_KEPT]:
             try:
-                row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
-            except sqlite3.OperationalError:
-                return None
-            if row is None or int(row["version"]) >= version:
-                return None
-            with contextlib.closing(sqlite3.connect(copy)) as target:
-                connection.backup(target)
+                old.unlink()
+            except OSError:
+                pass
         return copy
 
     def _migrate(self) -> None:
-        self._keep_a_copy_before(49)
+        # First, before a table is touched: a file from a newer build is not
+        # this build's to change. Checked only after the tables were created
+        # and rows cleaned up, an older image put back what a newer schema had
+        # dropped before it refused (Gate 4, 2026-10-05).
+        stored = self.stored_schema_version()
+        if stored is not None and stored > SCHEMA_VERSION:
+            raise CatalogNewerThanBuild(stored)
+        self._keep_a_copy_before(SCHEMA_VERSION, stored)
         with self._connect() as connection:
             # Switching mode needs the file to itself, which it has here: the
             # store migrates before anything else opens it.
@@ -1890,7 +1929,7 @@ class CatalogStore:
             if row is None:
                 connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
             elif row["version"] > SCHEMA_VERSION:
-                raise RuntimeError(f"Unsupported catalog schema version {row['version']}")
+                raise CatalogNewerThanBuild(int(row["version"]))
             elif row["version"] < SCHEMA_VERSION:
                 connection.execute("UPDATE schema_info SET version=?", (SCHEMA_VERSION,))
             if stored_version is not None and stored_version < 30:

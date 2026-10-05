@@ -1,0 +1,16 @@
+# Build the image from this checkout instead of pulling the published one:
+#
+#   docker compose -f compose.yaml -f compose.build.yaml build
+#   docker compose -f compose.yaml -f compose.build.yaml up -d
+#
+# or set FLIPPARR_IMAGE=flipparr:local in .env after building it yourself
+# (docs/RELEASE.md). FLIPPARR_BUILD stamps the image with the commit it was
+# built from, reported by /healthz; an unstamped build reports "source".
+services:
+  flipparr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        FLIPPARR_BUILD: "${FLIPPARR_BUILD:-source}"
+    image: "${FLIPPARR_IMAGE:-flipparr:local}"

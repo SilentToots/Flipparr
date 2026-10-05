@@ -7,7 +7,7 @@ import pathlib
 import os
 import sqlite3
 import tempfile
-from catalog_store import ADMIN_USER_ID, CatalogStore
+from catalog_store import ADMIN_USER_ID, SCHEMA_VERSION, CatalogStore
 import threading
 import types
 import contextlib
@@ -10673,6 +10673,47 @@ class ServiceOutageTests(unittest.TestCase):
                 patch("app.fetch_json_with_headers", side_effect=json.JSONDecodeError("Expecting value", "<html>", 0)):
             with self.assertRaisesRegex(app.DownloadClientUnanswered, "not JSON"):
                 app._sab_history_slot({"sab_nzo_id": "x"})
+
+
+class StartupPreconditionTests(unittest.TestCase):
+    """Gate 4 (2026-10-05): a container that cannot serve says so in one
+    line and stops, rather than coming up "healthy" with every page a 500."""
+
+    def test_a_config_folder_flipparr_cannot_write_refuses_to_start(self):
+        with tempfile.TemporaryDirectory() as folder:
+            locked = Path(folder) / "config"
+            locked.mkdir()
+            locked.chmod(0o500)
+            try:
+                with patch("app.catalog_database_path", return_value=locked / "flipparr.db"):
+                    with self.assertRaises(app.StartupRefused) as refused:
+                        app.check_startup_preconditions()
+            finally:
+                locked.chmod(0o700)
+        self.assertIn("not writable", refused.exception.reason)
+        self.assertIn("PUID:PGID", refused.exception.reason)
+        self.assertNotEqual(refused.exception.code, 0, "the process exits non-zero")
+
+    def test_a_catalog_from_a_newer_build_refuses_to_start_and_says_what_to_do(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / "flipparr.db"
+            with patch("app.catalog_database_path", return_value=database), patch.object(app, "_CATALOG_STORE", None):
+                app.check_startup_preconditions()
+                with sqlite3.connect(database) as connection:
+                    connection.execute("UPDATE schema_info SET version=?", (SCHEMA_VERSION + 1,))
+                with patch.object(app, "_CATALOG_STORE", None):
+                    with self.assertRaises(app.StartupRefused) as refused:
+                        app.check_startup_preconditions()
+        self.assertIn("newer Flipparr", refused.exception.reason)
+        self.assertIn("restore the backup", refused.exception.reason)
+
+    def test_a_good_start_reports_where_and_what_schema(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / "config" / "flipparr.db"
+            with patch("app.catalog_database_path", return_value=database), patch.object(app, "_CATALOG_STORE", None):
+                found = app.check_startup_preconditions()
+                self.assertTrue(database.is_file(), "a missing config folder it may create is created, and the catalog in it")
+        self.assertEqual(found["schema"], SCHEMA_VERSION)
 
 
 class _StopAfterOnePass(threading.Event):

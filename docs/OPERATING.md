@@ -10,39 +10,57 @@ rather than just the workaround.
 
 ## 1. Install
 
-Flipparr ships as a Docker image and keeps all of its state in one `/config`
-volume. It needs read-write access to your comics (see [Volumes](#volumes)) and
-read access to your download client's completed folder if you want automatic
-import.
+Flipparr ships as a Docker image, `ghcr.io/silenttoots/flipparr`, and keeps
+all of its state in one `/config` volume. It needs read-write access to your
+comics (see [Volumes](#volumes)) and to your download client's completed
+folder if you want automatic import.
 
 ```bash
-cp .env.example .env      # set CONFIG_PATH, COMICS_PATH, SAB_COMPLETE_PATH
+cp .env.example .env            # set CONFIG_PATH, COMICS_PATH, SAB_COMPLETE_PATH
+mkdir -p "$CONFIG_PATH" && chown 1000:1000 "$CONFIG_PATH"   # the PUID:PGID in .env
 docker compose up -d
 ```
 
-Open the port you published (`FLIPPARR_PORT`, default 8787). A new install
-opens on setup, which asks for your library folder, then optionally a download
-client and a metadata source, and scans when you finish. Everything it asks is
-also under **Settings** afterwards.
+**Create the config folder first, owned by the user the container runs as.**
+Docker creates a missing bind-mount folder itself, owned by root, and the
+container (which runs as `PUID:PGID`, 1000:1000 by default) cannot write it.
+Flipparr then refuses to start and says so in `docker compose logs flipparr`:
 
-The compose file attaches to an external network named `home-services-proxy`.
-If you are not running one, delete the `networks:` blocks from
-`compose.yaml` before starting.
+```
+Flipparr cannot start: the config folder (/config) is not writable by user 1000:1000 ...
+```
+
+Fix the folder's owner and start it again. The same line tells you about a
+catalog it cannot open, for the same reason.
+
+Open the port you published (`FLIPPARR_PORT`, default 8787, on
+`FLIPPARR_BIND`, loopback by default). A new install opens on setup, which
+asks for your library folder, then optionally a download client and a metadata
+source, and scans when you finish. Everything it asks is also under
+**Settings** afterwards. Sign-in is off until you turn it on in Settings →
+Security; keep the port on loopback or your own network until then.
+
+The compose file joins no network of its own. To put Flipparr on the network
+your reverse proxy or download clients share, add a `compose.override.yaml`
+beside it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). To build the
+image from a checkout instead of pulling it, use `compose.build.yaml`
+([RELEASE.md](RELEASE.md)).
 
 ### Volumes
 
 | Mount | Mode | Purpose |
 | --- | --- | --- |
-| `/config` | read-write | database, settings, credentials, caches. **This is the only thing you need to back up.** |
+| `/config` | read-write | database, settings, credentials, caches. **This is the only thing you need to back up** (see [Backup and restore](#backup-and-restore) for what is in it). |
 | `/comics` | read-write | your library. Written to when a completed download is imported, and when replacing a file moves the original into `.flipparr/quarantine/`. Scanning only reads. |
-| `/downloads/complete/comics` | read-only | where the download client puts finished files |
+| `/downloads/complete/comics` | read-write | where SABnzbd puts finished files. Writable so a download's folder is removed once its comic is verified in the library (SABnzbd keeps the files otherwise); only the one folder SABnzbd reported for that job is ever removed. |
 | `/downloads/torrents/complete/comics` | read-only | qBittorrent's comics category folder (optional; `TORRENT_COMPLETE_PATH`). Torrents keep seeding from it after import, so Flipparr never writes there; only qBittorrent removes anything. |
 
 ### Permissions
 
-The image runs as `1000:10` by default. `/config` must be writable by whatever
-user the container runs as — set `PUID`/`PGID` to match the owner of your
-config directory.
+The image runs as `1000:1000` by default. `/config` must be writable by
+whatever user the container runs as — set `PUID`/`PGID` to match the owner of
+your config directory, and create that directory before the first start
+(above). Flipparr checks this when it starts and refuses to run otherwise.
 
 This matters more than it looks. Config files created by one user are not
 necessarily readable by another, and an unreadable `auth.json` is treated as a
@@ -176,14 +194,19 @@ docker network create --internal --subnet 172.16.88.0/29 flipparr-ingress
 ```
 
 ```yaml
-# compose.override.yaml, next to Flipparr's compose.yaml
+# compose.override.yaml, next to Flipparr's compose.yaml. compose.yaml joins
+# no network of its own, so name here every network Flipparr should be on:
+# the one your download clients and indexer share, and the proxy's.
 services:
   flipparr:
     networks:
-      proxy:              # keep whatever network reaches Prowlarr and SABnzbd
+      services:
       ingress:
         aliases: [flipparr-ingress]
 networks:
+  services:
+    name: your-services-network      # the one Prowlarr and SABnzbd are on
+    external: true
   ingress:
     name: flipparr-ingress
     external: true
@@ -389,35 +412,74 @@ tar -czf flipparr-backup-$(date +%F).tgz -C /path/to config
 docker compose start flipparr
 ```
 
-To restore, put the directory back and start the container. *Verified: a
-destroy-and-restore cycle reproduced the catalog exactly, byte-for-byte on a
-963-file library.*
+What is in it, and what you may leave out:
+
+- `flipparr.db` (and `flipparr.db-wal`, `flipparr.db-shm` while running): the
+  catalog -- your library's runs, issues, requests, profiles, reading places,
+  ratings and arcs. Archive it with the container stopped, or with all three
+  files together.
+- `flipparr.db.pre-v<N>`: the catalog as it was before an upgrade raised the
+  schema to N. Flipparr keeps the last three. They are the way back if an
+  upgrade is ever doubted; archive them or not as you like.
+- `settings.json`, `auth.json`, `metadata-providers.json`,
+  `acquisition-services.json`: settings and **credentials** (your password
+  hash and session secret, provider and download-client keys). Keep the
+  archive as private as the folder.
+- `cover-cache/`, `reading-cache/`, `tmp/`, `downloads/`: caches and files in
+  flight, up to a few gigabytes, all rebuilt on demand. Safe to exclude
+  (`--exclude=cover-cache --exclude=reading-cache --exclude=tmp
+  --exclude=downloads`).
+- `models/`, `avatars/`, `user-covers/`, `arc-index.json`: the panel model you
+  copied in, profile pictures, covers you chose, the arc index.
+
+Not in `/config`: originals set aside by a replacement, in
+`<library>/.flipparr/quarantine/`.
+
+To restore, stop the container, put the directory back **owned by the same
+`PUID:PGID`** (`tar` run as root keeps the archived owner; otherwise
+`chown -R` it), and start the container. An `auth.json` the container cannot
+read fails closed, so a wrong owner shows as "cannot start" or a sign-in
+that refuses everyone. A restored catalog is older than the library: the next
+scan picks up comics that arrived since, and requests fulfilled since are
+searched for again.
+
+This is exercised, with real containers, by `tools/install_drill.py` (see
+[INSTALL_PROOFS.md](INSTALL_PROOFS.md)).
 
 ### Upgrading and rolling back
+
+`compose.yaml` names the release it shipped with
+(`ghcr.io/silenttoots/flipparr:0.1.0`). To upgrade, set `FLIPPARR_IMAGE` in
+`.env` to the new tag (or take the new `compose.yaml`), then:
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
-The database migrates forward on start. **Back up `/config` first — a rollback
-needs it.** The catalog refuses to open a database newer than the build reading
-it, so once an upgrade has raised the schema, the previous image will not start
-against that file:
+The database migrates forward on start. Before it does, Flipparr keeps the
+catalog as it was beside the database (`flipparr.db.pre-v<N>`, the last
+three), but **back up `/config` first anyway -- a rollback needs it.**
+
+Flipparr refuses to open a catalog written by a newer build, before touching
+it, and says so in the log:
 
 ```
-RuntimeError: Unsupported catalog schema version 28
+Flipparr cannot start: This library's catalog is at schema 70, newer than this build's 64: it was last opened by a newer Flipparr. Run that version, or restore the backup taken before it.
 ```
 
-That is a deliberate refusal rather than a corruption: the older build stops
-instead of writing to a shape it does not understand. But it does mean a
-rollback is *restore the backup, then run the previous tag* — not just the
-previous tag. To roll back:
+So once an upgrade has raised the schema, a rollback is *restore the backup,
+then run the previous tag* -- not just the previous tag:
 
 ```bash
 docker compose down
-tar -xzf flipparr-backup-YYYY-MM-DD.tgz -C /path/to
-docker compose up -d          # with the previous image tag pinned
+tar -xzf flipparr-backup-YYYY-MM-DD.tgz -C /path/to     # as the same owner, see above
+FLIPPARR_IMAGE=ghcr.io/silenttoots/flipparr:<previous>  # in .env
+docker compose up -d
 ```
+
+Builds from before 0.1.0 do not have that refusal: they start against a newer
+catalog and answer errors to everything. Restoring the backup is the way back
+from those too.
 
 If you have no backup and need the previous version, the library itself is
 safe: your comics were never modified. Point a fresh `/config` at the same
@@ -580,11 +642,10 @@ addresses*). The full account of what leaves the server is
   acquisition.
 - **Automatic acquisition covers single issues only.** Collected editions are
   imported from files you already own.
-- **No rate limiting on sign-in.** Password hashing makes brute force expensive
-  but does not stop it. Do not expose this instance directly to the internet;
-  put it behind a VPN, a tailnet, or a proxy that provides its own protection.
-- **Cover extraction supports ZIP-based comic formats** (`.cbz`). CBR and PDF
-  cover rendering are not implemented.
+- **Sign-in is off on a new install**, and failed sign-ins are slowed, not
+  blocked (see [Failed sign-ins](#failed-sign-ins)). Do not expose this
+  instance directly to the internet; put it behind a VPN, a tailnet, or a proxy
+  that provides its own protection.
 - **Provider data is incomplete.** The Grand Comics Database does not expose a
   complete collected-edition-to-issue relationship, so inferred contents are
   labelled as inferred rather than presented as fact.

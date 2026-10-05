@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from access_policy import ADMIN, HOUSEHOLD, Viewer, allows, route_access
-from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogStore, CollectionNameTaken, _issue_release_state, normalized_person
+from catalog_store import ADMIN_USER_ID, SWITCH_LOCKS, CatalogNewerThanBuild, CatalogStore, CollectionNameTaken, _issue_release_state, normalized_person
 import page_panels as panel_finder
 import content_rating
 from comic_language import (
@@ -17481,8 +17481,11 @@ class Handler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         if parsed_url.path == "/healthz":
             # Separate from "/" so the container healthcheck keeps working once
-            # authentication is switched on.
-            self.send_json({"status": "ok", "version": APP_VERSION, "build": APP_BUILD})
+            # authentication is switched on. 503 when the catalog cannot be
+            # read: Docker then says unhealthy, as it should.
+            healthy, catalog = catalog_health()
+            self.send_json({"status": "ok" if healthy else "unhealthy", "version": APP_VERSION, "build": APP_BUILD,
+                            "catalog": catalog}, 200 if healthy else 503)
             return
         if parsed_url.path == "/api/v1/auth/status":
             # Reachable unauthenticated: the app needs to know whether to show a
@@ -20082,6 +20085,60 @@ def reset_password_command(username: str | None, password_stdin: bool) -> int:
     return 0
 
 
+class StartupRefused(SystemExit):
+    """Flipparr cannot serve from here, and says why in one line rather
+    than starting and answering 500 to everything (Gate 4, 2026-10-05: a
+    root-owned /config and an image older than its database both came up
+    "healthy" that way)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Flipparr cannot start: {reason}")
+        self.reason = reason
+
+
+def check_startup_preconditions() -> dict[str, Any]:
+    """What must be true before serving: the config folder is Flipparr's to
+    write, and the catalog opens. Raises StartupRefused with the plain
+    reason otherwise; returns what it found for the start-up log.
+
+    Said in terms of what to do: nearly every failure here is a mount or
+    its ownership. Docker makes a missing bind path, and any anonymous
+    volume, owned by root, and the image runs as PUID:PGID.
+    """
+    config_dir = catalog_database_path().parent
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        probe = config_dir / f".flipparr-write-check-{os.getpid()}"
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        raise StartupRefused(
+            f"the config folder ({config_dir}) is not writable by user {os.getuid()}:{os.getgid()} ({exc.strerror or exc}). "
+            "Create it before the first start and give it to the PUID:PGID the container runs as "
+            "(docs/OPERATING.md, Permissions).") from exc
+    try:
+        store = catalog_store()
+    except CatalogNewerThanBuild as exc:
+        raise StartupRefused(str(exc)) from exc
+    except sqlite3.DatabaseError as exc:
+        raise StartupRefused(
+            f"the catalog ({catalog_database_path()}) could not be opened: {exc}. "
+            "If the file is damaged, restore it from a backup or a .pre-v copy beside it.") from exc
+    return {"config": str(config_dir), "database": str(store.database_path),
+            "schema": store.stored_schema_version(), "journal_mode": getattr(store, "journal_mode", None)}
+
+
+def catalog_health() -> tuple[bool, str]:
+    """Whether the catalog answers, for /healthz: a container whose
+    database has gone unreadable is not healthy, whatever its port says."""
+    try:
+        with sqlite3.connect(f"file:{catalog_database_path()}?mode=ro", uri=True, timeout=2) as connection:
+            connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
+        return True, "ok"
+    except sqlite3.Error as exc:
+        return False, support_safe(str(exc))[:160]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", default="serve", choices=("serve", "reset-password"),
@@ -20094,13 +20151,18 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "reset-password":
         sys.exit(reset_password_command(args.username, args.password_stdin))
+    try:
+        found = check_startup_preconditions()
+    except StartupRefused as refused:
+        log_event("startup_refused", level="error", reason=refused.reason)
+        print(str(refused), file=sys.stderr, flush=True)
+        raise
+    # Which SQLite this is decides WAL or the rollback journal
+    # (catalog_store.journal_mode_for); said once, so a log shows it.
+    log_event("sqlite_runtime", version=sqlite3.sqlite_version, **found)
     load_persisted_remote_cache()
     load_persisted_provider_cache()
     try:
-        # Which SQLite this is decides WAL or the rollback journal
-        # (catalog_store.journal_mode_for); said once, so a log shows it.
-        log_event("sqlite_runtime", version=sqlite3.sqlite_version,
-                  journal_mode=getattr(catalog_store(), "journal_mode", None))
         recovered = catalog_store().recover_interrupted_searches()
         acquisition_staging_dir("direct_site")
         restarted = recover_interrupted_direct_downloads()

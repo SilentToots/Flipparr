@@ -4449,7 +4449,10 @@ class ReaderProfileTests(LibraryFixture):
                     UPDATE schema_info SET version=48;
                 """)
             migrated = CatalogStore(path)
-            self.assertTrue(path.with_name(f"{path.name}.pre-v49").is_file(), "the library as it was, kept first")
+            kept = path.with_name(f"{path.name}.pre-v{catalog_store.SCHEMA_VERSION}")
+            self.assertTrue(kept.is_file(), "the library as it was, kept first")
+            with sqlite3.connect(kept) as copy:
+                self.assertEqual(copy.execute("SELECT version FROM schema_info").fetchone()[0], 48, "as it was")
             with sqlite3.connect(path) as connection:
                 rows = connection.execute(
                     "SELECT user_id, file_id, page, panel, page_count, file_signature, finished_at, updated_at "
@@ -4471,6 +4474,45 @@ class ReaderProfileTests(LibraryFixture):
             again = CatalogStore(path)
             self.assertEqual(len(again.recent_reading(user_id=ADMIN_USER_ID)), 2)
             self.assertEqual(again.catalog()["series"][0]["yourRating"], 3)
+
+    def test_every_upgrade_keeps_a_copy_and_the_oldest_copies_go(self):
+        """Gate 4 (2026-10-05): only the move to 49 kept one. Every build
+        whose schema is newer than the file's keeps the file as it was."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            path = store.database_path
+            copies = lambda: sorted(p.name for p in path.parent.glob(f"{path.name}.pre-v*"))  # noqa: E731
+            self.assertEqual(copies(), [], "a new library needs no copy")
+            CatalogStore(path)
+            self.assertEqual(copies(), [], "nor does opening the same schema again")
+            for older in (61, 62, 63):
+                (path.parent / f"{path.name}.pre-v{older}").write_bytes(b"older copy")
+            with sqlite3.connect(path) as connection:
+                connection.execute("UPDATE schema_info SET version=63")
+            CatalogStore(path)
+            names = copies()
+            self.assertIn(f"{path.name}.pre-v{catalog_store.SCHEMA_VERSION}", names)
+            self.assertEqual(len(names), CatalogStore.PRE_UPGRADE_COPIES_KEPT, "the oldest beyond the last few are gone")
+            self.assertNotIn(f"{path.name}.pre-v61", names)
+
+    def test_a_library_from_a_newer_build_is_refused_before_it_is_touched(self):
+        """Gate 4 (2026-10-05): the old check came after the tables were
+        created and rows cleaned up, so an older image put back what a newer
+        one had dropped, and switched the journal mode, before refusing."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            path = store.database_path
+            with sqlite3.connect(path) as connection:
+                connection.execute("UPDATE schema_info SET version=?", (catalog_store.SCHEMA_VERSION + 5,))
+                connection.execute("DROP TABLE notifications")
+                connection.execute("PRAGMA journal_mode=DELETE")
+            before = path.read_bytes()
+            with self.assertRaises(catalog_store.CatalogNewerThanBuild) as refused:
+                CatalogStore(path)
+            self.assertEqual(refused.exception.stored, catalog_store.SCHEMA_VERSION + 5)
+            self.assertIn("newer Flipparr", str(refused.exception))
+            self.assertEqual(path.read_bytes(), before, "not a byte of it changed")
+            self.assertEqual(sorted(p.name for p in path.parent.glob(f"{path.name}.pre-v*")), [], "no copy either")
 
     def test_a_profile_picture_and_reading_activity(self):
         with tempfile.TemporaryDirectory() as folder:

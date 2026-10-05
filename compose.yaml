@@ -8,19 +8,16 @@ x-logging: &default-logging
 
 services:
   flipparr:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        # Stamps the image with the commit it was built from, reported by
-        # /healthz. Pass it as FLIPPARR_BUILD=$(git rev-parse HEAD); an
-        # unstamped local build reports "source", which is fine for one.
-        FLIPPARR_BUILD: "${FLIPPARR_BUILD:-source}"
-    image: flipparr:local
+    # The published image, at the release this file shipped with. To follow
+    # a different tag, or an image you built yourself (compose.build.yaml),
+    # set FLIPPARR_IMAGE in .env. Rolling back is setting it to the previous
+    # tag -- with the config folder restored from the backup taken before
+    # the upgrade, if the schema moved (docs/OPERATING.md, section 4).
+    image: "${FLIPPARR_IMAGE:-ghcr.io/silenttoots/flipparr:0.1.0}"
     container_name: flipparr
     restart: unless-stopped
     init: true
-    user: "${PUID:-1000}:${PGID:-10}"
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       # Loopback by default. Set FLIPPARR_BIND to publish elsewhere -- a LAN
       # address, or 0.0.0.0 on a network you trust. Turn on authentication in
@@ -35,7 +32,7 @@ services:
       # forward to it (see docs/OPERATING.md, HTTPS).
       - "${FLIPPARR_BIND:-127.0.0.1}:${FLIPPARR_PORT:-8787}:8787"
     environment:
-      TZ: "${TZ:-America/New_York}"
+      TZ: "${TZ:-UTC}"
       FLIPPARR_DATABASE: /config/flipparr.db
       FLIPPARR_PROVIDER_CONFIG: /config/metadata-providers.json
       FLIPPARR_ACQUISITION_CONFIG: /config/acquisition-services.json
@@ -65,8 +62,6 @@ services:
       # own ratio or time limit stops the torrent. Optional; without
       # qBittorrent it is an empty folder.
       - "${TORRENT_COMPLETE_PATH:-./docker-data/torrents-complete}:/downloads/torrents/complete/comics:ro"
-    networks:
-      - proxy
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
@@ -74,7 +69,6 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
-networks:
-  proxy:
-    name: home-services-proxy
-    external: true
+# To put Flipparr on a network your reverse proxy or download clients share,
+# add a compose.override.yaml beside this file (docs/OPERATING.md, "Behind a
+# reverse proxy"); nothing here assumes one.

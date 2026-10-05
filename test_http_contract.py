@@ -728,6 +728,19 @@ class HttpContractTests(unittest.TestCase):
         body = self.get("/healthz").json()
         self.assertEqual(body["version"], app.APP_VERSION)
         self.assertTrue(body["build"])
+        self.assertEqual(body["catalog"], "ok")
+
+    def test_health_is_unhealthy_when_the_catalog_cannot_be_read(self):
+        """Gate 4 (2026-10-05): a container whose catalog never opened -- a
+        root-owned /config -- answered 200 here and 500 everywhere else, and
+        Docker called it healthy."""
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("app.catalog_database_path", return_value=Path(folder) / "missing" / "flipparr.db"):
+            response = self.get("/healthz")
+        self.assertEqual(response.status, 503)
+        body = json.loads(response.body)
+        self.assertEqual(body["status"], "unhealthy")
+        self.assertTrue(body["catalog"])
 
     def test_providers_needing_an_account_say_where_to_get_one(self):
         """An account is the one prerequisite the setup screen cannot satisfy,
