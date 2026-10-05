@@ -6846,7 +6846,7 @@ function SystemSettings({ onNavigate, onSectionChange }) {
     </SettingsCard>
     <SettingsCard title="Support">
       <p className="settings-card-lead">A file with everything on this page and which services are set up, for when you ask someone for help. It holds no passwords, keys, tokens or service addresses.</p>
-      <a className="secondary-button" href="/api/v1/system/diagnostics" download><DownloadSimple size={18} /> Download diagnostics</a>
+      <button type="button" className="secondary-button" onClick={() => downloadFrom("/api/v1/system/diagnostics")}><DownloadSimple size={18} /> Download diagnostics</button>
     </SettingsCard>
   </>;
 }

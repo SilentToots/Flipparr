@@ -2375,6 +2375,17 @@ class CatalogStoreTests(unittest.TestCase):
                     (f"direct_site:def456:{job_id}", "/config/downloads/direct_site/8"))
                 self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
 
+    def test_downloads_in_progress_leave_out_those_whose_request_ended(self):
+        """Settings -> System counted six rows of a cancelled request as six
+        downloads in progress while SABnzbd's queue was empty (2026-10-05)."""
+        with tempfile.TemporaryDirectory() as folder:
+            store, _series_id, job_id = self._one_wanted_job(Path(folder))
+            store.record_acquisition_download(job_id, "SAB-1", "Example 002", "k1")
+            self.assertEqual(store.background_work_summary()["downloads"],
+                             [{"source": "sabnzbd", "status": "queued", "count": 1}])
+            store.update_acquisition_job(job_id, "cancelled", "Request cancelled")
+            self.assertEqual(store.background_work_summary()["downloads"], [], "the importer ignores it too")
+
     def test_a_torrent_is_in_use_while_an_issue_downloads_from_it_or_keeps_it_as_evidence(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -10013,10 +10013,18 @@ class CatalogStore:
             wanted = counts("SELECT status, COUNT(*) FROM acquisition_jobs GROUP BY status")
             oldest_waiting = connection.execute(
                 "SELECT MIN(created_at) FROM acquisition_jobs WHERE status IN ('queued', 'waiting')").fetchone()[0]
+            # In progress the way the importer sees it (pending_acquisition_downloads):
+            # a download whose request was cancelled or fulfilled is history, whatever
+            # its own row last said -- six such rows from a cancelled request read as
+            # "6 downloads in progress" with SABnzbd's queue empty (2026-10-05).
             downloads = [{"source": row[0], "status": row[1], "count": int(row[2])} for row in connection.execute(
-                """SELECT source, status, COUNT(*) FROM acquisition_downloads
-                   WHERE status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files')
-                   GROUP BY source, status ORDER BY source, status""")]
+                """SELECT acquisition_downloads.source, acquisition_downloads.status, COUNT(*)
+                   FROM acquisition_downloads
+                   JOIN acquisition_jobs ON acquisition_jobs.id=acquisition_downloads.job_id
+                   WHERE acquisition_downloads.status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files')
+                     AND acquisition_jobs.status NOT IN ('fulfilled', 'cancelled')
+                   GROUP BY acquisition_downloads.source, acquisition_downloads.status
+                   ORDER BY acquisition_downloads.source, acquisition_downloads.status""")]
             metadata = counts("SELECT status, COUNT(*) FROM metadata_enrichment_jobs GROUP BY status")
             next_metadata = connection.execute(
                 "SELECT MIN(next_attempt_at) FROM metadata_enrichment_jobs WHERE status='waiting'").fetchone()[0]

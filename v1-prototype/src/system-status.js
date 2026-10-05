@@ -71,8 +71,10 @@ export function waitingWork(work) {
     rows.push({ id: "downloads", label: "Downloads in progress", value: `${downloads} (${detail})`, go: "requests" });
   }
   const wanted = work?.wanted?.byStatus || {};
-  const waiting = Number(wanted.queued || 0) + Number(wanted.waiting || 0) + Number(wanted.searching || 0);
-  if (waiting) rows.push({ id: "wanted", label: "Wanted issues being looked for", value: String(waiting), go: "requests" });
+  // "waiting" is an issue not published yet: watched, not searched for.
+  const searching = Number(wanted.queued || 0) + Number(wanted.searching || 0);
+  if (searching) rows.push({ id: "wanted", label: "Wanted issues being looked for", value: String(searching), go: "requests" });
+  if (Number(wanted.waiting || 0)) rows.push({ id: "upcoming", label: "Wanted issues not out yet", value: String(wanted.waiting), go: "requests" });
   if (Number(wanted.failed || 0)) rows.push({ id: "failed", label: "Wanted issues that failed", value: String(wanted.failed), go: "requests", tone: "red" });
   const metadata = work?.metadata?.byStatus || {};
   const metadataWaiting = Number(metadata.queued || 0) + Number(metadata.waiting || 0) + Number(metadata.running || 0);

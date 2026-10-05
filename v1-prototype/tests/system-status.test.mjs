@@ -32,12 +32,13 @@ test("sizes read as people say them", () => {
 test("waiting work leaves out what is empty and says where to act", () => {
   const rows = waitingWork({
     downloads: [{ source: "sabnzbd", status: "downloading", count: 2 }, { source: "qbittorrent", status: "importing", count: 1 }],
-    wanted: { byStatus: { queued: 3, searching: 1, failed: 2, fulfilled: 40 } },
+    wanted: { byStatus: { queued: 3, searching: 1, waiting: 2, failed: 2, fulfilled: 40 } },
     metadata: { byStatus: { waiting: 5, complete: 90, review: 1 } },
   });
   assert.deepEqual(rows.map((row) => [row.id, row.value, row.go || null]), [
     ["downloads", "3 (2 Usenet, 1 Torrent)", "requests"],
     ["wanted", "4", "requests"],
+    ["upcoming", "2", "requests"],
     ["failed", "2", "requests"],
     ["metadata", "5", null],
     ["metadata-review", "1", "health"],
