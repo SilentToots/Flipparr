@@ -77,6 +77,14 @@ it fails if the built image is not stamped with the commit under test.
 - **`npm ci`, never `npm install`** — installs the lockfile exactly and fails if
   `package.json` has drifted from it.
 - **Python dependencies are pinned** to exact versions in `requirements.txt`.
+- **SQLite is built from a pinned source tarball** (the `sqlite-build` stage),
+  checked against its published hash, so the image never depends on the base
+  image's older library.
+- **Build from a clean export of the commit**, never from a working folder
+  that earlier builds were unpacked into: unpacking adds files but never
+  removes the ones the repository has since dropped, and `COPY v1-prototype/`
+  then ships them. `git archive <commit> | tar -x -C <empty folder>` and
+  build there.
 
 ---
 
