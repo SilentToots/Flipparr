@@ -8889,6 +8889,11 @@ def _separators_to_spaces(text: str) -> str:
     return re.sub(r"[._]+", " ", kept).replace("\x00", ".")
 
 
+# How far a year in a file's name may sit from its folder's and still be
+# that book's own date rather than another run's (the catalog's era slack).
+RUN_YEAR_DRIFT = 3
+
+
 def _run_year_clue(path: Path, raw: str, title: str, number_match: re.Match[str] | None) -> int | None:
     """The year a publication run began, where the file's name says so.
 
@@ -8897,9 +8902,9 @@ def _run_year_clue(path: Path, raw: str, title: str, number_match: re.Match[str]
 
     - the folder -- "Captain America (2011)/Captain America #010.cbr" --
       when the folder's title is the file's own. It is the grouping the
-      owner made, and outranks a year in the name: a book series files
-      "The Adventure Zone (2019) #001" (that book's year) under "The
-      Adventure Zone (2018)";
+      owner made, and outranks a nearby year in the name: a book series
+      files "The Adventure Zone (2019) #001" (that book's year) under "The
+      Adventure Zone (2018)". A year an era away is another run's;
     - "V2011" -- "Batman V2011 #001";
     - a year before the number -- "Captain America (2011) #010": the
       series' year. A year after the number -- "Batman #015 (2017)" -- is
@@ -8909,18 +8914,25 @@ def _run_year_clue(path: Path, raw: str, title: str, number_match: re.Match[str]
     1940, 2011, 2016 and 2025 runs, none with its #1, was one run of 245
     files. `year` keeps the issue's date either way.
     """
+    named = None
+    stated = VOLUME_YEAR.search(raw)
+    if stated:
+        named = int(stated.group(1))
+    elif number_match is not None:
+        years = re.findall(r"\(\s*((?:19|20)\d{2})\s*\)", raw[:number_match.start()])
+        if years:
+            named = int(years[-1])
     folder = re.sub(r"\s+", " ", _separators_to_spaces(urllib.parse.unquote(path.parent.name))).strip()
     found = re.fullmatch(r"(.+?)\s*\(\s*((?:19|20)\d{2})\s*\)", folder)
     if found and title and normalized_title(found.group(1)) == normalized_title(title):
-        return int(found.group(2))
-    stated = VOLUME_YEAR.search(raw)
-    if stated:
-        return int(stated.group(1))
-    if number_match is not None:
-        years = re.findall(r"\(\s*((?:19|20)\d{2})\s*\)", raw[:number_match.start()])
-        if years:
-            return int(years[-1])
-    return None
+        folder_year = int(found.group(2))
+        # A name a whole era from its folder names another run, misfiled:
+        # "Nightwing (2011) #025" in "Nightwing (2016)" is the 2011 run's
+        # #25. Within a few years it is the book's own date.
+        if named is not None and abs(named - folder_year) > RUN_YEAR_DRIFT:
+            return named
+        return folder_year
+    return named
 
 
 def parse_filename(path: Path) -> ParsedFile:

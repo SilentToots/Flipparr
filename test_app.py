@@ -10120,6 +10120,17 @@ class IntakeEraCompatibilityTests(unittest.TestCase):
             runs, _ = self._intake(folder)
         self.assertEqual(runs, {("The Adventure Zone", 2018): {("issue", "1"), ("issue", "2"), ("issue", "6")}})
 
+    def test_a_name_an_era_from_its_folder_is_another_runs_misfiled_issue(self):
+        # Gate 2 (2026-10-05): two of the 2011 run's issues in the 2016 folder;
+        # production's provider-backed catalog files them under 2011.
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("Nightwing (2011)/Nightwing (2011) #024.cbz", "Nightwing (2016)/Nightwing (2011) #025.cbz",
+                         "Nightwing (2016)/Nightwing (2016) #025.cbz"):
+                self._comic(folder, f"comics/{name}")
+            runs, _ = self._intake(folder)
+        self.assertEqual(runs, {("Nightwing", 2011): {("issue", "24"), ("issue", "25")},
+                                ("Nightwing", 2016): {("issue", "25")}})
+
     def test_a_year_after_the_number_is_a_cover_date_and_splits_nothing(self):
         with tempfile.TemporaryDirectory() as folder:
             for name in ("Saga 015 (2013).cbz", "Saga 030 (2015).cbz", "Saga 054 (2018).cbz"):
