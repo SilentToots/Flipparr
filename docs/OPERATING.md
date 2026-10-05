@@ -505,6 +505,17 @@ point your health check at `/healthz`.
 
 ---
 
+### When an AI connector stops
+
+If Claude's or ChatGPT's account runs out of credit, or its API key is
+refused, every admin gets a notification in the bell ("Claude is out of
+credit") that opens Settings → Reader. Flipparr stops asking that service for
+fifteen minutes at a time and panel view carries on with its own reading. One
+notification an outage: the next successful answer re-arms it. Neither service
+lets an API key ask how much credit is left, so Flipparr cannot warn that a
+balance is running low; set a low-balance email alert or auto-reload in the
+provider's own billing page for that.
+
 ### Privacy settings
 
 Three things beyond your own services are off until you turn them on: a vision

@@ -1501,6 +1501,17 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
                 "tone": "done" if approved else "warning",
                 "cover": payload.get("cover"),
                 "target": {"view": "requests", "focus": {"requestId": payload.get("requestId")}}}
+    if row["kind"] == "connector_trouble":
+        if not viewer.is_admin:
+            return None
+        name = CONNECTOR_NAMES.get(str(payload.get("provider")), "The vision model")
+        out = payload.get("reason") == "out_of_credit"
+        return {**base,
+                "title": f"{name} is out of credit" if out else f"{name}'s API key was refused",
+                "detail": ("Panel view and cover ratings are using Flipparr's own reading until you add credit to that account."
+                           if out else "Panel view and cover ratings are using Flipparr's own reading until you enter a working key."),
+                "tone": "warning",
+                "target": {"view": "settings", "section": "reader"}}
     return None
 
 
@@ -13154,8 +13165,13 @@ def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]
     try:
         with urllib.request.urlopen(request, timeout=VISION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
+        _VISION_TROUBLE_TOLD.pop(provider, None)  # it answers again: the next outage is news
     except urllib.error.HTTPError as exc:
         code, said = _vision_error(exc)
+        if code in _VISION_QUOTA_CODES:
+            tell_admins_of_connector_trouble(provider, "out_of_credit")
+        elif exc.code == 401:
+            tell_admins_of_connector_trouble(provider, "key_refused")
         if exc.code == 429 or code in _VISION_QUOTA_CODES:
             headers_seen = dict(exc.headers.items()) if exc.headers else {}
             # OpenAI says "try again in 1s" while its token window has a
@@ -13202,6 +13218,31 @@ def _duration_seconds(text: str) -> float:
     for amount, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", text or ""):
         total += float(amount) * {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}[unit]
     return total
+
+
+# Which connectors the admins have been told are in trouble, and why: one
+# notification an outage, not one a page. Cleared by the next answer.
+_VISION_TROUBLE_TOLD: dict[str, str] = {}
+CONNECTOR_NAMES = {"anthropic": "Claude", "openai": "ChatGPT"}
+
+
+def tell_admins_of_connector_trouble(provider: str, reason: str) -> None:
+    """Put it in every admin's bell that an AI connector has stopped for a
+    reason only they can fix -- its account is out of credit, or its key was
+    refused. Neither service lets a key ask for its balance (checked
+    2026-10-05), so "running low" cannot be known; "out" is what the refusal
+    says. Never raises: the page being read falls back either way."""
+    if _VISION_TROUBLE_TOLD.get(provider) == reason:
+        return
+    _VISION_TROUBLE_TOLD[provider] = reason
+    try:
+        store = catalog_store()
+        for user in store.list_users():
+            if user["role"] == "admin" and not user["disabled"]:
+                store.record_notification(int(user["id"]), "connector_trouble", f"connector:{provider}:{reason}",
+                                          {"provider": provider, "reason": reason}, merge=True)
+    except Exception as exc:  # noqa: BLE001
+        log_exception("connector_notification_failed", exc, level="warning", provider=provider)
 
 
 def _vision_error(exc: urllib.error.HTTPError) -> tuple[str, str]:

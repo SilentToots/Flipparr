@@ -11358,6 +11358,8 @@ export function App() {
       setRequestFocus({ ...target.focus });
       navigate("requests");
     }
+    // A connector in trouble (out of credit, key refused) opens where it is set up.
+    if (target?.view === "settings") navigate("settings", target.section);
   }
 
   // Dismissals made here and not yet confirmed: an answer to some other

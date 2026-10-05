@@ -9951,6 +9951,69 @@ class CatalogReuseTests(unittest.TestCase):
                 self.assertEqual(len({before, after_commit, app._catalog_stamp()}), 3)
 
 
+
+class ConnectorTroubleNotificationTests(unittest.TestCase):
+    """An AI connector that stops for a reason only the admin can fix -- out
+    of credit, key refused -- goes in the admin's bell, once an outage
+    (owner, 2026-10-05). Neither service says how much credit is left, so
+    there is no "running low" to tell."""
+
+    EMPTY = (b'{"type": "error", "error": {"type": "invalid_request_error", "message": "Your credit balance is too low '
+             b'to access the Anthropic API."}}')
+
+    def setUp(self):
+        app._VISION_TROUBLE_TOLD.clear()
+        self.addCleanup(app._VISION_TROUBLE_TOLD.clear)
+        self.store = Mock()
+        self.store.list_users.return_value = [
+            {"id": 1, "role": "admin", "disabled": False}, {"id": 2, "role": "reader", "disabled": False},
+            {"id": 3, "role": "admin", "disabled": True}]
+        for patcher in (patch("app.catalog_store", return_value=self.store), patch("app._wait_for_provider_slot"),
+                        patch("app.log_event"), patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True),
+                        patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "a-key"}})):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _refuse(self, status, body):
+        import email.message, io
+        error = urllib.error.HTTPError("https://api.anthropic.com/v1/messages", status, "no", email.message.Message(), io.BytesIO(body))
+        with patch("urllib.request.urlopen", side_effect=error), patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
+            with self.assertRaises(app.VisionUnavailable):
+                app.ask_vision_model(b"jpeg", "boxes?")
+
+    def test_an_empty_balance_tells_each_admin_once_until_it_answers_again(self):
+        self._refuse(400, self.EMPTY)
+        self._refuse(400, self.EMPTY)
+        calls = self.store.record_notification.call_args_list
+        self.assertEqual(len(calls), 1, "once an outage, to the one working admin")
+        self.assertEqual(calls[0].args[:3], (1, "connector_trouble", "connector:anthropic:out_of_credit"))
+        answer = Mock()
+        answer.__enter__ = lambda s: io.BytesIO(json.dumps({"content": [{"type": "text", "text": "[]"}]}).encode())
+        answer.__exit__ = lambda *a: False
+        with patch("urllib.request.urlopen", return_value=answer):
+            app.ask_vision_model(b"jpeg", "boxes?")
+        self._refuse(400, self.EMPTY)
+        self.assertEqual(self.store.record_notification.call_count, 2, "it worked in between: the next outage is news")
+
+    def test_a_refused_key_is_told_and_an_ordinary_refusal_is_not(self):
+        self._refuse(400, b'{"error": {"type": "invalid_request_error", "message": "image too large"}}')
+        self._refuse(529, b'{"error": {"type": "overloaded_error"}}')
+        self.store.record_notification.assert_not_called()
+        self._refuse(401, b'{"error": {"type": "authentication_error", "message": "invalid x-api-key"}}')
+        self.assertEqual(self.store.record_notification.call_args.args[2], "connector:anthropic:key_refused")
+
+    def test_the_bell_line_says_what_stopped_and_opens_where_to_fix_it(self):
+        row = {"id": 5, "updatedAt": "2026-10-05T12:00:00+00:00", "readAt": None, "kind": "connector_trouble",
+               "payload": {"provider": "anthropic", "reason": "out_of_credit"}}
+        admin = Mock(is_admin=True, max_rating=None)
+        view = app.notification_view(row, admin)
+        self.assertEqual((view["title"], view["tone"], view["target"]),
+                         ("Claude is out of credit", "warning", {"view": "settings", "section": "reader"}))
+        refused = app.notification_view({**row, "payload": {"provider": "openai", "reason": "key_refused"}}, admin)
+        self.assertEqual(refused["title"], "ChatGPT's API key was refused")
+        self.assertIsNone(app.notification_view(row, Mock(is_admin=False, max_rating=None)), "a reader is not told")
+
+
 class _QuickStop(threading.Event):
     """A stop event whose waits return at once, so a worker loop runs a turn."""
 
