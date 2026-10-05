@@ -173,9 +173,13 @@ Learned on the abandoned rewrite, and true of this image:
   database in WAL mode when two connections write or checkpoint at the same
   instant; the fix is in 3.51.3 (backported to 3.44.6 and 3.50.7). The image's
   Debian Bookworm SQLite is 3.40.1 and `catalog_store.py` opens the catalog in
-  WAL mode with several threads writing. SQLite rates it extremely rare, but it
-  is open until the catalog uses the rollback journal or the image carries a
-  fixed SQLite. Release blocker.
+  WAL mode with several threads writing. **Resolved 2026-10-04:** the image
+  builds SQLite 3.53.4 from sqlite.org's checksum-pinned source (`Dockerfile`,
+  stage `sqlite-build`) and refuses to build on anything older than 3.51.3;
+  `catalog_store.journal_mode_for` keeps WAL only on a fixed SQLite and uses
+  the rollback journal elsewhere (an old Python run from source), and the
+  startup log records which (`sqlite_runtime`). When SQLite is updated, change
+  the version, URL and both hashes together.
 - **Docker bridge networking** presents the bridge gateway, not loopback, as
   the client address; trusting it is an explicit setting
   (`FLIPPARR_TRUSTED_PROXIES`, `docs/OPERATING.md`), never a default.

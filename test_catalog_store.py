@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app import ParsedFile, _metron_reprint_coverage
 from provider_evidence import native_issue_evidence
@@ -3165,6 +3166,31 @@ class CatalogStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JournalModeTests(unittest.TestCase):
+    """WAL only on a SQLite with the WAL-reset fix (3.51.3, or the 3.44.6 and
+    3.50.7 backports); the rollback journal on anything older."""
+
+    def test_the_fixed_releases_and_backports_get_wal(self):
+        for version in ((3, 51, 3), (3, 53, 4), (4, 0, 0), (3, 50, 7), (3, 50, 9), (3, 44, 6)):
+            self.assertEqual(catalog_store.journal_mode_for(version), "WAL", version)
+        for version in ((3, 40, 1), (3, 51, 2), (3, 50, 6), (3, 44, 5), (3, 46, 1), (3, 45, 0), (3, 7, 0)):
+            self.assertEqual(catalog_store.journal_mode_for(version), "DELETE", version)
+
+    def test_a_library_opened_on_an_unfixed_sqlite_leaves_wal_and_keeps_its_rows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "library.db"
+            with patch.object(catalog_store.sqlite3, "sqlite_version_info", (3, 53, 4)):
+                store = CatalogStore(path)
+            self.assertEqual(store.journal_mode, "WAL")
+            store.register_root(folder, True)
+            with patch.object(catalog_store.sqlite3, "sqlite_version_info", (3, 40, 1)):
+                reopened = CatalogStore(path)
+            self.assertEqual(reopened.journal_mode, "DELETE")
+            with sqlite3.connect(path) as connection:
+                self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0].upper(), "DELETE")
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM library_roots").fetchone()[0], 1)
 
 
 class CatalogSlugGroupTests(unittest.TestCase):

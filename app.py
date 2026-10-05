@@ -24,6 +24,7 @@ import io
 import http.client
 import ipaddress
 import socket
+import sqlite3
 import json
 import math
 import mimetypes
@@ -19019,6 +19020,10 @@ def main() -> None:
     load_persisted_remote_cache()
     load_persisted_provider_cache()
     try:
+        # Which SQLite this is decides WAL or the rollback journal
+        # (catalog_store.journal_mode_for); said once, so a log shows it.
+        log_event("sqlite_runtime", version=sqlite3.sqlite_version,
+                  journal_mode=getattr(catalog_store(), "journal_mode", None))
         recovered = catalog_store().recover_interrupted_searches()
         acquisition_staging_dir("direct_site")
         restarted = recover_interrupted_direct_downloads()

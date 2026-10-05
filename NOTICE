@@ -27,6 +27,8 @@ Third-party software in the server image:
   ONNX Runtime                      MIT (Microsoft), used only to run a panel
                                     model the operator supplies; no model ships
   libarchive (bsdtar)               BSD-2-Clause
+  SQLite 3.53.4                     public domain; built from sqlite.org's
+                                    source, replacing Debian's older library
   Debian packages in the base image under their own licences (see
   /usr/share/doc/*/copyright in the image)
 

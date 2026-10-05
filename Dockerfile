@@ -12,6 +12,29 @@ RUN npm ci
 COPY v1-prototype/ ./
 RUN npm run build
 
+# SQLite, built from source. Debian 12's libsqlite3 is 3.40.1, inside the range
+# of SQLite's WAL-reset bug (3.7.0-3.51.2; https://sqlite.org/wal.html#walresetbug),
+# and Debian has not patched it. The catalog is written from several threads in
+# WAL mode, so the image carries a fixed release instead of giving WAL up. The
+# tarball is pinned by checksum: SQLite publishes its SHA3-256 (454e45f6...0338
+# for 3.53.4, verified 2026-10-04); ADD checks the SHA-256 of the same file.
+# The -D options keep what Debian's build turned on that changes behaviour.
+FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS sqlite-build
+ADD --checksum=sha256:0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c \
+    https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz /tmp/sqlite.tar.gz
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes gcc libc6-dev make \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir /tmp/sqlite && tar -xzf /tmp/sqlite.tar.gz -C /tmp/sqlite --strip-components=1 \
+ && cd /tmp/sqlite \
+ && CFLAGS="-O2 -DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_SECURE_DELETE -DSQLITE_LIKE_DOESNT_MATCH_BLOBS \
+      -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 \
+      -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_DBSTAT_VTAB -DSQLITE_ENABLE_COLUMN_METADATA \
+      -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_SOUNDEX" \
+    ./configure --prefix=/opt/sqlite --disable-static \
+ && make -j"$(nproc)" && make install \
+ && mkdir /out && cp -L /opt/sqlite/lib/libsqlite3.so.0 /out/libsqlite3.so.0
+
 FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
 
 # Stamped by the build with the commit that produced it, and reported by
@@ -36,6 +59,11 @@ ENV FLIPPARR_BUILD=${FLIPPARR_BUILD} \
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes libarchive-tools \
  && rm -rf /var/lib/apt/lists/*
+
+# The fixed SQLite (see sqlite-build) ahead of Debian's: /usr/local/lib comes
+# first in the loader's search path, so Python's sqlite3 module loads it.
+COPY --from=sqlite-build /out/libsqlite3.so.0 /usr/local/lib/libsqlite3.so.0
+RUN ldconfig && python -c "import sqlite3, sys; sys.exit(sqlite3.sqlite_version_info < (3, 51, 3))"
 
 WORKDIR /app
 COPY requirements.txt ./

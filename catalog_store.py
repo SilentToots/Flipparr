@@ -23,6 +23,22 @@ from typing import Any, Callable, Iterable, Sequence
 
 
 SCHEMA_VERSION = 64
+
+
+def journal_mode_for(version_info: Sequence[int]) -> str:
+    """WAL where this SQLite is safe in it, the rollback journal elsewhere.
+
+    SQLite 3.7.0 through 3.51.2 can corrupt a database in WAL mode when two
+    connections write or checkpoint at the same instant, which several
+    threads here can do (https://sqlite.org/wal.html#walresetbug). The fix is
+    in 3.51.3, backported to 3.44.6 and 3.50.7. The image builds a fixed
+    SQLite (Dockerfile); anything older -- Debian 12's 3.40.1, an old Python
+    run from source -- gets the rollback journal: readers then wait for a
+    write instead of reading beside it, which is slower and cannot corrupt.
+    """
+    version = tuple(int(part) for part in version_info[:3])
+    fixed = version >= (3, 51, 3) or (3, 50, 7) <= version < (3, 51, 0) or (3, 44, 6) <= version < (3, 45, 0)
+    return "WAL" if fixed else "DELETE"
 # Who found a page's panels: the gutter finder, a local model, a vision model
 # over the wire, a person, or a file that carried them.
 PANEL_SOURCES = {"auto", "model", "vlm", "manual", "acbf"}
@@ -794,9 +810,12 @@ class CatalogStore:
     def _migrate(self) -> None:
         self._keep_a_copy_before(49)
         with self._connect() as connection:
+            # Switching mode needs the file to itself, which it has here: the
+            # store migrates before anything else opens it.
+            self.journal_mode = str(connection.execute(
+                f"PRAGMA journal_mode = {journal_mode_for(sqlite3.sqlite_version_info)}").fetchone()[0]).upper()
             connection.executescript(
                 """
-                PRAGMA journal_mode = WAL;
                 CREATE TABLE IF NOT EXISTS schema_info (
                     version INTEGER NOT NULL
                 );
