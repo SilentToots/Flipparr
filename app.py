@@ -16426,7 +16426,61 @@ chooseButton.addEventListener('click', async () => {
 </body></html>"""
 
 
+# The catalog is the whole library in one answer: 14 MB of JSON and 1.6 s to
+# build for 2,800 files (measured 2026-10-05), and the page asks for it again
+# on every visit and every few seconds while work is running. Built once, it
+# is reused for as long as nothing it is made from has changed: the database
+# (any commit touches the file or its write-ahead log), the settings and the
+# provider settings. CATALOG_REUSE_SECONDS caps that, for the parts that
+# depend on the clock -- an issue's release date arriving, a provider's
+# cooldown ending. One viewer's ratings are not another's, so each has their own.
+CATALOG_REUSE_SECONDS = 30
+_CATALOG_CACHE: dict[int, tuple[Any, float, dict[str, Any]]] = {}
+_CATALOG_BUILD_LOCK = threading.Lock()
+
+
+def _catalog_stamp() -> tuple[Any, ...]:
+    database = catalog_database_path()
+    # The store too: a catalog built by one store is never another's answer.
+    stamp: list[Any] = [str(database), id(catalog_store())]
+    for path in (database, database.with_name(database.name + "-wal"), settings_config_path(), provider_config_path()):
+        try:
+            stat = path.stat()
+            stamp.append((stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            stamp.append(None)
+    return tuple(stamp)
+
+
 def catalog_api_payload(*, viewer_id: int) -> dict[str, Any]:
+    """The catalog for one viewer, rebuilt only when something it is made
+    from has changed (see CATALOG_REUSE_SECONDS). The top level and its stats
+    are the caller's own to change; everything deeper is shared, read-only."""
+    def fresh(entry: tuple[Any, float, dict[str, Any]] | None) -> bool:
+        return entry is not None and entry[0] == _catalog_stamp() and time.monotonic() - entry[1] < CATALOG_REUSE_SECONDS
+
+    entry = _CATALOG_CACHE.get(viewer_id)
+    if not fresh(entry):
+        # One build at a time: several pages asking at once wait for the one
+        # answer instead of each spending the 1.6 s.
+        with _CATALOG_BUILD_LOCK:
+            entry = _CATALOG_CACHE.get(viewer_id)
+            if not fresh(entry):
+                # Stamped before the build, so a write that lands while it runs
+                # is never missed: the next ask sees a newer stamp and builds
+                # again. (Building can settle a job's state, itself a write;
+                # that costs one more build, after which nothing changes.)
+                stamp = _catalog_stamp()
+                payload = _build_catalog_api_payload(viewer_id=viewer_id)
+                entry = (stamp, time.monotonic(), payload)
+                if len(_CATALOG_CACHE) >= 4 and viewer_id not in _CATALOG_CACHE:
+                    _CATALOG_CACHE.pop(next(iter(_CATALOG_CACHE)))  # a household is few; memory is not
+                _CATALOG_CACHE[viewer_id] = entry
+    payload = entry[2]
+    return {**payload, "stats": dict(payload.get("stats") or {})}
+
+
+def _build_catalog_api_payload(*, viewer_id: int) -> dict[str, Any]:
     """Add provider availability to the public catalog without exposing credentials.
 
     Ratings in it are the viewer's own.

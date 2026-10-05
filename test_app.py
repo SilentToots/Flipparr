@@ -9866,6 +9866,71 @@ class SourcePriorityTests(unittest.TestCase):
         self.assertEqual(groups, {"prowlarr": "search", "sabnzbd": "clients", "qbittorrent": "clients",
                                   "flaresolverr": "direct", "direct_site": "direct"})
 
+
+class CatalogReuseTests(unittest.TestCase):
+    """The catalog takes 1.6 s to build for a real library and is asked for
+    constantly; it is rebuilt only when what it is made from has changed
+    (2026-10-05)."""
+
+    def setUp(self):
+        app._CATALOG_CACHE.clear()
+        self.addCleanup(app._CATALOG_CACHE.clear)
+        self.store = Mock()
+        self.store.catalog.side_effect = lambda *args, **kwargs: {
+            "series": [{"id": "1"}], "enrichment": {}, "stats": {"series": 1}}
+        self.store.metadata_provider_available.return_value = True
+        for target, value in (("app.catalog_store", self.store), ("app._series_enrichment_provider_order", []),
+                              ("app.collected_editions_enabled", False)):
+            patcher = patch(target, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_an_unchanged_library_is_built_once_and_a_change_rebuilds_it(self):
+        with patch("app._catalog_stamp", return_value=("a",)):
+            first = catalog_api_payload(viewer_id=1)
+            second = catalog_api_payload(viewer_id=1)
+        self.assertEqual(self.store.catalog.call_count, 1)
+        self.assertIs(first["series"], second["series"], "the same build, not a second one")
+        with patch("app._catalog_stamp", return_value=("b",)):
+            catalog_api_payload(viewer_id=1)
+        self.assertEqual(self.store.catalog.call_count, 2, "a commit, a settings change: built again")
+
+    def test_each_viewer_has_their_own_and_none_outlives_the_cap(self):
+        with patch("app._catalog_stamp", return_value=("a",)):
+            catalog_api_payload(viewer_id=1)
+            catalog_api_payload(viewer_id=2)
+            self.assertEqual(self.store.catalog.call_count, 2, "one viewer's ratings are not another's")
+            with patch("app.time.monotonic", return_value=time.monotonic() + app.CATALOG_REUSE_SECONDS + 1):
+                catalog_api_payload(viewer_id=1)
+        self.assertEqual(self.store.catalog.call_count, 3, "the clock moves release dates and cooldowns")
+
+    def test_what_a_caller_changes_at_the_top_never_reaches_the_next_caller(self):
+        with patch("app._catalog_stamp", return_value=("a",)):
+            first = catalog_api_payload(viewer_id=1)
+            first["series"] = []
+            first["stats"]["pendingRequests"] = 9
+            first["memberRequests"] = ["x"]
+            second = catalog_api_payload(viewer_id=1)
+        self.assertEqual(second["series"], [{"id": "1"}])
+        self.assertNotIn("pendingRequests", second["stats"])
+        self.assertNotIn("memberRequests", second)
+
+    def test_the_stamp_moves_when_the_database_or_a_settings_file_does(self):
+        with tempfile.TemporaryDirectory() as folder:
+            paths = {name: Path(folder) / name for name in ("flipparr.db", "settings.json", "providers.json")}
+            for path in paths.values():
+                path.write_text("1")
+            with patch("app.catalog_database_path", return_value=paths["flipparr.db"]), \
+                    patch("app.settings_config_path", return_value=paths["settings.json"]), \
+                    patch("app.provider_config_path", return_value=paths["providers.json"]):
+                before = app._catalog_stamp()
+                self.assertEqual(app._catalog_stamp(), before)
+                Path(str(paths["flipparr.db"]) + "-wal").write_text("a commit")
+                after_commit = app._catalog_stamp()
+                paths["settings.json"].write_text("changed!")
+                self.assertEqual(len({before, after_commit, app._catalog_stamp()}), 3)
+
+
 class _QuickStop(threading.Event):
     """A stop event whose waits return at once, so a worker loop runs a turn."""
 
