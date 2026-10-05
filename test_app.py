@@ -5455,6 +5455,23 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
         )
         fallback.assert_called_once()
 
+    def test_sabnzbd_refusing_the_api_key_is_not_every_download_lost(self):
+        # Gate 3 (2026-10-05): a 200 with {"status": false, "error": ...} read
+        # as an empty queue and history, so every download looked forgotten.
+        download = {"id": 31, "job_id": 7, "sab_nzo_id": "gone-id", "release_title": "Saga.001.2012",
+                    "created_at": "2026-09-01T00:00:00+00:00"}
+        store = Mock()
+        refused = {"status": False, "error": "API Key Incorrect"}
+        with patch("app.catalog_store", return_value=store), \
+                patch("app._enabled_acquisition_service", return_value={"url": "http://sab", "apiKey": "wrong"}), \
+                patch("app.fetch_json_with_headers", return_value=refused), \
+                patch("app._fallback_after_sab_failure") as fallback:
+            with self.assertRaisesRegex(app.DownloadClientUnanswered, "API Key Incorrect"):
+                reconcile_acquisition_download(download)
+        store.update_acquisition_download.assert_not_called()
+        fallback.assert_not_called()
+        self.assertTrue(issubclass(app.DownloadClientUnanswered, app.DOWNLOAD_CLIENT_HICCUPS), "the import worker waits it out")
+
     def test_a_download_still_in_the_queue_or_just_sent_keeps_waiting(self):
         result, store, _queue, fallback = self._reconcile_missing_from_history(3600, {"nzo_id": "gone-id"})
         self.assertEqual(result["status"], "downloading")
@@ -8900,6 +8917,21 @@ class DirectDownloadRecoveryTests(unittest.TestCase):
             app.reconcile_acquisition_download(row)
         self.assertEqual(len(started), 2, "the reconciler restarted it once, not on every pass")
 
+    def test_an_import_a_restart_cut_off_is_done_again(self):
+        # Gate 3 (2026-10-05): the row said "importing" when the process
+        # went; nothing picked it up again and the issue stayed grabbed.
+        store = Mock()
+        row = {"id": 1438, "job_id": 1620, "source": "direct_site", "status": "importing",
+               "sab_storage": "/config/tmp/direct_site/1438", "release_key": "k", "release_title": "World's Finest #36"}
+        with patch("app.catalog_store", return_value=store), \
+                patch("app._import_completed_download", return_value={"status": "imported"}) as importer:
+            self.assertEqual(app.reconcile_acquisition_download(row)["status"], "imported")
+        importer.assert_called_once_with(store, row, "/config/tmp/direct_site/1438")
+        # Without the fetched folder there is nothing to import from.
+        with patch("app.catalog_store", return_value=store), patch("app._import_completed_download") as importer:
+            app.reconcile_acquisition_download({**row, "sab_storage": None})
+        importer.assert_not_called()
+
     def test_stopping_a_download_frees_the_issue_and_sets_the_release_aside(self):
         store = Mock()
         store.acquisition_download_for_job.return_value = {
@@ -10183,6 +10215,85 @@ class IntakeEraCompatibilityTests(unittest.TestCase):
                          "both formats under one run, each owned on its own")
 
 
+class ImportRestartSafetyTests(unittest.TestCase):
+    """Gate 3 (2026-10-05): an import cut off by a restart. `docker stop`
+    does not wait for the import worker, so a copy can be left half-written
+    beside its destination under a name no later import looked for -- and,
+    ending in .cbz, the next scan would have catalogued it."""
+
+    def _comic(self, path, page=b"page"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("001.jpg", page)
+        return path
+
+    def _context(self, **extra):
+        return {"seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
+                "issueNumber": "1", "issueTitle": "Chapter One", "existingDirectory": None, **extra}
+
+    def test_a_copy_left_by_a_killed_import_is_never_catalogued(self):
+        with tempfile.TemporaryDirectory() as folder:
+            run = Path(folder) / "Saga (2012)"
+            self._comic(run / "Saga (2012) #001.cbz")
+            (run / ".Saga (2012) #002.flipparr-1-140235.partial.cbz").write_bytes(b"PK\x03\x04 half")
+            names = [parsed.filename for parsed in scan_folder(folder)]
+        self.assertEqual(names, ["Saga (2012) #001.cbz"])
+
+    def test_a_retried_import_clears_the_copy_an_earlier_process_left(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library, completed = root / "library", root / "completed"
+            source = self._comic(completed / "Saga.001.2012" / "Saga 001 (2012).cbz")
+            run = library / "Image Comics" / "Saga (2012)"
+            run.mkdir(parents=True)
+            stale = run / ".Saga (2012) #001 - Chapter One.flipparr-1-140235.partial.cbz"
+            stale.write_bytes(b"PK\x03\x04 half")
+            before = app.PROCESS_STARTED_AT - 60
+            os.utime(stale, (before, before))
+            store = Mock()
+            store.get_acquisition_job_context.return_value = self._context()
+            with patch("app.catalog_store", return_value=store):
+                result = import_downloaded_comic(
+                    {"job_id": 7, "sab_storage": str(source.parent), "release_title": "Saga.001.2012"},
+                    library_root=library, completed_root=completed)
+            self.assertFalse(stale.exists(), "the earlier process's copy is gone")
+            self.assertEqual(Path(result["destination"]).read_bytes(), source.read_bytes())
+            self.assertEqual(sorted(path.name for path in run.iterdir()), ["Saga (2012) #001 - Chapter One.cbz"])
+
+    def test_a_copy_this_process_is_writing_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / "Saga (2012) #001.cbz"
+            live = Path(folder) / ".Saga (2012) #001.flipparr-1-999.partial.cbz"
+            live.write_bytes(b"PK\x03\x04 being written")
+            app._clear_stale_partials(destination)
+            self.assertTrue(live.exists())
+
+    def test_a_replacement_retried_after_its_swap_finished_is_already_done(self):
+        # Killed after the rename, before the row said imported: the catalog
+        # already points the original at its quarantine copy, so the retry
+        # finds the new comic in place rather than refusing it as identical.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library, completed = root / "library", root / "completed"
+            source = self._comic(completed / "Saga.001.2012" / "Saga 001 (2012).cbz", b"replacement")
+            destination = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbz"
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(source.read_bytes())
+            quarantine = library / ".flipparr" / "quarantine" / "9" / "Image Comics" / "Saga (2012)" / destination.name
+            quarantine.parent.mkdir(parents=True)
+            quarantine.write_bytes(b"damaged-original")
+            store = Mock()
+            store.get_acquisition_job_context.return_value = self._context(
+                issueTitle=None, existingDirectory=str(destination.parent),
+                replacementId="9", replacementFileId="4", replacementFilePath=str(quarantine))
+            with patch("app.catalog_store", return_value=store):
+                result = import_downloaded_comic(
+                    {"job_id": 7, "sab_storage": str(source.parent), "release_title": "Saga.001.2012"},
+                    library_root=library, completed_root=completed)
+            self.assertTrue(result["alreadyPresent"])
+            self.assertEqual(quarantine.read_bytes(), b"damaged-original", "the original stays recoverable")
+
+
 class _QuickStop(threading.Event):
     """A stop event whose waits return at once, so a worker loop runs a turn."""
 
@@ -10286,6 +10397,54 @@ class SystemStatusTests(unittest.TestCase):
             app.acquisition_import_worker(stop)
         self.assertIn("acquisition_import_cycle_failed", [call.args[0] for call in logged.call_args_list])
         self.assertIn("database is locked", app._WORKER_PROBLEMS["imports"]["message"])
+
+    def test_a_download_client_that_drops_the_line_fails_no_download(self):
+        # Gate 3 (2026-10-05): a reset connection or half a reply was "Import
+        # coordinator failed" -- the download and its issue failed for good.
+        import http.client
+        import json as json_module
+        for hiccup in (ConnectionResetError(54, "Connection reset by peer"),
+                       http.client.RemoteDisconnected("Remote end closed connection without response"),
+                       http.client.IncompleteRead(b"{\"queue\""),
+                       json_module.JSONDecodeError("Expecting value", "<html>", 0),
+                       app.AcquisitionServiceOff("Connect and enable SABnzbd in Settings first")):
+            with self.subTest(type(hiccup).__name__):
+                app._WORKER_PROBLEMS.clear()
+                stop = _QuickStop()
+                store = Mock()
+                store.pending_acquisition_downloads.return_value = [
+                    {"id": 1, "job_id": 11, "source": "sabnzbd"}, {"id": 2, "job_id": 12, "source": "qbittorrent"}]
+
+                def unanswered(download):
+                    if download["id"] == 2:
+                        stop.set()
+                    raise hiccup
+
+                with patch("app.catalog_store", return_value=store), patch("app.log_event") as logged, \
+                        patch("app.reconcile_acquisition_download", side_effect=unanswered), \
+                        patch.object(app, "_KEPT_SWEPT_AT", [time.monotonic()]):
+                    app.acquisition_import_worker(stop)
+                store.update_acquisition_download.assert_not_called()
+                store.update_acquisition_job.assert_not_called()
+                events = [call.args[0] for call in logged.call_args_list]
+                self.assertEqual(events.count("acquisition_import_transient"), 1, "once a pass, not once a download")
+                self.assertIn(type(hiccup).__name__, app._WORKER_PROBLEMS["imports"]["message"])
+
+    def test_a_download_that_breaks_the_importer_still_fails_and_says_so(self):
+        stop = _QuickStop()
+        store = Mock()
+        store.pending_acquisition_downloads.return_value = [{"id": 1, "job_id": 11, "source": "sabnzbd"}]
+
+        def broken(download):
+            stop.set()
+            raise KeyError("sab_storage")
+
+        with patch("app.catalog_store", return_value=store), patch("app.log_event"), \
+                patch("app.reconcile_acquisition_download", side_effect=broken), \
+                patch.object(app, "_KEPT_SWEPT_AT", [time.monotonic()]):
+            app.acquisition_import_worker(stop)
+        store.update_acquisition_download.assert_called_once()
+        self.assertEqual(store.update_acquisition_download.call_args.args[1], "failed")
 
     def test_the_servers_own_notices_join_the_structured_log(self):
         """Waitress wrote "Task queue depth is 4" as bare text on stderr."""

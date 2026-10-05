@@ -3292,11 +3292,16 @@ def test_acquisition_service_connection(
     return {"service": service_id, "status": "connected", "detail": detail}
 
 
+class AcquisitionServiceOff(ValueError):
+    """A service turned off or not connected in Settings: an answer, not a
+    failure. A download already in it waits for it to come back."""
+
+
 def _enabled_acquisition_service(service_id: str) -> dict[str, Any]:
     config = load_acquisition_service_config().get(service_id) or {}
     if not config.get("enabled") or (_service_needs_api_key(service_id) and not config.get("apiKey")):
         name = ACQUISITION_SERVICE_DEFINITIONS[service_id]["name"]
-        raise ValueError(f"Connect and enable {name} in Settings first")
+        raise AcquisitionServiceOff(f"Connect and enable {name} in Settings first")
     return {**config, "url": _normalize_service_url(config.get("url"))}
 
 
@@ -6852,6 +6857,7 @@ def _import_selected_comic(
         f".{destination.stem}.flipparr-{os.getpid()}-{threading.get_ident()}.partial"
         f"{destination.suffix.lower()}"
     )
+    _clear_stale_partials(destination)
     if partial.exists():
         raise ValueError("A previous partial import needs review before this comic can be copied")
     quarantine_path: Path | None = None
@@ -6956,6 +6962,27 @@ def _sab_job_folder(storage: str, completed_root: Path) -> Path | None:
     return folder
 
 
+class DownloadClientUnanswered(Exception):
+    """A download client that answered, but not with what was asked for."""
+
+
+def _sab_slots(payload: Any, part: str) -> list[dict[str, Any]]:
+    """The slots of SABnzbd's `part` ("queue" or "history"), or an error.
+
+    A wrong API key is answered 200, `{"status": false, "error": "API Key
+    Incorrect"}`. Read as no slots, every download looked forgotten and, ten
+    minutes on, each was given up and the next release grabbed (2026-10-05).
+    Only a real queue or history says what SABnzbd has.
+    """
+    section = payload.get(part) if isinstance(payload, dict) else None
+    slots = section.get("slots") if isinstance(section, dict) else None
+    if not isinstance(slots, list):
+        said = payload.get("error") if isinstance(payload, dict) else None
+        raise DownloadClientUnanswered(
+            f"SABnzbd did not answer with its {part}" + (f": {str(said)[:120]}" if said else ""))
+    return [slot for slot in slots if isinstance(slot, dict)]
+
+
 def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     sab = _enabled_acquisition_service("sabnzbd")
     endpoint = f"{sab['url']}/api?" + urllib.parse.urlencode({
@@ -6965,10 +6992,8 @@ def _sab_history_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     payload = fetch_json_with_headers(
         endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0
     )
-    history = payload.get("history") if isinstance(payload, dict) else None
-    slots = history.get("slots") if isinstance(history, dict) else []
     return next(
-        (slot for slot in slots if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
+        (slot for slot in _sab_slots(payload, "history") if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
         None,
     )
 
@@ -7868,10 +7893,8 @@ def _sab_queue_slot(download: dict[str, Any]) -> dict[str, Any] | None:
     payload = fetch_json_with_headers(
         endpoint, {"Accept": "application/json", "User-Agent": f"Flipparr/{APP_VERSION}"}, timeout=30.0
     )
-    queue = payload.get("queue") if isinstance(payload, dict) else None
-    slots = queue.get("slots") if isinstance(queue, dict) else []
     return next(
-        (slot for slot in slots or [] if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
+        (slot for slot in _sab_slots(payload, "queue") if str(slot.get("nzo_id")) == str(download["sab_nzo_id"])),
         None,
     )
 
@@ -7982,7 +8005,11 @@ def reconcile_acquisition_download(download: dict[str, Any]) -> dict[str, Any]:
                 _start_direct_fetch(download_id, int(download.get("job_id") or 0), str(download["release_key"]),
                                     str(download.get("release_title") or "download-site download"))
             return {"status": "downloading"}
-        if status != "completed":
+        # "importing" here is an import a restart cut off: only this worker
+        # imports, one download at a time, so none is under way. It is done
+        # again from the fetched folder; a copy already in place counts as
+        # imported (`_import_selected_comic`).
+        if status not in {"completed", "importing"} or (status == "importing" and not download.get("sab_storage")):
             return {"status": status or "unknown"}
         storage = str(download.get("sab_storage") or "")
     else:
@@ -8596,6 +8623,13 @@ def _release_seeded_torrents(store: Any) -> int:
     return removed
 
 
+# What a download client's trouble looks like from here, as against a download's.
+DOWNLOAD_CLIENT_HICCUPS = (
+    urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException,
+    json.JSONDecodeError, AcquisitionServiceOff, DownloadClientUnanswered,
+)
+
+
 def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> None:
     while not stop_event.is_set():
         worker_beat("imports")
@@ -8612,15 +8646,20 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
         try:
             downloads = catalog_store().pending_acquisition_downloads()
             imported_any = False
+            unanswered: list[BaseException] = []
             for download in downloads:
                 if stop_event.is_set():
                     break
                 try:
                     result = reconcile_acquisition_download(download)
                     imported_any = imported_any or result.get("status") == "imported"
-                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
-                    # Transient service outages are retried without changing the durable request state.
-                    log_exception("acquisition_import_transient", exc, level="warning")
+                except DOWNLOAD_CLIENT_HICCUPS as exc:
+                    # A download client that did not answer, or answered half a
+                    # reply, says nothing about the download: it waits for the
+                    # next pass. Until 2026-10-05 only a timeout counted, and a
+                    # dropped connection failed the download for good -- for a
+                    # torrent, the hourly sweep then deleted it and its data.
+                    unanswered.append(exc)
                     continue
                 except Exception as exc:
                     # Never leave a request looking active when the coordinator itself failed
@@ -8638,6 +8677,12 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                         )
                     except Exception as nested:
                         log_exception("acquisition_failure_record_failed", nested)
+            if unanswered:
+                # Once a pass, not once a download every 15 seconds; and on
+                # Settings -> System, where it was invisible before.
+                log_exception("acquisition_import_transient", unanswered[0], level="warning",
+                              downloads=len(unanswered))
+                worker_problem("imports", unanswered[0])
             if imported_any:
                 start_catalog_scan(str(COMIC_LIBRARY_ROOT), True, "local")
         except Exception as exc:  # noqa: BLE001 -- the next pass tries again
@@ -9609,6 +9654,41 @@ def lookup_identity(parsed: ParsedFile, embedded: dict[str, Any]) -> ParsedFile:
     )
 
 
+# An import's copy in flight, written beside its destination and renamed into
+# place: ".<stem>.flipparr-<pid>-<thread>.partial<ext>". Never one of the
+# library's comics, though it ends in .cbz.
+IMPORT_PARTIAL = re.compile(r"^\..+\.flipparr-\d+-\d+\.partial(?:\.[A-Za-z0-9]+)?$")
+
+
+def _is_import_partial(name: str) -> bool:
+    return bool(IMPORT_PARTIAL.match(name))
+
+
+def _clear_stale_partials(destination: Path) -> None:
+    """Remove copies of this comic an earlier process left half-written.
+
+    A restart between the copy and its rename -- `docker stop` does not wait
+    for the import worker -- leaves the copy behind, under a name no later
+    import would look for. Nothing this process writes is older than its
+    start, so whatever is was left by another (Docker gives every start the
+    same process id, so the id in the name cannot tell them apart).
+    """
+    prefix = f".{destination.stem}.flipparr-"
+    try:
+        siblings = list(destination.parent.iterdir())
+    except OSError:
+        return
+    for leftover in siblings:
+        if not leftover.name.startswith(prefix) or not _is_import_partial(leftover.name):
+            continue
+        try:
+            if leftover.is_file() and leftover.stat().st_mtime < PROCESS_STARTED_AT:
+                leftover.unlink()
+                log_event("import_partial_removed", path=str(leftover))
+        except OSError as exc:
+            log_event("import_partial_unremovable", level="warning", path=str(leftover), error=str(exc))
+
+
 def scan_folder(folder: str, recursive: bool = True) -> list[ParsedFile]:
     root = Path(folder).expanduser().resolve()
     if not root.exists() or not root.is_dir():
@@ -9620,6 +9700,7 @@ def scan_folder(folder: str, recursive: bool = True) -> list[ParsedFile]:
         if not MANAGED_LIBRARY_DIRS.intersection(p.relative_to(root).parts)
         and p.is_file()
         and p.suffix.lower() in SUPPORTED_EXTENSIONS
+        and not _is_import_partial(p.name)
     ]
 
 
