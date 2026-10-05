@@ -429,6 +429,18 @@ Whether a given upgrade raises the schema is in the release notes; see
 
 ## 5. Troubleshooting
 
+**Start with Settings → System** (admin). It shows whether each background
+worker (metadata, imports, release searches, library scans, age ratings) is
+running, when it last did something and what last went wrong; what work is
+waiting (downloads, wanted issues, metadata, metadata sources asking Flipparr
+to wait); and the last 200 warnings and errors since Flipparr started. A
+worker that dies is logged (`thread_crashed`) and started again, up to five
+times an hour; after that it stays stopped until Flipparr is restarted, and
+the page says so. **Download diagnostics** saves the same facts, plus which
+services are set up, as a file safe to share when asking for help: it holds
+no passwords, keys, tokens or service addresses. The same data is at
+`GET /api/v1/system/status` (admin).
+
 **Every series shows "Status unknown".**
 Publication status comes from provider metadata. After a `local` scan, or while
 a provider is rate-limiting you, it will not be filled in. It backfills on its

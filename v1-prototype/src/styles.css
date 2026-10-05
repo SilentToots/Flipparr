@@ -4106,6 +4106,14 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .about-list li > a { justify-self: start; }
 .about-privacy + .about-privacy { margin-top: var(--space-16); }
 .about-privacy h4 { margin: 0 0 var(--space-8); font-size: var(--text-sm); }
+/* Settings -> System: facts as label-over-value tiles; each worker, wait or
+   problem a name and its badge on one line over its muted explanation. */
+.system-facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--space-12); }
+.system-facts > div { min-width: 0; display: grid; gap: var(--space-2); }
+.system-facts dt { color: var(--muted); font-size: var(--text-xs); }
+.system-facts dd { margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
+.system-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
+.system-row-head b { font-weight: var(--weight-regular); color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   .reader, .reader-page, .reader-bar { animation: none; transition: none; }
 }

@@ -9837,3 +9837,130 @@ class SourcePriorityTests(unittest.TestCase):
         groups = {service["id"]: service["group"] for service in app.public_acquisition_service_config()["services"]}
         self.assertEqual(groups, {"prowlarr": "search", "sabnzbd": "clients", "qbittorrent": "clients",
                                   "flaresolverr": "direct", "direct_site": "direct"})
+
+class _QuickStop(threading.Event):
+    """A stop event whose waits return at once, so a worker loop runs a turn."""
+
+    def wait(self, timeout=None):
+        return self.is_set()
+
+
+class SystemStatusTests(unittest.TestCase):
+    """Settings -> System: workers say they are alive, a dead one is
+    restarted (a few times an hour at most), and the support file carries no
+    secret (2026-10-05)."""
+
+    def setUp(self):
+        for table in (app._WORKER_BEATS, app._WORKER_PROBLEMS, app._WORKER_RESTARTS):
+            table.clear()
+        app._WORKERS_GIVEN_UP.clear()
+
+    def _specs(self, threads):
+        def starter(worker_id):
+            def start():
+                thread = threading.Thread(target=lambda: None, name=f"t-{worker_id}")
+                thread.start()
+                thread.join()
+                threads[worker_id] = thread
+                return thread
+            return start
+        return tuple(app.WorkerSpec(worker_id, worker_id.title(), "", f"t-{worker_id}", 60,
+                                    starter(worker_id), lambda worker_id=worker_id: threads.get(worker_id))
+                     for worker_id in ("alpha", "beta"))
+
+    def test_a_dead_worker_is_restarted_and_one_that_keeps_dying_is_left_stopped(self):
+        threads = {}
+        specs = self._specs(threads)
+        with patch("app.worker_specs", return_value=specs), patch("app.log_event") as logged:
+            specs[0].start()                     # alpha ran and ended; beta never started
+            app.worker_beat("alpha")
+            self.assertEqual(app.restart_dead_workers(now=1000.0), ["alpha"], "beta was never started here")
+            for minute in range(1, 6):
+                app.restart_dead_workers(now=1000.0 + minute * 60)
+            states = {state["id"]: state for state in app.worker_states(now=1400.0)}
+        self.assertEqual(states["alpha"]["state"], "stopped")
+        self.assertEqual(states["alpha"]["restartsLastHour"], app.WORKER_RESTARTS_PER_HOUR)
+        self.assertEqual(states["beta"]["state"], "off")
+        events = [call.args[0] for call in logged.call_args_list]
+        self.assertEqual(events.count("worker_restarted"), app.WORKER_RESTARTS_PER_HOUR)
+        self.assertEqual(events.count("worker_stopped"), 1, "said once, not every half minute")
+
+    def test_a_running_worker_is_running_until_it_has_been_quiet_too_long(self):
+        stop = threading.Event()
+        thread = threading.Thread(target=stop.wait, name="t-alpha", daemon=True)
+        thread.start()
+        self.addCleanup(stop.set)
+        spec = app.WorkerSpec("alpha", "Alpha", "", "t-alpha", 60, lambda: thread, lambda: thread)
+        with patch("app.worker_specs", return_value=(spec,)):
+            app._WORKER_BEATS["alpha"] = 1000.0
+            self.assertEqual(app.worker_states(now=1030.0)[0]["state"], "running")
+            self.assertEqual(app.worker_states(now=1100.0)[0]["state"], "quiet")
+
+    def test_a_thread_that_crashes_is_logged_and_its_worker_remembers_why(self):
+        spec = app.WorkerSpec("alpha", "Alpha", "", "t-alpha", 60, lambda: None, lambda: None)
+
+        def crash():
+            raise RuntimeError("disk on fire")
+
+        thread = threading.Thread(target=crash, name="t-alpha")
+        with patch("app.worker_specs", return_value=(spec,)), patch("app.log_event") as logged, \
+                patch("threading.excepthook", app._thread_crashed):
+            thread.start()
+            thread.join()
+        self.assertEqual(logged.call_args.args[0], "thread_crashed")
+        self.assertEqual(logged.call_args.kwargs["worker"], "alpha")
+        self.assertIn("disk on fire", app._WORKER_PROBLEMS["alpha"]["message"])
+
+    def test_the_metadata_worker_outlives_an_exception_in_one_turn(self):
+        stop = _QuickStop()
+        turns = []
+
+        def step(store, event):
+            turns.append(1)
+            if len(turns) == 1:
+                raise RuntimeError("provider returned nonsense")
+            event.set()
+
+        with patch("app.catalog_store"), patch("app._metadata_enrichment_step", side_effect=step), \
+                patch("app.log_event"):
+            app.metadata_enrichment_worker(stop)
+        self.assertEqual(len(turns), 2, "the loop went on after the failure")
+        self.assertIn("provider returned nonsense", app._WORKER_PROBLEMS["metadata"]["message"])
+
+    def test_an_import_pass_that_fails_is_logged_not_swallowed(self):
+        stop = _QuickStop()
+        store = Mock()
+
+        def fail():
+            stop.set()
+            raise RuntimeError("database is locked")
+
+        store.pending_acquisition_downloads.side_effect = fail
+        with patch("app.catalog_store", return_value=store), patch("app.log_event") as logged, \
+                patch.object(app, "_KEPT_SWEPT_AT", [time.monotonic()]):
+            app.acquisition_import_worker(stop)
+        self.assertIn("acquisition_import_cycle_failed", [call.args[0] for call in logged.call_args_list])
+        self.assertIn("database is locked", app._WORKER_PROBLEMS["imports"]["message"])
+
+    def test_the_support_file_carries_no_secret(self):
+        scrubbed = app.support_safe({
+            "detail": "GET http://sab:8080/api?apikey=abc123&mode=queue failed",
+            "url": "https://user:hunter2@indexer.example/rss",
+            "apiKey": "abc123", "nested": [{"password": "hunter2", "note": "token=xyz"}],
+            "count": 3,
+        })
+        text = json.dumps(scrubbed)
+        for secret in ("abc123", "hunter2", "xyz"):
+            self.assertNotIn(secret, text)
+        self.assertEqual(scrubbed["count"], 3)
+        self.assertIn("mode=queue", scrubbed["detail"], "only the secret goes")
+
+    def test_recent_problems_keep_warnings_newest_first_and_leave_info_out(self):
+        app.RECENT_PROBLEMS.clear()
+        app.log_event("all_fine", level="info")
+        app.log_event("first_trouble", level="warning", detail="sab said apikey=abc123 was wrong")
+        app.log_event("second_trouble", level="error", error="boom")
+        problems = app.recent_problems()
+        self.assertEqual([problem["event"] for problem in problems], ["second_trouble", "first_trouble"])
+        self.assertNotIn("abc123", json.dumps(problems))
+

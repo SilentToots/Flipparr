@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import collections
 import concurrent.futures
 import contextlib
 import datetime as dt
@@ -29,6 +30,7 @@ import json
 import math
 import mimetypes
 import os
+import platform
 import posixpath
 import re
 import secrets
@@ -138,6 +140,7 @@ _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
 # parameter nobody thought to list.
 
 _LOG_LOCK = threading.Lock()
+RECENT_PROBLEMS: collections.deque[dict[str, Any]] = collections.deque(maxlen=200)
 _REQUEST_CONTEXT = threading.local()
 _LOG_CLOSED = False
 
@@ -164,6 +167,10 @@ def log_event(event: str, level: str = "info", **fields: Any) -> None:
     with _LOG_LOCK:
         if _LOG_CLOSED:
             return
+        if level in ("warning", "error"):
+            # Kept for Settings -> System, so the last problems can be read
+            # without the container's log, which Docker caps and rotates.
+            RECENT_PROBLEMS.append(record)
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
 
@@ -1730,13 +1737,16 @@ def rate_runs_pass(limit: int = RATING_BATCH) -> int:
 def ratings_worker(stop_event: threading.Event = _RATINGS_STOP) -> None:
     """Settle ratings a batch at a time: shortly after starting, every quarter
     hour, and at once when woken (cover reading switched on, "Check now")."""
+    worker_beat("ratings")
     stop_event.wait(120)
     while not stop_event.is_set():
+        worker_beat("ratings")
         try:
             while rate_runs_pass() == RATING_BATCH and not stop_event.is_set():
-                pass
+                worker_beat("ratings")
         except Exception as exc:  # noqa: BLE001
             log_exception("ratings_pass_failed", exc, level="warning")
+            worker_problem("ratings", exc)
         _RATINGS_WAKE.wait(RATING_POLL_SECONDS)
         _RATINGS_WAKE.clear()
 
@@ -8518,6 +8528,7 @@ def _release_seeded_torrents(store: Any) -> int:
 
 def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> None:
     while not stop_event.is_set():
+        worker_beat("imports")
         if time.monotonic() - _KEPT_SWEPT_AT[0] >= 3600:
             _KEPT_SWEPT_AT[0] = time.monotonic()
             try:
@@ -8559,8 +8570,11 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                         log_exception("acquisition_failure_record_failed", nested)
             if imported_any:
                 start_catalog_scan(str(COMIC_LIBRARY_ROOT), True, "local")
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 -- the next pass tries again
+            # Swallowed without a word until 2026-10-05: imports could stop
+            # and nothing anywhere said why.
+            log_exception("acquisition_import_cycle_failed", exc, level="warning")
+            worker_problem("imports", exc)
         stop_event.wait(IMPORT_POLL_SECONDS)
 
 
@@ -8583,6 +8597,7 @@ def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> Non
     """
     delay = RESEARCH_FIRST_SWEEP_SECONDS
     while not stop_event.is_set():
+        worker_beat("searches")
         stop_event.wait(delay)
         delay = RESEARCH_POLL_SECONDS
         if stop_event.is_set():
@@ -8595,10 +8610,12 @@ def release_research_worker(stop_event: threading.Event = _RESEARCH_STOP) -> Non
             # No indexer or no download client: every search would fail in a
             # loop and say nothing useful.
             continue
+        worker_beat("searches")
         try:
             _automatic_release_grabs(None, backoff=True)
         except Exception as exc:
             log_exception("release_research_failed", exc, level="warning")
+            worker_problem("searches", exc)
 
 
 def start_release_research_worker() -> threading.Thread:
@@ -15054,40 +15071,53 @@ def metadata_enrichment_worker(stop_event: threading.Event = _ENRICHMENT_STOP) -
     store.resume_metadata_enrichment()
     store.enqueue_metadata_enrichment()
     while not stop_event.is_set():
-        providers = [provider_id for provider_id, _values in _series_enrichment_provider_order()]
-        if providers and not any(store.metadata_provider_available(provider_id) for provider_id in providers):
-            stop_event.wait(5)
-            continue
-        job = store.claim_metadata_enrichment_job()
-        if job:
-            run_metadata_enrichment_job(job)
-            stop_event.wait(1)
-            continue
-        monitored = store.claim_monitored_series_refresh()
-        if not monitored:
-            # Idle: ask about one run whose files name no creator, so search
-            # by creator finds it too.
-            try:
-                synced = sync_next_run_creators(store)
-            except Exception:
-                synced = False
-            stop_event.wait(1 if synced else 5)
-            continue
-        series_run_id = int(monitored["series_run_id"])
+        worker_beat("metadata")
         try:
-            outcome = enrich_catalog_series(series_run_id)
-        except MetadataRateLimited as exc:
-            store.finish_monitored_series_refresh(
-                series_run_id, exc.provider, str(exc), exc.retry_after_seconds
-            )
-        except Exception as exc:
-            store.finish_monitored_series_refresh(series_run_id, error=str(exc))
-        else:
-            store.finish_monitored_series_refresh(
-                series_run_id, str(outcome.get("provider") or "") or None
-            )
-            store.reconcile_acquisition_jobs()
+            _metadata_enrichment_step(store, stop_event)
+        except Exception as exc:  # noqa: BLE001 -- one bad pass must not end the worker
+            # Before 2026-10-05 an exception here ended the thread, and
+            # metadata stopped until the next restart without a word.
+            log_exception("metadata_worker_failed", exc, level="warning")
+            worker_problem("metadata", exc)
+            stop_event.wait(30)
+
+
+def _metadata_enrichment_step(store: CatalogStore, stop_event: threading.Event) -> None:
+    """One turn of the metadata worker's loop."""
+    providers = [provider_id for provider_id, _values in _series_enrichment_provider_order()]
+    if providers and not any(store.metadata_provider_available(provider_id) for provider_id in providers):
+        stop_event.wait(5)
+        return
+    job = store.claim_metadata_enrichment_job()
+    if job:
+        run_metadata_enrichment_job(job)
         stop_event.wait(1)
+        return
+    monitored = store.claim_monitored_series_refresh()
+    if not monitored:
+        # Idle: ask about one run whose files name no creator, so search
+        # by creator finds it too.
+        try:
+            synced = sync_next_run_creators(store)
+        except Exception:
+            synced = False
+        stop_event.wait(1 if synced else 5)
+        return
+    series_run_id = int(monitored["series_run_id"])
+    try:
+        outcome = enrich_catalog_series(series_run_id)
+    except MetadataRateLimited as exc:
+        store.finish_monitored_series_refresh(
+            series_run_id, exc.provider, str(exc), exc.retry_after_seconds
+        )
+    except Exception as exc:
+        store.finish_monitored_series_refresh(series_run_id, error=str(exc))
+    else:
+        store.finish_monitored_series_refresh(
+            series_run_id, str(outcome.get("provider") or "") or None
+        )
+        store.reconcile_acquisition_jobs()
+    stop_event.wait(1)
 
 
 # ---------------------------------------------------------------------------
@@ -15134,7 +15164,9 @@ def auto_scan_worker(stop_event: threading.Event = _AUTO_SCAN_STOP) -> None:
     The same fast local scan the scan buttons start: filenames and the
     metadata inside files, no online lookups, unchanged files reused.
     """
+    worker_beat("scans")
     while not stop_event.wait(AUTO_SCAN_POLL_SECONDS):
+        worker_beat("scans")
         try:
             store = catalog_store()
             schedule = store.scan_schedule()
@@ -15144,12 +15176,14 @@ def auto_scan_worker(stop_event: threading.Event = _AUTO_SCAN_STOP) -> None:
                 scan_id = start_catalog_scan(root["path"], root["recursive"], "local")
                 waited = 0
                 while waited < AUTO_SCAN_STALE_SECONDS and not stop_event.wait(5):
+                    worker_beat("scans")
                     waited += 5
                     if (store.get_scan(scan_id) or {}).get("status") not in {"queued", "scanning"}:
                         break
             log_event("auto_scan_finished", roots=len(schedule["roots"]))
         except Exception as exc:
             log_exception("auto_scan_failed", exc, level="warning")
+            worker_problem("scans", exc)
 
 
 def start_auto_scan_worker() -> threading.Thread:
@@ -15178,6 +15212,232 @@ def start_metadata_enrichment_worker() -> threading.Thread:
     )
     _ENRICHMENT_THREAD.start()
     return _ENRICHMENT_THREAD
+
+
+# ---------------------------------------------------------------------------
+# Background workers: activity, problems and supervision (Settings -> System)
+#
+# Five long-running threads do Flipparr's background work. Each says when it
+# last did something (worker_beat) and what last went wrong (worker_problem);
+# a supervisor restarts one that has died, a few times an hour at most, and
+# every death is logged with its traceback. Before 2026-10-05 a worker could
+# end on one unexpected exception and its work stop, unseen, until a restart.
+# ---------------------------------------------------------------------------
+
+PROCESS_STARTED_AT = time.time()
+_WORKER_BEATS: dict[str, float] = {}
+_WORKER_PROBLEMS: dict[str, dict[str, Any]] = {}
+_WORKER_RESTARTS: dict[str, list[float]] = {}
+_WORKERS_GIVEN_UP: set[str] = set()
+_WORKERS_STOPPING = threading.Event()
+WORKER_RESTARTS_PER_HOUR = 5
+
+
+@dataclass(frozen=True)
+class WorkerSpec:
+    id: str
+    name: str
+    description: str
+    thread_name: str
+    # How long the worker may go without a beat while still being normal:
+    # its own poll interval, with room to spare.
+    quiet_seconds: int
+    start: Callable[[], threading.Thread]
+    thread: Callable[[], threading.Thread | None]
+
+
+def worker_specs() -> tuple[WorkerSpec, ...]:
+    return (
+        WorkerSpec("metadata", "Metadata", "Fills in issue titles, dates and covers from your metadata sources.",
+                   "flipparr-metadata-coordinator", 180, start_metadata_enrichment_worker, lambda: _ENRICHMENT_THREAD),
+        WorkerSpec("imports", "Imports", "Picks up finished downloads and files them into your library.",
+                   "flipparr-sab-import-coordinator", IMPORT_POLL_SECONDS * 4 + 120, start_acquisition_import_worker,
+                   lambda: _IMPORT_THREAD),
+        WorkerSpec("searches", "Release searches", "Searches again for wanted issues nothing was found for yet.",
+                   "flipparr-release-research", RESEARCH_POLL_SECONDS * 2 + 300, start_release_research_worker,
+                   lambda: _RESEARCH_THREAD),
+        WorkerSpec("scans", "Library scans", "Scans your library folders on the schedule you set.",
+                   "flipparr-auto-scan", AUTO_SCAN_POLL_SECONDS * 3, start_auto_scan_worker, lambda: _AUTO_SCAN_THREAD),
+        WorkerSpec("ratings", "Age ratings", "Settles age ratings for runs that have none yet.",
+                   "flipparr-ratings", RATING_POLL_SECONDS * 2 + 300, start_ratings_worker, lambda: _RATINGS_THREAD),
+    )
+
+
+def worker_beat(worker_id: str) -> None:
+    _WORKER_BEATS[worker_id] = time.time()
+
+
+def worker_problem(worker_id: str, problem: BaseException | str) -> None:
+    message = f"{type(problem).__name__}: {problem}" if isinstance(problem, BaseException) else str(problem)
+    _WORKER_PROBLEMS[worker_id] = {"at": _utc_now_iso(), "message": support_safe(message)[:500]}
+
+
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _iso(epoch: float | None) -> str | None:
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).isoformat(timespec="seconds") if epoch else None
+
+
+def _thread_crashed(args: threading.ExceptHookArgs) -> None:
+    """Every thread's uncaught exception, as a log line rather than a stray
+    traceback on stderr -- and, for a worker, its last problem."""
+    name = args.thread.name if args.thread else ""
+    worker = next((spec.id for spec in worker_specs() if spec.thread_name == name), None)
+    if args.exc_value is not None:
+        log_exception("thread_crashed", args.exc_value, thread=name, worker=worker)
+        if worker:
+            worker_problem(worker, args.exc_value)
+
+
+def supervise_workers(stop_event: threading.Event = _WORKERS_STOPPING, interval: float = 30.0) -> None:
+    while not stop_event.wait(interval):
+        restart_dead_workers()
+
+
+def restart_dead_workers(now: float | None = None) -> list[str]:
+    """Start again any worker whose thread has ended, unless it has already
+    been restarted WORKER_RESTARTS_PER_HOUR times in the last hour -- then it
+    stays stopped, so a worker that fails at once does not spin."""
+    now = time.time() if now is None else now
+    restarted = []
+    for spec in worker_specs():
+        thread = spec.thread()
+        if thread is not None and thread.is_alive():
+            continue
+        if thread is None and spec.id not in _WORKER_BEATS:
+            continue  # never started in this process (a test, a one-off command)
+        recent = [at for at in _WORKER_RESTARTS.get(spec.id, []) if now - at < 3600]
+        if len(recent) >= WORKER_RESTARTS_PER_HOUR:
+            if spec.id not in _WORKERS_GIVEN_UP:
+                _WORKERS_GIVEN_UP.add(spec.id)
+                log_event("worker_stopped", level="error", worker=spec.id,
+                          detail=f"Stopped after {len(recent)} restarts in an hour; restart Flipparr once the cause is fixed.")
+            continue
+        _WORKER_RESTARTS[spec.id] = recent + [now]
+        log_event("worker_restarted", level="warning", worker=spec.id)
+        spec.start()
+        restarted.append(spec.id)
+    return restarted
+
+
+def start_worker_supervisor() -> threading.Thread:
+    threading.excepthook = _thread_crashed
+    _WORKERS_STOPPING.clear()
+    thread = threading.Thread(target=supervise_workers, name="flipparr-supervisor", daemon=True)
+    thread.start()
+    return thread
+
+
+def worker_states(now: float | None = None) -> list[dict[str, Any]]:
+    now = time.time() if now is None else now
+    states = []
+    for spec in worker_specs():
+        thread = spec.thread()
+        alive = thread is not None and thread.is_alive()
+        beat = _WORKER_BEATS.get(spec.id)
+        if alive:
+            state = "running" if beat is not None and now - beat <= spec.quiet_seconds else "quiet"
+        elif thread is None and beat is None:
+            state = "off"
+        else:
+            state = "stopped" if spec.id in _WORKERS_GIVEN_UP else "restarting"
+        states.append({
+            "id": spec.id, "name": spec.name, "description": spec.description, "state": state,
+            "lastActivityAt": _iso(beat),
+            "lastProblem": _WORKER_PROBLEMS.get(spec.id),
+            "restartsLastHour": len([at for at in _WORKER_RESTARTS.get(spec.id, []) if now - at < 3600]),
+        })
+    return states
+
+
+# A support file is read by someone else: anything that could let them into
+# the instance or a service is taken out of every string in it.
+_SECRET_IN_TEXT = re.compile(
+    r"(?i)((?:api[_-]?key|apikey|token|password|passwd|secret|session|cookie|authorization)\s*[=:]\s*)([^&\s\"',;]+)")
+_URL_CREDENTIALS = re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@")
+
+
+def support_safe(value: Any) -> Any:
+    if isinstance(value, str):
+        return _URL_CREDENTIALS.sub(r"\1<redacted>@", _SECRET_IN_TEXT.sub(r"\1<redacted>", value))
+    if isinstance(value, dict):
+        return {key: ("<redacted>" if re.search(r"(?i)key|token|password|secret|cookie|authorization", str(key))
+                      and key not in {"tokenized"} else support_safe(item)) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [support_safe(item) for item in value]
+    return value
+
+
+def _disk(path: Path | str) -> dict[str, Any]:
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError as exc:
+        return {"path": str(path), "error": str(exc)}
+    return {"path": str(path), "freeBytes": usage.free, "totalBytes": usage.total}
+
+
+def recent_problems(limit: int = 50) -> list[dict[str, Any]]:
+    with _LOG_LOCK:
+        records = list(RECENT_PROBLEMS)[-limit:]
+    problems = []
+    for record in reversed(records):
+        detail = {key: value for key, value in record.items()
+                  if key not in {"ts", "level", "event", "error", "detail", "traceback"}}
+        problems.append(support_safe({
+            "at": record.get("ts"), "level": record.get("level"), "event": record.get("event"),
+            "message": str(record.get("error") or record.get("detail") or "")[:500],
+            "detail": detail,
+            "traceback": record.get("traceback"),
+        }))
+    return problems
+
+
+def system_status() -> dict[str, Any]:
+    """Settings -> System: is the background work alive, what is waiting, and
+    what went wrong lately. Nothing in it is a secret."""
+    store = catalog_store()
+    try:
+        with sqlite3.connect(store.database_path) as connection:
+            schema = connection.execute("SELECT version FROM schema_info").fetchone()[0]
+    except sqlite3.Error:
+        schema = None
+    return {
+        "version": APP_VERSION,
+        "build": APP_BUILD,
+        "startedAt": _iso(PROCESS_STARTED_AT),
+        "uptimeSeconds": int(time.time() - PROCESS_STARTED_AT),
+        "python": platform.python_version(),
+        "database": {"sqlite": sqlite3.sqlite_version, "journalMode": getattr(store, "journal_mode", None),
+                     "schema": schema},
+        "server": {"name": "Waitress", "threads": http_thread_count()},
+        "disk": {"config": _disk(store.database_path.parent), "temp": _disk(tempfile.gettempdir())},
+        "workers": worker_states(),
+        "work": store.background_work_summary(),
+        "problems": recent_problems(),
+    }
+
+
+def diagnostics_report() -> dict[str, Any]:
+    """The support file: the System page's facts plus what is configured --
+    never a key, a password, a token or a service's address."""
+    services = [{"id": service["id"], "configured": bool(service.get("configured")),
+                 "enabled": bool(service.get("enabled"))}
+                for service in public_acquisition_service_config().get("services", [])]
+    providers = [{"id": provider.get("id"), "configured": bool(provider.get("configured")),
+                  "enabled": bool(provider.get("enabled"))}
+                 for provider in (public_provider_config().get("providers") or [])]
+    report = {
+        "generatedAt": _utc_now_iso(),
+        "platform": {"system": platform.system(), "machine": platform.machine(), "release": platform.release()},
+        **system_status(),
+        "settings": load_app_settings(),
+        "services": services,
+        "providers": providers,
+        "library": catalog_store().library_counts(),
+    }
+    return support_safe(report)
 
 
 def assess_identity_confidence(
@@ -16585,6 +16845,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self._dispatch(self._route_get)
 
+    def do_HEAD(self) -> None:
+        # The GET route, answered without its body: access_policy already
+        # treats HEAD as GET, and Waitress sends no body for HEAD. Uptime
+        # monitors check with HEAD; it answered 501 until 2026-10-05.
+        self._dispatch(self._route_get)
+
     def do_POST(self) -> None:
         self._dispatch(self._route_post)
 
@@ -16692,6 +16958,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/settings":
             self.send_json(load_app_settings())
+            return
+        if parsed_url.path == "/api/v1/system/status":
+            self.send_json(system_status())
+            return
+        if parsed_url.path == "/api/v1/system/diagnostics":
+            body = json.dumps(diagnostics_report(), indent=2, ensure_ascii=False, default=str).encode("utf-8")
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="flipparr-diagnostics-{stamp}.json"')
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
             return
         if parsed_url.path == "/api/v1/acquisition/progress":
             self.send_json(acquisition_download_progress())
@@ -19185,6 +19466,7 @@ def main() -> None:
     start_release_research_worker()
     start_auto_scan_worker()
     start_ratings_worker()
+    start_worker_supervisor()
     temp_dir = serving_temp_dir()
     if temp_dir is not None:
         tempfile.tempdir = str(temp_dir)
@@ -19203,6 +19485,7 @@ def main() -> None:
     try:
         server.run()
     finally:
+        _WORKERS_STOPPING.set()  # first, or the supervisor restarts what is stopping
         _ENRICHMENT_STOP.set()
         _IMPORT_STOP.set()
         log_event("server_stopped")

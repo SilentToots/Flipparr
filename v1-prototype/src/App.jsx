@@ -39,6 +39,7 @@ import {
   FolderOpen,
   Gear,
   Info,
+  Pulse,
   Star,
   HardDrive,
   ListBullets,
@@ -57,6 +58,7 @@ import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { listCard, communityListLine, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, groupOwnerLine, groupsToAddTo, ARC_SORTS, arcMaker, moveToEdge, issuesInRange } from "./reading-list.js";
 import { jobsNeedingAttention, jobHasFailed } from "./nav-counts.js";
+import { agoPhrase, coolingProviders, formatBytes, problemTitle, scanBadge, waitingWork, workerAdvice, workerBadge } from "./system-status.js";
 import { artTone } from "./art-tone.js";
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel, sourceOrder, sourceRows, groupServices } from "./pull-list.js";
 import {
@@ -5446,6 +5448,8 @@ const SETTINGS_SECTIONS = [
     detail: "Who reads this library. Each profile keeps its own place, history and ratings." },
   { id: "security", label: "Security", icon: LockSimple, group: "app",
     detail: "Who can reach this app, and how they sign in." },
+  { id: "system", label: "System", icon: Pulse, group: "app",
+    detail: "Whether the background work is running, what it has waiting, and what went wrong lately." },
   { id: "about", label: "About", icon: Info, group: "app",
     detail: "Flipparr's licence, where its information comes from, and what leaves this server." },
 ];
@@ -6753,6 +6757,100 @@ const PRIVACY_SECTIONS = [
   ] },
 ];
 
+// Settings -> System, after the *arr apps' System -> Status: is the background
+// work alive, what does it have waiting, what went wrong lately -- and a
+// support file that is safe to hand to someone else. Admin only.
+function SystemSettings({ onNavigate, onSectionChange }) {
+  const [status, setStatus] = useState(() => lastAnswer("/api/v1/system/status"));
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setStatus(await apiRequest("/api/v1/system/status"));
+      setError("");
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(load, 30000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+  const go = (target) => (target === "health" ? onSectionChange("health") : onNavigate(target));
+  if (!status) {
+    return error
+      ? <p className="workbench-error" role="alert">System status is unavailable: {error}</p>
+      : <CatalogLoading title="Checking the background work…" detail="Workers, waiting work and recent problems." />;
+  }
+  const rows = waitingWork(status.work);
+  const cooling = coolingProviders(status.work);
+  const scan = status.work?.lastScan;
+  const disk = (item) => item?.error ? "Unavailable" : `${formatBytes(item?.freeBytes)} free of ${formatBytes(item?.totalBytes)}`;
+  return <>
+    <SettingsCard title="Flipparr" action={<button type="button" className="secondary-button" onClick={load} disabled={loading} aria-busy={loading}>
+      {loading ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} Refresh</button>}>
+      <dl className="system-facts">
+        <div><dt>Build</dt><dd>{status.version} · {status.build}</dd></div>
+        <div><dt>Running since</dt><dd>{new Date(status.startedAt).toLocaleString()}</dd></div>
+        <div><dt>Database</dt><dd>SQLite {status.database?.sqlite} · {String(status.database?.journalMode || "").toUpperCase()} · schema {status.database?.schema}</dd></div>
+        <div><dt>Server</dt><dd>{status.server?.name} · {status.server?.threads} threads</dd></div>
+        <div><dt>Library data</dt><dd>{disk(status.disk?.config)}</dd></div>
+        <div><dt>Temporary files</dt><dd>{disk(status.disk?.temp)}</dd></div>
+      </dl>
+      {error ? <p className="workbench-error" role="alert">Could not refresh: {error}</p> : null}
+    </SettingsCard>
+    <SettingsCard title="Background work">
+      <ul className="about-list system-workers">
+        {(status.workers || []).map((worker) => {
+          const badge = workerBadge(worker.state);
+          const advice = workerAdvice(worker);
+          return <li key={worker.id}>
+            <span className="system-row-head"><strong>{worker.name}</strong><StatusBadge tone={badge.tone}>{badge.label}</StatusBadge></span>
+            <span>{worker.description}{worker.lastActivityAt ? ` Last active ${agoPhrase(worker.lastActivityAt)}.` : ""}</span>
+            {advice ? <span>{advice}</span> : null}
+            {worker.lastProblem ? <span>Last problem, {agoPhrase(worker.lastProblem.at)}: {worker.lastProblem.message}</span> : null}
+          </li>;
+        })}
+      </ul>
+    </SettingsCard>
+    <SettingsCard title="Waiting work">
+      {rows.length || cooling.length || scan ? <ul className="about-list">
+        {rows.map((row) => <li key={row.id}>
+          <span className="system-row-head"><strong>{row.label}</strong>{row.tone ? <StatusBadge tone={row.tone}>{row.value}</StatusBadge> : <b>{row.value}</b>}</span>
+          {row.go ? <span><button type="button" className="discover-text-button" onClick={() => go(row.go)}>{row.go === "health" ? "Open Library health" : "Open Requests"}</button></span> : null}
+        </li>)}
+        {cooling.map((item) => <li key={item.provider}>
+          <span className="system-row-head"><strong>{item.provider === "comic_vine" ? "Comic Vine" : item.provider === "gcd" ? "Grand Comics Database" : item.provider[0].toUpperCase() + item.provider.slice(1)} is asking Flipparr to wait</strong><StatusBadge tone="amber">until {new Date(item.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</StatusBadge></span>
+          <span>Metadata from it resumes on its own{item.lastError ? `. It said: ${item.lastError}` : ""}.</span>
+        </li>)}
+        {scan ? <li>
+          <span className="system-row-head"><strong>Last library scan</strong><StatusBadge tone={scanBadge(scan.status).tone}>{scanBadge(scan.status).label}</StatusBadge></span>
+          <span>{scan.completed_at ? `Finished ${new Date(scan.completed_at).toLocaleString()}` : `Started ${new Date(scan.started_at).toLocaleString()}`} · {Number(scan.processed_files || 0).toLocaleString()} files checked, {Number(scan.changed_files || 0).toLocaleString()} changed{scan.error ? `. ${scan.error}` : ""}</span>
+        </li> : null}
+      </ul> : <p className="settings-card-lead">Nothing is waiting.</p>}
+    </SettingsCard>
+    <SettingsCard title="Recent problems">
+      {status.problems?.length ? <ul className="about-list system-problems">
+        {status.problems.map((problem, index) => <li className="job-failure-copy" key={`${problem.at}-${problem.event}-${index}`}>
+          <span className="system-row-head"><strong>{problemTitle(problem.event)}</strong><StatusBadge tone={problem.level === "error" ? "red" : "amber"}>{timeAgo(problem.at)}</StatusBadge></span>
+          {problem.message ? <span>{problem.message}</span> : null}
+          {problem.traceback || Object.keys(problem.detail || {}).length ? <details><summary>Technical details</summary>
+            <code>{[Object.keys(problem.detail || {}).length ? JSON.stringify(problem.detail, null, 2) : "", problem.traceback || ""].filter(Boolean).join("\n\n")}</code>
+          </details> : null}
+        </li>)}
+      </ul> : <p className="settings-card-lead">No problems since Flipparr started.</p>}
+    </SettingsCard>
+    <SettingsCard title="Support">
+      <p className="settings-card-lead">A file with everything on this page and which services are set up, for when you ask someone for help. It holds no passwords, keys, tokens or service addresses.</p>
+      <a className="secondary-button" href="/api/v1/system/diagnostics" download><DownloadSimple size={18} /> Download diagnostics</a>
+    </SettingsCard>
+  </>;
+}
+
 function AboutSettings() {
   const build = useBuild();
   return <>
@@ -7029,6 +7127,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
           </SettingsCard>
         </> : null}
         {current === "about" ? <AboutSettings /> : null}
+        {current === "system" ? <SystemSettings onNavigate={onNavigate} onSectionChange={onSectionChange} /> : null}
         {current === "acquisition" ? <>
           <SettingsCard title="Download order" className="metadata-source-settings">
             <p className="settings-card-lead">Flipparr takes a release from the first source here that has one good enough. Pulling a whole run, a pack still comes first; pulling one issue, a single does.</p>

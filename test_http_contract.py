@@ -637,6 +637,33 @@ class HttpContractTests(unittest.TestCase):
         return [line for line in lines
                 if line.get("event") == event and line.get("request_id") == request_id]
 
+    def test_the_system_page_reports_workers_work_and_problems(self):
+        status = self.get("/api/v1/system/status")
+        self.assertEqual(status.status, 200)
+        body = status.json()
+        for key in ("version", "build", "uptimeSeconds", "database", "server", "disk", "workers", "work", "problems"):
+            self.assertIn(key, body)
+        self.assertEqual({worker["id"] for worker in body["workers"]},
+                         {"metadata", "imports", "searches", "scans", "ratings"})
+        self.assertIn("byStatus", body["work"]["wanted"])
+
+    def test_the_diagnostics_file_is_a_download_without_any_secret(self):
+        app.save_acquisition_service_config("prowlarr", {
+            "url": "http://indexer.private-host.example:9696", "apiKey": "super-secret-key-123", "enabled": True})
+        self.addCleanup(lambda: Path(os.environ["COMICARR_ACQUISITION_CONFIG"]).unlink(missing_ok=True))
+        report = self.get("/api/v1/system/diagnostics")
+        self.assertEqual(report.status, 200)
+        self.assertIn("attachment", report.headers.get("Content-Disposition", ""))
+        self.assertNotIn(b"super-secret-key-123", report.body)
+        self.assertNotIn(b"private-host", report.body, "no service addresses either")
+        services = {service["id"]: service for service in json.loads(report.body)["services"]}
+        self.assertTrue(services["prowlarr"]["configured"])
+
+    def test_the_system_routes_are_the_admins(self):
+        import access_policy
+        for path in ("/api/v1/system/status", "/api/v1/system/diagnostics"):
+            self.assertEqual(access_policy.route_access("GET", path), "admin", path)
+
     def test_every_request_is_logged_as_one_json_object(self):
         response, lines = self._captured_log(lambda: self.get("/healthz"))
         self.assertEqual(response.status, 200)
@@ -1731,6 +1758,17 @@ class TransportTests(unittest.TestCase):
         finally:
             for sock in stalled:
                 sock.close()
+
+    def test_head_answers_like_get_without_the_body(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("HEAD", "/healthz")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read(), b"")
+            self.assertGreater(int(response.headers["Content-Length"]), 0, "the length GET would send")
+        finally:
+            connection.close()
 
     def test_the_server_names_itself_without_a_python_version(self):
         server = request("GET", self.base + "/healthz").headers.get("Server", "")

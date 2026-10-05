@@ -10003,6 +10003,47 @@ class CatalogStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def background_work_summary(self) -> dict[str, Any]:
+        """What the background work has in hand, for Settings -> System:
+        counts by state, what is next and when, read in one short connection."""
+        with self._connect() as connection:
+            def counts(sql: str) -> dict[str, int]:
+                return {str(row[0]): int(row[1]) for row in connection.execute(sql)}
+
+            wanted = counts("SELECT status, COUNT(*) FROM acquisition_jobs GROUP BY status")
+            oldest_waiting = connection.execute(
+                "SELECT MIN(created_at) FROM acquisition_jobs WHERE status IN ('queued', 'waiting')").fetchone()[0]
+            downloads = [{"source": row[0], "status": row[1], "count": int(row[2])} for row in connection.execute(
+                """SELECT source, status, COUNT(*) FROM acquisition_downloads
+                   WHERE status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files')
+                   GROUP BY source, status ORDER BY source, status""")]
+            metadata = counts("SELECT status, COUNT(*) FROM metadata_enrichment_jobs GROUP BY status")
+            next_metadata = connection.execute(
+                "SELECT MIN(next_attempt_at) FROM metadata_enrichment_jobs WHERE status='waiting'").fetchone()[0]
+            providers = [{"provider": row["provider"], "waitUntil": row["next_allowed_at"],
+                          "consecutiveFailures": int(row["consecutive_failures"] or 0), "lastError": row["last_error"]}
+                         for row in connection.execute(
+                             "SELECT provider, next_allowed_at, consecutive_failures, last_error FROM metadata_provider_state "
+                             "ORDER BY provider")]
+            scan = connection.execute(
+                """SELECT status, started_at, completed_at, total_files, processed_files, changed_files, error
+                   FROM scan_runs ORDER BY id DESC LIMIT 1""").fetchone()
+        return {
+            "wanted": {"byStatus": wanted, "oldestWaitingSince": oldest_waiting},
+            "downloads": downloads,
+            "metadata": {"byStatus": metadata, "nextRetryAt": next_metadata},
+            "providers": providers,
+            "lastScan": dict(scan) if scan else None,
+        }
+
+    def library_counts(self) -> dict[str, int]:
+        with self._connect() as connection:
+            return {
+                "files": int(connection.execute("SELECT COUNT(*) FROM files").fetchone()[0]),
+                "runs": int(connection.execute("SELECT COUNT(*) FROM series_runs").fetchone()[0]),
+                "roots": int(connection.execute("SELECT COUNT(*) FROM library_roots").fetchone()[0]),
+            }
+
     def perform_scan(
         self,
         scan_id: int,

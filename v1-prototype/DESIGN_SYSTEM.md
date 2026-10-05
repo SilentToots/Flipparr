@@ -188,6 +188,11 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   rows of an icon tile, the name, what is set and a chevron), and each
   section opens as its own page with a back button; tapping the Settings tab
   inside a section returns to the list.
+- **System** (since 2026-10-05, admin only), before About: a facts grid
+  (`system-facts`, label over value), then Background work, Waiting work and
+  Recent problems as `about-list` rows whose head (`system-row-head`) is the
+  name and a `StatusBadge`. A problem's technical details reuse the
+  `job-failure-copy` disclosure. Wording comes from `src/system-status.js`.
 - **About** (since 2026-10-03) is the last section, for every profile: the
   licence, the credits each data source asks for, the software licences and
   the privacy notice, as `about-list` rows (a name over its muted line). A

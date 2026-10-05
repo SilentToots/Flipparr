@@ -150,7 +150,18 @@ WSGI adapter (`app._WSGIHandler`) and the 152 HTTP contract tests pass on it;
 `TransportTests` keep the stalled-client, keep-alive, large-body and
 server-header behaviour in CI. SIGTERM now lets running requests finish.
 
-Open: durable job inspection for support.
+**Job inspection (2026-10-05):** Settings → System and
+`/api/v1/system/status` show each background worker's state, last activity and
+last problem, the work waiting (downloads, wanted issues, metadata, provider
+cooldowns, the last scan) and the recent warnings and errors; a supervisor
+restarts a worker that dies (five times an hour at most) and every crash is
+logged. Two loops that could end or fail silently -- metadata on one
+exception, imports swallowing every error -- were fixed. A diagnostics file,
+scrubbed of credentials and service addresses, is the support artefact.
+HEAD requests, answered 501 before, now answer as GET without a body.
+
+Gate 1's listed items are in place; its proofs for this image are the CI run
+and the NAS checks recorded in the commits.
 
 ### Gate 2 — Catalog correctness
 
