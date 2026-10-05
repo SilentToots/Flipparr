@@ -69,7 +69,7 @@ All settings have working defaults; you only need these if you are changing path
 | `FLIPPARR_GCD_MIN_INTERVAL_SECONDS` | `1.5` | minimum gap between Grand Comics Database requests |
 | `FLIPPARR_METRON_MIN_INTERVAL_SECONDS` | `3.2` | Metron documents 20 requests/minute |
 | `FLIPPARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
-| `FLIPPARR_HTTP_THREADS` | `16` | worker threads answering requests (4-128) |
+| `FLIPPARR_HTTP_THREADS` | `32` | worker threads answering requests (4-128) |
 | `FLIPPARR_TEMP_DIR` | *(unset: `/config/tmp`)* | where temporary files go (uploads while they arrive, comic packs being unpacked). Flipparr makes a `flipparr-tmp` folder inside the folder you name and empties only that at start |
 
 Flipparr is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/).

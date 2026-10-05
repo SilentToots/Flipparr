@@ -10035,6 +10035,28 @@ class SystemStatusTests(unittest.TestCase):
         self.assertIn("acquisition_import_cycle_failed", [call.args[0] for call in logged.call_args_list])
         self.assertIn("database is locked", app._WORKER_PROBLEMS["imports"]["message"])
 
+    def test_the_servers_own_notices_join_the_structured_log(self):
+        """Waitress wrote "Task queue depth is 4" as bare text on stderr."""
+        import logging
+        app._route_server_logs()
+        app._route_server_logs()   # asked twice, attached once
+        handlers = [handler for handler in logging.getLogger("waitress").handlers
+                    if isinstance(handler, app._ServerLogHandler)]
+        self.assertEqual(len(handlers), 1)
+        with patch("app.log_event") as logged:
+            logging.getLogger("waitress.queue").warning("Task queue depth is %d", 4)
+            logging.getLogger("waitress").error("something broke")
+        self.assertEqual(logged.call_args_list[0].args[0], "server_queue")
+        self.assertEqual(logged.call_args_list[0].kwargs["level"], "info", "waiting a moment is not a problem to list")
+        self.assertEqual((logged.call_args_list[1].args[0], logged.call_args_list[1].kwargs["level"]), ("server_notice", "error"))
+        self.assertEqual(app.http_thread_count(), 32)
+
+    def test_a_refused_vision_request_says_what_the_service_said(self):
+        import email.message, io
+        body = json.dumps({"error": {"type": "invalid_request_error", "message": "image exceeds 5 MB maximum"}}).encode()
+        refusal = urllib.error.HTTPError("https://api.example/v1", 400, "Bad Request", email.message.Message(), io.BytesIO(body))
+        self.assertEqual(app._vision_error(refusal), ("invalid_request_error", "image exceeds 5 MB maximum"))
+
     def test_the_support_file_carries_no_secret(self):
         scrubbed = app.support_safe({
             "detail": "GET http://sab:8080/api?apikey=abc123&mode=queue failed",

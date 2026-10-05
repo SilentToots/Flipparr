@@ -21,6 +21,8 @@ tiers and the manual pass exist for them.
 
 from __future__ import annotations
 
+import os
+
 from typing import Any
 
 from PIL import Image, ImageOps
@@ -212,12 +214,22 @@ def load_model_session(path: str | None) -> Any:
     the caller carries on with the gutter finder alone. No model ships with
     Flipparr; the operator may place one at the configured path.
     """
-    if not path:
-        return None
+    if not path or not os.path.isfile(path):
+        return None  # no model: the runtime is never loaded at all
+    # ONNX Runtime's official builds send usage telemetry to Microsoft unless
+    # told not to before they initialise (its docs/Privacy.md; found in the
+    # production log 2026-10-05). Flipparr sends no telemetry, so it is
+    # switched off here, whatever the environment says, and again through
+    # the runtime's own switch.
+    os.environ["ORT_DISABLE_TELEMETRY"] = "1"
     try:
-        import onnxruntime  # noqa: PLC0415 -- optional, probed at startup
+        import onnxruntime  # noqa: PLC0415 -- optional, loaded only with a model
     except ImportError:
         return None
+    try:
+        onnxruntime.disable_telemetry_events()
+    except Exception:  # noqa: BLE001 -- an older runtime without the switch
+        pass
     try:
         return onnxruntime.InferenceSession(path, providers=["CPUExecutionProvider"])
     except Exception:  # noqa: BLE001 -- a broken model file is a missing tier, not an error page

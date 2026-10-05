@@ -27,6 +27,7 @@ import ipaddress
 import socket
 import sqlite3
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -13154,7 +13155,7 @@ def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]
         with urllib.request.urlopen(request, timeout=VISION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
-        code = _vision_error_code(exc)
+        code, said = _vision_error(exc)
         if exc.code == 429 or code in _VISION_QUOTA_CODES:
             headers_seen = dict(exc.headers.items()) if exc.headers else {}
             # OpenAI says "try again in 1s" while its token window has a
@@ -13163,7 +13164,10 @@ def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]
             if code in _VISION_QUOTA_CODES:
                 retry_after = max(retry_after, VISION_QUOTA_COOLDOWN_SECONDS)
             _cool_down_provider_requests(provider, retry_after)
-        log_event("vision_request_failed", "warning", provider=provider, status=exc.code, code=code)
+        # What the service said, not only its code: "invalid_request_error"
+        # alone could not say why one page in a sitting was refused.
+        log_event("vision_request_failed", "warning", provider=provider, status=exc.code, code=code,
+                  detail=support_safe(said)[:300] or None)
         raise VisionUnavailable(f"{provider} answered {exc.code}" + (f" ({code})" if code else "")) from None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         log_event("vision_request_failed", "warning", provider=provider, error=type(exc).__name__)
@@ -13200,19 +13204,24 @@ def _duration_seconds(text: str) -> float:
     return total
 
 
-def _vision_error_code(exc: urllib.error.HTTPError) -> str:
-    """The service's own name for a refusal, from the error body, or empty."""
+def _vision_error(exc: urllib.error.HTTPError) -> tuple[str, str]:
+    """The service's own name for a refusal and what it said about it, from
+    the error body; empty strings when there is none."""
     try:
         raw = exc.read(4096)
     except Exception:  # noqa: BLE001 -- a body that cannot be read is no code
-        return ""
+        return "", ""
     try:
         error = json.loads(raw.decode("utf-8", "replace")).get("error") or {}
     except (ValueError, AttributeError):
-        return ""
+        return "", ""
     if not isinstance(error, dict):
-        return ""
-    return str(error.get("code") or error.get("type") or "")
+        return "", ""
+    return str(error.get("code") or error.get("type") or ""), str(error.get("message") or "")
+
+
+def _vision_error_code(exc: urllib.error.HTTPError) -> str:
+    return _vision_error(exc)[0]
 
 
 def vision_panels(image: bytes, width: int, height: int, direction: str, mask: Any,
@@ -19427,12 +19436,38 @@ def wsgi_app(environ: dict[str, Any], start_response: Callable[..., Any]) -> lis
 
 
 def http_thread_count() -> int:
-    """Worker threads running routes: FLIPPARR_HTTP_THREADS, else 16. A page
-    of covers asks for many images at once; a household is a few people."""
+    """Worker threads running routes: FLIPPARR_HTTP_THREADS, else 32. Sixteen
+    was measured too few on 2026-10-05: one library page asks for 18 covers at
+    once and a panel read can hold a thread for ten seconds, and requests
+    queued behind them."""
     try:
-        return max(4, min(int(_env("HTTP_THREADS", "16")), 128))
+        return max(4, min(int(_env("HTTP_THREADS", "32")), 128))
     except ValueError:
-        return 16
+        return 32
+
+
+class _ServerLogHandler(logging.Handler):
+    """Waitress's own notices, as lines of the structured log rather than
+    bare text on stderr. A queue-depth notice is information -- requests
+    waited a moment for a free thread -- and not a problem to list."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            queue_notice = record.name == "waitress.queue"
+            level = "info" if queue_notice or record.levelno < logging.WARNING else (
+                "error" if record.levelno >= logging.ERROR else "warning")
+            log_event("server_queue" if queue_notice else "server_notice", level=level,
+                      detail=record.getMessage()[:500], logger=record.name)
+        except Exception:  # noqa: BLE001 -- logging must never raise
+            pass
+
+
+def _route_server_logs() -> None:
+    logger = logging.getLogger("waitress")
+    if not any(isinstance(handler, _ServerLogHandler) for handler in logger.handlers):
+        logger.addHandler(_ServerLogHandler())
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
 
 
 def make_server(host: str, port: int) -> tuple[Any, int]:
@@ -19440,6 +19475,7 @@ def make_server(host: str, port: int) -> tuple[Any, int]:
     port it bound (port 0 picks a free one, for tests)."""
     import waitress
 
+    _route_server_logs()
     server = waitress.create_server(
         wsgi_app, host=host, port=port,
         threads=http_thread_count(),

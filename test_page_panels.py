@@ -209,6 +209,29 @@ class ModelTierTests(unittest.TestCase):
         self.assertIsNone(load_model_session(None))
         self.assertIsNone(load_model_session("/nowhere/panels.onnx"))
 
+    def test_the_runtime_loads_only_with_a_model_and_never_with_telemetry(self):
+        """ONNX Runtime's official builds send usage telemetry to Microsoft
+        unless told not to before they start; production was doing so until
+        2026-10-05. It is switched off first, and without a model file the
+        runtime is not imported at all."""
+        import os, sys, tempfile, types
+        from unittest.mock import patch
+        seen = {}
+        fake = types.ModuleType("onnxruntime")
+        fake.disable_telemetry_events = lambda: seen.setdefault("switched_off", True)
+
+        def session(path, providers):
+            seen["telemetry_env_at_load"] = os.environ.get("ORT_DISABLE_TELEMETRY")
+            return "session"
+
+        fake.InferenceSession = session
+        with tempfile.NamedTemporaryFile(suffix=".onnx") as model, patch.dict(sys.modules, {"onnxruntime": fake}), \
+                patch.dict(os.environ, {"ORT_DISABLE_TELEMETRY": "0"}):
+            self.assertIsNone(load_model_session(model.name + ".missing"))
+            self.assertEqual(seen, {}, "no model file: the runtime is never touched")
+            self.assertEqual(load_model_session(model.name), "session")
+        self.assertEqual(seen, {"switched_off": True, "telemetry_env_at_load": "1"})
+
     def test_two_boxes_that_mostly_overlap_are_one_panel_seen_twice(self):
         kept = suppress([(0.9, (0, 0, 100, 100)), (0.7, (5, 5, 100, 100)), (0.8, (200, 0, 300, 100))])
         self.assertEqual(kept, [(0, 0, 100, 100), (200, 0, 300, 100)], "the surer of the pair, and the other panel")

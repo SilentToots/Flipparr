@@ -14,6 +14,11 @@ sent.
   browser.
 - No analytics, no telemetry, no update checks, nothing sent to Flipparr's
   authors. Fonts and icons are part of the app; it loads no outside scripts.
+- One bundled library, ONNX Runtime (the optional panel detector), sends usage
+  telemetry to Microsoft by default. Flipparr switches that off before the
+  library starts (`ORT_DISABLE_TELEMETRY=1`, and the library's own switch),
+  and does not load it at all unless a panel model is installed. Builds
+  before 2026-10-05 did not switch it off.
 
 ## Goes to the services the operator sets up
 

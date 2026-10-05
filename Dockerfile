@@ -76,7 +76,11 @@ RUN pip install --no-cache-dir --requirement requirements.txt
 # vision assistant still work.
 COPY requirements-panels.txt ./
 RUN pip install --no-cache-dir --requirement requirements-panels.txt
-ENV FLIPPARR_PANEL_MODEL=/config/models/panels.onnx
+# ONNX Runtime's official builds send usage telemetry to Microsoft by default;
+# this is its documented off switch, read before it initialises. page_panels.py
+# sets it too, for anyone running outside this image.
+ENV FLIPPARR_PANEL_MODEL=/config/models/panels.onnx \
+    ORT_DISABLE_TELEMETRY=1
 COPY LICENSE NOTICE ./
 COPY app.py catalog_store.py page_panels.py access_policy.py content_rating.py reading_list_formats.py torrent_client.py arc_catalog.py \
      comic_language.py provider_evidence.py ./
