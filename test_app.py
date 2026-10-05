@@ -10014,6 +10014,42 @@ class ConnectorTroubleNotificationTests(unittest.TestCase):
         self.assertIsNone(app.notification_view(row, Mock(is_admin=False, max_rating=None)), "a reader is not told")
 
 
+
+class QuietSweepAndCoverCacheTests(unittest.TestCase):
+    """Two causes of a slow library page after a deploy (2026-10-05)."""
+
+    def test_an_empty_arrivals_sweep_writes_nothing(self):
+        """The bell is asked on every page load; writing its mark each time
+        made the database look changed and the catalog was rebuilt for it."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.db")
+            now = dt.datetime(2026, 10, 5, 12, 0, tzinfo=dt.timezone.utc)
+            recent = (now - dt.timedelta(minutes=10)).isoformat()
+            store.set_notification_mark("arrivals", recent)
+            with patch("app.catalog_store", return_value=store):
+                self.assertEqual(app.sweep_arrivals(now), 0)
+                self.assertEqual(store.notification_mark("arrivals"), recent, "nothing new: the mark stays")
+                stale = (now - dt.timedelta(hours=2)).isoformat()
+                store.set_notification_mark("arrivals", stale)
+                app.sweep_arrivals(now)
+                self.assertGreater(store.notification_mark("arrivals"), stale, "an hour behind: moved, to keep the search small")
+
+    def test_covers_are_kept_beside_the_catalog_under_a_budget(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.dict("app.os.environ", {"FLIPPARR_COVER_CACHE": str(Path(folder) / "cover-cache")}):
+            path = Path(folder) / "Example 001.cbz"
+            image = io.BytesIO()
+            from PIL import Image
+            Image.new("RGB", (40, 60), "red").save(image, format="PNG")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("001.png", image.getvalue())
+            with patch("app.sweep_image_cache") as sweep:
+                body = app.render_file_cover_thumbnail(path, "001.png")
+            self.assertTrue(body.startswith(b"\xff\xd8"))
+            self.assertEqual(len(list((Path(folder) / "cover-cache").glob("*.jpg"))), 1, "kept on the config volume")
+            self.assertEqual(sweep.call_args.args[1], app.COVER_CACHE_MAX_BYTES, "and swept to its budget")
+
+
 class _QuickStop(threading.Event):
     """A stop event whose waits return at once, so a worker loop runs a turn."""
 

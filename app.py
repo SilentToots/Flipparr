@@ -108,7 +108,11 @@ ARCHIVE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".
 COVER_THUMBNAIL_MAX_DIMENSION = 600
 COVER_THUMBNAIL_QUALITY = 82
 COVER_SOURCE_MAX_BYTES = 50_000_000
-COVER_CACHE_DIR = Path(tempfile.gettempdir()) / "flipparr-cover-cache-v1"
+# Covers are kept beside the catalog, like reading pages, so a restart does
+# not wipe them: in the container's RAM /tmp every deploy meant re-reading
+# every cover from its comic, 46 at once on the first library page (about a
+# second each, 2026-10-05). FLIPPARR_COVER_CACHE_MB bounds it.
+COVER_CACHE_MAX_BYTES = max(32, int(_env("COVER_CACHE_MB", "512") or 512)) * 1024 * 1024
 # The run drawer's header is 606px wide; a page behind it is drawn at twice
 # that for high-density screens.
 BACKDROP_MAX_DIMENSION = 1200
@@ -1399,6 +1403,16 @@ _NOTIFICATION_SWEEP_LOCK = threading.Lock()
 _NOTIFICATION_SWEEP_LAG = dt.timedelta(seconds=5)
 
 
+NOTIFICATION_MARK_MAX_LAG_SECONDS = 3600
+
+
+def _iso_age_seconds(earlier: str, later: str) -> float:
+    try:
+        return (dt.datetime.fromisoformat(later) - dt.datetime.fromisoformat(earlier)).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
 def sweep_arrivals(now: dt.datetime | None = None) -> int:
     """Turn comics imported since the last sweep into notifications: the
     admins hear of every one, a reader of those carrying out their request.
@@ -1416,6 +1430,14 @@ def sweep_arrivals(now: dt.datetime | None = None) -> int:
         if until <= after:
             return 0
         arrivals = store.arrivals_between(after, until)
+        if not arrivals and _iso_age_seconds(after, until) < NOTIFICATION_MARK_MAX_LAG_SECONDS:
+            # Nothing new: leave the mark where it is. The bell is asked on
+            # every page load, and writing the mark each time made the
+            # database look changed to the catalog cache, which rebuilt the
+            # 14 MB catalog for nothing (2026-10-05). Searching from an older
+            # mark finds the same nothing; after an hour it is moved anyway,
+            # so the search stays small.
+            return 0
         admins = [user["id"] for user in store.list_users() if user["role"] == "admin" and not user["disabled"]]
         # A reader who asked for the run is told whatever its rating is now:
         # a run just added is usually unrated for a while, and the bell hides
@@ -2088,6 +2110,10 @@ def reading_cache_dir() -> Path:
     importing this module is still heard.
     """
     return _configured_path("READING_CACHE", catalog_database_path().parent / "reading-cache")
+
+
+def cover_cache_dir() -> Path:
+    return _configured_path("COVER_CACHE", catalog_database_path().parent / "cover-cache")
 
 
 # A comic a person fetched themselves. Larger than any single issue needs, and
@@ -9437,7 +9463,9 @@ def render_file_cover_thumbnail(
     cache_dir: Path | None = None, budget: int | None = None,
 ) -> bytes:
     """Extract and cache a web-sized JPEG without modifying the comic archive."""
-    cache_dir = COVER_CACHE_DIR if cache_dir is None else cache_dir
+    if cache_dir is None:
+        cache_dir = cover_cache_dir()
+        budget = COVER_CACHE_MAX_BYTES if budget is None else budget
     stat = path.stat()
     fingerprint = "\0".join(
         (
