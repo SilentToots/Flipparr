@@ -394,14 +394,25 @@ def _issue_number_value(value: Any) -> float | None:
     return float(match.group(1)) if match else None
 
 
-def _stated_run_year(parsed: dict[str, Any], identity: dict[str, Any], embedded: dict[str, Any]) -> int | None:
-    """The run year a file states: its name or folder (parse_filename's
-    `run_year`), else ComicInfo's Volume when that is a year -- the field
-    ComicRack and Mylar fill with the series' start year."""
+def _named_run_year(parsed: dict[str, Any], identity: dict[str, Any]) -> int | None:
+    """The run year the file's name or folder states (parse_filename's
+    `run_year`): the owner's own grouping, exact to the year."""
     for value in (parsed.get("run_year"), identity.get("run_year")):
         year = _valid_year(value)
         if year is not None:
             return year
+    return None
+
+
+def _stated_run_year(parsed: dict[str, Any], identity: dict[str, Any], embedded: dict[str, Any]) -> int | None:
+    """The run year a file states: its name or folder, else ComicInfo's
+    Volume when that is a year -- the field ComicRack and Mylar fill with
+    the series' start year. Other taggers write the issue's own year there
+    (DIE: Loaded #9, a 2025 series, says 2026), so only the name's year is
+    exact; see _resolve_series_run."""
+    named = _named_run_year(parsed, identity)
+    if named is not None:
+        return named
     volume = str(embedded.get("volume") or "").strip()
     return _valid_year(volume) if re.fullmatch(r"(?:19|20)\d{2}", volume) else None
 
@@ -2282,6 +2293,7 @@ class CatalogStore:
             "kind": "issue" if is_issue else "edition",
             "issue": str(issue) if issue is not None else None,
             "run_year": _stated_run_year(parsed, identity, embedded),
+            "run_year_named": _named_run_year(parsed, identity),
             "volume": override.get("volumeNumber") if "volumeNumber" in override else identity.get("volume") or parsed.get("volume"),
             "year": override.get("publicationYear") if "publicationYear" in override else recommendation.get("publication_year") or identity.get("year"),
             "publisher": override.get("publisher") if "publisher" in override else recommendation.get("publisher") or embedded.get("publisher"),
@@ -2416,10 +2428,11 @@ class CatalogStore:
         canonical_key = _normalized(claim["series_title"])
         observed_year = _valid_year(claim.get("year"))
         anchor_year = _claim_run_anchor_year(claim)
-        # A stated run year is the run's own: 2011 and 2012 are two Captain
-        # America series, not one with a year's slack. A year inferred from
-        # an opening issue's cover date keeps the slack it needs.
-        era_slack = 0 if anchor_year is not None and anchor_year == _valid_year(claim.get("run_year")) else 3
+        # A run year in the name or folder is the run's own: 2011 and 2012
+        # are two Captain America series, not one with a year's slack.
+        # ComicInfo's Volume, and a year inferred from an opening issue's
+        # cover date, keep the slack they need.
+        era_slack = 0 if anchor_year is not None and anchor_year == _valid_year(claim.get("run_year_named")) else 3
         normalized_publisher = _normalized_publisher(claim.get("publisher"))
         claim_provider = str(claim.get("provider") or "").strip()
         claim_provider_series_id = str(claim.get("provider_series_id") or "").strip()

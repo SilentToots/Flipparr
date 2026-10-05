@@ -10138,6 +10138,15 @@ class IntakeEraCompatibilityTests(unittest.TestCase):
         self.assertEqual({key for key in runs if key[0] == "Hawkeye"}, {("Hawkeye", 2012), ("Hawkeye", 2016)})
         self.assertEqual(files["Hawkeye (2012) #004.cbz"][1], 2012)
 
+    def test_a_comicinfo_volume_that_is_a_cover_year_splits_nothing(self):
+        # Production (2026-10-05): DIE: Loaded #9, a 2025 series, carries
+        # ComicInfo Volume 2026 -- its own year, not the run's.
+        with tempfile.TemporaryDirectory() as folder:
+            self._comic(folder, "comics/Die Loaded #001.cbz", {"Series": "Die Loaded", "Number": "1", "Volume": "2025"})
+            self._comic(folder, "comics/Die Loaded #009.cbz", {"Series": "Die Loaded", "Number": "9", "Volume": "2026"})
+            runs, _ = self._intake(folder)
+        self.assertEqual(runs, {("Die Loaded", 2025): {("issue", "1"), ("issue", "9")}})
+
     def test_manga_volumes_keep_their_numbers_and_issues_and_volumes_share_a_run(self):
         with tempfile.TemporaryDirectory() as folder:
             for name in ("Blue Lock (2021) v18.cbz", "Blue Lock (2021) v19.cbz",

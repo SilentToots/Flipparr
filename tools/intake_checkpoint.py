@@ -33,6 +33,7 @@ import os
 import random
 import sqlite3
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -142,7 +143,16 @@ def measure(database: Path) -> dict[str, Any]:
     import app  # noqa: PLC0415
     from catalog_store import CatalogStore  # noqa: PLC0415
 
-    catalog = CatalogStore(database).catalog(app.preferred_language())
+    # Opening a store runs the app's startup upkeep, which writes: measure a
+    # throwaway copy, so a reference stays as production made it and a
+    # second run against it measures the same thing.
+    with tempfile.TemporaryDirectory() as scratch:
+        copy = Path(scratch) / "measure.db"
+        source, target = sqlite3.connect(f"file:{database}?mode=ro", uri=True), sqlite3.connect(copy)
+        source.backup(target)
+        source.close()
+        target.close()
+        catalog = CatalogStore(copy).catalog(app.preferred_language())
     inbox = catalog.get("inbox") or []
     reasons = collections.Counter(str(item.get("reasonCode") or item.get("reason") or item.get("category") or "other")
                                   for item in inbox)
