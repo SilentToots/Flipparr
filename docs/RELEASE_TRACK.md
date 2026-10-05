@@ -223,16 +223,27 @@ behind those promises, fixed with a failing-first test each:
 - a password-protected torrent or direct download reached the library;
 - a missing torrents mount was checked nowhere.
 
+**Reviewed the same day.** A second look at that work found five flaws in
+it, fixed in 924bf7a3: one issue Prowlarr errors on held up every search
+behind it; the RAR/7-Zip password check read only the archive tool's last
+line and its test had invented the message; the qBittorrent sign-in retry
+was still banned, an hour later (qBittorrent's failure count never runs
+down); a refused qBittorrent password was told to nobody; trouble was worded
+wrongly or left listed.
+
 `tools/fulfillment_drill.py` runs the real server beside fake SABnzbd and
-Prowlarr, with a SIGKILL mid-download and mid-search. In the release image on
-the NAS (build 24c7809e): 6 of 6 scenarios held, against 1 of 6 for the build
-before these fixes (fcf15e1c); 1,124 tests OK; opening production's catalog
-moved no file.
+Prowlarr, with a SIGKILL mid-download and mid-search; it runs in CI. In the
+release image on the NAS (build 924bf7a3): 7 of 7 scenarios held -- against
+1 of the first 6 for the build before Gate 3 (fcf15e1c), and 6 of 7 for the
+first round (24c7809e); 1,136 tests OK; opening production's catalog moved
+no file.
 
 Not covered end to end: qBittorrent itself (its behaviour is proven by unit
-tests against a scripted client, not a running one), and a clean install and
-upgrade exercising the torrents mount, which move to Gate 4 with the rest of
-install and upgrade.
+tests against a scripted client, not a running one); an encrypted RAR (the
+check is proven with the real archive tool on an encrypted zip, as nothing
+free writes an encrypted RAR); and a clean install and upgrade exercising
+the torrents mount, which moves to Gate 4 with the rest of install and
+upgrade.
 
 ### Gate 4 — Release candidate
 
