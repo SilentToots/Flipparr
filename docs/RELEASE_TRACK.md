@@ -201,11 +201,38 @@ library).
 ### Gate 3 — Fulfillment correctness
 
 Prowlarr through SABnzbd, qBittorrent or a direct download, through validated
-import and request reconciliation, is in daily use. Open: written restart,
-outage and failure-injection proofs for this image, including the
-qBittorrent gates set when torrents were approved (2026-09-30): its
-provider-outage behaviour, restart recovery (a torrent is never restarted as
-a direct fetch) and the read-only torrents mount in clean install and upgrade.
+import and request reconciliation, is in daily use.
+
+**Proven (2026-10-05):** [FULFILLMENT_PROOFS.md](FULFILLMENT_PROOFS.md) gives
+each restart, outage and bad-download scenario, what Flipparr does, and the
+test or drill scenario that proves it -- including the qBittorrent gates set
+on 2026-09-30 (outage behaviour, a torrent never restarted as a direct
+fetch, the read-only torrents mount). A survey of the pipeline found faults
+behind those promises, fixed with a failing-first test each:
+
+- an import cut off by a restart left a half-written copy that the next
+  scan catalogued, and a direct download stuck at "importing" for good;
+- a download client that dropped the line or answered half a reply failed
+  the download for good (a torrent was then deleted by the hourly sweep),
+  and SABnzbd refusing the API key gave every download up as lost;
+- a Prowlarr outage counted against every issue, pushing its next search out
+  by up to a day, and a search by hand during one parked the issue for good;
+- outages were told to nobody: Settings -> System now names a silent service
+  at once and every admin's bell does after 30 minutes; a refused
+  qBittorrent password is retried under its ban threshold;
+- a password-protected torrent or direct download reached the library;
+- a missing torrents mount was checked nowhere.
+
+`tools/fulfillment_drill.py` runs the real server beside fake SABnzbd and
+Prowlarr, with a SIGKILL mid-download and mid-search. In the release image on
+the NAS (build 24c7809e): 6 of 6 scenarios held, against 1 of 6 for the build
+before these fixes (fcf15e1c); 1,124 tests OK; opening production's catalog
+moved no file.
+
+Not covered end to end: qBittorrent itself (its behaviour is proven by unit
+tests against a scripted client, not a running one), and a clean install and
+upgrade exercising the torrents mount, which move to Gate 4 with the rest of
+install and upgrade.
 
 ### Gate 4 — Release candidate
 

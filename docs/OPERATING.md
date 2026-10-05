@@ -517,6 +517,34 @@ lets an API key ask how much credit is left, so Flipparr cannot warn that a
 balance is running low; set a low-balance email alert or auto-reload in the
 provider's own billing page for that.
 
+### When a download service stops answering
+
+If Prowlarr, SABnzbd or qBittorrent stops answering -- it is restarting,
+its address changed, or it refuses Flipparr's API key or password --
+nothing is given up:
+
+- downloads already in SABnzbd or qBittorrent wait, and carry on when it
+  answers again;
+- searches wait too, and a search that went unanswered does not count
+  against the issue, so an outage does not push its next search out;
+- Settings → System lists the service under **Waiting work** ("SABnzbd isn't
+  answering, since 3:20 PM") with what it last said;
+- after half an hour, every admin gets one notification in the bell, which
+  opens Settings → Acquisition. The next answer clears it.
+
+A wrong qBittorrent password is tried at most once every fifteen minutes,
+so Flipparr never trips qBittorrent's own ban on an address after five
+failed sign-ins. Saving new credentials, or pressing Test, asks at once.
+
+**Finished torrents wait for good.** Flipparr cannot see qBittorrent's
+"comics" folder. Settings → Acquisition → qBittorrent → Test says so when
+the folder is missing or unreadable; after half an hour the bell says
+"Flipparr can't see the torrents folder". Mount the category's folder at
+`TORRENT_COMPLETE_PATH` (section 1) and recreate the container.
+
+What holds through restarts, outages and bad downloads, and how each is
+tested, is in [FULFILLMENT_PROOFS.md](FULFILLMENT_PROOFS.md).
+
 ### Privacy settings
 
 Three things beyond your own services are off until you turn them on: a vision
