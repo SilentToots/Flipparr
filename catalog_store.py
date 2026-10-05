@@ -8480,6 +8480,29 @@ class CatalogStore:
         return {"id": str(job_id), "status": "queued", "action": "research",
                 "detail": "Stopped; ready to search for another release", "download": dict(download)}
 
+    def return_unanswered_search(self, job_id: int, detail: str) -> None:
+        """Put back a search the indexer never answered, without the try
+        counting against the issue: the backoff is for issues nobody has
+        posted, and an outage says nothing about that (Gate 3, 2026-10-05).
+        Due again at once; the sweep stops at the first silence, so an outage
+        costs one question a pass, not one per issue."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            changed = connection.execute(
+                """UPDATE acquisition_jobs
+                   SET status='queued', queue_reason=?,
+                       attempt_count=MAX(attempt_count-1, 0),
+                       last_attempt_at=NULL, updated_at=?
+                   WHERE id=? AND status='searching'""",
+                (detail, now, int(job_id)),
+            ).rowcount
+            if changed:
+                connection.execute(
+                    """INSERT INTO acquisition_job_events(job_id, status, detail, created_at)
+                       VALUES (?, 'queued', ?, ?)""",
+                    (int(job_id), detail, now),
+                )
+
     def recover_interrupted_searches(self) -> int:
         """Put back every search a restart cut short.
 

@@ -4,9 +4,11 @@ import email.message
 import hashlib
 import io
 import json
+import time
 import unittest
 import urllib.error
 import urllib.parse
+from unittest.mock import patch
 
 import torrent_client
 from torrent_client import QBittorrent, TorrentAuthError, TorrentClientError
@@ -142,6 +144,25 @@ class SessionTests(unittest.TestCase):
         banned = QBittorrent("http://qbt:8080", "admin", "x", opener=FakeClient([(403, b"", None), (403, b"", None)]))
         with self.assertRaisesRegex(TorrentAuthError, "blocked this address"):
             banned.version()
+
+    def test_a_refused_sign_in_is_not_asked_again_until_the_wait_is_over(self):
+        # Gate 3 (2026-10-05): a wrong password asked every 15 seconds walked
+        # into qBittorrent's ban on an address after five failed sign-ins.
+        qbt = FakeClient([(403, b"", None), (200, b"Fails.", None)])
+        client = QBittorrent("http://qbt:8080", "admin", "wrong", opener=qbt, refused_wait=900)
+        for _ in range(3):
+            with self.assertRaisesRegex(TorrentAuthError, "rejected this username and password"):
+                client.version()
+        self.assertEqual(len(qbt.requests), 2, "one try and one sign-in, then the refusal is repeated without asking")
+        with patch("torrent_client.time.monotonic", return_value=time.monotonic() + 901):
+            qbt.answers += [(403, b"", None), ok(cookies=["SID=abc; path=/"]), ok(b"v4.6.7")]
+            self.assertEqual(client.version(), "v4.6.7", "asked again once the wait is over")
+        # A person's Test (no wait) always asks.
+        tester = QBittorrent("http://qbt:8080", "admin", "wrong",
+                             opener=FakeClient([(403, b"", None), (200, b"Fails.", None), (403, b"", None), (200, b"Fails.", None)]))
+        for _ in range(2):
+            with self.assertRaises(TorrentAuthError):
+                tester.version()
 
     def test_a_client_that_lets_its_network_in_needs_no_credentials(self):
         open_client = QBittorrent("http://qbt:8080", opener=FakeClient([ok(b"v4.6.7")]))

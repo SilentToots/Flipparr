@@ -29,6 +29,7 @@ import binascii
 import hashlib
 import json
 import secrets
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -210,7 +211,7 @@ class QBittorrent:
     def __init__(
         self, url: str, username: str = "", password: str = "", *,
         timeout: float = 20.0, user_agent: str = "Flipparr",
-        opener: Callable[..., Any] | None = None,
+        opener: Callable[..., Any] | None = None, refused_wait: float = 0.0,
     ) -> None:
         self.url = str(url or "").rstrip("/")
         self.username = str(username or "")
@@ -220,6 +221,13 @@ class QBittorrent:
         self._open = opener or urllib.request.urlopen
         self._cookie = ""
         self._webapi: tuple[int, ...] | None = None
+        # After a refused sign-in, how long before trying again; meanwhile the
+        # refusal is repeated without asking. qBittorrent bans an address
+        # after a few failed sign-ins (five, by default, for an hour), and a
+        # wrong password asked every 15 seconds -- once per torrent a pass --
+        # walked straight into it. Zero, as for a person's Test, always asks.
+        self.refused_wait = refused_wait
+        self._refused: tuple[float, str] | None = None
 
     # ---- transport --------------------------------------------------------
 
@@ -254,6 +262,7 @@ class QBittorrent:
                 status, body, _headers = self._send(method, path, query=query)
             return status, body
 
+        self._still_refused()
         status, body = once()
         if status in (401, 403):
             # No session, or one that has expired. Signed in once and asked again.
@@ -268,6 +277,19 @@ class QBittorrent:
         nothing to sign in with, and the caller's 403 stands."""
         if not self.username:
             raise TorrentAuthError("qBittorrent wants a username and password")
+        self._still_refused()
+        try:
+            self._sign_in()
+        except TorrentAuthError as exc:
+            self._refused = (time.monotonic(), str(exc))
+            raise
+        self._refused = None
+
+    def _still_refused(self) -> None:
+        if self._refused and time.monotonic() - self._refused[0] < self.refused_wait:
+            raise TorrentAuthError(self._refused[1])
+
+    def _sign_in(self) -> None:
         self._cookie = ""
         status, body, headers = self._send(
             "POST", "/api/v2/auth/login",

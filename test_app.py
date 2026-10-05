@@ -5470,7 +5470,7 @@ class WrongDownloadIsNotOfferedAgainTests(unittest.TestCase):
                 reconcile_acquisition_download(download)
         store.update_acquisition_download.assert_not_called()
         fallback.assert_not_called()
-        self.assertTrue(issubclass(app.DownloadClientUnanswered, app.DOWNLOAD_CLIENT_HICCUPS), "the import worker waits it out")
+        self.assertTrue(issubclass(app.DownloadClientUnanswered, app.SERVICE_HICCUPS), "the import worker waits it out")
 
     def test_a_download_still_in_the_queue_or_just_sent_keeps_waiting(self):
         result, store, _queue, fallback = self._reconcile_missing_from_history(3600, {"nzo_id": "gone-id"})
@@ -7520,9 +7520,23 @@ class ASearchCannotStallThePassTests(unittest.TestCase):
              patch("app._prowlarr_search", side_effect=TimeoutError("Prowlarr did not answer")):
             with self.assertRaises(TimeoutError):
                 app.search_prowlarr_releases(7)
+        # Prowlarr's silence goes back on the queue without counting against
+        # the issue (Gate 3, 2026-10-05) ...
+        store.return_unanswered_search.assert_called_once()
+        self.assertEqual(store.return_unanswered_search.call_args.args[0], 7)
+        self.assertIn("prowlarr", app._SERVICE_TROUBLE)
+        app._SERVICE_TROUBLE.clear()
+        # ... while a search that failed on its own account is put back as before.
+        store.reset_mock()
+        with patch("app.catalog_store", return_value=store), \
+             patch("app._enabled_acquisition_service", return_value={"url": "x", "apiKey": "y"}), \
+             patch("app._prowlarr_search", side_effect=KeyError("title")):
+            with self.assertRaises(KeyError):
+                app.search_prowlarr_releases(7)
         last = store.update_acquisition_job.call_args_list[-1]
         self.assertEqual(last.args[:2], (7, "queued"))
         self.assertIn("tried again", last.args[2])
+        store.return_unanswered_search.assert_not_called()
 
     def test_the_first_sweep_comes_soon_after_start(self):
         """A restart mid-pass otherwise left the rest for a quarter of an hour."""
@@ -10292,6 +10306,82 @@ class ImportRestartSafetyTests(unittest.TestCase):
                     library_root=library, completed_root=completed)
             self.assertTrue(result["alreadyPresent"])
             self.assertEqual(quarantine.read_bytes(), b"damaged-original", "the original stays recoverable")
+
+
+class ServiceOutageTests(unittest.TestCase):
+    """Gate 3 (2026-10-05): a service that stops answering is waited for,
+    counted against nothing, and named to the admins once it has been long
+    enough to need them."""
+
+    def setUp(self):
+        app._SERVICE_TROUBLE.clear()
+        self.addCleanup(app._SERVICE_TROUBLE.clear)
+
+    def _store(self):
+        store = Mock()
+        store.list_users.return_value = [{"id": 1, "role": "admin", "disabled": False},
+                                         {"id": 2, "role": "reader", "disabled": False}]
+        return store
+
+    def test_the_admins_hear_of_an_outage_once_it_has_lasted(self):
+        store = self._store()
+        with patch("app.catalog_store", return_value=store), patch("app.time.time", return_value=1_000_000.0):
+            app.service_trouble("sabnzbd", ConnectionRefusedError(61, "Connection refused"))
+        store.record_notification.assert_not_called()
+        later = 1_000_000.0 + app.SERVICE_TROUBLE_NOTICE_SECONDS
+        with patch("app.catalog_store", return_value=store), patch("app.time.time", return_value=later):
+            app.service_trouble("sabnzbd", ConnectionRefusedError(61, "Connection refused"))
+            app.service_trouble("sabnzbd", ConnectionRefusedError(61, "Connection refused"))
+        store.record_notification.assert_called_once()
+        self.assertEqual(store.record_notification.call_args.args[:2], (1, "service_trouble"), "the admin, once")
+        self.assertEqual(app.service_troubles()[0]["name"], "SABnzbd")
+        app.service_answered("sabnzbd")
+        self.assertEqual(app.service_troubles(), [])
+
+    def test_the_bell_says_what_waits(self):
+        admin = Mock(is_admin=True, max_rating=None)
+        reader = Mock(is_admin=False, max_rating=None)
+        row = {"id": 5, "updatedAt": "2026-10-05T12:00:00+00:00", "readAt": None, "kind": "service_trouble",
+               "payload": {"service": "prowlarr"}}
+        view = app.notification_view(row, admin)
+        self.assertEqual(view["title"], "Prowlarr isn't answering")
+        self.assertIn("Searches wait", view["detail"])
+        self.assertEqual(view["target"], {"view": "settings", "section": "acquisition"})
+        self.assertIsNone(app.notification_view(row, reader), "a reader is not told")
+
+    def test_a_pass_stops_at_the_first_silence(self):
+        store = Mock()
+        store.acquisition_jobs_awaiting_release.return_value = [1, 2, 3]
+        asked = []
+
+        def search(job_id):
+            asked.append(job_id)
+            app.service_trouble("prowlarr", TimeoutError("Prowlarr did not answer"))
+            return None
+
+        with patch("app.catalog_store", return_value=store), patch("app._auto_grab_release", side_effect=search), \
+                patch("app._issues_awaiting_a_pack", return_value=set()), patch("app.log_event"):
+            app._automatic_release_grabs(None, backoff=True)
+        self.assertEqual(asked, [1], "one question, not one deadline per issue")
+
+    def test_the_import_worker_notes_which_client_is_silent_and_when_it_answers(self):
+        stop = _QuickStop()
+        store = Mock()
+        store.pending_acquisition_downloads.return_value = [
+            {"id": 1, "job_id": 11, "source": "qbittorrent"}, {"id": 2, "job_id": 12, "source": "sabnzbd"}]
+
+        def reconcile(download):
+            if download["source"] == "qbittorrent":
+                raise ConnectionResetError(54, "Connection reset by peer")
+            stop.set()
+            return {"status": "downloading"}
+
+        app.service_trouble("sabnzbd", "earlier")
+        with patch("app.catalog_store", return_value=store), patch("app.log_event"), \
+                patch("app.reconcile_acquisition_download", side_effect=reconcile), \
+                patch.object(app, "_KEPT_SWEPT_AT", [time.monotonic()]):
+            app.acquisition_import_worker(stop)
+        self.assertEqual([entry["service"] for entry in app.service_troubles()], ["qbittorrent"])
 
 
 class _QuickStop(threading.Event):

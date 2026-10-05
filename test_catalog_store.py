@@ -2287,6 +2287,25 @@ class CatalogStoreTests(unittest.TestCase):
                           "the attempt that never finished does not count")
             self.assertEqual(store.recover_interrupted_searches(), 0)
 
+    def test_a_search_the_indexer_never_answered_does_not_count(self):
+        """Gate 3 (2026-10-05): every search during an outage counted, and
+        pushed each issue's next try out by up to a day."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, _series_id, job_id = self._one_wanted_job(root)
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            store.update_acquisition_job(job_id, "queued", "No release found yet")
+            store.update_acquisition_job(job_id, "searching", "Searching Prowlarr")
+            self.assertEqual(self._job(root, job_id)["attemptCount"], 2)
+            store.return_unanswered_search(job_id, "Prowlarr did not answer")
+            job = self._job(root, job_id)
+            self.assertEqual((job["status"], job["attemptCount"]), ("queued", 1))
+            self.assertIn(job_id, store.acquisition_jobs_awaiting_release(backoff=True), "due again at once")
+            # Only a search still in flight is put back.
+            store.update_acquisition_job(job_id, "grabbed", "Sent")
+            store.return_unanswered_search(job_id, "late")
+            self.assertEqual(self._job(root, job_id)["status"], "grabbed")
+
     def test_the_wait_grows_with_each_empty_search(self):
         now = _parse_timestamp(_utc_now())
         due = CatalogStore._search_is_due

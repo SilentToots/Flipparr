@@ -1523,6 +1523,17 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
                 "tone": "done" if approved else "warning",
                 "cover": payload.get("cover"),
                 "target": {"view": "requests", "focus": {"requestId": payload.get("requestId")}}}
+    if row["kind"] == "service_trouble":
+        if not viewer.is_admin:
+            return None
+        name = SERVICE_NAMES.get(str(payload.get("service")), "A download service")
+        searching = payload.get("service") == "prowlarr"
+        return {**base,
+                "title": f"{name} isn't answering",
+                "detail": ("Searches wait for it; none is given up or counted against an issue meanwhile."
+                           if searching else "Downloads in it wait for it; none is given up meanwhile."),
+                "tone": "warning",
+                "target": {"view": "settings", "section": "acquisition"}}
     if row["kind"] == "connector_trouble":
         if not viewer.is_admin:
             return None
@@ -3323,6 +3334,12 @@ _QBITTORRENT_CLIENTS: dict[tuple[str, str, str], torrent_client.QBittorrent] = {
 _QBITTORRENT_CLIENTS_LOCK = threading.Lock()
 
 
+# How long the workers wait after qBittorrent refuses Flipparr's sign-in
+# before trying again: four tries an hour stay under its default ban (five
+# failures). Saving new credentials makes a new client, which asks at once.
+QBITTORRENT_REFUSED_WAIT_SECONDS = 900
+
+
 def _qbittorrent_client() -> torrent_client.QBittorrent:
     config = _enabled_acquisition_service("qbittorrent")
     key = (str(config["url"]), str(config.get("username") or ""),
@@ -3333,6 +3350,7 @@ def _qbittorrent_client() -> torrent_client.QBittorrent:
             _QBITTORRENT_CLIENTS.clear()
             client = torrent_client.QBittorrent(
                 key[0], key[1], str(config.get("password") or ""), user_agent=f"Flipparr/{APP_VERSION}",
+                refused_wait=QBITTORRENT_REFUSED_WAIT_SECONDS,
             )
             _QBITTORRENT_CLIENTS[key] = client
     return client
@@ -5442,10 +5460,19 @@ def search_prowlarr_releases(job_id: int, query: str | None = None) -> dict[str,
         # A job left at "searching" is invisible to every later pass, which
         # only picks up queued work, so a search that failed once was never
         # tried again. Put it back where the sweep will find it.
-        store.update_acquisition_job(
-            job_id, "queued", f"Search did not finish ({exc}); it will be tried again"
-        )
+        if isinstance(exc, SERVICE_HICCUPS):
+            # Prowlarr did not answer: that says nothing about the issue, so
+            # the try does not count towards its backoff. Counted, an outage
+            # pushed every issue's next search out by up to a day.
+            store.return_unanswered_search(
+                job_id, f"Prowlarr did not answer ({exc}); the search will run again when it does")
+            service_trouble("prowlarr", exc)
+        else:
+            store.update_acquisition_job(
+                job_id, "queued", f"Search did not finish ({exc}); it will be tried again"
+            )
         raise
+    service_answered("prowlarr")
     # Strong matches first, in the admin's order of sources.
     candidates.sort(key=_release_order_key(by_title=True))
     candidates = candidates[:24]
@@ -7694,7 +7721,12 @@ def _automatic_release_grabs(
             # issue as well would grab the same comics twice over.
             return
     grabbed = 0
+    started = time.time()
     for job_id in job_ids:
+        if service_failed_since("prowlarr", started):
+            # Prowlarr stopped answering during this pass: the rest would each
+            # wait out its deadline for the same silence.
+            break
         # Another pass may be on this issue, or have finished it since this one
         # read its list. Searching it again sends a second copy to SABnzbd.
         with _JOBS_IN_FLIGHT_LOCK:
@@ -8623,8 +8655,70 @@ def _release_seeded_torrents(store: Any) -> int:
     return removed
 
 
-# What a download client's trouble looks like from here, as against a download's.
-DOWNLOAD_CLIENT_HICCUPS = (
+# Which acquisition service is not answering: since when, and what it last
+# said. Kept in memory -- a restart asks again -- and cleared by the first
+# answer. Before 2026-10-05 an outage showed only as a warning per download
+# every 15 seconds, and nobody was told.
+_SERVICE_TROUBLE: dict[str, dict[str, Any]] = {}
+_SERVICE_TROUBLE_LOCK = threading.Lock()
+# How long a service may stay silent before the admins are told. Downloads
+# wait and searches do not count meanwhile, so a blip is nobody's business;
+# half an hour is a service that needs looking at.
+SERVICE_TROUBLE_NOTICE_SECONDS = 1800
+
+
+def service_trouble(service: str, problem: BaseException | str) -> None:
+    """Note that `service` did not answer, and tell the admins once it has
+    been so long enough to need them. Never raises."""
+    now = time.time()
+    message = support_safe(f"{type(problem).__name__}: {problem}" if isinstance(problem, BaseException) else str(problem))[:300]
+    with _SERVICE_TROUBLE_LOCK:
+        trouble = _SERVICE_TROUBLE.setdefault(service, {"since": now, "told": False})
+        trouble.update(last=now, message=message)
+        tell = not trouble["told"] and now - trouble["since"] >= SERVICE_TROUBLE_NOTICE_SECONDS
+        if tell:
+            trouble["told"] = True
+        since = trouble["since"]
+    if tell:
+        try:
+            store = catalog_store()
+            for user in store.list_users():
+                if user["role"] == "admin" and not user["disabled"]:
+                    store.record_notification(int(user["id"]), "service_trouble", f"service:{service}:{int(since)}",
+                                              {"service": service, "since": _iso(since)}, merge=True)
+        except Exception as exc:  # noqa: BLE001
+            log_exception("service_notification_failed", exc, level="warning", service=service)
+
+
+def service_answered(service: str) -> None:
+    with _SERVICE_TROUBLE_LOCK:
+        trouble = _SERVICE_TROUBLE.pop(service, None)
+    if trouble and trouble.get("told"):
+        log_event("service_answering_again", service=service)
+
+
+def service_failed_since(service: str, moment: float) -> bool:
+    with _SERVICE_TROUBLE_LOCK:
+        trouble = _SERVICE_TROUBLE.get(service)
+        return bool(trouble) and float(trouble.get("last") or 0) >= moment
+
+
+def service_troubles() -> list[dict[str, Any]]:
+    """For Settings -> System: the services not answering right now."""
+    with _SERVICE_TROUBLE_LOCK:
+        return [{"service": service, "name": SERVICE_NAMES.get(service, service),
+                 "since": _iso(trouble["since"]), "lastProblem": trouble.get("message")}
+                for service, trouble in sorted(_SERVICE_TROUBLE.items())]
+
+
+SERVICE_NAMES = {"prowlarr": "Prowlarr", "sabnzbd": "SABnzbd", "qbittorrent": "qBittorrent",
+                 "direct_site": "The download site"}
+
+
+# What a service's trouble looks like from here -- an indexer or download
+# client not answering, or answering half a reply -- as against a download's
+# or a search's own failure.
+SERVICE_HICCUPS = (
     urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException,
     json.JSONDecodeError, AcquisitionServiceOff, DownloadClientUnanswered,
 )
@@ -8650,10 +8744,13 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
             for download in downloads:
                 if stop_event.is_set():
                     break
+                service = str(download.get("source") or "sabnzbd")
                 try:
                     result = reconcile_acquisition_download(download)
                     imported_any = imported_any or result.get("status") == "imported"
-                except DOWNLOAD_CLIENT_HICCUPS as exc:
+                    service_answered(service)
+                except SERVICE_HICCUPS as exc:
+                    service_trouble(service, exc)
                     # A download client that did not answer, or answered half a
                     # reply, says nothing about the download: it waits for the
                     # next pass. Until 2026-10-05 only a timeout counted, and a
@@ -15666,6 +15763,7 @@ def system_status() -> dict[str, Any]:
         "disk": {"config": _disk(store.database_path.parent), "temp": _disk(tempfile.gettempdir())},
         "workers": worker_states(),
         "work": store.background_work_summary(),
+        "services": service_troubles(),
         "problems": recent_problems(),
     }
 

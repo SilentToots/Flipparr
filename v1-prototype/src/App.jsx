@@ -6788,6 +6788,7 @@ function SystemSettings({ onNavigate, onSectionChange }) {
   }
   const rows = waitingWork(status.work);
   const cooling = coolingProviders(status.work);
+  const silent = status.services || [];
   const scan = status.work?.lastScan;
   const disk = (item) => item?.error ? "Unavailable" : `${formatBytes(item?.freeBytes)} free of ${formatBytes(item?.totalBytes)}`;
   return <>
@@ -6818,7 +6819,11 @@ function SystemSettings({ onNavigate, onSectionChange }) {
       </ul>
     </SettingsCard>
     <SettingsCard title="Waiting work">
-      {rows.length || cooling.length || scan ? <ul className="about-list">
+      {rows.length || cooling.length || silent.length || scan ? <ul className="about-list">
+        {silent.map((item) => <li key={item.service}>
+          <span className="system-row-head"><strong>{item.name} isn't answering</strong><StatusBadge tone="amber">since {new Date(item.since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</StatusBadge></span>
+          <span>{item.service === "prowlarr" ? "Searches wait for it, and none counts against an issue meanwhile" : "Downloads in it wait for it; none is given up meanwhile"}{item.lastProblem ? `. Last: ${item.lastProblem}` : ""}.</span>
+        </li>)}
         {rows.map((row) => <li key={row.id}>
           <span className="system-row-head"><strong>{row.label}</strong>{row.tone ? <StatusBadge tone={row.tone}>{row.value}</StatusBadge> : <b>{row.value}</b>}</span>
           {row.go ? <span><button type="button" className="discover-text-button" onClick={() => go(row.go)}>{row.go === "health" ? "Open Library health" : "Open Requests"}</button></span> : null}
