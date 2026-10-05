@@ -1526,12 +1526,14 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
     if row["kind"] == "service_trouble":
         if not viewer.is_admin:
             return None
-        name = SERVICE_NAMES.get(str(payload.get("service")), "A download service")
-        searching = payload.get("service") == "prowlarr"
+        service = str(payload.get("service"))
+        name = SERVICE_NAMES.get(service, "A download service")
+        folder = service.endswith("_folder")
         return {**base,
-                "title": f"{name} isn't answering",
-                "detail": ("Searches wait for it; none is given up or counted against an issue meanwhile."
-                           if searching else "Downloads in it wait for it; none is given up meanwhile."),
+                "title": f"Flipparr can't see {name[0].lower() + name[1:]}" if folder else f"{name} isn't answering",
+                "detail": ("Finished downloads wait there until it is mounted where Flipparr reads it."
+                           if folder else "Searches wait for it; none is given up or counted against an issue meanwhile."
+                           if service == "prowlarr" else "Downloads in it wait for it; none is given up meanwhile."),
                 "tone": "warning",
                 "target": {"view": "settings", "section": "acquisition"}}
     if row["kind"] == "connector_trouble":
@@ -3276,6 +3278,11 @@ def test_acquisition_service_connection(
         if not selective:
             detail += (" This version downloads a pack whole, so packs are not taken from it;"
                        " qBittorrent 4.5.5 or later downloads only the issues wanted.")
+        if not (TORRENT_COMPLETE_ROOT.is_dir() and os.access(TORRENT_COMPLETE_ROOT, os.R_OK | os.X_OK)):
+            # Gate 3 (2026-10-05): checked nowhere before, so a missing mount
+            # showed only as finished torrents waiting for good.
+            detail += (f" Flipparr cannot read its torrents folder ({TORRENT_COMPLETE_ROOT}) yet: mount"
+                       f" qBittorrent's “{category}” folder there, or finished torrents will wait.")
         return {"service": service_id, "status": "connected", "detail": detail}
     if service_id == "direct_site":
         found = direct_site_search("batman", limit=3, base_url=url)
@@ -6169,6 +6176,9 @@ def _download_candidate_score(path: Path, context: dict[str, Any]) -> tuple[int,
             reason = (f"{reason} {missing} MB of it is zero-filled: data missing from the "
                       "download itself, which downloading it again cannot fill")
         return -1000, {"path": path, "result": result, "reason": reason, "damaged": bool(missing)}
+    locked = archive_is_locked(path)
+    if locked:
+        return -1000, {"path": path, "result": result, "reason": locked, "locked": True}
     lookup = result.get("lookup_identity") or {}
     embedded = result.get("embedded_metadata") or {}
     candidate_issue = lookup.get("issue") or embedded.get("number")
@@ -6514,6 +6524,9 @@ def _choose_downloaded_comic(
         # that is merely unreadable here may only be beyond this machine.
         if all(info.get("damaged") for _score, info in ranked):
             raise refuse(f"The download is incomplete ({reason})", "damaged")
+        # Locked is proof too: no download of this release will open.
+        if all(info.get("locked") for _score, info in ranked):
+            raise refuse("The download is password-protected", "format")
         raise refuse(f"No comic in the download could be read ({reason})", "unreadable")
     score, selected = ranked[0]
     if vouched:
@@ -8712,7 +8725,8 @@ def service_troubles() -> list[dict[str, Any]]:
 
 
 SERVICE_NAMES = {"prowlarr": "Prowlarr", "sabnzbd": "SABnzbd", "qbittorrent": "qBittorrent",
-                 "direct_site": "The download site"}
+                 "direct_site": "The download site",
+                 "sabnzbd_folder": "SABnzbd's finished folder", "qbittorrent_folder": "The torrents folder"}
 
 
 # What a service's trouble looks like from here -- an indexer or download
@@ -8749,6 +8763,14 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                     result = reconcile_acquisition_download(download)
                     imported_any = imported_any or result.get("status") == "imported"
                     service_answered(service)
+                    # Finished, but not where Flipparr reads it: a mount that is
+                    # missing or points elsewhere. It waits for good otherwise,
+                    # saying so only on its own row.
+                    folder = f"{service}_folder"
+                    if result.get("status") == "waiting_for_files":
+                        service_trouble(folder, str(result.get("detail") or "The finished download is not visible to Flipparr"))
+                    elif result.get("status") == "imported":
+                        service_answered(folder)
                 except SERVICE_HICCUPS as exc:
                     service_trouble(service, exc)
                     # A download client that did not answer, or answered half a
@@ -9250,6 +9272,43 @@ def _run_archive_tool(arguments: list[str], limit: int) -> bytes:
         detail = completed.stderr.decode("utf-8", "replace").strip().splitlines()
         raise ValueError(detail[-1] if detail else "The archive could not be read")
     return completed.stdout
+
+
+_LOCKED_ARCHIVE_WORDS = re.compile(r"encrypt|passphrase|password", re.I)
+
+
+def archive_is_locked(path: Path) -> str | None:
+    """Why a comic cannot be opened without a password, or None.
+
+    For a download, before it is taken: SABnzbd pauses a password-protected
+    Usenet post and says so, but a torrent or a direct download arrived with
+    nothing to stop it, and the file-health check reads a RAR's header and no
+    further (Gate 3, 2026-10-05). A zip says so in each member's flags; RAR
+    and 7-Zip are asked to list themselves and hand over their first page,
+    which libarchive refuses for an encrypted entry.
+    """
+    kind = archive_kind(path)
+    if kind == "zip":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                if any(info.flag_bits & 0x1 for info in archive.infolist() if not info.is_dir()):
+                    return "The archive is password-protected"
+        except (zipfile.BadZipFile, OSError):
+            return None
+        return None
+    if kind not in {"rar", "rar5", "7z"}:
+        return None
+    try:
+        names = archive_member_names(path)
+        pages = sorted(name for name in names if Path(name).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS)
+        if pages:
+            read_archive_member(path, pages[0])
+    except ArchiveToolMissing:
+        return None
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        if _LOCKED_ARCHIVE_WORDS.search(str(exc)):
+            return "The archive is password-protected"
+    return None
 
 
 def archive_member_names(path: Path) -> list[str]:

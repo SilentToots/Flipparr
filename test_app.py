@@ -406,6 +406,7 @@ class FilenameParserTests(unittest.TestCase):
             "app._series_enrichment_provider_order",
             return_value=[("metron", {"token": "saved"}), ("comic_vine", {"apiKey": "saved"}), ("gcd", {})],
         ):
+            app._CATALOG_CACHE.clear()  # this test's mocks, not an earlier test's catalog
             result = catalog_api_payload(viewer_id=1)
 
         enrichment = result["enrichment"]
@@ -1617,6 +1618,7 @@ class FilenameParserTests(unittest.TestCase):
         with patch("app.catalog_store", return_value=store), patch(
             "app._series_enrichment_provider_order", return_value=[]
         ), patch("app.collected_editions_enabled", return_value=True):
+            app._CATALOG_CACHE.clear()  # this test's mocks, not an earlier test's catalog
             payload = catalog_api_payload(viewer_id=1)
         self.assertTrue(payload["collectedEditionsEnabled"])
 
@@ -8120,6 +8122,64 @@ class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
             self.choose(["broken.cbr"])
         self.assertEqual(unproven.exception.kind, "unreadable")
 
+    def test_a_password_protected_download_is_refused_and_bars_its_release(self):
+        # Gate 3 (2026-10-05): only SABnzbd's ENCRYPTED pause caught these; a
+        # torrent or direct download passed the header check and was taken.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "download"
+            source.mkdir()
+            locked = source / "Supergirl - Woman of Tomorrow 02 (of 08) (2021).cbz"
+            with zipfile.ZipFile(locked, "w") as archive:
+                archive.writestr("001.jpg", b"ciphertext")
+            # Set the "encrypted" bit a password-protected zip carries, in the
+            # local and the central headers (zipfile writes no encryption).
+            data = bytearray(locked.read_bytes())
+            data[data.find(b"PK\x03\x04") + 6] |= 0x1
+            data[data.find(b"PK\x01\x02") + 8] |= 0x1
+            locked.write_bytes(bytes(data))
+            self.assertEqual(app.archive_is_locked(locked), "The archive is password-protected")
+            with patch("app.inventory_file", side_effect=self.inventory):
+                with self.assertRaises(app.DownloadContentMismatch) as refused:
+                    app.select_downloaded_comic(source, self.supergirl, root, release_title=self.supergirl_release)
+        self.assertEqual(refused.exception.kind, "format")
+        self.assertNotIn("format", app.DownloadContentMismatch.UNPROVEN, "no copy of this release will open")
+        self.assertIn("password-protected", str(refused.exception))
+
+    def test_a_rar_that_will_not_give_up_a_page_without_a_password_is_locked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rar = Path(folder) / "Saga 001.cbr"
+            rar.write_bytes(b"Rar!\x1a\x07\x01\x00" + b"\x00" * 64)
+            with patch("app.archive_member_names", return_value=["001.jpg"]), \
+                    patch("app.read_archive_member", side_effect=ValueError("bsdtar: Passphrase required for this entry")):
+                self.assertEqual(app.archive_is_locked(rar), "The archive is password-protected")
+            with patch("app.archive_member_names", return_value=["001.jpg"]), \
+                    patch("app.read_archive_member", side_effect=ValueError("Truncated RAR file data")):
+                self.assertIsNone(app.archive_is_locked(rar), "damaged is not locked")
+            with patch("app.archive_member_names", return_value=["001.jpg"]), patch("app.read_archive_member", return_value=b"jpeg"):
+                self.assertIsNone(app.archive_is_locked(rar))
+
+    def test_a_download_labelled_in_another_language_is_refused_at_import(self):
+        # Gate 3 (2026-10-05): scored away at search time and tested there; the
+        # import's own refusal, for a release that slipped through, was not.
+        job = {**self.supergirl, "preferredLanguage": "en"}
+        with self.assertRaises(app.DownloadContentMismatch) as refused:
+            self.choose(["Supergirl - Woman of Tomorrow 02 (of 08) (2021) (French).cbz"], job=job)
+        self.assertEqual(refused.exception.kind, "language")
+        self.assertIn("French", str(refused.exception))
+
+    def test_a_download_with_no_comic_in_it_is_refused_as_such(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / "download"
+            source.mkdir()
+            (source / "release.nfo").write_text("posted by")
+            (source / "cover.jpg").write_bytes(b"jpeg")
+            with self.assertRaises(app.DownloadContentMismatch) as refused:
+                app.select_downloaded_comic(source, self.supergirl, root, release_title=self.supergirl_release)
+        self.assertEqual(refused.exception.kind, "format")
+        self.assertNotIn("format", app.DownloadContentMismatch.UNPROVEN)
+
     def test_two_files_that_name_nothing_are_not_guessed_between(self):
         with self.assertRaises(app.DownloadContentMismatch) as refused:
             self.choose(["a.cbr", "b.cbr"])
@@ -9374,6 +9434,23 @@ class TorrentAcquisitionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "rejected this username"):
                 test_acquisition_service_connection("qbittorrent")
 
+    def test_the_connection_test_says_when_flipparr_cannot_read_the_torrents_folder(self):
+        client = Mock()
+        client.version.return_value = "v5.0.2"
+        client.default_save_path.return_value = "/data/torrents/complete"
+        client.ensure_category.return_value = "/data/torrents/complete/comics"
+        client.supports_selection.return_value = True
+        config = {"qbittorrent": {"url": "http://qbittorrent:8080", "category": "comics"}}
+        with tempfile.TemporaryDirectory() as folder:
+            mounted = Path(folder) / "comics"
+            mounted.mkdir()
+            for root, said in ((Path(folder) / "missing" / "comics", True), (mounted, False)):
+                with self.subTest(mounted=not said), patch("app.TORRENT_COMPLETE_ROOT", root), \
+                        patch("app.load_acquisition_service_config", return_value=config), \
+                        patch("app.torrent_client.QBittorrent", return_value=client):
+                    detail = test_acquisition_service_connection("qbittorrent")["detail"]
+                self.assertEqual("cannot read its torrents folder" in detail, said)
+
     def test_automatic_search_runs_with_either_download_client(self):
         def enabled(service):
             if service in ("prowlarr", "qbittorrent"):
@@ -9650,6 +9727,14 @@ class TorrentAcquisitionTests(unittest.TestCase):
         self.assertTrue(message.startswith("The pack does not hold The Woods #21: it holds The Woods 001"), message)
         self.assertEqual(fallback.call_args.kwargs, {"kind": "contradiction"})
         self.assertEqual(fake.deleted, [(self.HASH, True)], "nothing else uses it, so it goes")
+
+    def test_a_torrent_with_no_comic_in_it_is_refused_and_removed(self):
+        # Gate 3 (2026-10-05): the empty-torrent refusal had no test.
+        fake = FakeQbittorrent()
+        fake.put(self.HASH, tags=["flipparr"], files=[("Woods/readme.txt", 100), ("Woods/sample.mkv", 9_000_000)])
+        _result, _store, fallback = self.choose(fake)
+        self.assertEqual(fallback.call_args.kwargs, {"kind": "format"})
+        self.assertEqual(fake.deleted, [(self.HASH, True)])
 
     def test_a_single_release_in_several_files_keeps_them_all(self):
         fake = FakeQbittorrent()
@@ -10282,6 +10367,40 @@ class ImportRestartSafetyTests(unittest.TestCase):
             app._clear_stale_partials(destination)
             self.assertTrue(live.exists())
 
+    def test_an_import_that_would_fill_the_disk_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library, completed = root / "library", root / "completed"
+            source = self._comic(completed / "Saga.001.2012" / "Saga 001 (2012).cbz")
+            library.mkdir()
+            store = Mock()
+            store.get_acquisition_job_context.return_value = self._context()
+            nearly_full = app.shutil._ntuple_diskusage(total=10 << 30, used=10 << 30, free=1 << 20)
+            with patch("app.catalog_store", return_value=store), patch("app.shutil.disk_usage", return_value=nearly_full):
+                with self.assertRaisesRegex(ValueError, "minimum free disk space"):
+                    import_downloaded_comic(
+                        {"job_id": 7, "sab_storage": str(source.parent), "release_title": "Saga.001.2012"},
+                        library_root=library, completed_root=completed)
+            self.assertEqual([path for path in library.rglob("*") if path.is_file()], [])
+
+    def test_a_replacement_that_fails_after_the_swap_puts_the_original_back(self):
+        # Gate 3: the rollback had no test. The rejected new copy is kept for
+        # a look, beside the quarantined original, never deleted.
+        with tempfile.TemporaryDirectory() as folder:
+            library = Path(folder) / "library"
+            original = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbz"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(b"new-but-bad")
+            quarantine = library / ".flipparr" / "quarantine" / "9" / "Image Comics" / "Saga (2012)" / original.name
+            quarantine.parent.mkdir(parents=True)
+            quarantine.write_bytes(b"the-original")
+            store = Mock()
+            app._rollback_replacement_swap(store, 9, original, quarantine, original)
+            self.assertEqual(original.read_bytes(), b"the-original")
+            kept = [path for path in quarantine.parent.iterdir() if ".failed-new-" in path.name]
+            self.assertEqual([path.read_bytes() for path in kept], [b"new-but-bad"])
+            store.restore_replacement_original.assert_called_once_with(9, str(quarantine), str(original), str(kept[0]))
+
     def test_a_replacement_retried_after_its_swap_finished_is_already_done(self):
         # Killed after the rename, before the row said imported: the catalog
         # already points the original at its quarantine copy, so the retry
@@ -10348,6 +10467,26 @@ class ServiceOutageTests(unittest.TestCase):
         self.assertIn("Searches wait", view["detail"])
         self.assertEqual(view["target"], {"view": "settings", "section": "acquisition"})
         self.assertIsNone(app.notification_view(row, reader), "a reader is not told")
+
+    def test_a_finished_download_flipparr_cannot_see_is_a_folder_in_trouble(self):
+        stop = _QuickStop()
+        store = Mock()
+        store.pending_acquisition_downloads.return_value = [{"id": 1, "job_id": 11, "source": "qbittorrent"}]
+
+        def unseen(download):
+            stop.set()
+            return {"status": "waiting_for_files", "detail": "qBittorrent saved this torrent in “Downloads”"}
+
+        with patch("app.catalog_store", return_value=store), patch("app.log_event"), \
+                patch("app.reconcile_acquisition_download", side_effect=unseen), \
+                patch.object(app, "_KEPT_SWEPT_AT", [time.monotonic()]):
+            app.acquisition_import_worker(stop)
+        self.assertEqual([entry["name"] for entry in app.service_troubles()], ["The torrents folder"])
+        view = app.notification_view({"id": 6, "updatedAt": "2026-10-05T12:00:00+00:00", "readAt": None,
+                                      "kind": "service_trouble", "payload": {"service": "qbittorrent_folder"}},
+                                     Mock(is_admin=True, max_rating=None))
+        self.assertEqual(view["title"], "Flipparr can't see the torrents folder")
+        self.assertIn("until it is mounted", view["detail"])
 
     def test_a_pass_stops_at_the_first_silence(self):
         store = Mock()
