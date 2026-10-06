@@ -4880,7 +4880,11 @@ class CatalogStore:
     }
     # What ends a profile's sign-ins everywhere when it changes: a new
     # password, a changed role, being switched off. A PIN is not a sign-in.
-    _USER_REVOKING = {"password_hash", "role", "disabled"}
+    # A change to any of these ends the profile's sessions: what it signs in
+    # with, what it may do, and (review, 2026-10-06) its PIN and lock -- a
+    # PIN changed because it leaked would otherwise leave the sessions it
+    # opened good for thirty days.
+    _USER_REVOKING = {"password_hash", "role", "disabled", "pin_hash", "switch_lock"}
 
     def update_user(self, user_id: int, **changes: Any) -> dict[str, Any]:
         """Change a profile. Keys are the public names (`name`, `passwordHash`, ...)."""

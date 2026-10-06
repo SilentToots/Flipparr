@@ -4753,18 +4753,25 @@ class ReaderProfileTests(LibraryFixture):
             store.update_user(ADMIN_USER_ID, role="reader")
             self.assertEqual(store.user(ADMIN_USER_ID)["role"], "reader")
 
-    def test_a_new_password_or_a_lost_role_ends_every_sign_in_a_pin_does_not(self):
+    def test_a_new_password_pin_or_lock_or_a_lost_role_ends_every_sign_in(self):
+        """A PIN opens a profile from the picker, so a PIN changed because it
+        leaked must end those sessions too (review, 2026-10-06); a change
+        that is no change ends nothing."""
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))
             sam = self._reader(store, login_name="sam")
             version = store.user(sam)["sessionVersion"]
+            store.update_user(sam, name="Sam")
+            self.assertEqual(store.user(sam)["sessionVersion"], version, "a name is not a sign-in")
             store.update_user(sam, pinHash="scrypt$1234")
-            self.assertEqual(store.user(sam)["sessionVersion"], version, "a PIN is not a sign-in")
-            store.update_user(sam, passwordHash="scrypt$new")
             self.assertEqual(store.user(sam)["sessionVersion"], version + 1)
-            store.update_user(sam, disabled=True)
+            store.update_user(sam, pinHash="scrypt$1234")
+            self.assertEqual(store.user(sam)["sessionVersion"], version + 1, "the same PIN again changes nothing")
+            store.update_user(sam, passwordHash="scrypt$new")
             self.assertEqual(store.user(sam)["sessionVersion"], version + 2)
-            self.assertEqual(store.bump_session_version(sam), version + 3)
+            store.update_user(sam, disabled=True)
+            self.assertEqual(store.user(sam)["sessionVersion"], version + 3)
+            self.assertEqual(store.bump_session_version(sam), version + 4)
             self.assertEqual(store.user_by_login("SAM")["id"], sam, "sign-in names ignore case")
             self.assertEqual(store.user_secrets(sam)["passwordHash"], "scrypt$new")
             self.assertNotIn("passwordHash", store.user(sam), "hashes never leave with a profile")

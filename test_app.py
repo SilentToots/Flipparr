@@ -139,7 +139,7 @@ class FilenameParserTests(unittest.TestCase):
         original = urllib.error.HTTPError(
             request.full_url, 401, "Unauthorized", {}, None
         )
-        with patch("app.urllib.request.urlopen", side_effect=original), self.assertRaises(
+        with patch.object(app._HTTP_OPENER, "open", side_effect=original), self.assertRaises(
             urllib.error.HTTPError
         ) as raised:
             app._safe_urlopen(request, timeout=1)
@@ -9430,6 +9430,66 @@ class TorrentAcquisitionTests(unittest.TestCase):
             self.assertNotIn("password", saved)
             self.assertNotIn("username", saved)
             self.assertEqual(app._enabled_download_clients(), ["qbittorrent"])
+
+    def test_a_saved_secret_goes_only_to_the_address_it_was_saved_for(self):
+        """Review (2026-10-06): the test sent the stored key to whatever
+        address the request named, so an admin session could read any key
+        the settings page hides."""
+        saved = {"sabnzbd": {"url": "http://sab:8080", "apiKey": "the-saved-key", "enabled": True},
+                 "prowlarr": {"url": "http://prowlarr:9696", "apiKey": "prowlarr-key", "enabled": True},
+                 "qbittorrent": {"url": "http://qbt:8080", "username": "admin", "password": "qbt-pass", "enabled": True}}
+        with patch("app.load_acquisition_service_config", return_value=saved):
+            with self.assertRaisesRegex(ValueError, "API key for the new address"):
+                test_acquisition_service_connection("sabnzbd", {"url": "http://attacker.example"})
+            with self.assertRaisesRegex(ValueError, "API key for the new address"):
+                test_acquisition_service_connection("prowlarr", {"url": "http://attacker.example"})
+            with self.assertRaisesRegex(ValueError, "password for the new address"):
+                test_acquisition_service_connection("qbittorrent", {"url": "http://attacker.example"})
+            # The saved address, and a new address with its own key, are asked.
+            with patch("app.fetch_json_with_headers", return_value={"version": "4.3"}) as fetch:
+                test_acquisition_service_connection("sabnzbd", {})
+                self.assertIn("apikey=the-saved-key", fetch.call_args.args[0])
+                test_acquisition_service_connection("sabnzbd", {"url": "http://new-sab:8080", "apiKey": "new-key"})
+                self.assertIn("new-sab", fetch.call_args.args[0])
+                self.assertNotIn("the-saved-key", fetch.call_args.args[0])
+
+    def test_saving_a_new_address_without_its_secret_drops_the_old_secret(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "acq.json"
+            path.write_text(json.dumps({"sabnzbd": {"url": "http://sab:8080", "apiKey": "old-key", "enabled": True}}))
+            with patch("app.acquisition_config_path", return_value=path):
+                save_acquisition_service_config("sabnzbd", {"url": "http://other:8080"})
+                self.assertNotIn("apiKey", json.loads(path.read_text())["sabnzbd"], "the key was for the old address")
+                save_acquisition_service_config("sabnzbd", {"url": "http://other:8080", "apiKey": "other-key"})
+                save_acquisition_service_config("sabnzbd", {"enabled": False})
+                self.assertEqual(json.loads(path.read_text())["sabnzbd"]["apiKey"], "other-key", "the same address keeps it")
+
+    def test_a_redirect_to_another_host_does_not_carry_our_credentials(self):
+        """Review (2026-10-06): a Prowlarr indexer in redirect mode answered
+        with the indexer's address, and urllib took Prowlarr's key along."""
+        handler = app._KeepCredentialsHome()
+        original = urllib.request.Request("https://prowlarr.local/api/v1/download?x=1",
+                                          headers={"X-Api-Key": "prowlarr-key", "Authorization": "Bearer t", "Accept": "*/*"})
+        import email.message
+        elsewhere = handler.redirect_request(original, None, 302, "Found", email.message.Message(), "https://indexer.example/get/1")
+        names = {name.lower() for name in list(elsewhere.headers) + list(elsewhere.unredirected_hdrs)}
+        self.assertNotIn("x-api-key", names)
+        self.assertNotIn("authorization", names)
+        self.assertIn("accept", names, "ordinary headers stay")
+        same = handler.redirect_request(original, None, 302, "Found", email.message.Message(), "https://prowlarr.local/api/v1/download/2")
+        self.assertIn("x-api-key", {name.lower() for name in list(same.headers) + list(same.unredirected_hdrs)})
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(original, None, 302, "Found", email.message.Message(), "file:///config/auth.json")
+        with self.assertRaisesRegex(urllib.error.URLError, "http and https"):
+            app._safe_urlopen(urllib.request.Request("file:///etc/hostname"), timeout=1)
+
+    def test_a_providers_next_page_must_be_the_providers_own(self):
+        with self.assertRaisesRegex(ValueError, "not its own"):
+            app.fetch_provider_json("metron", "https://attacker.example/api/arc/?page=2", "token")
+        with self.assertRaisesRegex(ValueError, "not its own"):
+            app.fetch_provider_json("metron", "file:///config/auth.json", "token")
+        with self.assertRaisesRegex(ValueError, "not its own"):
+            app.fetch_provider_json("comic_vine", "http://comicvine.gamespot.com/api/issues/", "key")
 
     def test_the_connection_test_names_the_category_and_its_folder(self):
         client = Mock()

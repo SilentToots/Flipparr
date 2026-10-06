@@ -7190,6 +7190,7 @@ function SecuritySettings({ onChanged, onSignOut }) {
   const [config, setConfig] = useState(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
@@ -7208,13 +7209,16 @@ function SecuritySettings({ onChanged, onSignOut }) {
     setError("");
     setSaved("");
     try {
+      // Once a password exists, every change here is confirmed with it: a
+      // session alone (a shared device's PIN, say) does not change sign-in.
       const result = await apiRequest("/api/v1/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(config?.configured ? { ...patch, currentPassword } : patch),
       });
       setConfig(result);
       setPassword("");
+      setCurrentPassword("");
       setSaved("Saved");
       // Keep the shell's auth gate in step with what was just saved.
       if (onChanged) await onChanged();
@@ -7230,6 +7234,9 @@ function SecuritySettings({ onChanged, onSignOut }) {
     <SettingsCard title="Sign-in"
       action={on && onSignOut ? <button type="button" className="secondary-button" onClick={onSignOut}><SignOut size={17} /> Sign out</button> : null}>
     <p className="settings-card-lead">This app stores your metadata and download-client API keys and can start downloads, so require a sign-in if anything other than you can reach it.</p>
+    {config.configured ? <label className="form-field"><span>Your current password</span>
+      <input type="password" value={currentPassword} autoComplete="current-password" placeholder="Needed to change anything here" onChange={(event) => setCurrentPassword(event.target.value)} />
+    </label> : null}
     <Toggle
       checked={on}
       onChange={(next) => next
@@ -7257,7 +7264,7 @@ function SecuritySettings({ onChanged, onSignOut }) {
         <input type="password" value={password} autoComplete="new-password" placeholder={config.configured ? "Leave blank to keep it" : "At least 8 characters"} onChange={(event) => setPassword(event.target.value)} />
       </label>
       </div>
-      <button className="secondary-button" disabled={busy || !username || (!config.configured && !password)}
+      <button className="secondary-button" disabled={busy || !username || (!config.configured && !password) || (config.configured && !currentPassword)}
         onClick={() => save({ method: config.method, username, ...(password ? { password } : {}) })} aria-busy={busy}>
         {busy ? <LoadingSpinner size={17} /> : <ShieldCheck size={17} />} Save credentials
       </button>

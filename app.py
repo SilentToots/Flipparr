@@ -645,12 +645,21 @@ def _save_auth_config(patch: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("A username is required to enable authentication")
         if not current["passwordHash"]:
             raise ValueError("Set a username and password before requiring sign-in")
+    bypass = patch.get("localBypass", current["localBypass"])
+    if not isinstance(bypass, bool):
+        raise ValueError("localBypass must be true or false")
+    # Turning sign-in on, or the local bypass off, is said because the port
+    # has become reachable by more than the household. Every session issued
+    # while it was weaker -- a device made the admin only because sign-in was
+    # off, a visitor through a proxy the bypass took for local -- would
+    # otherwise stay good for its remaining thirty days (review, 2026-10-06).
+    tightening = (current["method"] == "none" and method == "forms") or (current["localBypass"] and not bypass)
+    if tightening:
+        current["householdEpoch"] = _household_epoch(current) + 1
+        current["sessionSecret"] = secrets.token_urlsafe(32)
     current["method"] = method
     current["username"] = username
-    if "localBypass" in patch:
-        if not isinstance(patch["localBypass"], bool):
-            raise ValueError("localBypass must be true or false")
-        current["localBypass"] = patch["localBypass"]
+    current["localBypass"] = bypass
     if not current["sessionSecret"]:
         current["sessionSecret"] = secrets.token_urlsafe(32)
     _write_auth_config(current)
@@ -706,7 +715,7 @@ def session_token_valid(token: str, config: dict[str, Any]) -> bool:
     except ValueError:
         return False
     # Renaming the account or rotating the secret invalidates issued sessions.
-    return hmac.compare_digest(username, str(config.get("username") or ""))
+    return hmac.compare_digest(str(username).encode(), str(config.get("username") or "").encode())
 
 
 # ---- Reader profiles: whose request this is ----------------------------------
@@ -919,8 +928,10 @@ def profile_choices(store: "CatalogStore", config: dict[str, Any]) -> list[dict[
     return [public_profile(user, config) for user in store.list_users() if not user["disabled"] and user["showOnPicker"]]
 
 
-def _checked(key: str, generation: str, secret: Any, hashed: str, *, max_delay: int) -> bool:
-    wait = _throttle_wait(key, generation)
+def _checked(key: str, generation: str, secret: Any, hashed: str, *, max_delay: int,
+             window: float | None = None, ceiling: int | None = None) -> bool:
+    wait = _throttle_reserve(key, generation, max_delay=max_delay, ceiling=ceiling,
+                             **({"window": window} if window is not None else {}))
     if wait:
         raise Throttled(wait)
     ok = secret is not None and verify_password(str(secret), hashed)
@@ -939,7 +950,8 @@ def check_profile_switch(store: "CatalogStore", config: dict[str, Any], user_id:
     lock = profile_lock(user, config)
     secrets_ = store.user_secrets(user_id)
     if lock == "pin":
-        if not _checked(f"pin:{user_id}", secrets_["pinHash"], pin, secrets_["pinHash"], max_delay=_PIN_MAX_DELAY_SECONDS):
+        if not _checked(f"pin:{user_id}", secrets_["pinHash"], pin, secrets_["pinHash"], max_delay=_PIN_MAX_DELAY_SECONDS,
+                        window=_PIN_FAILURE_WINDOW_SECONDS, ceiling=_PIN_MAX_FAILURES):
             raise PermissionError("That PIN is not right")
         if not user.get("pinLength"):
             # A PIN from before lengths were kept, now known.
@@ -959,7 +971,7 @@ def login_subject(username: str, config: dict[str, Any], store: "CatalogStore") 
     reset-password command finds it); a reader's is in their profile.
     """
     configured = str(config.get("username") or "")
-    if configured and hmac.compare_digest(username, configured):
+    if configured and hmac.compare_digest(str(username).encode(), configured.encode()):
         return "account", str(config.get("passwordHash") or ""), store.user(ADMIN_USER_ID)
     user = store.user_by_login(username) if username else None
     if user and not user["disabled"]:
@@ -1906,28 +1918,52 @@ def _throttle_wait(key: str, generation: str, now: float | None = None) -> int:
         return max(0, math.ceil(bucket["retryAt"] - now))
 
 
-def _throttle_record(key: str, generation: str, succeeded: bool, now: float | None = None,
-                     max_delay: int = _LOGIN_MAX_DELAY_SECONDS) -> None:
+def _throttle_reserve(key: str, generation: str, now: float | None = None,
+                      max_delay: int = _LOGIN_MAX_DELAY_SECONDS, window: float = _LOGIN_FAILURE_WINDOW_SECONDS,
+                      ceiling: int | None = None) -> int:
+    """Take the next attempt against this key, or say how long to wait.
+
+    The attempt is counted as a failure here, under the lock, and uncounted
+    by `_throttle_record(succeeded=True)`. Checked first and counted after
+    the hash was verified, a burst of guesses on 32 threads all passed the
+    check before any was counted (review, 2026-10-06). With `ceiling`, that
+    many failures in the window refuse every attempt until it ends: a PIN
+    has ten thousand values and a day of guessing must not reach them.
+    """
     now = time.time() if now is None else now
     with _LOGIN_THROTTLE_LOCK:
-        if succeeded:
-            _LOGIN_THROTTLE.pop(key, None)
-            return
-        bucket = _throttle_bucket(key, generation, now)
+        bucket = _throttle_bucket(key, generation, now, window)
+        wait = max(0, math.ceil(bucket["retryAt"] - now))
+        if wait:
+            return wait
         bucket["failures"] += 1
         bucket["lastFailure"] = now
+        if ceiling is not None and bucket["failures"] >= ceiling:
+            bucket["retryAt"] = now + window
+            return 0
         excess = bucket["failures"] - _LOGIN_FREE_FAILURES
         if excess >= 0:
             bucket["retryAt"] = now + min(2 ** excess, max_delay)
+        return 0
 
 
-def _throttle_bucket(key: str, generation_source: str, now: float) -> dict[str, Any]:
+def _throttle_record(key: str, generation: str, succeeded: bool, now: float | None = None,
+                     max_delay: int = _LOGIN_MAX_DELAY_SECONDS) -> None:
+    """After `_throttle_reserve`: a success forgets the key's failures; a
+    failure is already counted."""
+    if succeeded:
+        with _LOGIN_THROTTLE_LOCK:
+            _LOGIN_THROTTLE.pop(key, None)
+
+
+def _throttle_bucket(key: str, generation_source: str, now: float,
+                     window: float = _LOGIN_FAILURE_WINDOW_SECONDS) -> dict[str, Any]:
     generation = hashlib.sha256(str(generation_source or "").encode()).hexdigest()
     bucket = _LOGIN_THROTTLE.get(key)
     if (
         bucket is None
         or bucket["generation"] != generation
-        or now - bucket["lastFailure"] > _LOGIN_FAILURE_WINDOW_SECONDS
+        or now - bucket["lastFailure"] > window
     ):
         bucket = {"failures": 0, "retryAt": 0.0, "lastFailure": now, "generation": generation}
         _LOGIN_THROTTLE[key] = bucket
@@ -1935,8 +1971,14 @@ def _throttle_bucket(key: str, generation_source: str, now: float) -> dict[str, 
 
 
 # A PIN has ten thousand values, so its delay grows further than a password's:
-# a child tapping at the admin's profile meets minutes, not seconds.
+# a child tapping at the admin's profile meets minutes, not seconds -- and
+# its failures are remembered for a day, with a ceiling: twenty wrong PINs in
+# a day lock the profile's PIN until the day is out (or the admin sets a new
+# one, which starts a new count). Without the ceiling, five minutes a guess
+# reached a four-digit PIN in about a month.
 _PIN_MAX_DELAY_SECONDS = 300
+_PIN_FAILURE_WINDOW_SECONDS = 24 * 3600
+_PIN_MAX_FAILURES = 20
 
 
 def _too_many(wait: int) -> tuple[dict[str, Any], int, dict[str, str]]:
@@ -1951,7 +1993,7 @@ def _login_throttle_key(username: str, config: dict[str, Any]) -> str:
     # Two buckets, so the table cannot grow with invented usernames: the real
     # account, and everything else (which can never succeed anyway).
     configured = str(config.get("username") or "")
-    if configured and hmac.compare_digest(username, configured):
+    if configured and hmac.compare_digest(str(username).encode(), configured.encode()):
         return "account"
     return "other"
 
@@ -2011,10 +2053,37 @@ def reset_password(username: str | None, password: str) -> dict[str, Any]:
 
 
 def is_local_address(address: str) -> bool:
-    try:
-        return ipaddress.ip_address(address).is_private or ipaddress.ip_address(address).is_loopback
-    except ValueError:
+    parsed = _parse_address(address)   # ::ffff:a.b.c.d is a.b.c.d, on every Python
+    return parsed is not None and (parsed.is_private or parsed.is_loopback)
+
+
+# Names a browser may call this server by and still be treated as one of the
+# household (sign-in off, or the local bypass). A page on any website can
+# make its own name resolve to this server (DNS rebinding) and then read and
+# write the API as the local device it runs on; so a name that could be
+# anyone's is not enough, and only what cannot be arranged from outside is:
+# an address, "localhost", a bare machine name, and the private suffixes.
+# The owner's own names -- a tailnet's, a domain behind a proxy -- go in
+# FLIPPARR_ALLOWED_HOSTS (review, 2026-10-06).
+_HOUSEHOLD_HOST_SUFFIXES = (".local", ".lan", ".home", ".internal", ".home.arpa", ".localhost", ".localdomain")
+
+
+def household_host_allowed(host_header: str, allowed: str | None = None) -> bool:
+    host = str(host_header or "").strip().lower()
+    if host.startswith("["):
+        host = host.split("]", 1)[0] + "]"
+    else:
+        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    if not host:
         return False
+    if host == "localhost" or host.endswith(_HOUSEHOLD_HOST_SUFFIXES):
+        return True
+    if _parse_address(host.strip("[]")) is not None:
+        return True
+    if "." not in host:
+        return True   # a bare machine name: not resolvable from outside the network
+    names = {name.strip().lower() for name in str(allowed if allowed is not None else _env("ALLOWED_HOSTS", "")).split(",") if name.strip()}
+    return host in names
 
 
 def collected_editions_enabled() -> bool:
@@ -2603,10 +2672,46 @@ def _redacted_upstream_url(value: str) -> str:
     )
 
 
+# Headers that name us to a service, and must not follow a redirect to
+# another one: a Prowlarr indexer set to "redirect" answers with the
+# indexer's address, and urllib's redirect handler copied every header,
+# Prowlarr's key included (review, 2026-10-06).
+_CREDENTIAL_HEADERS = ("authorization", "x-api-key", "cookie", "proxy-authorization")
+
+
+class _KeepCredentialsHome(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but only to http(s), and without the credential
+    headers when the host changes."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme not in ("http", "https"):
+            raise urllib.error.HTTPError(newurl, code, "redirect to a scheme that is not http(s)", headers, fp)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc.lower() != urllib.parse.urlsplit(req.full_url).netloc.lower():
+            for name in list(new.headers):
+                if name.lower() in _CREDENTIAL_HEADERS:
+                    del new.headers[name]
+            for name in list(new.unredirected_hdrs):
+                if name.lower() in _CREDENTIAL_HEADERS:
+                    del new.unredirected_hdrs[name]
+        return new
+
+
+# http(s) only: urllib's default opener also speaks file:// and ftp://, and a
+# provider's "next page" address is the provider's to make up.
+_HTTP_OPENER = urllib.request.OpenerDirector()
+for _handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(), urllib.request.HTTPHandler(),
+                 urllib.request.HTTPSHandler(), urllib.request.HTTPDefaultErrorHandler(), _KeepCredentialsHome(),
+                 urllib.request.HTTPErrorProcessor()):
+    _HTTP_OPENER.add_handler(_handler)
+
+
 def _safe_urlopen(request: urllib.request.Request, *, timeout: float):
     """Open one request without retaining credential-bearing URLs on failure."""
+    if urllib.parse.urlsplit(request.full_url).scheme not in ("http", "https"):
+        raise urllib.error.URLError("only http and https addresses are fetched")
     try:
-        return urllib.request.urlopen(request, timeout=timeout)
+        return _HTTP_OPENER.open(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
         raise urllib.error.HTTPError(
             _redacted_upstream_url(exc.geturl() or request.full_url),
@@ -2759,6 +2864,14 @@ def _cool_down_provider_requests(provider_id: str, retry_after_seconds: int) -> 
         )
 
 
+# Where each provider lives; nothing else is asked with its credential.
+_PROVIDER_HOMES = {
+    "metron": urllib.parse.urlsplit(METRON_API_BASE).hostname,
+    "comic_vine": urllib.parse.urlsplit(COMIC_VINE_API_BASE).hostname,
+    "gcd": urllib.parse.urlsplit(GCD_API_BASE).hostname,
+}
+
+
 def fetch_provider_json(
     provider_id: str,
     url: str,
@@ -2768,6 +2881,13 @@ def fetch_provider_json(
     force: bool = False,
 ) -> Any:
     """Cache, coalesce, and globally pace authenticated metadata requests."""
+    # Only the provider's own address carries its credential. A "next page"
+    # link is the provider's to make up, and taken as given it could send the
+    # token anywhere, or read a local file (review, 2026-10-06).
+    home = _PROVIDER_HOMES.get(provider_id)
+    parts = urllib.parse.urlsplit(str(url))
+    if home and (parts.scheme != "https" or parts.hostname != home):
+        raise ValueError(f"{provider_id} answered with an address that is not its own")
     key = _provider_cache_key(provider_id, url, credential)
     ttl_seconds = _provider_cache_ttl(url, provider_id)
     stale_entry: dict[str, Any] | None = None
@@ -3204,7 +3324,14 @@ def save_acquisition_service_config(service_id: str, payload: dict[str, Any]) ->
                     config[saved_id].update(values)
         current = config[service_id]
         if "url" in payload and str(payload.get("url") or "").strip():
-            current["url"] = _normalize_service_url(payload["url"])
+            new_url = _normalize_service_url(payload["url"])
+            if current.get("url") and new_url != _normalize_service_url(current["url"]) and not str(payload.get("apiKey") or "").strip() \
+                    and not str(payload.get("password") or ""):
+                # A new address with the old secret is the same leak as the
+                # test's: the secret was given for the old one.
+                for credential in ("apiKey", "password"):
+                    current.pop(credential, None)
+            current["url"] = new_url
         supplied_key = str(payload.get("apiKey") or "").strip()
         if supplied_key:
             current["apiKey"] = supplied_key
@@ -3242,9 +3369,19 @@ def test_acquisition_service_connection(
     payload = payload or {}
     config = load_acquisition_service_config()[service_id]
     url = _normalize_service_url(payload.get("url") or config.get("url"))
-    api_key = str(payload.get("apiKey") or config.get("apiKey") or "").strip()
+    # A saved key or password goes only to the address it was saved for.
+    # Sent to whatever address the request named, the test handed the
+    # stored secret to anyone with an admin session (review, 2026-10-06);
+    # to try a new address, enter its key again, as Sonarr and Radarr ask.
+    requested = str(payload.get("url") or "").strip()
+    same_address = not requested or (bool(config.get("url")) and url == _normalize_service_url(config["url"]))
+    stored = config if same_address else {}
+    api_key = str(payload.get("apiKey") or stored.get("apiKey") or "").strip()
     if not api_key and _service_needs_api_key(service_id):
-        raise ValueError(f"Enter a {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} API key first")
+        raise ValueError(
+            f"Enter a {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} API key first"
+            if same_address else
+            f"Enter the {ACQUISITION_SERVICE_DEFINITIONS[service_id]['name']} API key for the new address")
     if service_id == "flaresolverr":
         endpoint = _solver_endpoint(url)
         answer = solver_request({"cmd": "sessions.list"}, url=url, timeout=30.0)
@@ -3257,8 +3394,10 @@ def test_acquisition_service_connection(
             detail += " Its API lives at /v1, so that is the address Flipparr will use."
         return {"service": service_id, "status": "connected", "detail": detail}
     if service_id == "qbittorrent":
-        username = str(payload.get("username") if payload.get("username") is not None else config.get("username") or "")
-        password = str(payload.get("password") or config.get("password") or "")
+        username = str(payload.get("username") if payload.get("username") is not None else stored.get("username") or "")
+        password = str(payload.get("password") or stored.get("password") or "")
+        if not password and not same_address and config.get("password"):
+            raise ValueError("Enter the qBittorrent password for the new address")
         category = str(payload.get("category") or config.get("category") or "comics").strip() or "comics"
         client = torrent_client.QBittorrent(url, username, password, user_agent=f"Flipparr/{APP_VERSION}")
         try:
@@ -17109,6 +17248,18 @@ class Handler(BaseHTTPRequestHandler):
         # cover loaded from a provider would otherwise carry this instance's
         # address with it.
         self.send_header("Referrer-Policy", "no-referrer")
+        # Never framed by another site (a household device needs no cookie,
+        # so SameSite is no defence against clickjacking there), never
+        # sniffed into another type, and no browser feature a comic library
+        # has a use for. The HTML shell carries the full policy
+        # (handle_web_asset); everything else only needs these.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
+                                               "serial=(), hid=(), bluetooth=(), midi=(), display-capture=()")
+        if not getattr(self, "_full_csp", False):
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
 
     def _client_address(self) -> str:
         """The caller's real address, believing a forwarded header only from a
@@ -17210,6 +17361,12 @@ class Handler(BaseHTTPRequestHandler):
             or self._shared_device_cookie
             or bool(config["localBypass"] and is_local_address(self._client_address()))
         )
+        if household and viewer is None and not household_host_allowed(self.headers.get("Host", "")):
+            # Called by a name this server was not given: a rebound domain,
+            # most likely. Not one of the household, whatever address it
+            # comes from; a signed-in cookie still counts.
+            household = False
+            self._host_refused = True
         if viewer is None and household:
             enabled = [user for user in store.list_users() if not user["disabled"]]
             if len(enabled) == 1:
@@ -17407,6 +17564,7 @@ class Handler(BaseHTTPRequestHandler):
         # survives from one to the next.
         self.viewer = None
         self._household = False
+        self._host_refused = False
         self._shared_device_cookie = False
         self._shared_session = False
         self._pending_cookies = []
@@ -17421,7 +17579,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": f"Authentication is misconfigured: {exc}"}, 503)
                 return
             if not allows(access, viewer=self.viewer, household=self._household):
-                if self.viewer is None:
+                if self.viewer is None and self._host_refused:
+                    self.send_json({"error": "This server is not known by the name you called it by. Open it by its "
+                                             "address, or name the host in FLIPPARR_ALLOWED_HOSTS.",
+                                    "reason": "host_not_allowed"}, 421)
+                elif self.viewer is None:
                     # A shared device that has not said who is reading gets
                     # the picker; anything else, the sign-in form.
                     reason = "profile_required" if self._household else "signin_required"
@@ -18050,7 +18212,7 @@ class Handler(BaseHTTPRequestHandler):
             password = str(payload.get("password") or "")
             store = _profiles_store()
             key, hashed, user = login_subject(username, config, store)
-            wait = _throttle_wait(key, hashed)
+            wait = _throttle_reserve(key, hashed)
             if wait:
                 body, status, headers = _too_many(wait)
                 body["error"] = f"Too many failed sign-ins. Try again in {wait} second{'s' if wait != 1 else ''}."
@@ -18086,6 +18248,12 @@ class Handler(BaseHTTPRequestHandler):
                 page = int(payload.get("page") or 0)
                 if _profiles_store().user(user_id) is None:
                     raise LookupError("That profile does not exist")
+                # The file comes in the body, not the path, so the rating gate
+                # in _dispatch did not see it: a limited reader could set a
+                # page of any comic as their picture (review, 2026-10-06).
+                if self.viewer is not None and not self.viewer.is_admin and self.viewer.max_rating \
+                        and not self._run_visible(f"/api/v1/files/{file_id}/pages/{page}"):
+                    raise LookupError("That comic is not available")
                 updated = profile_avatar_from_library(user_id, file_id, page)
             except (TypeError, ValueError) as exc:
                 self.send_json({"error": str(exc) or "Choose a comic from the library"}, 400)
@@ -18236,6 +18404,24 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"status": "signed out everywhere"})
             return
         if parsed_url.path == "/api/v1/auth":
+            # A session is not the password: one opened on a shared device
+            # with a four-digit PIN, or kept from before sign-in was turned
+            # on, must not be able to change the password, turn sign-in off
+            # or widen the bypass. Once a password exists, changing any of
+            # this takes it (review, 2026-10-06).
+            current = load_auth_config()
+            if current.get("passwordHash"):
+                wait = _throttle_reserve("account", current["passwordHash"])
+                if wait:
+                    body, status, headers = _too_many(wait)
+                    self.send_json(body, status, headers=headers)
+                    return
+                confirmed = verify_password(str(payload.get("currentPassword") or ""), current["passwordHash"])
+                _throttle_record("account", current["passwordHash"], confirmed)
+                if not confirmed:
+                    self.send_json({"error": "Enter your current password to change sign-in settings",
+                                    "reason": "current_password"}, 403)
+                    return
             try:
                 updated = save_auth_config(payload)
             except ValueError as exc:

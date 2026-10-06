@@ -993,6 +993,7 @@ class HttpContractTests(unittest.TestCase):
         """The documented order is: set a username and password, then require
         sign-in. The password used to be discarded unless the method was
         already "forms", which made that order impossible."""
+        app._write_auth_config(app._auth_defaults())   # a first setup: no password yet
         self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
         saved = self.post("/api/v1/auth", {
             "method": "none", "username": "setup", "password": "first-password-here"})
@@ -1008,7 +1009,7 @@ class HttpContractTests(unittest.TestCase):
         self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
         app.save_auth_config({"method": "none", "username": "owner",
                               "password": "owner-password-1"})
-        enabled = self.post("/api/v1/auth", {"method": "forms", "username": "owner"})
+        enabled = self.post("/api/v1/auth", {"method": "forms", "username": "owner", "currentPassword": "owner-password-1"})
         self.assertEqual(enabled.status, 200)
         cookie = enabled.headers.get("Set-Cookie", "")
         self.assertIn(app._SESSION_COOKIE, cookie, "no session issued on enable")
@@ -1027,9 +1028,10 @@ class HttpContractTests(unittest.TestCase):
         self._configure_auth(localBypass=False)
         config = app.load_auth_config()
         cookie = lambda token: f"{app._SESSION_COOKIE}={token}"
-        this_device = cookie(app.issue_session_token(config))
-        other_device = cookie(app.issue_session_token(config))
-        changed = self.post("/api/v1/auth", {"username": "reader", "password": "a different password"},
+        this_device = cookie(app.issue_profile_token(app.catalog_store().user(app.ADMIN_USER_ID), config))
+        other_device = cookie(app.issue_profile_token(app.catalog_store().user(app.ADMIN_USER_ID), config))
+        changed = self.post("/api/v1/auth", {"username": "reader", "password": "a different password",
+                                             "currentPassword": "correct horse battery"},
                             headers={"Cookie": this_device})
         self.assertEqual(changed.status, 200)
         fresh = changed.headers.get("Set-Cookie", "").split(";")[0]
@@ -1041,11 +1043,76 @@ class HttpContractTests(unittest.TestCase):
     def test_settings_that_leave_the_password_alone_keep_everyone_signed_in(self):
         self._configure_auth(localBypass=False)
         config = app.load_auth_config()
-        other_device = f"{app._SESSION_COOKIE}={app.issue_session_token(config)}"
-        this_device = f"{app._SESSION_COOKIE}={app.issue_session_token(config)}"
-        toggled = self.post("/api/v1/auth", {"localBypass": False}, headers={"Cookie": this_device})
+        other_device = f"{app._SESSION_COOKIE}={app.issue_profile_token(app.catalog_store().user(app.ADMIN_USER_ID), config)}"
+        this_device = f"{app._SESSION_COOKIE}={app.issue_profile_token(app.catalog_store().user(app.ADMIN_USER_ID), config)}"
+        toggled = self.post("/api/v1/auth", {"localBypass": False, "currentPassword": "correct horse battery"},
+                            headers={"Cookie": this_device})
         self.assertEqual(toggled.status, 200)
         self.assertEqual(self._catalog_status(other_device), 200)
+
+    def test_sign_in_settings_take_the_current_password_not_just_a_session(self):
+        """Review (2026-10-06): a session opened on a shared device with a
+        four-digit PIN could change the password or turn sign-in off."""
+        self._configure_auth(localBypass=False)
+        config = app.load_auth_config()
+        session = f"{app._SESSION_COOKIE}={app.issue_profile_token(app.catalog_store().user(app.ADMIN_USER_ID), config)}"
+        refused = self.post("/api/v1/auth", {"method": "none"}, headers={"Cookie": session})
+        self.assertEqual(refused.status, 403)
+        self.assertEqual(json.loads(refused.body)["reason"], "current_password")
+        wrong = self.post("/api/v1/auth", {"method": "none", "currentPassword": "not it"}, headers={"Cookie": session})
+        self.assertEqual(wrong.status, 403)
+        self.assertEqual(app.load_auth_config()["method"], "forms", "nothing changed")
+        right = self.post("/api/v1/auth", {"method": "none", "currentPassword": "correct horse battery"},
+                          headers={"Cookie": session})
+        self.assertEqual(right.status, 200)
+
+    def test_turning_sign_in_on_or_the_bypass_off_ends_the_sessions_from_before(self):
+        """Review (2026-10-06): with sign-in off, any device that reached the
+        port was issued a 30-day admin cookie, and turning sign-in on left it
+        good. The caller keeps a fresh one; everyone else signs in."""
+        app._LOGIN_THROTTLE.clear()
+        self.addCleanup(app._LOGIN_THROTTLE.clear)
+        self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+        app.save_auth_config({"method": "none", "username": "owner", "password": "owner-password-1"})
+        before = self.get("/api/v1/catalog").headers.get("Set-Cookie", "").split(";")[0]
+        self.assertIn(app._SESSION_COOKIE, before, "a household device is handed a session")
+        enabled = self.post("/api/v1/auth", {"method": "forms", "username": "owner", "currentPassword": "owner-password-1"},
+                            headers={"Cookie": before})
+        self.assertEqual(enabled.status, 200)
+        fresh = enabled.headers.get("Set-Cookie", "").split(";")[0]
+        self.assertEqual(self._catalog_status(before), 401, "the session from before sign-in was on")
+        self.assertEqual(self._catalog_status(fresh), 200, "the caller's new one")
+        # The bypass going off is a tightening too.
+        app.save_auth_config({"localBypass": True})
+        config = app.load_auth_config()
+        visitor = f"{app._SESSION_COOKIE}={app.issue_profile_token(app.catalog_store().user(app.ADMIN_USER_ID), config)}"
+        self.assertEqual(self._catalog_status(visitor), 200)
+        off = self.post("/api/v1/auth", {"localBypass": False, "currentPassword": "owner-password-1"}, headers={"Cookie": visitor})
+        self.assertEqual(off.status, 200)
+        self.assertEqual(self._catalog_status(visitor), 401)
+
+    def test_a_household_device_is_not_one_when_called_by_a_name_this_server_was_not_given(self):
+        """Review (2026-10-06): a page on any website can make its own name
+        resolve here (DNS rebinding) and then act as the device it runs on."""
+        self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
+        app.save_auth_config({"method": "none"})
+        rebound = self.get("/api/v1/catalog", headers={"Host": "evil.example:8787"})
+        self.assertEqual(rebound.status, 421)
+        self.assertEqual(json.loads(rebound.body)["reason"], "host_not_allowed")
+        self.assertNotIn(app._SESSION_COOKIE, rebound.headers.get("Set-Cookie", ""), "and is handed nothing")
+        for host in ("nas:8787", "nas.local", "192.168.1.20:8787", "[fd00::1]:8787", "localhost"):
+            self.assertEqual(self.get("/api/v1/catalog", headers={"Host": host}).status, 200, host)
+        with patch.dict(app.os.environ, {"FLIPPARR_ALLOWED_HOSTS": "comics.example.org, nas.tailnet.ts.net"}):
+            self.assertEqual(self.get("/api/v1/catalog", headers={"Host": "nas.tailnet.ts.net"}).status, 200)
+            self.assertEqual(self.get("/api/v1/catalog", headers={"Host": "evil.example"}).status, 421)
+        self.assertEqual(self.get("/healthz", headers={"Host": "evil.example"}).status, 200, "the health check needs no identity")
+
+    def test_every_response_refuses_framing_and_sniffing(self):
+        for path in ("/healthz", "/api/v1/catalog", "/"):
+            headers = {k.lower(): v for k, v in self.get(path).headers.items()}
+            self.assertEqual(headers.get("x-frame-options"), "DENY", path)
+            self.assertEqual(headers.get("x-content-type-options"), "nosniff", path)
+            self.assertIn("frame-ancestors 'none'", headers.get("content-security-policy", ""), path)
 
     def test_requiring_sign_in_without_a_password_is_refused_clearly(self):
         """Isolated to its own config file: the suite shares one auth.json, and a
@@ -1058,6 +1125,7 @@ class HttpContractTests(unittest.TestCase):
         self.assertIn("password", str(caught.exception).lower())
 
     def test_a_password_without_a_username_is_refused(self):
+        app._write_auth_config(app._auth_defaults())
         self.addCleanup(lambda: app.save_auth_config({"method": "none"}))
         refused = self.post("/api/v1/auth", {"method": "none", "username": "", "password": "orphan-password"})
         self.assertEqual(refused.status, 400)
@@ -2038,6 +2106,11 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual(self.call("PATCH", "/api/v1/me", {"switchLock": "pin"}, cookies=sam_cookies).status, 400)
         pin = self.call("PATCH", "/api/v1/me", {"switchLock": "pin", "pin": "1357"}, cookies=sam_cookies)
         self.assertEqual((pin.status, pin.json()["lock"]), (200, "pin"))
+        # A new PIN ends the sessions opened with the old one; the chooser is
+        # handed a fresh one in the same answer (review, 2026-10-06).
+        self.assertIn("flipparr_session", pin.cookies)
+        self.assertEqual(self.call("GET", "/api/v1/me", cookies=sam_cookies).status, 401)
+        sam_cookies = {**sam_cookies, **pin.cookies}
         self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "password": "sams password"}).status, 403)
         self.assertEqual(self.call("POST", "/api/v1/profiles/switch", {"userId": sam, "pin": "1357"}).status, 200)
         # Open again, keeping both secrets: a tap.
@@ -2709,6 +2782,9 @@ class ReaderProfileHttpTests(unittest.TestCase):
 
     def test_a_cookie_from_before_profiles_is_the_admins_and_is_upgraded(self):
         app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        # An install from before profiles that already had sign-in on: no
+        # tightening has happened to it, so its epoch is still the first.
+        app._write_auth_config({**app.load_auth_config(), "householdEpoch": 0})
         legacy = {"flipparr_session": app.issue_session_token(app.load_auth_config())}
         first = self.call("GET", "/api/v1/catalog", cookies=legacy)
         self.assertEqual(first.status, 200)
@@ -2757,6 +2833,19 @@ class ReaderProfileHttpTests(unittest.TestCase):
         cleared = self.call("DELETE", f"/api/v1/profiles/{sam}/avatar", cookies=sam_cookies)
         self.assertEqual((cleared.status, cleared.json()["avatar"]), (200, None))
         self.assertEqual(self.call("GET", avatar).status, 404)
+
+    def test_a_limited_reader_cannot_make_a_restricted_page_their_picture(self):
+        """Review (2026-10-06): the file came in the body, so the rating gate
+        on the path never saw it."""
+        sam = self._household_with_a_reader()
+        admin_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "everyone"}, cookies=admin_cookies)
+        sam_cookies = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        with patch("app.render_file_page", return_value=_png_bytes(60)) as render, \
+                patch.object(app.Handler, "_run_visible", return_value=False):
+            refused = self.call("POST", f"/api/v1/profiles/{sam}/avatar", {"fileId": 7, "page": 3}, cookies=sam_cookies)
+        self.assertEqual(refused.status, 404)
+        render.assert_not_called()
 
     def test_a_profile_page_counts_what_its_profile_has_read(self):
         sam = self._household_with_a_reader()
