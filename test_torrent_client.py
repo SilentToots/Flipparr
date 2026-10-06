@@ -208,6 +208,9 @@ class TorrentCallTests(unittest.TestCase):
         self.assertTrue(request.get_header("Content-type").startswith("multipart/form-data; boundary="))
         body = request.data
         for expected in (b'name="category"\r\n\r\ncomics', b'name="tags"\r\n\r\nflipparr,job-7',
+                         # Managed by the category, so it saves in the category's
+                         # folder on a client whose default mode is manual.
+                         b'name="autoTMM"\r\n\r\ntrue',
                          b'name="contentLayout"\r\n\r\nSubfolder',
                          b'name="stopped"\r\n\r\nfalse', b'name="paused"\r\n\r\nfalse',
                          b'name="torrents"; filename="Blue Lock_ v34_.torrent"', TORRENT):
@@ -226,6 +229,7 @@ class TorrentCallTests(unittest.TestCase):
         body = fake.requests[1].data
         self.assertIn(b'name="stopCondition"\r\n\r\nMetadataReceived', body)
         self.assertIn(b'name="stopped"\r\n\r\nfalse', body, "a stopped magnet never fetches its file list")
+        self.assertNotIn(b"autoTMM", body, "without a category there is nothing to be managed by")
 
     def test_a_magnet_is_sent_as_a_url_and_newer_clients_name_what_they_added(self):
         answer = json.dumps({"success_count": 1, "pending_count": 0, "failure_count": 0,

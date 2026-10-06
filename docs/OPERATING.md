@@ -383,7 +383,10 @@ client, and prefers Usenet when a Usenet and a torrent release match equally.
 3. **Connect it** under *Settings → Acquisition services → qBittorrent*: the
    Web UI address, a username and password if it asks for one, and a
    category (`comics`). **Test** creates the category beside qBittorrent's
-   own download folder and says where it saves.
+   own download folder and says where it saves; a grab creates it too if it
+   is missing. Flipparr adds its torrents under automatic torrent management,
+   so they save in the category's folder whatever the client's default mode
+   is -- do not move them by hand while they download.
 4. **Mount that folder** into Flipparr read-only: set `TORRENT_COMPLETE_PATH`
    in `.env` to the category's folder on the host. Its last component must be
    the category's name. Create the folder before starting the container, so
@@ -689,6 +692,15 @@ at a time for the ban to end.
 the folder is missing or unreadable; after half an hour the bell says
 "Flipparr can't see the torrents folder". Mount the category's folder at
 `TORRENT_COMPLETE_PATH` (section 1) and recreate the container.
+
+**A torrent's issues say "qBittorrent saved this torrent in “…”, not in the
+“comics” folder".** The torrent finished somewhere other than the category's
+folder: a torrent added before 0.1.0 under manual management on a client
+whose default folder is not the category's, or one you moved by hand. In
+qBittorrent, right-click it → *Automatic Torrent Management* (or set its
+location to the category's folder); Flipparr imports it on its next pass.
+Torrents Flipparr adds now are managed by their category, so this does not
+recur.
 
 What holds through restarts, outages and bad downloads, and how each is
 tested, is in [FULFILLMENT_PROOFS.md](FULFILLMENT_PROOFS.md).

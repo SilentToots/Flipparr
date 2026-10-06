@@ -153,36 +153,70 @@ You lose manual corrections, aliases and request history — not files.
 
 ## 5. Release notes
 
-### 0.1.0 — unreleased
+### 0.1.0 — first release
 
-First release of the V1-forward line.
+The first installable release of Flipparr, for one household on one Docker
+host. Everything below is in `ghcr.io/silenttoots/flipparr:0.1.0`, built by
+CI from the tagged commit and stamped with it (`/healthz` shows `build`).
 
-**Schema:** 64. Upgrading from any earlier build raises the schema, so a
-rollback to a pre-0.1.0 image requires restoring a `/config` backup. A
-pre-0.1.0 build opening the upgraded catalog does not refuse it cleanly; it
-starts and answers errors, which is why the restore comes first.
+**Schema:** 64. There is no earlier release to upgrade from; a pre-release
+build's catalog is raised to 64 on first start and a copy of it kept beside
+it (`flipparr.db.pre-v<old>`, the last three). Rolling back to a pre-release
+build means restoring that copy or a `/config` backup -- an older build
+refuses a newer catalog and stops.
 
-**Image:** `ghcr.io/silenttoots/flipparr:0.1.0`, built by CI from the tagged
-commit and stamped with it. The container runs as 1000:1000 unless
-`PUID`/`PGID` say otherwise; create the config folder owned by that user
-before the first start, or the container says so and stops.
+**Running it:** the container runs as `PUID:PGID` (1000:1000 unless `.env`
+says otherwise). Create `CONFIG_PATH` owned by that user before the first
+start; otherwise the container says so and stops. The port is bound to
+loopback by default; sign-in is off until you set a password under Settings
+→ Security, so put a proxy or sign-in in front before anything else can
+reach it (OPERATING.md, section 2).
 
-**Included**
+**What is in it**
 
-- First-run setup: library folder, download services and metadata sources, with
-  a folder check that reports how many comics it can see before committing.
-- Authentication — *arr-style forms sign-in with an optional local bypass,
-  scrypt password hashing, and HMAC-signed session cookies. Fails closed if its
-  config cannot be read.
-- Views are addressable: refreshing, bookmarking or sharing a link returns to
-  where you were, including an open series.
-- Structured logs. One JSON object per line, each carrying the id of the request
-  that produced it, returned to the caller as `X-Request-Id`.
-- Provider responses cached in SQLite, with definitive misses remembered so a
-  rescan does not re-ask a provider a question it has already answered.
-- Grand Comics Database, Metron, Comic Vine and Open Library as metadata
-  sources; Prowlarr and SABnzbd for acquisition.
+- *Library:* folders read where they are; filenames, embedded metadata and
+  covers as first-class evidence; runs, issues and collected editions
+  (editions opt-in) grouped and confirmed against GCD, Metron, Comic Vine
+  and Open Library; file health shown as its own fact; the metadata
+  workbench, cover picker and run tools behind Edit and Advanced.
+- *Acquisition:* follow a run and its missing issues are searched through
+  Prowlarr and fetched by SABnzbd, qBittorrent (only the wanted issues of a
+  pack, the rest of the run riding along) or a direct-download site you
+  enter; order of sources is yours; every download validated before import;
+  replacement of damaged files without deleting the original first; what
+  waits and why on Settings → System, with a bell notice after half an hour.
+- *Reading:* the reader with page and panel views (panels found locally; an
+  optional AI connector for hard pages, off by default), progress per
+  profile, reading lists, story arcs (seeded from Metron and community
+  lists, or made by hand, CBL in and out), collections, the pull list,
+  Discover shelves, universal search, an A–Z rail.
+- *Household:* Plex-Home-style profiles with PIN or password, age limits
+  enforced on the server, readers' requests awaiting the admin, shared-device
+  sign-out, notifications per profile.
+- *Operations:* one JSON log line per event carrying the request id (also
+  returned as `X-Request-Id`); `/healthz` with the build and the catalog's
+  state; start-up refusals in one plain line; backups of `/config` restore
+  everything but files; the container runs read-only with every capability
+  dropped, under memory and pid limits.
+
+**Proven for this release** (`docs/RELEASE_TRACK.md`, Gates 1–4): a clean
+and a repeated intake of a real 2,820-file library; restarts, outages and
+bad downloads in the fulfillment drill, with qBittorrent run end to end
+against a real client; clean install, upgrade from a schema-28 build and
+rollback in the install drill; performance on the real library on a NAS
+volume; a security review of the household model; WCAG 2.2 AA audit of
+every screen at four widths.
+
+**Found and fixed while proving it** (so you do not meet them): a
+qBittorrent that did not have the `comics` category, or runs in manual
+torrent management, saved packs where Flipparr never looked -- the grab now
+makes the category and adds torrents under automatic management; a clean
+scan on a NAS volume took ten minutes for want of a kept database connection
+(now under twenty seconds); a newer catalog opened by an older build came up
+"healthy" with every page a 500 (now refused before a byte is touched).
 
 **Known limitations** are listed in [OPERATING.md](OPERATING.md#6-known-limitations).
-The one worth reading before you start: GCD's anonymous tier allows roughly
-25 series an hour, so a large library wants a Metron token.
+The ones worth reading before you start: GCD's anonymous tier allows roughly
+25 series an hour, so a large library wants a Metron token; the whole
+catalog is one answer to the browser, fine to about 10,000 files; collected
+editions have weaker metadata and are never acquired automatically.

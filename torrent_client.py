@@ -423,6 +423,12 @@ class QBittorrent:
             field("urls", magnet)
         if category:
             field("category", category)
+            # Managed by its category, so it saves in the category's folder --
+            # the one Flipparr reads. A client whose default mode is manual
+            # (qBittorrent's own default) otherwise puts it in the default
+            # save folder, category or not, where it is never seen. Found
+            # against a fresh client on 2026-10-06.
+            field("autoTMM", "true")
         if tags:
             field("tags", ",".join(tags))
         field("contentLayout", "Subfolder")

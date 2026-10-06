@@ -131,7 +131,7 @@ release-ready until its gates pass.
 
 ## Delivery gates
 
-Status as of 2026-10-03, for the `Dockerfile` image.
+Status as of 2026-10-06, for the `Dockerfile` image: Gates 1–4 passed; the `v0.1.0` tag is next.
 
 ### Gate 1 — Release foundation
 
@@ -303,7 +303,44 @@ visual harness does. Unmeasured: a screen reader's reading of each page
 (axe checks names, roles and landmarks, not the experience); the reader's
 page view under 200% zoom beyond what 320px stands in for.
 
-Open: operations; documentation. From Gate 3: qBittorrent end to end.
+**qBittorrent end to end (2026-10-06):** the fulfillment drill gained a
+fake qBittorrent and five torrent scenarios -- a run mostly missing takes a
+pack, only the wanted issues' files are fetched and the rest of the run rides
+along; a hard kill mid-download; the pack lands and every issue is imported
+while the torrent seeds on; the client stops it and Flipparr removes it with
+its files; a refused password is held and named -- and ran them against a
+**real qBittorrent 5.2.3** (a throwaway container on the NAS, no trackers
+or peers, a web seed the drill serves) as well as the fake in CI. The real
+client found two faults the fake had hidden, both putting the pack where
+Flipparr never looked: the `comics` category was only ever created by
+Settings → Test, and a torrent follows its category's folder only under
+automatic management, which a fresh client does not default to. The grab
+now creates the category and adds under `autoTMM`; the fake behaves as the
+client does; 5 of 5 held on the re-run
+([FULFILLMENT_PROOFS.md](FULFILLMENT_PROOFS.md), "qBittorrent, end to
+end"; evidence in `~/flipparr-intake/drill-qbt-real-20261006/` on the NAS).
+Still unmeasured: a torrent from a real indexer through a real swarm, which
+needs the owner's client and a release he wants.
+
+**Operations and documentation (2026-10-06):** checked against the
+definition of done above. Start-up refuses a config folder it cannot write
+and a catalog it cannot open, naming the user it runs as; the first-run
+folder check, Settings → Test and the per-service `_folder` trouble cover
+the library, SABnzbd and torrents mounts; every log line carries the
+request id, returned as `X-Request-Id`; `/healthz` reports build and
+catalog; diagnostics are support-safe. `README.md` rewritten as the public
+front page (what it is, what it needs, how to run and develop it; the
+pre-product scanner prose removed); `docs/RELEASE.md` carries the 0.1.0
+release notes with the schema, rollback and found-and-fixed lines;
+`OPERATING.md` gained the torrent-management note and its troubleshooting
+entry. Setup, providers, import, backup/restore, upgrade/rollback,
+troubleshooting, known limitations, privacy and security each have their
+document.
+
+**Gate 4 is complete** as of 2026-10-06, pending the `v0.1.0` tag, which
+publishes `ghcr.io/silenttoots/flipparr:0.1.0` from CI and is the owner's to
+push. After the tag: verify the published image with the install drill
+(RELEASE.md, step 6) and make the package public.
 
 ## Carried-forward findings
 

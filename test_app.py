@@ -9397,6 +9397,13 @@ class FakeQbittorrent:
         self.added.append(kwargs)
         return []
 
+    def default_save_path(self):
+        return "/data/torrents/complete/"
+
+    def ensure_category(self, name, save_path=""):
+        self.categories_made = getattr(self, "categories_made", []) + [(name, save_path)]
+        return save_path
+
 
 class TorrentAcquisitionTests(unittest.TestCase):
     """qBittorrent beside SABnzbd: torrents for manga and for whole runs as
@@ -9744,6 +9751,11 @@ class TorrentAcquisitionTests(unittest.TestCase):
         added = fake.added[0]
         self.assertEqual((added["category"], added["tags"], added["wait_for_files"], added["torrent"]),
                          ("comics", ["flipparr", "job-12"], True, TORRENT))
+        # The category is made before the torrent is added, beside the
+        # client's own folder -- not only when Settings' Test is pressed. A
+        # real client without it saved the pack in its default folder and
+        # every issue waited for files that never came (2026-10-06).
+        self.assertEqual(fake.categories_made, [("comics", "/data/torrents/complete/comics")])
         store.record_acquisition_download.assert_called_once_with(
             12, f"torrent:{HASH}:12", "The Woods #1 - 36 (2014-2018)", "key-1", source="qbittorrent")
         self.assertEqual(store.update_acquisition_job.call_args.args, (12, "grabbed", "Sent to qBittorrent: The Woods #1 - 36 (2014-2018)"))
@@ -9756,6 +9768,7 @@ class TorrentAcquisitionTests(unittest.TestCase):
         _result, store, fetch = self.grab(fake)
         fetch.assert_not_called()
         self.assertEqual(fake.added, [])
+        self.assertFalse(hasattr(fake, "categories_made"), "a torrent joined, not added, asks nothing of categories")
         self.assertIn("job-12", app.torrent_client.tags_of(fake.torrents[self.HASH]))
         self.assertEqual(store.record_acquisition_download.call_args.args[1], f"torrent:{self.HASH}:12")
 

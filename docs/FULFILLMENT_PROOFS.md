@@ -12,10 +12,10 @@ this image. This is the evidence for Gate 3 in
   `test_torrent_client.py`, `test_http_contract.py`), run in CI on every push
   and inside the release image on the NAS before every deploy.
 - **The drill** (`tools/fulfillment_drill.py`) starts the real server as its
-  own process, beside fake SABnzbd and Prowlarr, in a scratch folder in a
-  throwaway container with no network, and puts it through the scenarios
-  below, including a `SIGKILL`. It touches no library and no real download
-  client:
+  own process, beside fake SABnzbd, Prowlarr and qBittorrent, in a scratch
+  folder in a throwaway container with no network, and puts it through the
+  scenarios below, including a `SIGKILL`. It touches no library and no real
+  download client:
 
   ```
   docker run --rm --network none --read-only --tmpfs /tmp:size=512m \
@@ -95,6 +95,51 @@ Flipparr without it:
   (`test_a_finished_download_flipparr_cannot_see_is_a_folder_in_trouble`);
 - a torrent saved outside the category's folder waits and says where
   (`test_a_torrent_saved_outside_the_comics_folder_waits_and_says_where`).
+
+## qBittorrent, end to end
+
+Added for Gate 4 (2026-10-06). The drill has a fake qBittorrent as well --
+the Web API as `torrent_client.py` speaks it -- and five torrent scenarios,
+which it runs against the fake in CI and ran once against a **real
+qBittorrent** (5.2.3, WebAPI 2.15.1, the same as the owner's): a throwaway
+`linuxserver/qbittorrent` container on the NAS with a generated password,
+on a network of its own with no trackers, DHT or peers, fed by a web seed
+the drill serves itself; nothing of the owner's was touched.
+
+```
+python3 -B tools/fulfillment_drill.py --out /out --only-torrents \
+  --qbittorrent http://qbt-drill:8080 --qbittorrent-user drill --qbittorrent-password … \
+  --torrents /drill/torrents --web-seed http://flipparr-drill:18080/seed/
+```
+
+| Scenario | What must hold | Proof |
+|---|---|---|
+| A run mostly missing, offered a pack torrent | Taken through qBittorrent by the run's search, added stopped, tagged `flipparr`/`job-N`; when its file list is known only the wanted issues' files are set to download (the owned #1 at priority 0), every other wanted issue of the run gets its own row on the same torrent, the torrent is tagged `flipparr-selected` and started, and it saves into the `comics` category's folder | drill: *torrent pack: only the wanted issues are fetched*; `test_a_torrent_is_added_to_wait_for_its_file_list_and_recorded_by_hash`, `test_only_the_wanted_issues_are_fetched_and_the_others_ride_along` |
+| Hard kill while it downloads | The same torrent is kept, not added again; the rows survive | drill: *torrent: killed while it downloads* |
+| The chosen files land | Each issue imported from the torrent's folder and fulfilled; the owned issue not imported again; the torrent left seeding, nothing deleted | drill: *torrent: the pack lands and every issue is imported*; `test_a_finished_file_is_imported_from_the_torrents_folder`, `test_a_torrent_seeds_on_after_import_and_is_not_swept_for_other_issues` |
+| The client stops the torrent at its share limit | The hourly sweep (also at start) removes the torrent and its files; the library's copies stay | drill: *torrent: seeding done, the torrent is released*; `test_the_client_stops_a_torrent_at_its_limit_and_then_it_goes` |
+| The password is refused | Asked once, held, named on Settings → System; the issue stays grabbed | drill: *torrent: qBittorrent refuses the password* (fake only: a real client's ban would outlive the drill) |
+
+**What the real client found that the fake could not** -- two things, both
+of which put the pack in the client's default folder, where Flipparr never
+looks, so all seven issues waited for files that would not appear (the
+per-row guard said exactly that, which is how it was seen):
+
+1. The `comics` category was created only by Settings → Test; a grab
+   against a client without it added the torrent to a category the client
+   did not know. The grab now makes the category, beside the client's
+   default folder, before adding (`send_release_to_qbittorrent`).
+2. With the category there and its folder right, qBittorrent still saved
+   the torrent in its default folder: a torrent follows its category's
+   folder only under *automatic torrent management*, and a fresh client's
+   default mode is manual. Flipparr's torrents are now added with
+   `autoTMM=true` (`torrent_client.add_torrent`;
+   `test_a_torrent_file_is_uploaded_in_a_folder_of_its_own_with_its_category_and_tags`).
+   The owner's client had the mode on, which is why production never
+   showed it.
+
+The fake now behaves as the real client does on both counts, so the CI
+drill would catch either regression.
 
 ## Intended, and why
 

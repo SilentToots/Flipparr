@@ -5904,8 +5904,17 @@ def send_release_to_qbittorrent(job_id: int, candidate_id: str, *, anyway: bool 
                     f"qBittorrent {client.version()} would download the whole pack; "
                     "4.5.5 or later downloads only the issues wanted"
                 )
+            category = str(config.get("category") or "comics")
+            # The category and its folder, made here as well as by Settings'
+            # Test: a category qBittorrent does not know saves the torrent in
+            # its default folder, where Flipparr never looks, and every issue
+            # of the pack then waits for files that will not appear. Found
+            # against a real client (Gate 4, 2026-10-06); the fake had always
+            # known the category.
+            default = client.default_save_path().rstrip("/")
+            client.ensure_category(category, f"{default}/{category}" if default else "")
             client.add_torrent(
-                torrent=torrent, magnet=magnet, category=str(config.get("category") or "comics"),
+                torrent=torrent, magnet=magnet, category=category,
                 tags=tags, name=title, wait_for_files=selective,
             )
     except torrent_client.TorrentClientError as exc:
