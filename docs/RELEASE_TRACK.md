@@ -131,7 +131,7 @@ release-ready until its gates pass.
 
 ## Delivery gates
 
-Status as of 2026-10-06, for the `Dockerfile` image: Gates 1–4 passed; the `v0.1.0` tag is next.
+Status as of 2026-10-06: Gates 1–4 passed; `v0.1.0` published as `ghcr.io/silenttoots/flipparr:0.1.0` and running in production.
 
 ### Gate 1 — Release foundation
 
@@ -337,10 +337,18 @@ entry. Setup, providers, import, backup/restore, upgrade/rollback,
 troubleshooting, known limitations, privacy and security each have their
 document.
 
-**Gate 4 is complete** as of 2026-10-06, pending the `v0.1.0` tag, which
-publishes `ghcr.io/silenttoots/flipparr:0.1.0` from CI and is the owner's to
-push. After the tag: verify the published image with the install drill
-(RELEASE.md, step 6) and make the package public.
+**Gate 4 is complete, and 0.1.0 is released (2026-10-06).** The tag's
+first CI run, on d0f040d6, failed the drill's seeding scenario on the fresh
+runner and published nothing: the hourly sweeps' clock started at 0.0, and
+`time.monotonic()` counts from boot, so on a machine up less than an hour
+(a CI runner; a NAS just restarted) the first seeded-torrent and
+kept-download sweep waited an hour. Fixed with a test (d3067de3), the tag
+moved to it, and CI published `ghcr.io/silenttoots/flipparr:0.1.0` and
+`:latest` (digest `sha256:48e40e49…`, stamped d3067de3). The published
+image, pulled on the NAS once the owner made the package and the repository
+public: smoke import ok, SQLite 3.53.4, install drill 5 of 5 against it
+(evidence `~/flipparr-intake/install-drill-0.1.0/`), and production now runs
+that exact image (`/healthz`: `0.1.0`, build d3067de3, catalog ok).
 
 ## Carried-forward findings
 
