@@ -336,7 +336,14 @@ class FailureClasses(unittest.TestCase):
         self.assertTrue(result["segmented"], "five framed panels on black are a layout")
         self.assertEqual(len(result["panels"]), 5)
 
+    @unittest.expectedFailure
     def test_a_solid_strip_at_a_panels_foot_is_not_a_panel(self):
+        # Open again (2026-10-06 evening). Leaving the band out of every
+        # panel held on the benchmark (exact 25 -> 27) and broke production:
+        # the vision path refuses an answer that leaves a tenth of the ink
+        # uncovered, and on dark pages the bands are that ink -- pages with
+        # plain layouts fell to quadrants. Whatever absorbs a band has to
+        # keep it covered; see the test below.
         # Once & Future #5 p5: white gutters, dark art, and a solid black band
         # at the foot of a panel -- the leftover pass read the band as a
         # panel of its own because it is dense with "ink". Solid fill has no
@@ -354,6 +361,22 @@ class FailureClasses(unittest.TestCase):
         grown = add_leftover_panels(page_mask(image), panels)
         self.assertEqual(len(grown), 4, "the band is left alone, not made a panel of")
         self.assertEqual(grown[0], panels[0], "and the panel is not grown over it: a band under two panels grew one over the other")
+
+    def test_the_leftover_pass_never_leaves_a_solid_band_uncovered(self):
+        """The vision path refuses an answer with a tenth of the ink outside
+        every panel (INK_UNCOVERED_MAX), so a leftover pass that leaves a
+        dark band out of every panel turns a plain page into quadrants.
+        Held against the production regression of 2026-10-06."""
+        image, draw = _page()
+        grid = _grid(draw, 2, 2)
+        x0, y0, x1, y1 = grid[0]
+        draw.rectangle((x0, y1 - 60, x1, y1), fill="black")
+        width, height = image.size
+        panels = [{"x": bx0 / width, "y": by0 / height, "w": (bx1 - bx0) / width, "h": (by1 - by0) / height}
+                  for bx0, by0, bx1, by1 in grid]
+        panels[0]["h"] = (y1 - 60 - y0) / height
+        mask = page_mask(image)
+        self.assertLessEqual(ink_outside(mask, add_leftover_panels(mask, panels)), INK_UNCOVERED_MAX)
 
     @unittest.expectedFailure
     def test_an_inset_is_kept_as_its_own_panel(self):
