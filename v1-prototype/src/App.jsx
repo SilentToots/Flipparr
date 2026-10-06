@@ -5467,6 +5467,51 @@ function settingsSectionsFor(viewer) {
 
 // One block of a settings section, as a titled card; `action` sits at the
 // title's end.
+// The pages a person fixed by hand, as a file: out of this Flipparr and into
+// another, or back into this one after a loss. Each fix is keyed to the
+// page's own fingerprint, so it finds its page again under another file.
+function PanelFixesCard() {
+  const [summary, setSummary] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => apiRequest("/api/v1/panels/fixes").then(setSummary).catch(() => setSummary(null)), []);
+  useEffect(() => { load(); }, [load]);
+  async function importFile(file) {
+    if (!file) return;
+    setBusy(true); setError(""); setResult(null);
+    try {
+      const payload = JSON.parse(await file.text());
+      const outcome = await apiRequest("/api/v1/panels/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      setResult(outcome);
+      await load();
+    } catch (problem) {
+      setError(problem instanceof SyntaxError ? "That file is not JSON." : problem.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const pages = summary?.pages ?? 0;
+  return <div className="panel-fixes">
+    <p className="settings-card-lead">
+      {summary === null ? "Your panel fixes." : pages
+        ? `You have fixed ${pages} page${pages === 1 ? "" : "s"} in ${summary.comics} comic${summary.comics === 1 ? "" : "s"} by hand.`
+        : "No pages fixed by hand yet."}
+      {summary?.waitingForPages ? ` ${summary.waitingForPages} imported fix${summary.waitingForPages === 1 ? "" : "es"} are waiting for their pages to be read.` : ""}
+      {" "}Each fix is kept against the page itself, so it follows the page to a replaced file or another Flipparr. Export them as a file to keep; import a file to bring them back.
+    </p>
+    <div className="settings-card-actions">
+      <a className="ghost-button" href="/api/v1/panels/export" download>Export panel fixes</a>
+      <label className={`ghost-button file-button${busy ? " busy" : ""}`}>
+        <input type="file" accept=".json,application/json" disabled={busy} onChange={(event) => { const [file] = event.target.files || []; event.target.value = ""; importFile(file); }} />
+        {busy ? <LoadingSpinner size={16} /> : null}{busy ? "Importing…" : "Import panel fixes"}
+      </label>
+      {result ? <small role="status">{result.attached} attached, {result.waiting} waiting for pages, {result.alreadyFixed} already fixed here{result.unusable ? `, ${result.unusable} unusable` : ""}.</small> : null}
+      {error ? <small role="alert">{error}</small> : null}
+    </div>
+  </div>;
+}
+
 function SettingsCard({ title, action, className = "", children }) {
   return <section className={`settings-card ${className}`.trim()}>
     <header><h3>{title}</h3>{action}</header>
@@ -7152,6 +7197,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         {current === "reader" ? <>
           <SettingsCard title="Panel view">
             <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice follows your profile to any device. The rest of the page dims around the panel being read, which the same settings can turn off.{admin ? <> Flipparr finds the panels itself, and a page it gets wrong can be fixed by hand from the same settings &mdash; drawn, moved and numbered over the page &mdash; and stays as you left it.</> : null}</p>
+            {admin ? <PanelFixesCard /> : null}
           </SettingsCard>
           {/* Claude and ChatGPT are filed here, not under Metadata sources:
               they contribute nothing to what a comic is, only to how a hard

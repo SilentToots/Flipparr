@@ -7006,9 +7006,40 @@ class PagePanelTests(unittest.TestCase):
              patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
              patch("app._file_signature", return_value="sig"), \
              patch.object(Path, "is_file", return_value=True), \
-             patch("app.render_file_page", return_value=png or self._page_png()) as render:
+             patch("app.render_file_page", return_value=png or self._page_png()) as render, \
+             patch("app.page_hashes", return_value=("h" * 64, "0f0f0f0f0f0f0f0f")):
             store.manual_page_panels_near.return_value = []
+            store.manual_panels_by_hash.return_value = None
             return app.file_page_panels(7, index), store, render
+
+    def test_a_new_reading_is_kept_with_its_pages_fingerprint(self):
+        _result, store, _render = self._ask()
+        kwargs = store.set_page_panels.call_args.kwargs
+        self.assertEqual((kwargs["page_hash"], kwargs["page_dhash"]), ("h" * 64, "0f0f0f0f0f0f0f0f"))
+
+    def test_a_persons_fix_of_the_same_page_elsewhere_is_this_pages_answer(self):
+        """The page was fixed on the file this one replaced, or imported before
+        its file arrived: found by its fingerprint, it becomes this page's,
+        and the tiers are not asked."""
+        from pathlib import Path
+        hand = [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 0}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 1}]
+        store = Mock()
+        store.library_file_path.return_value = Path("/library/x.cbz")
+        store.page_panels.return_value = None
+        store.file_reading_direction.return_value = "ltr"
+        store.manual_panels_by_hash.return_value = {"fileId": 3, "member": "old.jpg", "panels": hand, "pageHash": "h" * 64,
+                                                    "pageDHash": "0f0f0f0f0f0f0f0f", "fixedBy": 1, "where": "history", "historyId": 9}
+        with patch("app.catalog_store", return_value=store), patch("app.archive_kind", return_value="zip"), \
+             patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), patch("app._file_signature", return_value="sig"), \
+             patch.object(Path, "is_file", return_value=True), patch("app.render_file_page", return_value=self._page_png()), \
+             patch("app.page_hashes", return_value=("h" * 64, "0f0f0f0f0f0f0f0f")), \
+             patch("app.panel_finder.detect_panels") as detect, patch("app.log_event"):
+            result = app.file_page_panels(7, 1)
+        detect.assert_not_called()
+        self.assertEqual((result["source"], len(result["panels"])), ("manual", 2))
+        store.set_page_panels.assert_called_once_with(7, "b.jpg", "sig", "manual", hand, True, page_hash="h" * 64,
+                                                      page_dhash="0f0f0f0f0f0f0f0f", fixed_by=1)
+        store.panels_attached_from_history.assert_called_once_with(9)
 
     def test_the_first_look_reads_the_render_and_keeps_what_it_found(self):
         result, store, render = self._ask()
@@ -7068,9 +7099,16 @@ class ManualPanelTests(unittest.TestCase):
              patch("app.cached_page_members", return_value=["a.jpg", "b.jpg"]), \
              patch("app._file_signature", return_value="sig"), \
              patch.object(Path, "is_file", return_value=True), \
+             patch("app.render_file_page", return_value=b""), patch("PIL.Image.open"), \
+             patch("app.page_hashes", return_value=("h" * 64, "0f0f0f0f0f0f0f0f")), \
              patch("app.file_page_panels", return_value={"ok": True}) as answer:
-            result = app.save_page_panels(7, index, payload)
+            result = app.save_page_panels(7, index, payload, fixed_by=2)
         return result, store, answer
+
+    def test_a_fix_is_kept_with_its_pages_fingerprint_and_its_author(self):
+        _result, store, _answer = self._saving({"panels": [{"x": 0, "y": 0, "w": 1, "h": 1}]})
+        kwargs = store.set_page_panels.call_args.kwargs
+        self.assertEqual((kwargs["page_hash"], kwargs["page_dhash"], kwargs["fixed_by"]), ("h" * 64, "0f0f0f0f0f0f0f0f", 2))
 
     def test_rectangles_are_kept_as_manual_in_the_order_sent(self):
         result, store, answer = self._saving({"panels": [
@@ -7130,6 +7168,68 @@ class ManualPanelTests(unittest.TestCase):
             self.assertEqual(app.forget_page_panels(7, 0), {"fresh": True})
         store.delete_page_panels.assert_called_once_with(7, "a.jpg")
         answer.assert_called_once_with(7, 0)
+
+
+class PanelFixesFileTests(unittest.TestCase):
+    """A person's panel fixes as a file: out of this Flipparr, into another,
+    each attached to its page again by the page's fingerprint."""
+
+    HAND = [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 0}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 1}]
+
+    def _store(self, rows):
+        store = Mock()
+        store.manual_panel_rows.return_value = rows
+        store.detached_manual_panels_count.return_value = 0
+        return store
+
+    def test_the_export_carries_every_fix_with_its_fingerprint_working_out_the_missing_ones(self):
+        from pathlib import Path
+        rows = [
+            {"fileId": 3, "member": "p2.jpg", "panels": list(reversed(self.HAND)), "fixedAt": "2026-10-01T00:00:00+00:00",
+             "pageHash": "a" * 64, "pageDHash": "1111111111111111", "fixedBy": 1, "filename": "X 001.cbz", "present": True,
+             "seriesTitle": "X", "seriesRunId": 7},
+            {"fileId": 4, "member": "p5.jpg", "panels": self.HAND, "fixedAt": "2026-10-02T00:00:00+00:00",
+             "pageHash": None, "pageDHash": None, "fixedBy": None, "filename": "X 002.cbz", "present": True,
+             "seriesTitle": "X", "seriesRunId": 7},
+        ]
+        store = self._store(rows)
+        store.library_file_path.return_value = Path("/library/X 002.cbz")
+        with patch("app.cached_page_members", return_value=["p1.jpg", "p5.jpg"]), \
+             patch("app.render_file_page", return_value=b""), \
+             patch("app.page_hashes", return_value=("b" * 64, "2222222222222222")), patch("PIL.Image.open"):
+            body, filename = app.export_panel_fixes(store, 7)
+        payload = json.loads(body)
+        self.assertEqual(filename, "Flipparr panel fixes - X.json")
+        self.assertEqual(payload["format"], app.PANEL_FIXES_FORMAT)
+        self.assertEqual([page["pageHash"] for page in payload["pages"]], ["a" * 64, "b" * 64])
+        self.assertEqual([panel["order"] for panel in payload["pages"][0]["panels"]], [0, 1], "in reading order")
+        store.set_page_hashes.assert_called_once_with(4, "p5.jpg", "b" * 64, "2222222222222222")
+
+    def test_an_import_attaches_what_it_can_and_keeps_the_rest_waiting(self):
+        from pathlib import Path
+        store = self._store([])
+        store.keep_detached_panels.return_value = 1
+        store.present_file_ids_named.side_effect = lambda name: [9] if name == "X 001.cbz" else []
+        store.library_file_path.return_value = Path("/library/X 001.cbz")
+        store.page_panels.return_value = None
+        payload = {"format": app.PANEL_FIXES_FORMAT, "pages": [
+            {"series": "X", "file": "X 001.cbz", "page": "p2.jpg", "pageHash": "a" * 64, "pageDHash": "1111111111111111", "panels": self.HAND, "fixedBy": 1},
+            {"series": "X", "file": "X 009.cbz", "page": "p1.jpg", "pageHash": "c" * 64, "pageDHash": "3333333333333333", "panels": self.HAND},
+            {"series": "X", "file": "X 010.cbz", "page": "p1.jpg", "panels": self.HAND},
+            {"file": "X 011.cbz", "page": "p1.jpg", "pageHash": "d" * 64, "panels": [{"x": 0, "y": 0, "w": 0.001, "h": 1}]},
+        ]}
+        with patch("app.cached_page_members", return_value=["p1.jpg", "p2.jpg"]), patch("app.render_file_page", return_value=b""), \
+             patch("app.page_hashes", return_value=("zz", "1111111111111113")), patch("app._file_signature", return_value="sig"), \
+             patch("PIL.Image.open"), patch("app.log_event"):
+            result = app.import_panel_fixes(store, payload, fixed_by=2)
+        self.assertEqual((result["attached"], result["waiting"], result["unusable"]), (1, 1, 2), "no fingerprint and a sliver are unusable")
+        store.set_page_panels.assert_called_once_with(9, "p2.jpg", "sig", "manual", self.HAND, True, page_hash="zz",
+                                                      page_dhash="1111111111111113", fixed_by=1)
+        waiting = store.keep_detached_panels.call_args.args[0]
+        self.assertEqual([entry["pageHash"] for entry in waiting], ["c" * 64])
+        self.assertEqual(waiting[0]["fixedBy"], 2, "an import with no author is the importer's")
+        with self.assertRaisesRegex(ValueError, "not a Flipparr panel-fixes file"):
+            app.import_panel_fixes(store, {"pages": []})
 
 
 class VisionConnectorTests(unittest.TestCase):

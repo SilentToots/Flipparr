@@ -1300,6 +1300,10 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .settings-card-lead { max-width: 72ch; margin: 0 0 var(--space-12); color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
 .settings-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-12); margin-top: var(--space-16); }
 .settings-card-actions small { color: var(--muted-weak); font-size: var(--text-sm); }
+/* A file picker that reads as a button: the input is hidden, the label is the control. */
+.file-button { position: relative; cursor: pointer; }
+.file-button input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.file-button.busy { opacity: var(--button-disabled-opacity); pointer-events: none; }
 .settings-card .form-field { margin-bottom: 0; }
 .settings-library-size { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 .settings-library-size strong { color: var(--text); font-weight: var(--weight-semibold); }

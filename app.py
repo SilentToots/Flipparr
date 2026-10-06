@@ -14263,6 +14263,31 @@ def vision_budget_allows(viewer_id: int) -> bool:
         return True
 
 
+def page_hashes(path: Path, member: str, image: Any) -> tuple[str, str]:
+    """A page's fingerprint: its bytes hashed, and the difference hash of its
+    render -- what a reader's fix is keyed to besides the file it was made
+    on, so the fix follows the page to another file or another Flipparr."""
+    digest = hashlib.sha256(read_archive_member(path, member)).hexdigest()
+    return digest, panel_finder.page_dhash(image)
+
+
+def _reattach_manual_panels(store: Any, file_id: int, member: str, signature: str, page_hash: str,
+                            page_dhash: str) -> dict[str, Any] | None:
+    """A person's fix of this same page made elsewhere -- on the file this
+    one replaced, on a run removed and added back, in an import waiting for
+    its pages -- becomes this page's, with a note of where it came from."""
+    found = store.manual_panels_by_hash(page_hash, page_dhash, near=panel_finder.DHASH_NEAR, exclude_file=file_id)
+    if not found:
+        return None
+    store.set_page_panels(file_id, member, signature, "manual", found["panels"], True,
+                          page_hash=page_hash, page_dhash=page_dhash, fixed_by=found.get("fixedBy"))
+    if found.get("historyId"):
+        store.panels_attached_from_history(int(found["historyId"]))
+    log_event("panel_fix_reattached", file_id=file_id, page=member[-40:], source=found["where"],
+              from_file=found.get("fileId"), by_bytes=found.get("pageHash") == page_hash)
+    return {"source": "manual", "segmented": True, "panels": found["panels"]}
+
+
 def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     from PIL import Image
 
@@ -14295,11 +14320,28 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
         or (record["source"] in ("auto", "model") and vision
             and (every or not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
     )
+    hashes: tuple[str, str] | None = None
     if record is None or stale or upgrade:
         # A reader's own fixes to this comic go with the question, when a
         # model is asked: the way this artist cuts a page, shown not told.
         examples = vision_examples(file_id, store) if vision else []
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
+            # The page's fingerprint, before anything is read off it: a fix
+            # of this same page made elsewhere -- on the file this one
+            # replaced, in an import -- is this page's answer.
+            try:
+                hashes = page_hashes(path, member, image)
+            except Exception as exc:  # noqa: BLE001 -- a page is read with or without its fingerprint
+                log_exception("page_hash_failed", exc, level="warning")
+            if hashes and record is None:
+                reattached = _reattach_manual_panels(store, file_id, member, signature, *hashes)
+                if reattached is not None:
+                    ordered = panel_finder.order_panels(reattached["panels"], direction)
+                    return {
+                        "fileId": str(file_id), "page": index, "source": "manual", "segmented": True,
+                        "readingDirection": direction,
+                        "panels": [{"id": f"{index}-{position}", **panel} for position, panel in enumerate(ordered)],
+                    }
             spread = panel_finder.is_spread(*image.size)
             if spread:
                 found = None
@@ -14332,7 +14374,8 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
                 for half, detail in zip(halves, details)
             ]
             found = panel_finder.combine_halves(readings, direction)
-        store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"])
+        store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"],
+                              page_hash=hashes[0] if hashes else None, page_dhash=hashes[1] if hashes else None)
         record = {"source": found["source"], "segmented": found["segmented"], "panels": found["panels"]}
     ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []
     return {
@@ -14396,7 +14439,7 @@ PANEL_MIN_SIDE = 0.02
 PANELS_MAX = 64
 
 
-def save_page_panels(file_id: int, index: int, payload: Any) -> dict[str, Any]:
+def save_page_panels(file_id: int, index: int, payload: Any, *, fixed_by: int | None = None) -> dict[str, Any]:
     """Keep a person's panels for one page, in the order given, and answer as the reader asks.
 
     Rectangles are normalised (0-1) and are checked to be on the page and no
@@ -14408,7 +14451,118 @@ def save_page_panels(file_id: int, index: int, payload: Any) -> dict[str, Any]:
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("panels"), list):
         raise ValueError("Send the page's panels as a list")
-    raw = payload["panels"]
+    # In the order sent: the editor's order is the reading order.
+    panels = _checked_panels([{**item, "order": position} if isinstance(item, dict) else item
+                              for position, item in enumerate(payload["panels"])])
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    if not 0 <= index < len(pages):
+        raise LookupError("That page is not in this comic")
+    from PIL import Image
+
+    hashes: tuple[str, str] | None = None
+    try:
+        with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
+            hashes = page_hashes(path, pages[index], image)
+    except Exception as exc:  # noqa: BLE001 -- a fix is kept with or without its page's fingerprint
+        log_exception("page_hash_failed", exc, level="warning")
+    store.set_page_panels(file_id, pages[index], _file_signature(path), "manual", panels, True,
+                          page_hash=hashes[0] if hashes else None, page_dhash=hashes[1] if hashes else None,
+                          fixed_by=fixed_by)
+    return file_page_panels(file_id, index)
+
+
+# ---- A person's panel fixes, as a file ------------------------------------------
+
+PANEL_FIXES_FORMAT = "flipparr-panel-fixes/1"
+
+
+def panel_fixes_summary(store: Any) -> dict[str, Any]:
+    rows = store.manual_panel_rows()
+    return {"pages": len(rows), "comics": len({row["fileId"] for row in rows}),
+            "waitingForPages": store.detached_manual_panels_count()}
+
+
+def export_panel_fixes(store: Any, series_run_id: int | None = None) -> tuple[bytes, str]:
+    """Every page a person fixed by hand, as one JSON file: the boxes in
+    reading order and the page's fingerprint, so another Flipparr -- or
+    this one after a loss -- can attach each fix to its page again. Pages
+    fixed before fingerprinting have theirs worked out here, when the comic
+    is still on disk."""
+    from PIL import Image
+
+    pages = []
+    for row in store.manual_panel_rows(series_run_id):
+        page_hash, page_dhash = row["pageHash"], row["pageDHash"]
+        if not page_hash and row["present"]:
+            try:
+                path = store.library_file_path(row["fileId"])
+                index = cached_page_members(path).index(row["member"])
+                with Image.open(io.BytesIO(render_file_page(row["fileId"], index))) as image:
+                    page_hash, page_dhash = page_hashes(path, row["member"], image)
+                store.set_page_hashes(row["fileId"], row["member"], page_hash, page_dhash)
+            except (OSError, ValueError, KeyError, LookupError, zipfile.BadZipFile) as exc:
+                log_exception("page_hash_failed", exc, level="warning")
+        pages.append({
+            "series": row["seriesTitle"], "file": row["filename"], "page": row["member"],
+            "pageHash": page_hash, "pageDHash": page_dhash,
+            "panels": panel_finder.order_panels(row["panels"]),
+            "fixedAt": row["fixedAt"], "fixedBy": row["fixedBy"],
+        })
+    body = json.dumps({"format": PANEL_FIXES_FORMAT, "exportedAt": _utc_now_iso(),
+                       "build": APP_BUILD, "pages": pages}, indent=1).encode()
+    name = "Flipparr panel fixes"
+    if series_run_id is not None and pages:
+        name += f" - {pages[0]['series'] or series_run_id}"
+    return body, f"{name}.json"
+
+
+def import_panel_fixes(store: Any, payload: Any, *, fixed_by: int | None = None) -> dict[str, Any]:
+    """A panel-fixes file from this or another Flipparr. Each page's fix is
+    attached to the page it belongs to when that page is in the library
+    (by its fingerprint, the same file name first), and otherwise kept
+    waiting, to be attached when the page is read. A page already fixed
+    by hand here is left as it is."""
+    if not isinstance(payload, dict) or payload.get("format") != PANEL_FIXES_FORMAT or not isinstance(payload.get("pages"), list):
+        raise ValueError("That is not a Flipparr panel-fixes file")
+    attached = waiting = kept = unusable = 0
+    to_wait: list[dict[str, Any]] = []
+    by_name = {(row["filename"], row["member"]): row for row in store.manual_panel_rows()}
+    for entry in payload["pages"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("panels"), list) or not (entry.get("pageHash") or entry.get("pageDHash")):
+            unusable += 1
+            continue
+        try:
+            panels = _checked_panels(entry["panels"])
+        except ValueError:
+            unusable += 1
+            continue
+        if (entry.get("file"), entry.get("page")) in by_name:
+            kept += 1  # this page is already a person's here
+            continue
+        target = _file_for_imported_fix(store, entry)
+        if target is not None:
+            file_id, member, signature, page_hash, page_dhash = target
+            if store.page_panels(file_id, member) and store.page_panels(file_id, member)["source"] == "manual":
+                kept += 1
+                continue
+            store.set_page_panels(file_id, member, signature, "manual", panels, True,
+                                  page_hash=page_hash, page_dhash=page_dhash, fixed_by=entry.get("fixedBy") or fixed_by)
+            attached += 1
+        else:
+            to_wait.append({"member": entry.get("page"), "panels": panels, "pageHash": entry.get("pageHash"),
+                            "pageDHash": entry.get("pageDHash"), "fixedBy": entry.get("fixedBy") or fixed_by})
+    waiting = store.keep_detached_panels(to_wait)
+    log_event("panel_fixes_imported", attached=attached, waiting=waiting, kept=kept, unusable=unusable)
+    return {"attached": attached, "waiting": waiting, "alreadyFixed": kept, "unusable": unusable,
+            **panel_fixes_summary(store)}
+
+
+def _checked_panels(raw: list[Any]) -> list[dict[str, Any]]:
+    """Rectangles as the editor saves them: on the page, not slivers, in order."""
     if len(raw) > PANELS_MAX:
         raise ValueError(f"A page has at most {PANELS_MAX} panels")
     panels: list[dict[str, Any]] = []
@@ -14423,18 +14577,34 @@ def save_page_panels(file_id: int, index: int, payload: Any) -> dict[str, Any]:
             raise ValueError("A panel has to sit on the page")
         if w < PANEL_MIN_SIDE or h < PANEL_MIN_SIDE:
             raise ValueError("A panel that thin cannot be read")
-        panels.append({"x": round(x, 4), "y": round(y, 4), "w": round(min(w, 1.0 - x), 4), "h": round(min(h, 1.0 - y), 4), "order": position})
-    if not panels:
-        panels = [{**panel_finder.WHOLE_PAGE, "order": 0}]
-    store = catalog_store()
-    path = store.library_file_path(file_id)
-    if not path.is_file() or archive_kind(path) is None:
-        raise ValueError("Pages can only be read from comic archives")
-    pages = cached_page_members(path)
-    if not 0 <= index < len(pages):
-        raise LookupError("That page is not in this comic")
-    store.set_page_panels(file_id, pages[index], _file_signature(path), "manual", panels, True)
-    return file_page_panels(file_id, index)
+        order = item.get("order")
+        panels.append({"x": round(x, 4), "y": round(y, 4), "w": round(min(w, 1.0 - x), 4), "h": round(min(h, 1.0 - y), 4),
+                       "order": int(order) if isinstance(order, int) else position})
+    return panels or [{**panel_finder.WHOLE_PAGE, "order": 0}]
+
+
+def _file_for_imported_fix(store: Any, entry: dict[str, Any]) -> tuple[int, str, str, str, str] | None:
+    """The page an imported fix belongs to, when it is in the library: a
+    present file of the same name holding a page of the same name, whose
+    fingerprint agrees. Anything else waits for the page to be read."""
+    from PIL import Image
+
+    filename, member = str(entry.get("file") or ""), str(entry.get("page") or "")
+    if not filename or not member:
+        return None
+    for file_id in store.present_file_ids_named(filename):
+        try:
+            path = store.library_file_path(file_id)
+            index = cached_page_members(path).index(member)
+            with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
+                page_hash, page_dhash = page_hashes(path, member, image)
+        except (OSError, ValueError, KeyError, LookupError, zipfile.BadZipFile):
+            continue
+        same_bytes = entry.get("pageHash") and entry["pageHash"] == page_hash
+        same_look = entry.get("pageDHash") and panel_finder.dhash_distance(entry["pageDHash"], page_dhash) <= panel_finder.DHASH_NEAR
+        if same_bytes or same_look:
+            return file_id, member, _file_signature(path), page_hash, page_dhash
+    return None
 
 
 def forget_file_panels(file_id: int) -> dict[str, Any]:
@@ -18274,6 +18444,28 @@ class Handler(BaseHTTPRequestHandler):
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
             return
+        if parsed_url.path == "/api/v1/panels/fixes":
+            self.send_json(panel_fixes_summary(catalog_store()))
+            return
+        if parsed_url.path == "/api/v1/panels/export":
+            query = urllib.parse.parse_qs(parsed_url.query)
+            run = query.get("seriesRunId", [None])[0]
+            try:
+                body, filename = export_panel_fixes(catalog_store(), int(run) if run else None)
+            except ValueError:
+                self.send_json({"error": "seriesRunId is a number"}, 400)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition", "attachment; filename=\"{}\"; filename*=UTF-8''{}".format(
+                filename.encode("ascii", "ignore").decode().replace('"', ""), urllib.parse.quote(filename)))
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Vary", "Cookie")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+            return
         reading_list_export = re.fullmatch(r"/api/v1/reading-lists/(\d+)/export", parsed_url.path)
         if reading_list_export:
             fmt = (urllib.parse.parse_qs(parsed_url.query).get("format") or ["cbl"])[0]
@@ -18469,6 +18661,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json_body()
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
+            return
+        if parsed_url.path == "/api/v1/panels/import":
+            try:
+                self.send_json(import_panel_fixes(catalog_store(), payload, fixed_by=self._viewer_id()))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
             return
         if parsed_url.path == "/api/v1/auth/login":
             config = load_auth_config()
@@ -19779,7 +19977,8 @@ class Handler(BaseHTTPRequestHandler):
         page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
         if page_panels_match:
             try:
-                result = save_page_panels(int(page_panels_match.group(1)), int(page_panels_match.group(2)), payload)
+                result = save_page_panels(int(page_panels_match.group(1)), int(page_panels_match.group(2)), payload,
+                                          fixed_by=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 65
+SCHEMA_VERSION = 66
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1438,17 +1438,30 @@ class CatalogStore:
                     panels_json TEXT NOT NULL,
                     segmented INTEGER NOT NULL,
                     updated_at TEXT NOT NULL,
+                    -- The page itself (schema 66): the member's bytes hashed,
+                    -- and the difference hash of its render, so a reader's
+                    -- fix follows the page to another file, another release,
+                    -- another Flipparr. Who fixed it, for a person's row.
+                    page_hash TEXT,
+                    page_dhash TEXT,
+                    fixed_by INTEGER,
                     PRIMARY KEY (file_id, page_member)
                 );
+                -- (its hash index is made in the upgrade step below, once the
+                -- column is there on a library from before 66 as well)
                 -- What a page's panels were before they were replaced (schema
                 -- 65): the automatic reading a person corrected, the model's
                 -- answer a rescan overwrote. Until this table a correction
                 -- erased the reading it corrected, so nothing could say what
                 -- had been wrong, or how often. `replaced_by` is the source
-                -- that took its place; `reason` is "overwrite" or "forgotten".
+                -- that took its place; `reason` is "overwrite", "forgotten",
+                -- "file removed" or "imported". Since 66 a row outlives its
+                -- file (file_id goes NULL) so a person's fix survives a run's
+                -- removal and waits, by its page hashes, to be attached again;
+                -- an imported fix with no file yet waits here the same way.
                 CREATE TABLE IF NOT EXISTS page_panel_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
                     page_member TEXT NOT NULL,
                     file_signature TEXT NOT NULL,
                     source TEXT NOT NULL,
@@ -1456,7 +1469,10 @@ class CatalogStore:
                     segmented INTEGER NOT NULL,
                     recorded_at TEXT NOT NULL,
                     replaced_by TEXT,
-                    reason TEXT NOT NULL
+                    reason TEXT NOT NULL,
+                    page_hash TEXT,
+                    page_dhash TEXT,
+                    fixed_by INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS page_panel_history_page
                     ON page_panel_history(file_id, page_member, id);
@@ -2087,6 +2103,43 @@ class CatalogStore:
                     if _panels_cover(row["panels_json"]) < 0.75
                 ]
                 connection.executemany("DELETE FROM page_panels WHERE file_id=? AND page_member=?", short)
+            # 66: a page's fixes follow the page. Hash columns on the rows,
+            # and the history's file_id made nullable (a table rebuild: SQLite
+            # cannot change a column's constraint in place) so a fix survives
+            # its file's removal.
+            panel_columns = {row["name"] for row in connection.execute("PRAGMA table_info(page_panels)")}
+            for column in ("page_hash TEXT", "page_dhash TEXT", "fixed_by INTEGER"):
+                if column.split()[0] not in panel_columns:
+                    connection.execute(f"ALTER TABLE page_panels ADD COLUMN {column}")
+            connection.execute("CREATE INDEX IF NOT EXISTS page_panels_hash ON page_panels(page_hash)")
+            history_columns = {row["name"]: row for row in connection.execute("PRAGMA table_info(page_panel_history)")}
+            if history_columns and (history_columns["file_id"]["notnull"] or "page_hash" not in history_columns):
+                connection.execute("ALTER TABLE page_panel_history RENAME TO page_panel_history_v65")
+                connection.execute(
+                    """CREATE TABLE page_panel_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                        page_member TEXT NOT NULL,
+                        file_signature TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        panels_json TEXT NOT NULL,
+                        segmented INTEGER NOT NULL,
+                        recorded_at TEXT NOT NULL,
+                        replaced_by TEXT,
+                        reason TEXT NOT NULL,
+                        page_hash TEXT,
+                        page_dhash TEXT,
+                        fixed_by INTEGER
+                    )""")
+                connection.execute(
+                    """INSERT INTO page_panel_history(
+                           id, file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason)
+                       SELECT id, file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason
+                       FROM page_panel_history_v65""")
+                connection.execute("DROP TABLE page_panel_history_v65")
+                connection.execute("CREATE INDEX IF NOT EXISTS page_panel_history_page ON page_panel_history(file_id, page_member, id)")
+            # The hash index only once the column is there, on a rebuilt or a fresh table alike.
+            connection.execute("CREATE INDEX IF NOT EXISTS page_panel_history_hash ON page_panel_history(page_hash)")
             # 48: the place is kept to the panel as well as the page, so panel
             # view resumes on the panel it was left on, as Guided View does.
             progress_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reading_progress)")}
@@ -4639,8 +4692,9 @@ class CatalogStore:
         """Keep the rows `where` names in the history before they go or change."""
         connection.execute(
             f"""INSERT INTO page_panel_history(
-                    file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason)
-                SELECT file_id, page_member, file_signature, source, panels_json, segmented, ?, ?, ?
+                    file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason,
+                    page_hash, page_dhash, fixed_by)
+                SELECT file_id, page_member, file_signature, source, panels_json, segmented, ?, ?, ?, page_hash, page_dhash, fixed_by
                 FROM page_panels WHERE {where}""",
             (_utc_now(), replaced_by, reason, *args),
         )
@@ -4733,6 +4787,7 @@ class CatalogStore:
         return {
             "fileSignature": row["file_signature"], "source": row["source"],
             "segmented": bool(row["segmented"]), "panels": _load_json(row["panels_json"], []),
+            "pageHash": row["page_hash"], "pageDHash": row["page_dhash"], "fixedBy": row["fixed_by"],
             # The reading this one replaced, when one was kept: what the
             # machine said before a person fixed the page.
             "previous": previous[0] if previous else None,
@@ -4740,7 +4795,8 @@ class CatalogStore:
 
     def set_page_panels(
         self, file_id: int, member: str, file_signature: str, source: str,
-        panels: list[dict[str, Any]], segmented: bool,
+        panels: list[dict[str, Any]], segmented: bool, *,
+        page_hash: str | None = None, page_dhash: str | None = None, fixed_by: int | None = None,
     ) -> None:
         """Keep one page's panels. `source` says who found them, so an automatic
         reading can be redone when the file changes and a person's is left alone."""
@@ -4759,17 +4815,135 @@ class CatalogStore:
             ).fetchone()
             if current is not None and (current["source"] != source or current["panels_json"] != json.dumps(list(panels))):
                 self._archive_page_panels(connection, "file_id=? AND page_member=?", (int(file_id), member), source, "overwrite")
+            # The page's hashes are kept once known, whoever saves after.
             connection.execute(
                 """INSERT INTO page_panels(
-                       file_id, page_member, file_signature, source, panels_json, segmented, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                       file_id, page_member, file_signature, source, panels_json, segmented, updated_at,
+                       page_hash, page_dhash, fixed_by
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(file_id, page_member) DO UPDATE SET
                        file_signature=excluded.file_signature, source=excluded.source,
                        panels_json=excluded.panels_json, segmented=excluded.segmented,
-                       updated_at=excluded.updated_at""",
+                       updated_at=excluded.updated_at,
+                       page_hash=COALESCE(excluded.page_hash, page_panels.page_hash),
+                       page_dhash=COALESCE(excluded.page_dhash, page_panels.page_dhash),
+                       fixed_by=CASE WHEN excluded.source='manual' THEN excluded.fixed_by ELSE NULL END""",
                 (int(file_id), member, file_signature, source, json.dumps(list(panels)),
-                 1 if segmented else 0, _utc_now()),
+                 1 if segmented else 0, _utc_now(), page_hash, page_dhash,
+                 fixed_by if source == "manual" else None),
             )
+
+    def set_page_hashes(self, file_id: int, member: str, page_hash: str, page_dhash: str) -> None:
+        """The page's fingerprint, learnt after its row was kept."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE page_panels SET page_hash=?, page_dhash=? WHERE file_id=? AND page_member=?",
+                (page_hash, page_dhash, int(file_id), member),
+            )
+
+    def manual_panels_by_hash(self, page_hash: str | None, page_dhash: str | None, *,
+                              near: int = 6, exclude_file: int | None = None) -> dict[str, Any] | None:
+        """A person's fix of this same page, wherever it was made: a current
+        row on another file, or one waiting in the history -- detached when
+        its file was removed, or imported before its file arrived. The exact
+        bytes first; else the nearest render within `near` bits."""
+        from page_panels import dhash_distance  # noqa: PLC0415 -- the one place the store reads an image hash
+
+        with self._connect() as connection:
+            candidates = [
+                {"fileId": row["file_id"], "member": row["page_member"], "panels": _load_json(row["panels_json"], []),
+                 "pageHash": row["page_hash"], "pageDHash": row["page_dhash"], "fixedBy": row["fixed_by"],
+                 "fixedAt": row["updated_at"], "where": "current"}
+                for row in connection.execute(
+                    "SELECT * FROM page_panels WHERE source='manual' AND (page_hash IS NOT NULL OR page_dhash IS NOT NULL)")
+            ] + [
+                {"fileId": row["file_id"], "member": row["page_member"], "panels": _load_json(row["panels_json"], []),
+                 "pageHash": row["page_hash"], "pageDHash": row["page_dhash"], "fixedBy": row["fixed_by"],
+                 "fixedAt": row["recorded_at"], "where": "history", "historyId": int(row["id"])}
+                for row in connection.execute(
+                    """SELECT * FROM page_panel_history WHERE source='manual' AND reason IN ('file removed', 'imported')
+                       AND (page_hash IS NOT NULL OR page_dhash IS NOT NULL) ORDER BY id DESC""")
+            ]
+        candidates = [item for item in candidates if exclude_file is None or item["fileId"] != int(exclude_file)]
+        if page_hash:
+            exact = [item for item in candidates if item["pageHash"] == page_hash]
+            if exact:
+                return exact[0]
+        if page_dhash:
+            scored = sorted(
+                ((dhash_distance(item["pageDHash"], page_dhash), position, item) for position, item in enumerate(candidates)
+                 if item["pageDHash"]),
+            )
+            if scored and scored[0][0] <= near:
+                return scored[0][2]
+        return None
+
+    def keep_detached_panels(self, entries: list[dict[str, Any]], reason: str = "imported") -> int:
+        """A person's fixes with no file to sit on yet -- imported from
+        another Flipparr -- kept in the history by their page hashes, to be
+        attached when the pages are read. One copy per hash."""
+        kept = 0
+        with self._write_lock, self._connect() as connection:
+            for entry in entries:
+                page_hash, page_dhash = entry.get("pageHash"), entry.get("pageDHash")
+                if not page_hash and not page_dhash:
+                    continue
+                if connection.execute(
+                    """SELECT 1 FROM page_panel_history WHERE source='manual' AND reason=? AND panels_json=?
+                       AND COALESCE(page_hash,'')=COALESCE(?,'') AND COALESCE(page_dhash,'')=COALESCE(?,'')""",
+                    (reason, json.dumps(list(entry["panels"])), page_hash, page_dhash),
+                ).fetchone():
+                    continue
+                connection.execute(
+                    """INSERT INTO page_panel_history(
+                           file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason,
+                           page_hash, page_dhash, fixed_by)
+                       VALUES (NULL, ?, '', 'manual', ?, 1, ?, NULL, ?, ?, ?, ?)""",
+                    (str(entry.get("member") or ""), json.dumps(list(entry["panels"])), _utc_now(), reason,
+                     page_hash, page_dhash, entry.get("fixedBy")),
+                )
+                kept += 1
+        return kept
+
+    def manual_panel_rows(self, series_run_id: int | None = None) -> list[dict[str, Any]]:
+        """Every page a person fixed, with the comic it is in, for export."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.file_id, p.page_member, p.panels_json, p.updated_at, p.page_hash, p.page_dhash, p.fixed_by,
+                          f.filename, f.present, s.canonical_title AS series_title, s.id AS series_run_id
+                   FROM page_panels p JOIN files f ON f.id=p.file_id
+                   LEFT JOIN file_identities i ON i.file_id=p.file_id
+                   LEFT JOIN series_runs s ON s.id=i.series_run_id
+                   WHERE p.source='manual' AND (? IS NULL OR s.id=?)
+                   ORDER BY s.canonical_title, f.filename, p.page_member""",
+                (series_run_id, series_run_id),
+            ).fetchall()
+        return [
+            {"fileId": int(row["file_id"]), "member": row["page_member"], "panels": _load_json(row["panels_json"], []),
+             "fixedAt": row["updated_at"], "pageHash": row["page_hash"], "pageDHash": row["page_dhash"],
+             "fixedBy": row["fixed_by"], "filename": row["filename"], "present": bool(row["present"]),
+             "seriesTitle": row["series_title"], "seriesRunId": row["series_run_id"]}
+            for row in rows
+        ]
+
+    def present_file_ids_named(self, filename: str) -> list[int]:
+        """The present library files with this exact name, newest first."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM files WHERE filename=? AND present=1 ORDER BY updated_at DESC", (filename,),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def detached_manual_panels_count(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute(
+                "SELECT COUNT(*) FROM page_panel_history WHERE source='manual' AND reason IN ('file removed', 'imported')"
+            ).fetchone()[0])
+
+    def panels_attached_from_history(self, history_id: int) -> None:
+        """A waiting fix found its page: it is no longer waiting."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute("UPDATE page_panel_history SET reason='attached' WHERE id=?", (int(history_id),))
 
     def file_reading_direction(self, file_id: int) -> str:
         """Which way a comic reads: its run's override, else right to left for manga.
@@ -7963,6 +8137,14 @@ class CatalogStore:
                 "SELECT 1 FROM series_runs WHERE id=?", (series_run_id,)
             ).fetchone():
                 raise LookupError("Series run was not found")
+            # A person's panel fixes outlive the files: kept in the history,
+            # detached, to be attached again by their page hashes when the
+            # pages come back under another file.
+            self._archive_page_panels(
+                connection,
+                "source='manual' AND file_id IN (SELECT file_id FROM file_identities WHERE series_run_id=?)",
+                (series_run_id,), None, "file removed",
+            )
             connection.execute(
                 """DELETE FROM files WHERE id IN (
                        SELECT file_id FROM file_identities WHERE series_run_id=?

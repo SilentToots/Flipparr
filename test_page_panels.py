@@ -5,7 +5,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 from page_panels import (
-    INK_UNCOVERED_MAX, add_leftover_panels, combine_halves, ink_outside, merge_overlapping,
+    DHASH_NEAR, INK_UNCOVERED_MAX, add_leftover_panels, combine_halves, dhash_distance, ink_outside, merge_overlapping, page_dhash,
     READING_LTR, READING_RTL, accept_vision_boxes, ambiguous_layout, detect_panels, ink_mask,
     load_model_session, order_panels, page_mask, parse_vision_boxes, parse_vision_order, quadrant_panels,
     refine, refine_vision_boxes, suppress, vision_boxes_prompt, vision_order_prompt,
@@ -299,6 +299,28 @@ class ModelTierTests(unittest.TestCase):
         self.assertEqual((result["segmented"], result["source"], len(result["panels"])), (True, "model", 2))
         tops = sorted(round(panel["y"], 2) for panel in result["panels"])
         self.assertEqual(tops, [0.05, 0.5])
+
+
+class PageHashTests(unittest.TestCase):
+    """A page's fingerprint: the same page re-encoded or resized is near; another page is far."""
+
+    def test_the_same_page_rendered_differently_hashes_near_and_another_page_far(self):
+        image, draw = _page()
+        _grid(draw, 2, 3)
+        other, draw = _page()
+        _grid(draw, 3, 2)
+        import io
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=60)
+        buffer.seek(0)
+        reencoded = Image.open(buffer).convert("RGB")
+        smaller = image.resize((300, 450))
+        original = page_dhash(image)
+        self.assertEqual(len(original), 16)
+        self.assertLessEqual(dhash_distance(original, page_dhash(reencoded)), DHASH_NEAR)
+        self.assertLessEqual(dhash_distance(original, page_dhash(smaller)), DHASH_NEAR)
+        self.assertGreater(dhash_distance(original, page_dhash(other)), DHASH_NEAR)
+        self.assertEqual(dhash_distance(original, "not a hash"), 64)
 
 
 class FailureClasses(unittest.TestCase):

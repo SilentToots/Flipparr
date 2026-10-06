@@ -510,6 +510,14 @@ What is in it, and what you may leave out:
 - `models/`, `avatars/`, `user-covers/`, `arc-index.json`: the panel model you
   copied in, profile pictures, covers you chose, the arc index.
 
+The pages you fixed by hand in panel view are in the catalog, and can also be
+exported on their own: **Settings → Reader → Panel view → Export panel
+fixes** writes a JSON file of every fix with the page's fingerprint, and
+*Import* brings one back -- into this Flipparr or another. A fix is attached
+to its page by that fingerprint, so it follows the page to a replaced file,
+a re-imported comic, or a run removed and added back; a fix whose page is
+not in the library yet waits until the page is read.
+
 Not in `/config`: originals set aside by a replacement, in
 `<library>/.flipparr/quarantine/`.
 

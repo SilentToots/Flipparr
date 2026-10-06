@@ -165,6 +165,39 @@ def page_mask(image: Image.Image) -> Image.Image:
     return _read(image)[0]
 
 
+# ---- A page's fingerprint ------------------------------------------------------
+#
+# A reader's fixes are kept against the page itself, not only against the
+# file and member name they were made on: a comic replaced by another
+# release, re-imported, or brought to another Flipparr has the same pages
+# under other names and other bytes. The difference hash (dHash) of the
+# page's grey render changes little with re-encoding or resizing and much
+# with a different page; two renders of one page sit within a few bits.
+DHASH_SIZE = 8
+DHASH_NEAR = 6
+
+
+def page_dhash(image: Image.Image) -> str:
+    """The page's difference hash: 64 bits as 16 hex digits."""
+    grey = ImageOps.grayscale(image).resize((DHASH_SIZE + 1, DHASH_SIZE), Image.Resampling.LANCZOS)
+    pixels = list(grey.getdata())
+    bits = 0
+    for row in range(DHASH_SIZE):
+        for column in range(DHASH_SIZE):
+            left = pixels[row * (DHASH_SIZE + 1) + column]
+            right = pixels[row * (DHASH_SIZE + 1) + column + 1]
+            bits = (bits << 1) | (1 if left > right else 0)
+    return f"{bits:016x}"
+
+
+def dhash_distance(a: str, b: str) -> int:
+    """How many bits two difference hashes differ by; 64 for anything unreadable."""
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except (TypeError, ValueError):
+        return 64
+
+
 def order_panels(panels: list[dict[str, Any]], direction: str = READING_LTR) -> list[dict[str, Any]]:
     """Reading order: rows top to bottom, then across each row the way the run reads.
 

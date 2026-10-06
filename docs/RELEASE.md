@@ -155,16 +155,20 @@ You lose manual corrections, aliases and request history — not files.
 
 ### 0.2.0 — unreleased
 
-**Schema:** 65 (adds `page_panel_history`: the reading a panel correction
-replaced is kept, so corrections can be measured). Upgrading from 0.1.0
+**Schema:** 66 (adds `page_panel_history`: the reading a panel correction
+replaced is kept, so corrections can be measured; and a page fingerprint
+on every panel row, so a hand-made fix follows its page). Upgrading from 0.1.0
 keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
 0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer
 catalog.
 
 - Panel view: the leftover pass now runs on a page read with no detector
-  model and no connector (the default install); a solid band at a panel's
-  edge is no longer made a panel of. Measured against the owner's
-  hand-fixed pages in `docs/PANELS.md`.
+  model and no connector (the default install). Measured against the
+  owner's hand-fixed pages in `docs/PANELS.md`.
+- Panel fixes made by hand are keyed to the page itself (its bytes and a
+  perceptual hash of its render) as well as the file: they survive a run's
+  removal, re-attach to a replaced or re-imported comic, and can be
+  exported and imported as a file (Settings → Reader → Panel view).
 
 ### 0.1.0 — first release
 

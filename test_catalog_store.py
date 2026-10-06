@@ -5205,9 +5205,109 @@ class PagePanelTests(LibraryFixture):
             store.set_page_panels(file_id, "p1.jpg", "sig-1", "auto", panels, True)
             self.assertEqual(store.page_panels(file_id, "p1.jpg"), {
                 "fileSignature": "sig-1", "source": "auto", "segmented": True, "panels": panels, "previous": None,
+                "pageHash": None, "pageDHash": None, "fixedBy": None,
             })
             store.set_page_panels(file_id, "p1.jpg", "sig-2", "manual", [], False)
             self.assertEqual(store.page_panels(file_id, "p1.jpg")["source"], "manual", "the same page, corrected")
+
+    def test_a_fix_follows_its_page_by_hash_to_another_file_and_survives_its_runs_removal(self):
+        """Schema 66: a person's fix is keyed to the page itself as well as the
+        file -- the member's bytes hashed, the render's difference hash -- so a
+        replaced or re-imported comic, or a run removed and added back, finds
+        the fix again instead of starting from nothing."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            first, second = self._file_id(store, "Example 001.cbz"), self._file_id(store, "Example 002.cbz")
+            hand = [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 0}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 1}]
+            store.set_page_panels(first, "p3.jpg", "sig", "manual", hand, True, page_hash="a" * 64, page_dhash="ff00ff00ff00ff00", fixed_by=1)
+            kept = store.page_panels(first, "p3.jpg")
+            self.assertEqual((kept["pageHash"], kept["pageDHash"], kept["fixedBy"]), ("a" * 64, "ff00ff00ff00ff00", 1))
+            # The same page under another file: exact bytes, or a near render.
+            found = store.manual_panels_by_hash("a" * 64, None, exclude_file=second)
+            self.assertEqual((found["fileId"], found["where"], found["panels"]), (first, "current", hand))
+            near = store.manual_panels_by_hash("b" * 64, "ff00ff00ff00ff03", exclude_file=second)
+            self.assertEqual(near["fileId"], first, "three bits off is the same page re-encoded")
+            self.assertIsNone(store.manual_panels_by_hash("b" * 64, "00ff00ff00ff00ff"), "another page is not")
+            self.assertIsNone(store.manual_panels_by_hash("a" * 64, None, exclude_file=first), "its own file is not an answer")
+            # A machine's reading saved later keeps the hashes and clears the author.
+            store.set_page_panels(first, "p3.jpg", "sig", "vlm", hand, True)
+            again = store.page_panels(first, "p3.jpg")
+            self.assertEqual((again["pageHash"], again["fixedBy"]), ("a" * 64, None))
+            store.set_page_hashes(first, "p3.jpg", "c" * 64, "0000000000000000")
+            self.assertEqual(store.page_panels(first, "p3.jpg")["pageHash"], "c" * 64)
+            # Removing the run takes the files, and a person's fix waits in the history.
+            store.set_page_panels(first, "p3.jpg", "sig", "manual", hand, True, page_hash="a" * 64, page_dhash="ff00ff00ff00ff00", fixed_by=1)
+            run_id = int(store.catalog()["series"][0]["id"])
+            store.remove_series_run(run_id)
+            self.assertIsNone(store.page_panels(first, "p3.jpg"))
+            waiting = store.manual_panels_by_hash("a" * 64, None)
+            self.assertEqual((waiting["where"], waiting["panels"], waiting["fileId"]), ("history", hand, None))
+            self.assertEqual(store.detached_manual_panels_count(), 1)
+            store.panels_attached_from_history(waiting["historyId"])
+            self.assertEqual(store.detached_manual_panels_count(), 0)
+
+    def test_imported_fixes_wait_by_hash_and_are_not_kept_twice(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            entries = [
+                {"member": "p1.jpg", "panels": [{"x": 0, "y": 0, "w": 1, "h": 1, "order": 0}], "pageHash": "d" * 64, "pageDHash": "1234123412341234", "fixedBy": 1},
+                {"member": "p2.jpg", "panels": [{"x": 0, "y": 0, "w": 1, "h": 1, "order": 0}]},
+            ]
+            self.assertEqual(store.keep_detached_panels(entries), 1, "a fix with no page hash cannot be attached to anything")
+            self.assertEqual(store.keep_detached_panels(entries), 0, "the same fix again is not kept twice")
+            found = store.manual_panels_by_hash("d" * 64, None)
+            self.assertEqual((found["where"], found["fixedBy"]), ("history", 1))
+            rows = store.manual_panel_rows()
+            self.assertEqual(rows, [], "waiting fixes are not export rows until attached")
+
+    def test_a_library_from_schema_64_gains_the_page_fingerprint_columns_on_opening(self):
+        # The scratch library of 2026-10-06 failed to open on the first
+        # build: the hash index was created with the tables, before the
+        # column it indexes had been added to the old page_panels table.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            file_id = self._file_id(store, "Example 001.cbz")
+            store.set_page_panels(file_id, "p1.jpg", "sig", "manual", [{"x": 0, "y": 0, "w": 1, "h": 1}], True)
+            with sqlite3.connect(root / "catalog.db") as raw:
+                raw.execute("DROP INDEX IF EXISTS page_panels_hash")
+                for column in ("page_hash", "page_dhash", "fixed_by"):
+                    raw.execute(f"ALTER TABLE page_panels DROP COLUMN {column}")
+                raw.execute("DROP TABLE page_panel_history")
+                raw.execute("UPDATE schema_info SET version=64")
+            reopened = CatalogStore(root / "catalog.db")
+            self.assertEqual(reopened.page_panels(file_id, "p1.jpg")["source"], "manual", "the fix came through")
+            with sqlite3.connect(root / "catalog.db") as raw:
+                self.assertIn("page_hash", {row[1] for row in raw.execute("PRAGMA table_info(page_panels)")})
+                self.assertEqual(raw.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
+
+    def test_a_library_from_schema_65_rebuilds_the_panel_history_keeping_its_rows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = self._three_files(root)
+            file_id = self._file_id(store, "Example 001.cbz")
+            store.set_page_panels(file_id, "p1.jpg", "sig", "auto", [{"x": 0, "y": 0, "w": 1, "h": 0.5}], True)
+            store.set_page_panels(file_id, "p1.jpg", "sig", "manual", [{"x": 0, "y": 0, "w": 1, "h": 1}], True)
+            with sqlite3.connect(root / "catalog.db") as raw:
+                raw.execute("PRAGMA foreign_keys = OFF")
+                raw.execute("ALTER TABLE page_panel_history RENAME TO old")
+                raw.execute("""CREATE TABLE page_panel_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    page_member TEXT NOT NULL, file_signature TEXT NOT NULL, source TEXT NOT NULL, panels_json TEXT NOT NULL,
+                    segmented INTEGER NOT NULL, recorded_at TEXT NOT NULL, replaced_by TEXT, reason TEXT NOT NULL)""")
+                raw.execute("""INSERT INTO page_panel_history(id, file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason)
+                               SELECT id, file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason FROM old""")
+                raw.execute("DROP TABLE old")
+                raw.execute("UPDATE schema_info SET version=65")
+            reopened = CatalogStore(root / "catalog.db")
+            history = reopened.page_panel_history(file_id, "p1.jpg")
+            self.assertEqual([(h["source"], h["replacedBy"]) for h in history], [("auto", "manual")], "the rows came along")
+            with sqlite3.connect(root / "catalog.db") as raw:
+                columns = {row[1]: row for row in raw.execute("PRAGMA table_info(page_panel_history)")}
+                self.assertEqual(columns["file_id"][3], 0, "file_id may now be NULL")
+                self.assertIn("page_hash", columns)
+                self.assertEqual(raw.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
 
     def test_a_correction_keeps_the_reading_it_replaced(self):
         """Until schema 65 a person's fix erased the automatic reading it
