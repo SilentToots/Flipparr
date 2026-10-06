@@ -43,6 +43,9 @@ services:
       # one -- not its container address, which changes across restarts --
       # otherwise the "local addresses" auth bypass cannot see the real client.
       FLIPPARR_TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
+      # Names this server may be opened by while sign-in is off or the local
+      # bypass is on, besides addresses and local names (.env.example).
+      FLIPPARR_ALLOWED_HOSTS: "${FLIPPARR_ALLOWED_HOSTS:-}"
       FLIPPARR_WEB_ROOT: /app/web
       FLIPPARR_LIBRARY_ROOT: /comics
       FLIPPARR_SAB_COMPLETE_ROOT: /downloads/complete/comics
@@ -64,9 +67,16 @@ services:
       - "${TORRENT_COMPLETE_PATH:-./docker-data/torrents-complete}:/downloads/torrents/complete/comics:ro"
     read_only: true
     tmpfs:
-      - /tmp:size=256m,mode=1777
+      - /tmp:size=256m,mode=1777,noexec,nosuid,nodev
     security_opt:
       - no-new-privileges:true
+    # A comic library needs no capability at all, and a bound on memory and
+    # processes keeps a runaway render or a malicious archive from taking
+    # the host with it. Raise FLIPPARR_MEMORY_LIMIT for a library of many
+    # thousands of comics (the catalog is held in memory).
+    cap_drop: [ALL]
+    mem_limit: "${FLIPPARR_MEMORY_LIMIT:-3g}"
+    pids_limit: 512
     logging: *default-logging
 
 # To put Flipparr on a network your reverse proxy or download clients share,

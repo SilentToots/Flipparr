@@ -219,4 +219,6 @@ it talks to is one you configure.
 
 What Flipparr keeps and what leaves your server, service by service, is in
 [`docs/PRIVACY.md`](docs/PRIVACY.md) and in the app under **Settings → About**.
+How to run it safely, what it defends against and what it does not:
+[`docs/SECURITY.md`](docs/SECURITY.md).
 Nothing is sent to Flipparr's authors.

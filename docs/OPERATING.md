@@ -113,13 +113,57 @@ change your library. If the port is reachable by anything other than you, turn
 sign-in on.
 
 - **Require sign-in** — `none` or `forms`. Set a username and password first.
-- **Skip sign-in on local addresses** — convenient on a home network or tailnet.
+- **Skip sign-in on local addresses** — a device on a private address is a
+  shared household device. Read the caveats below before turning it on.
+
+Once a password exists, every change to these settings asks for it: a session
+on its own — a shared tablet opened with a PIN, say — cannot change the
+password or turn sign-in off.
 
 Passwords are stored as a salted scrypt hash and never returned by the API.
 Signing in sets an `HttpOnly`, `SameSite=Lax` cookie, so page scripts cannot
 read your session, and cross-site requests do not carry it. A session lasts 30
 days. Setting a new password, in Settings or with `reset-password`, signs every
-other device out; the device you changed it on stays signed in.
+other device out; the device you changed it on stays signed in. So does
+turning sign-in on, or the local bypass off: every session issued while the
+port was open is ended, and only the device that made the change keeps one.
+
+### Which names Flipparr answers to
+
+While sign-in is off, or the local bypass is on, a device is treated as one of
+the household by where it connects from. A page on any website can make its
+own name resolve to your server (DNS rebinding) and then act as the device it
+runs on, so Flipparr answers as a household device only when opened by:
+
+- an address (`http://192.168.1.20:8787`), `localhost`, a bare machine name
+  (`http://nas:8787`), or a `.local`, `.lan`, `.home`, `.internal` or
+  `.home.arpa` name;
+- a name you list in `FLIPPARR_ALLOWED_HOSTS` (comma-separated): a tailnet
+  name such as `nas.your-tailnet.ts.net`, or a domain behind your proxy.
+
+Any other name answers `421` with "not known by the name you called it by".
+A signed-in session works under any name; the list matters only for the two
+settings above.
+
+### Before turning the local bypass on
+
+"Local" means the address the request arrives from is private or loopback,
+which is not the same as the device being in your home:
+
+- **Through a reverse proxy** every request arrives from the proxy's address,
+  which is private. Set `FLIPPARR_TRUSTED_PROXIES` to the proxy's network so
+  Flipparr can read the real client's address; without it, everyone the
+  proxy admits is "local".
+- **Through Tailscale Serve** (recommended for a tailnet) every request
+  arrives from loopback, so every device on the tailnet is local -- which is
+  usually what you want -- and with **Funnel**, so is the whole internet.
+  A device connecting to the tailnet address directly is *not* local:
+  Tailscale's carrier-grade NAT range (100.64/10) is not a private range.
+- **Docker Desktop, rootless Docker and loopback publishing** can present
+  every client as the Docker gateway, which is private.
+
+If in doubt, leave the bypass off and sign in; readers can have their own
+sign-ins.
 
 ### Failed sign-ins
 
@@ -129,11 +173,19 @@ sign-in page says how long. During the wait attempts are refused without the
 password being checked, so a correct guess cannot slip through. A successful
 sign-in, a password reset, or 15 quiet minutes clears it.
 
-There is deliberately no hard lockout. Behind a reverse proxy every request
-arrives from the proxy's address, so a lock on an address or an account would
-let anyone who can reach the sign-in page lock you out. A capped delay keeps
-guessing slow without that. Devices that are already signed in are never
-affected. The count is kept in memory, so restarting the container clears it.
+There is deliberately no hard lockout for passwords. Behind a reverse proxy
+every request arrives from the proxy's address, so a lock on an address or an
+account would let anyone who can reach the sign-in page lock you out. A capped
+delay keeps guessing slow without that. Devices that are already signed in are
+never affected. The count is kept in memory, so restarting the container clears
+it. The same wait applies to switching profiles with a password, and to
+changing the sign-in settings.
+
+**PINs are different.** A PIN has ten thousand values, so its waits grow to
+five minutes, its failures are remembered for a day, and twenty wrong PINs
+in a day lock that profile's PIN until the day is out. The admin can set the
+profile a new PIN, which starts a new count. Changing a PIN ends the sessions
+it opened.
 
 ### Forgot your password
 
@@ -242,6 +294,29 @@ If a request arrives claiming `X-Forwarded-Proto: https` from an address that is
 
 That is the case worth catching. Without it the site looks correctly served over
 HTTPS while its session cookie quietly lacks `Secure`.
+
+### Limits worth setting at the proxy
+
+Flipparr accepts request bodies up to 2 GB, because a comic can be uploaded
+by hand (**Pull List → Upload a file**), and it reads the whole body before
+it looks at who sent it. Behind a proxy, let only that one route take a large
+body and keep everything else small; the proxy also decides how long a slow
+client may take. For nginx:
+
+```nginx
+client_max_body_size 1m;
+client_body_timeout 30s;
+client_header_timeout 15s;
+location ~ ^/api/v1/(reading-lists|run-collections)/[0-9]+/cover/upload$ { client_max_body_size 60m; }
+location ~ ^/api/v1/profiles/[0-9]+/avatar/upload$                        { client_max_body_size 60m; }
+location ~ ^/api/v1/acquisition-jobs/[0-9]+/import$                        { client_max_body_size 2g; }
+```
+
+Caddy's `request_body { max_size }` and Traefik's `buffering.maxRequestBodyBytes`
+do the same. On a LAN with no proxy, the container's own limit of 200
+connections is the only bound; anyone on the network could fill the config
+volume's free space with half-sent uploads, which is one more reason the
+port binds to loopback by default.
 
 ### HTTPS
 

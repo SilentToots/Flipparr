@@ -11,6 +11,9 @@ secrets/
 comicarr.db
 comicarr.db-shm
 comicarr.db-wal
+*.db
+*.db-wal
+*.db-shm
 .pnpm-store/
 __pycache__/
 .venv/

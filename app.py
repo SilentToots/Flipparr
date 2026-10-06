@@ -198,17 +198,34 @@ def _close_log() -> None:
             pass
 
 
+_PATH_IN_TEXT = re.compile(r"(?<![\w:])/(?:[\w.@+-]+/)*[\w.@+-]+")
+
+
+def shown(exc: BaseException) -> str:
+    """What a client is told of an exception: the reason, not the server's
+    paths or the service's address. The whole text is in the log, under the
+    request id the answer carries (review, 2026-10-06)."""
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+        return "the service did not answer"
+    if isinstance(exc, OSError) and exc.strerror:
+        return str(exc.strerror)
+    text = support_safe(str(exc))
+    return _PATH_IN_TEXT.sub("<path>", text).strip()
+
+
 def log_exception(event: str, exc: BaseException, level: str = "error", **fields: Any) -> None:
     """Record a failure with its stack, keeping the detail server-side.
 
     Callers answer the client separately and generically; the request id is
     what ties that answer back to this record.
     """
+    # Scrubbed on the way to the log too, not only on the way to the System
+    # page: an exception's text can carry a URL or a header (review, 2026-10-06).
     log_event(
         event, level=level,
         error_type=type(exc).__name__,
-        error=str(exc),
-        traceback="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip(),
+        error=support_safe(str(exc)),
+        traceback=support_safe("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()),
         **fields,
     )
 
@@ -1127,7 +1144,7 @@ def square_avatar(image_bytes: bytes, *, top_bias: float = 0.5) -> bytes:
     """
     from PIL import Image, ImageOps
 
-    with Image.open(io.BytesIO(image_bytes)) as source:
+    with open_image_bounded(image_bytes) as source:
         image = ImageOps.exif_transpose(source).convert("RGB")
     width, height = image.size
     side = min(width, height)
@@ -2662,13 +2679,15 @@ def _redacted_upstream_url(value: str) -> str:
     query = urllib.parse.urlencode(
         [
             (key, "[REDACTED]" if key.casefold() in {
-                "api_key", "apikey", "token", "access_token"
+                "api_key", "apikey", "token", "access_token", "passkey", "password", "ma_password", "sid", "key",
             } else item)
             for key, item in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
         ]
     )
+    # user:password@host is a credential too.
+    netloc = parsed.netloc.rsplit("@", 1)[-1] if "@" in parsed.netloc else parsed.netloc
     return urllib.parse.urlunsplit(
-        (parsed.scheme, parsed.netloc, parsed.path, query, "")
+        (parsed.scheme, netloc, parsed.path, query, "")
     )
 
 
@@ -2677,6 +2696,37 @@ def _redacted_upstream_url(value: str) -> str:
 # indexer's address, and urllib's redirect handler copied every header,
 # Prowlarr's key included (review, 2026-10-06).
 _CREDENTIAL_HEADERS = ("authorization", "x-api-key", "cookie", "proxy-authorization")
+
+
+# The built web files, read once and compressed once per build: the 900 KB
+# script was gzipped again for every unauthenticated request (review,
+# 2026-10-06). Keyed by path and modification time, so a new build is seen.
+_WEB_ASSET_CACHE: dict[tuple[str, int, int, bool], tuple[bytes, str | None, str]] = {}
+_WEB_ASSET_CACHE_LOCK = threading.Lock()
+
+
+def _web_asset_body(target: Path, accept_encoding: str) -> tuple[bytes, str | None, str]:
+    stat = target.stat()
+    wants_gzip = "gzip" in (accept_encoding or "").lower()
+    key = (str(target), stat.st_mtime_ns, stat.st_size, wants_gzip)
+    with _WEB_ASSET_CACHE_LOCK:
+        cached = _WEB_ASSET_CACHE.get(key)
+    if cached is not None:
+        return cached
+    body = target.read_bytes()
+    content_type = (
+        WEB_ASSET_TYPES.get(target.suffix.lower())
+        or mimetypes.guess_type(target.name)[0]
+        or "application/octet-stream"
+    )
+    if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+        content_type += "; charset=utf-8"
+    body, encoding = _gzip_if_worthwhile(body, content_type, "gzip" if wants_gzip else "")
+    with _WEB_ASSET_CACHE_LOCK:
+        if len(_WEB_ASSET_CACHE) > 256:
+            _WEB_ASSET_CACHE.clear()
+        _WEB_ASSET_CACHE[key] = (body, encoding, content_type)
+    return body, encoding, content_type
 
 
 class _KeepCredentialsHome(urllib.request.HTTPRedirectHandler):
@@ -5064,6 +5114,8 @@ def _pdf_drawn_names(data: bytes, offsets: dict[int, int], page: bytes) -> set[b
 
 def _pdf_page_images(path: Path) -> list[bytes]:
     """Each page's one JPEG, in reading order."""
+    if path.stat().st_size > EBOOK_TOTAL_MAX_BYTES:
+        raise EbookNotConvertible("The PDF is larger than Flipparr will read")
     data = path.read_bytes()
     offsets, root = _pdf_cross_reference(data)
     catalog = _pdf_object(data, offsets, root)[0]
@@ -5113,18 +5165,38 @@ def _pdf_page_images(path: Path) -> list[bytes]:
     return _whole_book(images, page_count)
 
 
+# What one member of an ebook may hold, and the book in all, once decompressed:
+# a page's picture is a few megabytes, a book a few hundred. Read without
+# looking, a deflate bomb in an EPUB from an indexer took all the memory
+# there was (review, 2026-10-06).
+EBOOK_MEMBER_MAX_BYTES = 64 * 1024 * 1024
+EBOOK_TOTAL_MAX_BYTES = 1024 * 1024 * 1024
+
+
 def _epub_page_images(path: Path) -> list[bytes]:
     """Each page's one image, in the order the book is read."""
     import posixpath
     import zipfile
 
     with zipfile.ZipFile(path) as book:
-        container = book.read("META-INF/container.xml").decode("utf-8", "ignore")
+        budget = [EBOOK_TOTAL_MAX_BYTES]
+
+        def read(member: str) -> bytes:
+            info = book.getinfo(member)
+            if info.file_size > EBOOK_MEMBER_MAX_BYTES or info.file_size > budget[0]:
+                raise EbookNotConvertible("The EPUB's pages are larger than Flipparr will unpack")
+            budget[0] -= info.file_size
+            data = book.read(info)
+            if len(data) > EBOOK_MEMBER_MAX_BYTES:
+                raise EbookNotConvertible("The EPUB's pages are larger than Flipparr will unpack")
+            return data
+
+        container = read("META-INF/container.xml").decode("utf-8", "ignore")
         package = re.search(r'full-path\s*=\s*"([^"]+)"', container)
         if not package:
             raise EbookNotConvertible("The EPUB names no package")
         opf_path = package.group(1)
-        opf = book.read(opf_path).decode("utf-8", "ignore")
+        opf = read(opf_path).decode("utf-8", "ignore")
         base = posixpath.dirname(opf_path)
         manifest: dict[str, tuple[str, str]] = {}
         for item in re.finditer(r"<item\b[^>]*>", opf):
@@ -5140,9 +5212,9 @@ def _epub_page_images(path: Path) -> list[bytes]:
             member = posixpath.normpath(posixpath.join(base, urllib.parse.unquote(href)))
             page_count += 1
             if media.startswith("image/"):
-                images.append(book.read(member))
+                images.append(read(member))
                 continue
-            page = book.read(member).decode("utf-8", "ignore")
+            page = read(member).decode("utf-8", "ignore")
             sources = re.findall(
                 r'<(?:img\b[^>]*?\bsrc|image\b[^>]*?\b(?:xlink:)?href)\s*=\s*["\']([^"\']+)', page
             )
@@ -5155,7 +5227,7 @@ def _epub_page_images(path: Path) -> list[bytes]:
             image = posixpath.normpath(posixpath.join(
                 posixpath.dirname(member), urllib.parse.unquote(sources[0])
             ))
-            images.append(book.read(image))
+            images.append(read(image))
     # A title page or a credits page of text is ordinary; a book of text is not
     # manga pages at all.
     if text_pages > 2:
@@ -6434,6 +6506,9 @@ def _zero_filled_megabytes(path: Path) -> int:
 
 COMIC_PACK_MEMBER_TYPES = frozenset({".cbr", ".cbz", ".cb7", ".cbt", ".pdf"})
 PACK_MEMBER_MAX_BYTES = 2 * 1024 * 1024 * 1024
+# And together, per pack, for the few members one issue can match.
+PACK_UNPACK_MAX_BYTES = 4 * 1024 * 1024 * 1024
+PACK_MEMBERS_MAX = 8
 _PAGE_IMAGE_TYPES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".jxl", ".bmp", ".tif", ".tiff"})
 
 
@@ -6504,13 +6579,34 @@ def _unpack_comic_packs(
                 held += "; it holds: " + ", ".join(names[:12]) + (f", and {len(names) - 12} more" if len(names) > 12 else "")
             missing.append(held)
             continue
+        # What the pack says it holds, and the room for it: the stated sizes
+        # together, against the free space less the floor imports keep, and
+        # only as many members as one issue could want. A pack naming every
+        # member after the wanted issue, at 2 GB each, filled the config disk
+        # (review, 2026-10-06).
+        wanted = wanted[:PACK_MEMBERS_MAX]
         unpacked_dir = unpacked_dir or Path(tempfile.mkdtemp(prefix="flipparr-pack-"))
+        stated = sum(int(entry.file_size) for entry in wanted)
+        if stated > PACK_UNPACK_MAX_BYTES or shutil.disk_usage(unpacked_dir).free - stated < IMPORT_MIN_FREE_BYTES:
+            missing.append(f"{path.name}: the matching comics are larger than there is room to unpack")
+            continue
         with zipfile.ZipFile(path) as archive:
             for entry in wanted:
                 # Its own name only: a path inside a zip is never a path here.
                 target = unpacked_dir / _safe_path_component(Path(entry.filename).name, "issue.cbz")
                 with archive.open(entry) as inside, target.open("wb") as outside:
-                    shutil.copyfileobj(inside, outside, 1024 * 1024)
+                    # Bounded by what the entry said it was: a member that
+                    # inflates past its own size is a lie, and stops here.
+                    budget = int(entry.file_size) + 1024 * 1024
+                    while True:
+                        piece = inside.read(1024 * 1024)
+                        if not piece:
+                            break
+                        budget -= len(piece)
+                        if budget < 0:
+                            raise DownloadContentMismatch(
+                                f"{path.name}: a comic in the pack is larger than the pack says", kind="damaged")
+                        outside.write(piece)
                 kept.append(target)
         log_event("comic_pack_unpacked", pack=path.name, members=len(members), taken=len(wanted))
     if not kept and missing:
@@ -9499,22 +9595,70 @@ def _run_archive_tool(arguments: list[str], limit: int) -> bytes:
         raise ArchiveToolMissing(
             "This comic is a RAR archive, which needs bsdtar (libarchive-tools) to read."
         )
-    completed = subprocess.run(  # noqa: S603 - argv list, never a shell string
-        # No stdin: for an encrypted entry bsdtar asks it for a passphrase.
-        [tool, *arguments], capture_output=True, timeout=_ARCHIVE_READ_TIMEOUT_SECONDS,
-        stdin=subprocess.DEVNULL,
-    )
-    if len(completed.stdout) > limit:
+    stdout, stderr, returncode = _run_tool_bounded([tool, *arguments], limit)
+    if stdout is None:
         raise ValueError("Archive entry is larger than the limit")
     # A partly damaged archive still answers for the members it can reach, and
     # the cover is usually the first of them. Fifteen comics in a real library
     # list their pages and hand over a perfectly good first page while the tool
     # exits non-zero over something later in the file; refusing that output on
     # the exit code alone left those comics with no cover at all.
-    if not completed.stdout and completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", "replace").strip().splitlines()
+    if not stdout and returncode != 0:
+        detail = stderr.decode("utf-8", "replace").strip().splitlines()
         raise ValueError(detail[-1] if detail else "The archive could not be read")
-    return completed.stdout
+    return stdout
+
+
+def _run_tool_bounded(argv: list[str], limit: int, timeout: float = _ARCHIVE_READ_TIMEOUT_SECONDS,
+                      stderr_limit: int = 64 * 1024) -> tuple[bytes | None, bytes, int]:
+    """Run `argv` and read at most `limit` bytes of its output; past that the
+    process is killed and the output is None. `capture_output` read it all
+    and judged afterwards, so a page that decompressed to gigabytes was all
+    in memory before the limit was looked at (review, 2026-10-06)."""
+    process = subprocess.Popen(  # noqa: S603 - argv list, never a shell string
+        # No stdin: for an encrypted entry bsdtar asks it for a passphrase.
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    chunks: list[bytes] = []
+    total = 0
+    errors: list[bytes] = []
+
+    def drain_stderr() -> None:
+        kept = 0
+        for piece in iter(lambda: process.stderr.read(8192), b""):
+            if kept < stderr_limit:
+                errors.append(piece[:stderr_limit - kept])
+                kept += len(piece)
+
+    reader = threading.Thread(target=drain_stderr, daemon=True)
+    reader.start()
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            piece = process.stdout.read(1024 * 1024)
+            if not piece:
+                break
+            total += len(piece)
+            if total > limit:
+                process.kill()
+                process.wait(5)
+                return None, b"".join(errors), -9
+            chunks.append(piece)
+            if time.monotonic() > deadline:
+                process.kill()
+                process.wait(5)
+                raise subprocess.TimeoutExpired(argv, timeout)
+        try:
+            returncode = process.wait(max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(5)
+            raise
+    finally:
+        reader.join(5)
+        process.stdout.close()
+        process.stderr.close()
+    return b"".join(chunks), b"".join(errors), returncode
 
 
 _LOCKED_ARCHIVE_WORDS = re.compile(r"encrypt|passphrase|password", re.I)
@@ -9559,11 +9703,8 @@ def _archive_tool_says_locked(path: Path) -> str | None:
         return None
 
     def complaint(arguments: list[str]) -> tuple[bytes, str]:
-        completed = subprocess.run(  # noqa: S603 - argv list, never a shell string
-            [tool, *arguments], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=_ARCHIVE_READ_TIMEOUT_SECONDS,
-        )
-        return completed.stdout, completed.stderr.decode("utf-8", "replace")
+        stdout, stderr, _code = _run_tool_bounded([tool, *arguments], COVER_SOURCE_MAX_BYTES)
+        return stdout or b"", stderr.decode("utf-8", "replace")
 
     try:
         listing, said = complaint(["-tf", str(path)])
@@ -10032,11 +10173,54 @@ def render_file_cover_thumbnail(
     return body
 
 
+# The most pixels an image is decoded to, whoever sent it: a reader's
+# uploaded cover or a page in a comic. Pillow's own limit (about 178 million
+# pixels before it refuses) let a 50 MB PNG decode to half a gigabyte, several
+# times over on 32 threads (review, 2026-10-06). Forty million is a 6,300 px
+# square: past any comic page or cover worth keeping.
+IMAGE_MAX_PIXELS = 40_000_000
+IMAGE_FORMATS = ("JPEG", "PNG", "WEBP", "GIF", "BMP", "TIFF", "AVIF")
+
+
+def _bound_pillow() -> None:
+    """Pillow refuses, rather than warns about, an image past twice its
+    MAX_IMAGE_PIXELS; set so that is IMAGE_MAX_PIXELS, for every decode in
+    the process -- a page inside a comic as much as an upload."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    import warnings
+    Image.MAX_IMAGE_PIXELS = IMAGE_MAX_PIXELS // 2
+    warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+
+
+_bound_pillow()
+
+
+def open_image_bounded(data: bytes):
+    """Pillow's Image.open, for the formats a comic uses and within
+    IMAGE_MAX_PIXELS; the caller decides what to do with it. Raises
+    ValueError for anything else."""
+    from PIL import Image, UnidentifiedImageError
+    try:
+        image = Image.open(io.BytesIO(data), formats=IMAGE_FORMATS)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("Not a readable image") from exc
+    if image.width * image.height > IMAGE_MAX_PIXELS:
+        image.close()
+        raise ValueError(f"The image is larger than {IMAGE_MAX_PIXELS // 1_000_000} million pixels")
+    return image
+
+
 def normalize_image_to_jpeg(source_bytes: bytes, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION) -> bytes:
     """Create a bounded JPEG using Pillow on macOS, Linux, and Docker."""
     try:
         from PIL import Image, ImageOps, UnidentifiedImageError
-        with Image.open(io.BytesIO(source_bytes)) as source:
+        with open_image_bounded(source_bytes) as source:
+            if source.format == "JPEG":
+                # Decode a big JPEG straight to a size near the one wanted.
+                source.draft("RGB", (max_dimension * 2, max_dimension * 2))
             image = ImageOps.exif_transpose(source).convert("RGB")
             image.thumbnail((max_dimension, max_dimension))
             output = io.BytesIO()
@@ -14001,6 +14185,13 @@ def panel_model_session() -> Any:
     return _PANEL_MODEL["session"]
 
 
+# One reading of a page at a time: the 32 threads could each pay a vision
+# model for the same page before the first answer was stamped (review,
+# 2026-10-06).
+_PANELS_INFLIGHT: dict[tuple[int, int], threading.Lock] = {}
+_PANELS_INFLIGHT_LOCK = threading.Lock()
+
+
 def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     """Where the panels are on one page, in the order its run reads.
 
@@ -14010,6 +14201,39 @@ def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> 
     underneath it; a person's, like a chosen backdrop, stands. An unsegmented
     page answers with no panels, and the reader draws its four quadrants.
     """
+    with _PANELS_INFLIGHT_LOCK:
+        lock = _PANELS_INFLIGHT.setdefault((int(file_id), int(index)), threading.Lock())
+    with lock:
+        try:
+            return _file_page_panels(file_id, index, allow_vision=allow_vision)
+        finally:
+            with _PANELS_INFLIGHT_LOCK:
+                _PANELS_INFLIGHT.pop((int(file_id), int(index)), None)
+
+
+# How many pages a day a reader's profile may have read by a paid vision
+# model when the admin has allowed readers that at all (`visionForReaders`,
+# off by default). A reader scripting every page of the library would
+# otherwise spend without limit; the admin's own reading is not counted.
+VISION_PAGES_PER_READER_PER_DAY = 300
+_VISION_SPEND: dict[tuple[int, str], int] = {}
+_VISION_SPEND_LOCK = threading.Lock()
+
+
+def vision_budget_allows(viewer_id: int) -> bool:
+    """Take one of today's vision readings for this profile, or say no."""
+    day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    with _VISION_SPEND_LOCK:
+        for key in [key for key in _VISION_SPEND if key[1] != day]:
+            del _VISION_SPEND[key]
+        spent = _VISION_SPEND.get((viewer_id, day), 0)
+        if spent >= VISION_PAGES_PER_READER_PER_DAY:
+            return False
+        _VISION_SPEND[(viewer_id, day)] = spent + 1
+        return True
+
+
+def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     from PIL import Image
 
     store = catalog_store()
@@ -16057,14 +16281,21 @@ def worker_states(now: float | None = None) -> list[dict[str, Any]]:
 
 # A support file is read by someone else: anything that could let them into
 # the instance or a service is taken out of every string in it.
+# Secrets as they appear in text: `apikey=...`, `"api_key": "..."`, a dict's
+# repr, `Authorization: Bearer ...`, a tracker's `passkey`, a session id. The
+# key may be quoted, the value may be quoted; a bearer or basic credential
+# follows its word (review, 2026-10-06: the first pattern missed every one of
+# these shapes but the bare `key=value`).
 _SECRET_IN_TEXT = re.compile(
-    r"(?i)((?:api[_-]?key|apikey|token|password|passwd|secret|session|cookie|authorization)\s*[=:]\s*)([^&\s\"',;]+)")
+    r"(?i)((?:api[_-]?key|apikey|x-api-key|token|passkey|password|passwd|secret|session[_-]?secret|session|sid|"
+    r"cookie|authorization|credential)['\"]?\s*[=:]\s*['\"]?(?:(?:bearer|basic)\s+)?)([^&\s\"',;}\]]+)")
+_BEARER_IN_TEXT = re.compile(r"(?i)\b((?:bearer|basic)\s+)([A-Za-z0-9._~+/=-]{8,})")
 _URL_CREDENTIALS = re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@")
 
 
 def support_safe(value: Any) -> Any:
     if isinstance(value, str):
-        return _URL_CREDENTIALS.sub(r"\1<redacted>@", _SECRET_IN_TEXT.sub(r"\1<redacted>", value))
+        return _URL_CREDENTIALS.sub(r"\1<redacted>@", _BEARER_IN_TEXT.sub(r"\1<redacted>", _SECRET_IN_TEXT.sub(r"\1<redacted>", value)))
     if isinstance(value, dict):
         return {key: ("<redacted>" if re.search(r"(?i)key|token|password|secret|cookie|authorization", str(key))
                       and key not in {"tokenized"} else support_safe(item)) for key, item in value.items()}
@@ -17283,7 +17514,8 @@ class Handler(BaseHTTPRequestHandler):
         """
         global _PROXY_HEADER_WARNED
         peer = self.client_address[0] if self.client_address else ""
-        claimed = self.headers.get("X-Forwarded-Proto", "").strip().lower() == "https"
+        # The first value is the client's own hop; a proxy chain appends.
+        claimed = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
         if is_trusted_proxy(peer):
             return claimed
         if claimed and not _PROXY_HEADER_WARNED:
@@ -17565,6 +17797,7 @@ class Handler(BaseHTTPRequestHandler):
         self.viewer = None
         self._household = False
         self._host_refused = False
+        self._full_csp = False
         self._shared_device_cookie = False
         self._shared_session = False
         self._pending_cookies = []
@@ -17576,7 +17809,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._resolve_identity()
             except AuthConfigUnreadable as exc:
                 log_exception("auth_config_unreadable", exc, path=path)
-                self.send_json({"error": f"Authentication is misconfigured: {exc}"}, 503)
+                self.send_json({"error": f"Authentication is misconfigured: {shown(exc)}"}, 503)
                 return
             if not allows(access, viewer=self.viewer, household=self._household):
                 if self.viewer is None and self._host_refused:
@@ -17790,7 +18023,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
-                self.send_json({"error": f"This run's issues could not be listed: {exc}"}, 502)
+                self.send_json({"error": f"This run's issues could not be listed: {shown(exc)}"}, 502)
             return
         if parsed_url.path == "/api/v1/art-swatch":
             src = (urllib.parse.parse_qs(parsed_url.query).get("src") or [""])[0]
@@ -17818,7 +18051,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
-                self.send_json({"error": f"This issue's details are unavailable: {exc}"}, 502)
+                self.send_json({"error": f"This issue's details are unavailable: {shown(exc)}"}, 502)
             return
         if parsed_url.path == "/api/v1/discover/arc-suggestions":
             # From the kept lists only: no remote catalog is asked as someone types.
@@ -17830,7 +18063,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self.send_json(discover_story_arcs(query))
             except Exception as exc:
-                self.send_json({"arcs": [], "error": f"Story arcs are unavailable: {exc}"}, 502)
+                self.send_json({"arcs": [], "error": f"Story arcs are unavailable: {shown(exc)}"}, 502)
             return
         if parsed_url.path == "/api/v1/discover/arc":
             arc_id = (urllib.parse.parse_qs(parsed_url.query).get("id") or [""])[0]
@@ -17844,13 +18077,13 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
-                self.send_json({"error": f"This arc's issues could not be listed: {exc}"}, 502)
+                self.send_json({"error": f"This arc's issues could not be listed: {shown(exc)}"}, 502)
             return
         if parsed_url.path == "/api/v1/discover/releases":
             try:
                 self.send_json(release_calendar())
             except Exception as exc:
-                self.send_json({"error": f"Release dates are temporarily unavailable: {exc}"}, 502)
+                self.send_json({"error": f"Release dates are temporarily unavailable: {shown(exc)}"}, 502)
             return
         if parsed_url.path == "/api/v1/discover":
             query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]
@@ -17859,7 +18092,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             except Exception as exc:
-                self.send_json({"error": f"Series discovery is temporarily unavailable: {exc}"}, 502)
+                self.send_json({"error": f"Series discovery is temporarily unavailable: {shown(exc)}"}, 502)
             return
         collection_structure = re.fullmatch(r"/api/v1/collections/(\d+)/structure", parsed_url.path)
         if collection_structure:
@@ -17883,7 +18116,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"Series-run search failed: {exc}"}, 502)
+                self.send_json({"error": f"Series-run search failed: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -17933,15 +18166,18 @@ class Handler(BaseHTTPRequestHandler):
         file_page_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/pages/(\d+)/panels", parsed_url.path)
         if file_page_panels_match:
             try:
+                viewer = self._viewer()
+                vision = viewer.is_admin or (
+                    bool(load_app_settings().get("visionForReaders")) and vision_budget_allows(int(viewer.id)))
                 payload = file_page_panels(
                     int(file_page_panels_match.group(1)), int(file_page_panels_match.group(2)),
-                    allow_vision=self._viewer().is_admin or bool(load_app_settings().get("visionForReaders")),
+                    allow_vision=vision,
                 )
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
-                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                self.send_json({"error": shown(exc) or "That page could not be read"}, 422)
                 return
             self.send_json(payload)
             return
@@ -17956,14 +18192,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
-                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                self.send_json({"error": shown(exc) or "That page could not be read"}, 422)
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "private, max-age=86400")
-            self.end_headers()
-            self.wfile.write(body)
+            self.send_image(body)
             return
         if parsed_url.path == "/api/v1/reading":
             self.send_json(self._only_visible_runs(continue_reading(user_id=self._viewer_id())))
@@ -18166,7 +18397,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 updated = profile_avatar_from_upload(user_id, self.rfile.read(length))
             except (ValueError, OSError) as exc:
-                self.send_json({"error": str(exc) or "That picture could not be read"}, 422)
+                self.send_json({"error": shown(exc) or "That picture could not be read"}, 422)
                 return
             self.send_json(updated)
             return
@@ -18256,13 +18487,13 @@ class Handler(BaseHTTPRequestHandler):
                     raise LookupError("That comic is not available")
                 updated = profile_avatar_from_library(user_id, file_id, page)
             except (TypeError, ValueError) as exc:
-                self.send_json({"error": str(exc) or "Choose a comic from the library"}, 400)
+                self.send_json({"error": shown(exc) or "Choose a comic from the library"}, 400)
                 return
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (zipfile.BadZipFile, KeyError, OSError) as exc:
-                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                self.send_json({"error": shown(exc) or "That page could not be read"}, 422)
                 return
             self.send_json(updated)
             return
@@ -18451,7 +18682,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": message}, 400 if exc.code in {401, 403} else 502)
                 return
             except (urllib.error.URLError, TimeoutError) as exc:
-                self.send_json({"error": f"Could not reach the provider: {exc}"}, 502)
+                self.send_json({"error": f"Could not reach the provider: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -18551,7 +18782,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"The arc could not be pulled: {exc}"}, 502)
+                self.send_json({"error": f"The arc could not be pulled: {shown(exc)}"}, 502)
                 return
             # Each series' pull started its own searches, as any pull does.
             self.send_json(result)
@@ -18578,7 +18809,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"That issue could not be pulled: {exc}"}, 502)
+                self.send_json({"error": f"That issue could not be pulled: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -18594,7 +18825,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"Series could not be added: {exc}"}, 502)
+                self.send_json({"error": f"Series could not be added: {shown(exc)}"}, 502)
                 return
             self.send_json(result, 201)
             return
@@ -18885,7 +19116,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"Metadata search is temporarily unavailable: {exc}"}, 502)
+                self.send_json({"error": f"Metadata search is temporarily unavailable: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -19021,7 +19252,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:  # noqa: BLE001 -- the provider, not the library
-                self.send_json({"error": f"This arc's issues could not be listed: {exc}"}, 502)
+                self.send_json({"error": f"This arc's issues could not be listed: {shown(exc)}"}, 502)
                 return
             self.send_json(saved, 200 if saved.get("existed") else 201)
             return
@@ -19142,7 +19373,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:  # noqa: BLE001 -- the provider, not the library
-                self.send_json({"error": f"This arc's issues could not be listed: {exc}"}, 502)
+                self.send_json({"error": f"This arc's issues could not be listed: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -19281,7 +19512,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"Series-run confirmation failed: {exc}"}, 502)
+                self.send_json({"error": f"Series-run confirmation failed: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -19301,7 +19532,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             except Exception as exc:
-                self.send_json({"error": f"Collection structure import failed: {exc}"}, 502)
+                self.send_json({"error": f"Collection structure import failed: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -19316,7 +19547,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except Exception as exc:
                 catalog_store().record_issue_sync_error(series_id, "provider_broker", str(exc))
-                self.send_json({"error": f"Metadata refresh failed: {exc}"}, 502)
+                self.send_json({"error": f"Metadata refresh failed: {shown(exc)}"}, 502)
                 return
             self.send_json(result)
             return
@@ -19464,7 +19695,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (ValueError, TypeError) as exc:
-                self.send_json({"error": str(exc) or "That is not an issue of this arc"}, 400)
+                self.send_json({"error": shown(exc) or "That is not an issue of this arc"}, 400)
                 return
             self.send_json(result)
             return
@@ -19517,7 +19748,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
-                self.send_json({"error": str(exc) or "That page could not be read"}, 400)
+                self.send_json({"error": shown(exc) or "That page could not be read"}, 400)
                 return
             self.send_json(result)
             return
@@ -19532,7 +19763,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except Exception as exc:  # pragma: no cover - surfaced for diagnosis
                 log_exception("settings_save_failed", exc)
-                self.send_json({"error": f"Could not save settings: {exc}"}, 500)
+                self.send_json({"error": f"Could not save settings: {shown(exc)}"}, 500)
                 return
             self.send_json(updated)
             return
@@ -19622,7 +19853,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
-                self.send_json({"error": str(exc) or "That page could not be read"}, 422)
+                self.send_json({"error": shown(exc) or "That page could not be read"}, 422)
                 return
             self.send_json(result)
             return
@@ -19634,7 +19865,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 404)
                 return
             except (OSError, ValueError) as exc:
-                self.send_json({"error": str(exc) or "That comic could not be read"}, 422)
+                self.send_json({"error": shown(exc) or "That comic could not be read"}, 422)
                 return
             self.send_json(result)
             return
@@ -19685,6 +19916,33 @@ class Handler(BaseHTTPRequestHandler):
             else {"status": "signed out" if expire else "authenticated"}
         )
 
+    def send_image(self, body: bytes, content_type: str = "image/jpeg", headers: dict[str, str] | None = None) -> None:
+        """An image of a comic, for the profile asking. Kept by the browser but
+        asked about again each time (`no-cache` plus an ETag): after a switch
+        of profile on a shared tablet, a page a limited reader may not see
+        was served from the browser's cache for a day without the rating
+        gate running (review, 2026-10-06). The revalidation is a 304 in a
+        few milliseconds, and it goes through the gate."""
+        etag = 'W/"' + hashlib.sha256(body).hexdigest()[:24] + '"'
+        if self.headers.get("If-None-Match", "").strip() == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, no-cache")
+            self.send_header("Vary", "Cookie")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, no-cache")
+        self.send_header("Vary", "Cookie")
+        self.send_header("ETag", etag)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def send_json(self, payload: Any, status: int = 200,
                   headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload, indent=2, ensure_ascii=False).encode()
@@ -19724,27 +19982,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Web interface is not installed"}, 404)
             return
         try:
-            body = target.read_bytes()
+            body, encoding, content_type = _web_asset_body(target, self.headers.get("Accept-Encoding", ""))
         except OSError:
             self.send_json({"error": "Web interface could not be read"}, 500)
             return
-        content_type = (
-            WEB_ASSET_TYPES.get(target.suffix.lower())
-            or mimetypes.guess_type(target.name)[0]
-            or "application/octet-stream"
-        )
-        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
-            content_type += "; charset=utf-8"
-        body, encoding = _gzip_if_worthwhile(
-            body, content_type, self.headers.get("Accept-Encoding", "")
-        )
+        # The HTML shell carries the full policy: scripts, styles and fonts
+        # from here only; images from here and, for provider covers, https;
+        # nothing framed, nothing embedded, no base or form elsewhere.
+        shell = target.name == "index.html"
+        self._full_csp = shell
         self.send_response(200)
+        if shell:
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; "
+                             "font-src 'self'; connect-src 'self'; manifest-src 'self'; media-src 'self'; "
+                             "object-src 'none'; worker-src 'self'; frame-src 'none'; frame-ancestors 'none'; "
+                             "base-uri 'none'; form-action 'self'")
         self.send_header("Content-Type", content_type)
         if encoding:
             self.send_header("Content-Encoding", encoding)
         self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if target.name != "index.html" else "no-cache")
+        # Only the build's hashed files are immutable; the manifest, icons
+        # and licences keep their names from release to release.
+        hashed = not shell and "assets" in target.relative_to(root).parts
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if hashed else "no-cache")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -19809,15 +20071,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = render_file_cover_thumbnail(path, member)
         except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
-            self.send_json({"error": str(exc) or "Embedded cover could not be read"}, 422)
+            self.send_json({"error": shown(exc) or "Embedded cover could not be read"}, 422)
             return
-        self.send_response(200)
-        self.send_header("Content-Type", "image/jpeg")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "private, max-age=86400")
-        self.send_header("X-Cover-Source", "comic-file")
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_image(body, headers={"X-Cover-Source": "comic-file"})
 
     def handle_uploaded_cover(self, file_id: int, kind: str = "files") -> None:
         path = user_cover_dir(kind) / f"{file_id}.jpg"
@@ -19827,7 +20083,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = path.read_bytes()
         except OSError as exc:
-            self.send_json({"error": f"Uploaded cover could not be read: {exc}"}, 500)
+            self.send_json({"error": f"Uploaded cover could not be read: {shown(exc)}"}, 500)
             return
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
@@ -19872,7 +20128,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         except Exception as exc:  # noqa: BLE001
             log_exception("manual_import_failed", exc, level="warning")
-            self.send_json({"error": f"The comic could not be imported: {exc}"}, 500)
+            self.send_json({"error": f"The comic could not be imported: {shown(exc)}"}, 500)
             return
         self.send_json(result, 201)
 
@@ -20009,7 +20265,7 @@ class Handler(BaseHTTPRequestHandler):
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            self.send_json({"error": f"Could not open Finder: {exc}"}, 500)
+            self.send_json({"error": f"Could not open Finder: {shown(exc)}"}, 500)
             return
         if result.returncode == 0:
             self.send_json({"folder": result.stdout.strip().rstrip("/")})
@@ -20037,7 +20293,7 @@ class Handler(BaseHTTPRequestHandler):
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            self.send_json({"error": f"Could not open Finder: {exc}"}, 500)
+            self.send_json({"error": f"Could not open Finder: {shown(exc)}"}, 500)
             return
         if result.returncode != 0:
             self.send_json({"error": result.stderr.strip() or "Finder could not show the comic file"}, 500)
@@ -20045,6 +20301,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"status": "revealed", "message": f"Shown in Finder: {target.name}"})
 
     def handle_page(self, parsed_url: urllib.parse.ParseResult) -> None:
+        # The scanner page from before the web app, shown only when there is
+        # no web root (a source run). It walks any folder it is given, so it
+        # is the admin's: as a public path it listed comic files anywhere on
+        # the disk (review, 2026-10-06).
+        if not (self.viewer is not None and self.viewer.is_admin):
+            self.send_json({"error": "Authentication required", "reason": "signin_required"}, 401)
+            return
         query = self.query(parsed_url)
         folder = query.get("folder", "")
         checked = "checked" if query.get("recursive", "1") == "1" else ""
@@ -20222,7 +20485,10 @@ def make_server(host: str, port: int) -> tuple[Any, int]:
         # sits well above what a household opens: at Waitress's default of 100,
         # 100 stalled connections lock everyone else out. poll(), not select(),
         # which cannot watch more than 1,024 sockets.
-        connection_limit=1000,
+        # A household: a handful of devices, each with a few connections. The
+        # cap is what bounds a client that opens connections and never reads,
+        # and the disk a body can be spooled to before anything is checked.
+        connection_limit=200,
         asyncore_use_poll=True,
         # Seconds a connection may sit with nothing happening before it is closed.
         channel_timeout=30,
@@ -20354,6 +20620,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "reset-password":
         sys.exit(reset_password_command(args.username, args.password_stdin))
+    # Files Flipparr makes -- the catalog with its hashes, the config files
+    # with their keys -- are its own user's and nobody else's on the host.
+    os.umask(0o077)
     try:
         found = check_startup_preconditions()
     except StartupRefused as refused:

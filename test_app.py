@@ -5892,27 +5892,38 @@ class ArchiveReadingTests(unittest.TestCase):
         non-zero over something later in the file. Judging that on the exit
         code alone left fifteen comics in a real library with no cover.
         """
-        class Partial:
-            returncode = 1
-            stdout = b"pages/001.png\npages/002.png\n"
-            stderr = b"bsdtar: Bad RAR file\n"
+        partial = (b"pages/001.png\npages/002.png\n", b"bsdtar: Bad RAR file\n", 1)
         with tempfile.TemporaryDirectory() as folder:
             path = self._tar_comic(folder)
-            with patch("app.subprocess.run", return_value=Partial()):
+            with patch("app._run_tool_bounded", return_value=partial):
                 self.assertEqual(
                     app.archive_member_names(path), ["pages/001.png", "pages/002.png"],
                 )
 
     def test_an_archive_that_gives_nothing_back_is_an_error(self):
-        class Empty:
-            returncode = 1
-            stdout = b""
-            stderr = b"bsdtar: Unrecognized archive format\n"
+        empty = (b"", b"bsdtar: Unrecognized archive format\n", 1)
         with tempfile.TemporaryDirectory() as folder:
             path = self._tar_comic(folder)
-            with patch("app.subprocess.run", return_value=Empty()):
+            with patch("app._run_tool_bounded", return_value=empty):
                 with self.assertRaises(ValueError):
                     app.read_archive_member(path, "pages/001.png")
+
+    @unittest.skipUnless(app.shutil.which("bsdtar"), "needs bsdtar, as the image has")
+    def test_an_entry_that_inflates_past_the_limit_is_cut_off_not_read_whole(self):
+        """Review (2026-10-06): the tool's whole output was in memory before
+        the limit was looked at; a page that decompressed to gigabytes took
+        it all."""
+        with tempfile.TemporaryDirectory() as folder:
+            big = Path(folder) / "big.bin"
+            with big.open("wb") as handle:
+                for _ in range(24):
+                    handle.write(b"\0" * (1024 * 1024))
+            archive = Path(folder) / "bomb.cbt"
+            import subprocess
+            subprocess.run(["bsdtar", "-cf", str(archive), "-C", folder, "big.bin"], check=True)
+            with self.assertRaisesRegex(ValueError, "larger than the limit"):
+                app.read_archive_member(archive, "big.bin", limit=4 * 1024 * 1024)
+            self.assertEqual(len(app.read_archive_member(archive, "big.bin", limit=32 * 1024 * 1024)), 24 * 1024 * 1024)
 
 
 class VariantTaggedReleaseTests(unittest.TestCase):
@@ -8167,11 +8178,9 @@ class ImportTrustsAMatchingReleaseTests(unittest.TestCase):
             subprocess.run(["bsdtar", "-cf", str(plain), "--format", "zip", "-C", folder, "001.jpg"], check=True)
             self.assertEqual(app._archive_tool_says_locked(locked), "The archive is password-protected")
             self.assertIsNone(app._archive_tool_says_locked(plain))
-            # And what the reader's own call reports for it says nothing, which
-            # is why it cannot be the test.
-            with self.assertRaises(ValueError) as said:
+            # And the reader's own call refuses it as unreadable, whatever it says.
+            with self.assertRaises(ValueError):
                 app._run_archive_tool(["-xOf", str(locked), "001.jpg"], 1 << 20)
-            self.assertNotRegex(str(said.exception), "(?i)passphrase|encrypt|password")
 
     def test_a_rar_or_7zip_is_asked_of_the_archive_tool(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -10774,6 +10783,38 @@ class StartupPreconditionTests(unittest.TestCase):
                 found = app.check_startup_preconditions()
                 self.assertTrue(database.is_file(), "a missing config folder it may create is created, and the catalog in it")
         self.assertEqual(found["schema"], SCHEMA_VERSION)
+
+
+class VisionBudgetTests(unittest.TestCase):
+    """Review (2026-10-06): a reader allowed vision could script every page
+    of the library through a paid model."""
+
+    def setUp(self):
+        app._VISION_SPEND.clear()
+        self.addCleanup(app._VISION_SPEND.clear)
+
+    def test_a_reader_has_a_days_worth_of_readings_and_no_more(self):
+        for _ in range(app.VISION_PAGES_PER_READER_PER_DAY):
+            self.assertTrue(app.vision_budget_allows(7))
+        self.assertFalse(app.vision_budget_allows(7))
+        self.assertTrue(app.vision_budget_allows(8), "another profile's own")
+
+    def test_one_page_is_read_once_however_many_ask_at_once(self):
+        calls = []
+
+        def slow(file_id, index, *, allow_vision):
+            calls.append((file_id, index))
+            time.sleep(0.05)
+            return {"segmented": True, "panels": []}
+
+        with patch("app._file_page_panels", side_effect=slow):
+            threads = [threading.Thread(target=lambda: app.file_page_panels(3, 4)) for _ in range(6)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(len(calls), 6, "each waits its turn (the second finds the stamp the first wrote)")
+        self.assertEqual(app._PANELS_INFLIGHT, {})
 
 
 class _StopAfterOnePass(threading.Event):

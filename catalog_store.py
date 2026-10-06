@@ -9780,10 +9780,21 @@ class CatalogStore:
                 "title": merged_title, "preview": preview,
             }
 
+    # Folders that are never a comic library, however the request names them:
+    # the root of the filesystem (a scan of it walks everything and hangs on
+    # /proc) and the system's own trees (review, 2026-10-06). Only comics are
+    # ever catalogued or served from a root, so a wrong root reads nothing
+    # else; it is the walk that is the harm.
+    _NEVER_A_LIBRARY = ("/", "/proc", "/sys", "/dev", "/etc", "/run", "/var/run")
+
     def register_root(self, folder: str, recursive: bool) -> int:
         resolved = str(Path(folder).expanduser().resolve())
         if not Path(resolved).is_dir():
             raise ValueError("Library folder does not exist or is not a directory")
+        candidate = Path(resolved)
+        if resolved in self._NEVER_A_LIBRARY or any(
+                candidate.is_relative_to(Path(never)) for never in self._NEVER_A_LIBRARY if never != "/"):
+            raise ValueError("That folder is the system's, not a comic library")
         now = _utc_now()
         with self._connect() as connection:
             for row in connection.execute("SELECT id, path FROM library_roots"):

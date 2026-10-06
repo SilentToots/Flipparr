@@ -39,7 +39,8 @@ _TEMP = tempfile.TemporaryDirectory()
 _ROOT = Path(_TEMP.name)
 (_ROOT / "web").mkdir()
 (_ROOT / "web" / "index.html").write_text("<!doctype html><title>shell</title>")
-(_ROOT / "web" / "asset.js").write_text("console.log(1)")
+(_ROOT / "web" / "assets").mkdir()
+(_ROOT / "web" / "assets" / "asset.js").write_text("console.log(1)")
 (_ROOT / "web" / "font.woff2").write_bytes(b"wOF2")
 (_ROOT / "web" / "manifest.webmanifest").write_text('{"name": "Flipparr"}')
 (_ROOT / "web" / "favicon.ico").write_bytes(b"\x00\x00\x01\x00")
@@ -257,9 +258,16 @@ class HttpContractTests(unittest.TestCase):
     # ---- static assets and the SPA shell ---------------------------------
 
     def test_named_asset_is_served_with_immutable_caching(self):
-        response = self.get("/asset.js")
+        response = self.get("/assets/asset.js")
         self.assertEqual(response.status, 200)
         self.assertIn("immutable", response.headers.get("Cache-Control", ""))
+        # Only the build's hashed files: the manifest keeps its name from
+        # release to release, and a year of `immutable` kept the old one.
+        manifest = self.get("/manifest.webmanifest")
+        self.assertEqual(manifest.headers.get("Cache-Control"), "no-cache")
+        shell = self.get("/")
+        self.assertIn("script-src 'self'", shell.headers.get("Content-Security-Policy", ""))
+        self.assertIn("frame-ancestors 'none'", shell.headers.get("Content-Security-Policy", ""))
 
     def test_unknown_client_route_falls_back_to_the_app_shell(self):
         response = self.get("/library/some/deep/route")
@@ -357,7 +365,7 @@ class HttpContractTests(unittest.TestCase):
         json.loads(response.body)
 
     def test_text_assets_are_compressed_and_marked_vary(self):
-        gzipped = request("GET", self.base + "/asset.js", accept_encoding="gzip")
+        gzipped = request("GET", self.base + "/assets/asset.js", accept_encoding="gzip")
         self.assertEqual(gzipped.headers.get("Vary"), "Accept-Encoding")
         self.assertIn("immutable", gzipped.headers.get("Cache-Control", ""))
 

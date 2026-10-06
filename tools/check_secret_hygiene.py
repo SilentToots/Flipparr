@@ -19,7 +19,11 @@ FORBIDDEN_NAMES = {
     ".env",
     "acquisition-services.json",
     "metadata-providers.json",
+    "auth.json",           # the session secret and the password hash
+    "settings.json",
 }
+# A catalog holds profiles' password and PIN hashes; it is never committed.
+FORBIDDEN_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3")
 HIGH_CONFIDENCE = (
     re.compile(rb"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(rb"gh[pousr]_[A-Za-z0-9]{20,}"),
@@ -31,9 +35,13 @@ HIGH_CONFIDENCE = (
     # placeholder such as <backend-address> instead.
     re.compile(rb"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?![\d.])"),
 )
+# The key may be quoted (JSON, the app's own config files) and the value may
+# not be (an env file, a compose file); 2026-10-06, after a review found
+# the first pattern missed both.
 GENERIC_ASSIGNMENT = re.compile(
-    rb"(?i)(?:api[_-]?key|apikey|access[_-]?token|authorization|bearer[_-]?token)"
-    rb"\s*[=:]\s*['\"]([^'\"\r\n]{16,})['\"]"
+    rb"(?i)['\"]?(?:api[_-]?key|apikey|access[_-]?token|authorization|bearer[_-]?token|session[_-]?secret"
+    rb"|password[_-]?hash|passkey)['\"]?"
+    rb"\s*[=:]\s*['\"]?([A-Za-z0-9_./+=-]{16,})['\"]?"
 )
 PLACEHOLDER_WORDS = (
     b"test",
@@ -102,6 +110,7 @@ def findings(root: Path) -> list[tuple[Path, int, str]]:
         if (
             lowered_parts & FORBIDDEN_PARTS
             or name in FORBIDDEN_NAMES
+            or name.endswith(FORBIDDEN_SUFFIXES)
             or name.endswith(".credentials.json")
             or name.endswith(".secret")
         ):
