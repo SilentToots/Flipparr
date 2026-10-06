@@ -724,6 +724,27 @@ class HttpContractTests(unittest.TestCase):
         self.assertIn("inner detail", failures[0]["traceback"])
         self.assertEqual(failures[0]["request_id"], response.headers.get("X-Request-Id"))
 
+    def test_the_catalog_says_nothing_changed_in_a_few_bytes(self):
+        """Gate 4 (2026-10-05): a page polling every 5 s fetched the whole
+        catalog -- 18 MB of JSON on the owner's library -- each time."""
+        header = lambda response: next((v for k, v in response.headers.items() if k.lower() == "etag"), None)  # noqa: E731
+        first = self.get("/api/v1/catalog")
+        self.assertEqual(first.status, 200)
+        etag = header(first)
+        self.assertTrue(etag and etag.startswith('W/"'), etag)
+        self.assertNotIn("etag", first.json(), "the tag travels as a header, not in the body")
+        again = self.get("/api/v1/catalog", headers={"If-None-Match": etag})
+        self.assertEqual(again.status, 304)
+        self.assertEqual(again.body, b"")
+        self.assertEqual(header(again), etag)
+        stale = self.get("/api/v1/catalog", headers={"If-None-Match": 'W/"something-else"'})
+        self.assertEqual(stale.status, 200)
+        # A change to what it is made of is a new tag.
+        with patch("app.APP_BUILD", "another-build"):
+            changed = self.get("/api/v1/catalog", headers={"If-None-Match": etag})
+        self.assertEqual(changed.status, 200)
+        self.assertNotEqual(header(changed), etag)
+
     def test_health_reports_the_running_version_and_build(self):
         body = self.get("/healthz").json()
         self.assertEqual(body["version"], app.APP_VERSION)

@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,16 +14,41 @@ from catalog_store import ADMIN_USER_ID, CatalogStore, CollectionNameTaken, _par
 
 
 class CatalogStoreTests(unittest.TestCase):
-    def test_operation_context_releases_its_sqlite_connection(self):
+    def test_a_thread_keeps_its_connection_and_an_operation_ends_its_transaction(self):
+        """Gate 4 (2026-10-05): a connection per operation cost 33 ms a write
+        on a NAS volume; a thread's is kept, and `with` ends the transaction."""
         with tempfile.TemporaryDirectory() as folder:
             store = CatalogStore(Path(folder) / "catalog.db")
             connection = store._connect()
-
             with connection:
-                self.assertEqual(connection.execute("SELECT 1").fetchone()[0], 1)
-
+                connection.execute("CREATE TABLE t(x)")
+                connection.execute("INSERT INTO t VALUES (1)")
+                self.assertTrue(connection.in_transaction)
+            self.assertFalse(connection.in_transaction, "committed on exit")
+            self.assertIs(store._connect(), connection, "the same thread gets the same connection")
+            self.assertEqual(connection.execute("SELECT x FROM t").fetchone()[0], 1)
+            # Nested blocks are one transaction, ended by the outermost.
+            with store._connect() as outer:
+                outer.execute("INSERT INTO t VALUES (2)")
+                with store._connect() as inner:
+                    inner.execute("INSERT INTO t VALUES (3)")
+                self.assertTrue(outer.in_transaction, "the inner exit did not commit the outer's work")
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM t").fetchone()[0], 3)
+            # An exception rolls the whole thing back, and the connection is still usable.
+            with self.assertRaises(RuntimeError):
+                with store._connect() as failing:
+                    failing.execute("INSERT INTO t VALUES (4)")
+                    raise RuntimeError("no")
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM t").fetchone()[0], 3)
+            # Another thread has its own.
+            other = []
+            thread = threading.Thread(target=lambda: other.append(store._connect()))
+            thread.start(); thread.join()
+            self.assertIsNot(other[0], connection)
+            store.close()
             with self.assertRaisesRegex(sqlite3.ProgrammingError, "closed database"):
                 connection.execute("SELECT 1")
+            self.assertIsNot(store._connect(), connection, "after close, a fresh one")
 
     def test_merge_keeps_the_clean_title_over_an_identifier_title(self):
         """Merging a stamped duplicate must not rename the run the user kept."""
@@ -3229,6 +3255,7 @@ class JournalModeTests(unittest.TestCase):
                 store = CatalogStore(path)
             self.assertEqual(store.journal_mode, "WAL")
             store.register_root(folder, True)
+            store.close()   # a restart: switching the mode needs the file to itself
             with patch.object(catalog_store.sqlite3, "sqlite_version_info", (3, 40, 1)):
                 reopened = CatalogStore(path)
             self.assertEqual(reopened.journal_mode, "DELETE")

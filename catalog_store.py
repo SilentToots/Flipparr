@@ -263,13 +263,34 @@ def _summarize_run_creators(rows: Iterable[Any]) -> list[dict[str, Any]]:
 
 
 class _ClosingConnection(sqlite3.Connection):
-    """Commit or roll back a transaction, then release its SQLite handle."""
+    """A connection kept by its thread: `with` ends the transaction (commit,
+    or roll back on an exception) and leaves the connection open for the
+    thread's next operation. Nested `with` blocks on the same thread share
+    one transaction, ended by the outermost.
+
+    It used to close on exit, one connection per operation. On a NAS volume
+    (btrfs over bcache, Synology) a fresh connection paid about 17 ms to
+    commit and 16 ms to close, where one kept open commits in 0.2 ms, so a
+    scan of 290 comics -- six operations a file -- took 55 s instead of 8
+    (Gate 4, 2026-10-05). A thread's connection goes when the thread does.
+    """
+
+    _depth = 0
+    _kept = False
+
+    def __enter__(self):
+        self._depth += 1
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        self._depth -= 1
+        if self._depth > 0:
+            return False
         try:
             return super().__exit__(exc_type, exc_value, traceback)
         finally:
-            self.close()
+            if not self._kept:
+                self.close()
 
 
 def _issue_rating_summary(issues: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -788,19 +809,63 @@ class CatalogStore:
         self.preferred_language = ""
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = threading.Lock()
+        # Each thread's own connection (see _ClosingConnection), and all of
+        # them, for close().
+        self._thread = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
         self._migrate()
         self._reconcile_all_identities()
         self._backfill_legacy_replacement_requests()
 
+    def close(self) -> None:
+        """Let go of every thread's connection: for a store being replaced
+        (the database moved), or a test's folder being removed."""
+        with self._connections_lock:
+            connections, self._connections = self._connections, []
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+        self._thread = threading.local()
+
     def _connect(self) -> sqlite3.Connection:
+        kept = getattr(self._thread, "connection", None)
+        if kept is not None:
+            try:
+                kept.execute("SELECT 1")   # still open, and the file still there
+                return kept
+            except sqlite3.ProgrammingError:
+                self._thread.connection = None
         connection = sqlite3.connect(
             self.database_path,
             timeout=30,
             factory=_ClosingConnection,
+            check_same_thread=False,   # closed by close(), from any thread
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
+        if getattr(self, "journal_mode", None) is not None:
+            # Kept by its thread from here on; the migration's own connection,
+            # opened before the journal mode is known, is let go.
+            connection._kept = True
+            self._thread.connection = connection
+            with self._connections_lock:
+                self._connections.append(connection)
+        if getattr(self, "journal_mode", None) == "WAL":
+            # In WAL mode, NORMAL syncs the log at each checkpoint rather than
+            # at each commit, and SQLite documents it as safe from corruption
+            # ("a transaction committed in WAL mode with synchronous=NORMAL
+            # might roll back following a power loss or system crash",
+            # https://sqlite.org/pragma.html#pragma_synchronous); the catalog
+            # is rebuilt by a rescan in any case. FULL cost a sync of the log
+            # per commit, several a file: a scan of 525 comics took 110 s
+            # with the database on a NAS volume, 8 s with NORMAL (Gate 4,
+            # 2026-10-05). The rollback journal keeps FULL: there NORMAL can
+            # lose the journal's protection.
+            connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
     @contextlib.contextmanager
@@ -1078,6 +1143,10 @@ class CatalogStore:
                     edition_id INTEGER NOT NULL REFERENCES editions(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS file_editions_edition ON file_edition_links(edition_id);
+                -- Looked up by issue on every arc, request and ownership
+                -- question; without it each was a scan of every link (Gate 4,
+                -- 2026-10-05: the story-arcs grid took 0.7-2 s on 420 items).
+                CREATE INDEX IF NOT EXISTS file_issue_links_issue ON file_issue_links(issue_id);
                 CREATE TABLE IF NOT EXISTS edition_coverage_claims (
                     id INTEGER PRIMARY KEY,
                     edition_id INTEGER NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
@@ -1219,6 +1288,7 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS acquisition_jobs_status
                     ON acquisition_jobs(status, updated_at);
+                CREATE INDEX IF NOT EXISTS acquisition_jobs_issue ON acquisition_jobs(issue_id);
                 CREATE TABLE IF NOT EXISTS acquisition_job_events (
                     id INTEGER PRIMARY KEY,
                     job_id INTEGER NOT NULL REFERENCES acquisition_jobs(id) ON DELETE CASCADE,

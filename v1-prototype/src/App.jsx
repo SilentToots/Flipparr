@@ -11277,6 +11277,9 @@ export function App() {
   const [bellNews, setBellNews] = useState(() => lastAnswer("/api/v1/notifications") || { items: [], unread: 0, dismissed: [] });
   const [bellError, setBellError] = useState("");
   const [catalog, setCatalog] = useState(null);
+  const catalogRef = useRef(null);
+  catalogRef.current = catalog;
+  const catalogEtag = useRef(null);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
   // The picker, opened over the app (Switch profile), and the Add sheet.
@@ -11797,7 +11800,24 @@ export function App() {
   }
   async function loadCatalog() {
     try {
-      const data = await apiRequest("/api/v1/catalog");
+      // The catalog is asked for again every few seconds while something is
+      // moving. With the tag of the answer in hand, the server says "nothing
+      // changed" in a few bytes rather than the whole library again.
+      const known = catalogEtag.current;
+      const response = await fetch("/api/v1/catalog", known ? { headers: { "If-None-Match": known } } : undefined);
+      if (response.status === 304) {
+        setBackendStatus("live");
+        return catalogRef.current;
+      }
+      const data = await response.json();
+      if (!response.ok) {
+        const error = new Error(data.error || `Request failed (${response.status})`);
+        error.status = response.status;
+        error.reason = data.reason || "";
+        throw error;
+      }
+      catalogEtag.current = response.headers.get("ETag") || null;
+      LAST_ANSWERS.set("/api/v1/catalog", data);
       setCatalog(data);
       setBackendStatus("live");
       return data;

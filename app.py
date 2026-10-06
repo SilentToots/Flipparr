@@ -2333,6 +2333,8 @@ def catalog_store() -> CatalogStore:
         # forever would reintroduce, one layer up, the import-time capture that
         # `_configured_path` exists to avoid.
         if _CATALOG_STORE is None or _CATALOG_STORE.database_path != database_path:
+            if _CATALOG_STORE is not None:
+                _CATALOG_STORE.close()
             _CATALOG_STORE = CatalogStore(database_path)
         # The store derives issue titles and covers from the files themselves,
         # so it needs to know which language the library asked for. Read it
@@ -17017,7 +17019,13 @@ def catalog_api_payload(*, viewer_id: int) -> dict[str, Any]:
                     _CATALOG_CACHE.pop(next(iter(_CATALOG_CACHE)))  # a household is few; memory is not
                 _CATALOG_CACHE[viewer_id] = entry
     payload = entry[2]
-    return {**payload, "stats": dict(payload.get("stats") or {})}
+    # What this answer is made of, for the ETag: the stamp of the build it
+    # came from, the viewer, and the build of Flipparr (a new build may say
+    # the same facts differently). A client that has this answer already
+    # is told so in 304 and a few bytes, not 18 MB of JSON again
+    # (Gate 4, 2026-10-05: a page polling every 5 s fetched it each time).
+    stamp = hashlib.sha256(repr((entry[0], viewer_id, APP_BUILD)).encode()).hexdigest()[:24]
+    return {**payload, "stats": dict(payload.get("stats") or {}), "etag": f'W/"{stamp}"'}
 
 
 def _build_catalog_api_payload(*, viewer_id: int) -> dict[str, Any]:
@@ -17550,6 +17558,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/catalog":
             admin = self._viewer().is_admin
             payload = catalog_api_payload(viewer_id=self._viewer_id())
+            etag = str(payload.pop("etag", "") or "")
+            if etag and self.headers.get("If-None-Match", "").strip() == etag:
+                # Nothing it is made of has changed since this client got it.
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Vary", "Accept-Encoding, Cookie")
+                self.send_header("Cache-Control", "private, no-store")
+                self.end_headers()
+                return
             # Someone else's private collection is not there, for the admin
             # too, as with story arcs; each says whose it is.
             viewer = self._viewer()
@@ -17563,7 +17580,7 @@ class Handler(BaseHTTPRequestHandler):
             if admin:
                 payload.setdefault("stats", {})["pendingRequests"] = store.pending_member_request_count()
                 learn_about_waiting_requests(payload["memberRequests"])
-            self.send_json(payload)
+            self.send_json(payload, headers={"ETag": etag} if etag else None)
             return
         if parsed_url.path == "/api/v1/ratings":
             settings = load_app_settings()

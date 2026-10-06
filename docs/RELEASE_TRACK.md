@@ -263,8 +263,20 @@ three); `/healthz` reports the catalog and goes 503 without it; CI publishes
 and compose pulls it; the owner's proxy network, time zone and group are out
 of the shipped compose file.
 
-Open: realistic-library performance; the responsive and accessibility matrix;
-security; operations; documentation. From Gate 3: qBittorrent end to end.
+**Performance on the real library (2026-10-06):** measured on an isolated
+copy of production's catalog with the library mounted read-only
+([PERFORMANCE.md](PERFORMANCE.md)). Three findings, fixed: a clean scan of
+the 2,820-file library took 628 s with the database on the NAS volume
+because every operation opened and closed its own SQLite connection (18.6 s
+with a connection kept per thread and `synchronous=NORMAL` under WAL); the
+story-arcs grid took up to 2 s for want of an index on `file_issue_links`
+(20–30 ms); and a page polled the whole 18 MB catalog every 5 s while any
+request was queued (now an `ETag` and a 304). The catalog payload's size --
+about 6 KB a file, held whole in the server's cache -- is the next ceiling,
+past roughly 10,000 files, and is recorded as such.
+
+Open: the responsive and accessibility matrix; security; operations;
+documentation. From Gate 3: qBittorrent end to end.
 
 ## Carried-forward findings
 
