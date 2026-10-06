@@ -14109,23 +14109,39 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     examples = list(examples or [])
     text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction, len(examples)), examples)
     boxes = panel_finder.parse_vision_boxes(text, width, height)
+    # What the model said, before anything here is done to it: a third of
+    # the pages of some runs come out as "the whole page", and until this
+    # was logged nothing could say whether the model saw no panels or drew
+    # boxes that the merge below folded into one (2026-10-06). Numbers only.
+    drawn = [{key: round(float(box[key]), 3) for key in ("x", "y", "w", "h")} for box in (boxes or [])]
+
+    def told(outcome: str, **detail: Any) -> None:
+        log_event("vision_boxes", outcome=outcome, drawn=len(drawn), boxes=drawn, **detail)
+
     if boxes is None:
+        told("unreadable")
         return None
     # Boxes that lie over each other -- a diagonal pair, a panel seen twice
     # -- are one field, read at once.
     boxes = panel_finder.merge_overlapping(boxes)
     if len(boxes) <= 1:
+        told("whole", merged=len(boxes))
         return [dict(panel_finder.WHOLE_PAGE)]
     if not panel_finder.accept_vision_boxes(boxes):
+        told("refused", merged=len(boxes), why="too few")
         return None
     refined = panel_finder.refine_vision_boxes(mask, boxes)
     if refined is None:
+        told("refused", merged=len(boxes), why="edges unverifiable")
         return None
     # A panel the model left out comes back from the ink no box covers; a
     # reading that still leaves a tenth of the ink uncovered is a guess.
     refined = panel_finder.add_leftover_panels(mask, refined)
-    if panel_finder.ink_outside(mask, refined) > panel_finder.INK_UNCOVERED_MAX:
+    outside = panel_finder.ink_outside(mask, refined)
+    if outside > panel_finder.INK_UNCOVERED_MAX:
+        told("refused", merged=len(boxes), why="ink uncovered", uncovered=round(outside, 3))
         return None
+    told("kept", merged=len(boxes), kept=len(refined), uncovered=round(outside, 3))
     return refined
 
 
