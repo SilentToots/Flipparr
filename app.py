@@ -17588,17 +17588,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._sign_in_as(admin, config, device=True)
         device = cookies.get(_DEVICE_COOKIE)
         self._shared_device_cookie = bool(device is not None and device_token_valid(device.value, config))
-        household = (
+        by_place = (
             config["method"] == "none"
-            or self._shared_device_cookie
             or bool(config["localBypass"] and is_local_address(self._client_address()))
         )
-        if household and viewer is None and not household_host_allowed(self.headers.get("Host", "")):
+        if by_place and viewer is None and not self._shared_device_cookie \
+                and not household_host_allowed(self.headers.get("Host", "")):
             # Called by a name this server was not given: a rebound domain,
-            # most likely. Not one of the household, whatever address it
-            # comes from; a signed-in cookie still counts.
-            household = False
+            # most likely. Where the request comes from then proves nothing;
+            # a signed cookie -- a session's or a shared device's, which no
+            # other site's page can present -- still counts.
+            by_place = False
             self._host_refused = True
+        household = by_place or self._shared_device_cookie
         if viewer is None and household:
             enabled = [user for user in store.list_users() if not user["disabled"]]
             if len(enabled) == 1:
