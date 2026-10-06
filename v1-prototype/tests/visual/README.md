@@ -63,18 +63,19 @@ Each state declares the selectors that prove it photographed something, and
 several of them can only be satisfied by data. A scratch library that passes
 every state has:
 
-- **At least three runs, one of them with two or more readable issues.**
-  `reader-finish` opens the last page of a run's first issue and needs a next
-  one to offer. The reader renders the pages, so the archives need real
-  images in them, not placeholder bytes: a `.cbz` of a few small JPEGs per
-  issue, made with Pillow, is enough.
+- **At least three runs, one of them with two or more readable issues of
+  more than one page.** `reader-finish` opens the last page of a run's first
+  issue and needs a next one to offer, and `library-in-progress` needs a
+  page left to read. The reader renders the pages, so the archives need real
+  images in them, not placeholder bytes: a `.cbz` of three small PNGs per
+  issue is enough (a one-page issue can never be in progress).
 - **One followed run** for `library-following`, and **one run in progress** —
   started, with issues still unread — for `library-in-progress`. The same run
   can be both. Scan the folder with `metadataMode: "local"` (`POST
   /api/v1/scans`) so nothing is asked of a provider, then `POST
   /api/v1/series/<id>/monitoring` with `{}` to follow it and `POST
-  /api/v1/files/<fileId>/progress` with `{"page": 2}` to be part-way through
-  its first issue.
+  /api/v1/files/<fileId>/progress` with `{"page": 1}` to be part-way through
+  its first issue (pages count from 0; the page must exist in the file).
 - **No reader's request waiting.** A pending `member_requests` row opens the
   Pull List on its Requests tab — a queue row on desktop, a swipe card on a
   phone — which is a different page from the Wanted tab the baseline holds,

@@ -17,6 +17,9 @@ enforcement; this file is the explanation.
 - `tests/visual/` — `layout:check` (edges, alignment and placeholder fit at
   seven widths) and `visual:capture` / `visual:compare` (every screen at
   1440 and 375, with colour, type, spacing and contrast recorded per element).
+- `tests/a11y/` — `a11y:audit`: the same screens at 1440, 768, 375 and 320
+  through axe-core (WCAG 2.2 A/AA), with reflow, target size, keyboard focus
+  and reduced-motion probes of its own (below, "Accessibility").
 
 ## Brand
 
@@ -686,6 +689,48 @@ than the file.
    contrast gets worse or the layout moves; read its list of changed
    properties, which should contain only what you meant to change. Point it
    elsewhere with `VISUAL_APP_ORIGIN` and `VISUAL_BACKEND_ORIGIN`.
+   `--only name,name` recaptures a few states while one is being repaired;
+   a partial capture is not a baseline.
+5. `npm run a11y:audit -- --out <folder>` against the same app for a change
+   to a control, a focus style, a colour pair or anything that moves at
+   320px. It fails on a serious axe violation, a page that scrolls sideways
+   at 320px, or a focus stop with no indicator.
+
+## Accessibility
+
+The target is WCAG 2.2 AA, checked by `npm run a11y:audit` over every screen
+the visual harness knows, at 1440, 768, 375 and 320px (the width this
+document promises). What it holds, and the rules that follow from it:
+
+- **Contrast** 4.5:1 for text, 3:1 for large text and for the parts of a
+  control that identify it (1.4.3, 1.4.11). A secondary label is set lighter
+  by weight or by a token colour that still passes, never by fading a label
+  with `opacity` -- that is how the Read button's issue number fell to 3.67:1
+  on the violet (2026-10-06).
+- **Reflow** (1.4.10): no horizontal page scroll at 320px, which is also
+  what 200% zoom comes to on a small laptop. Shelves that scroll sideways on
+  purpose carry `data-scrolls-sideways` or one of the known shelf classes.
+- **Target size** (2.5.8): every control at least 24px in both directions.
+  Native checkboxes are 20px with their `<label>` as the target; a
+  text-only button (`.shelf-see-all`) carries `min-height: var(--space-24)`.
+  Visually hidden helpers (`.sr-only`, a hidden file input) are not targets.
+- **Keyboard** (2.1.1, 2.1.2, 2.4.7): Tab reaches every control in order,
+  nothing traps focus, and each stop shows a ring -- `--focus-ring` as an
+  outline, or on a field's wrapper through `:focus-within` (the sidebar
+  search). The audit compares each stop's focused and blurred styles, and
+  its wrapper's, so a ring drawn on either counts.
+- **Motion** (2.3.3): under `prefers-reduced-motion: reduce` every duration
+  collapses; the audit reads computed `animation-duration` and
+  `transition-duration` on every element and fails anything over a frame.
+- **Names and roles**: axe's `wcag2a`/`wcag2aa`/`wcag21a`/`wcag21aa`/
+  `wcag22aa` rule sets; a moderate or minor finding is printed and does not
+  fail the run, a serious or critical one does.
+
+First full pass (2026-10-06, 45 screen states x 4 widths): no overflow at
+320px anywhere, no motion under reduced motion, every focus stop indicated;
+the one serious finding (the Read sub-label's contrast) and the small
+targets (native checkboxes, *See all*) fixed in the shared rules, and the
+re-run clean of axe findings at every level.
 
 ## Framework policy
 

@@ -36,10 +36,14 @@ export const states = [
     name: "library-list",
     phone: false,
     path: "/library/all",
-    require: [".series-row"],
+    // Grid or list is chosen in the View & sort sheet since 2026-09-29.
+    waitForCatalog: true,
+    require: [".library-view-button", ".series-row"],
     async setup(page) {
-      await page.waitForSelector(".library-view-toggle", { timeout: 15000 });
-      await page.locator('.library-view-toggle [aria-label="List view"]').first().click();
+      await page.waitForSelector(".library-view-button", { timeout: 15000 });
+      await page.locator(".library-view-button").click();
+      await page.getByRole("radiogroup", { name: "View" }).getByRole("radio", { name: "List" }).click();
+      await page.locator(".library-sheet-done").click();
       await settle(page);
     },
   },
@@ -58,7 +62,7 @@ export const states = [
     async setup(page) {
       await page.waitForSelector(".library-view-button", { timeout: 15000 });
       await page.locator(".library-view-button").click();
-      await page.getByRole("switch", { name: "Following only" }).click();
+      await page.locator("label.follow-switch", { hasText: "Following only" }).click();
       await page.locator(".library-sheet-done").click();
       await settle(page);
     },
@@ -74,7 +78,7 @@ export const states = [
     async setup(page) {
       await page.waitForSelector(".library-view-button", { timeout: 15000 });
       await page.locator(".library-view-button").click();
-      await page.getByRole("switch", { name: "In progress only" }).click();
+      await page.locator("label.follow-switch", { hasText: "In progress only" }).click();
       await page.locator(".library-sheet-done").click();
       await settle(page);
     },

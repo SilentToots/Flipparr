@@ -14,6 +14,7 @@
     "visual:capture": "node tests/visual/capture.mjs",
     "visual:compare": "node tests/visual/compare.mjs",
     "layout:check": "node tests/visual/layout-check.mjs",
+    "a11y:audit": "node tests/a11y/audit.mjs",
     "lint": "eslint src tests scripts",
     "brand:icons": "node scripts/brand-icons.mjs"
   },
@@ -26,6 +27,7 @@
     "react-dom": "19.2.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@vitejs/plugin-react": "5.0.4",
     "eslint": "^10.10.0",
     "globals": "^17.12.0",

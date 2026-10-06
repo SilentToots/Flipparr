@@ -167,7 +167,11 @@ async function capture(page, state, origin, dir, suffix) {
 
 const browser = await chromium.launch();
 
-await rm(out, { recursive: true, force: true });
+// `--only name,name` captures a few states while a state is being repaired;
+// a partial capture is not a baseline, so compare.mjs is still run on a full one.
+const onlyFlag = process.argv.indexOf("--only");
+const only = onlyFlag === -1 ? [] : String(process.argv[onlyFlag + 1] || "").split(",").filter(Boolean);
+if (!only.length) await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 
 const results = [];
@@ -195,7 +199,8 @@ for (const { suffix, width, height } of VIEWPORTS) {
   const work = [
     ...states.map((s) => [s, APP]),
     ...backendStates.map((s) => [s, BACKEND]),
-  ].filter(([state]) => !suffix || state.phone !== false);
+  ].filter(([state]) => !suffix || state.phone !== false)
+    .filter(([state]) => !only.length || only.includes(state.name));
   for (const [state, origin] of work) {
     const name = state.name + suffix;
     try {

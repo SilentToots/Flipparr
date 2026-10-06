@@ -287,8 +287,23 @@ logs, missing response headers, container capabilities -- and the model, its
 limits and the proxy's part written up in [SECURITY.md](SECURITY.md).
 Dependencies audited (pip-audit, npm audit) clean. Deployed as 69462e94.
 
-Open: the responsive and accessibility matrix; operations; documentation.
-From Gate 3: qBittorrent end to end.
+**Responsive and accessibility (2026-10-06):** every screen state the
+visual harness knows (45, with the three Library filter states and the
+reader's finish drawer repaired to the current UI) at 1440, 768, 375 and
+320px through axe-core's WCAG 2.2 A/AA rules and four probes -- reflow,
+24px targets, keyboard focus, reduced motion (`npm run a11y:audit`;
+`v1-prototype/tests/a11y/README.md`). Result: no horizontal scroll at
+320px on any screen, no motion under `prefers-reduced-motion`, every
+keyboard stop indicated, no focus trap; one serious finding (the Read
+button's issue number at 3.67:1, faded with `opacity`) and two kinds of
+small target (13px native checkboxes, the 20px *See all* button) fixed in
+the shared rules and re-audited clean. The rules it holds are written into
+`DESIGN_SYSTEM.md`, "Accessibility". Not in CI: it needs a library, as the
+visual harness does. Unmeasured: a screen reader's reading of each page
+(axe checks names, roles and landmarks, not the experience); the reader's
+page view under 200% zoom beyond what 320px stands in for.
+
+Open: operations; documentation. From Gate 3: qBittorrent end to end.
 
 ## Carried-forward findings
 
