@@ -832,6 +832,9 @@ def run(seeded: dict[str, Any], fakes: Fakes, server: Server) -> list[dict[str, 
         saved_in = posixpath_name(str(torrent.get("save_path") or ""))
         if saved_in != "comics":
             broken.append(f"qBittorrent saved the pack in “{saved_in}”, not the comics category's folder")
+        # The riders' rows are written one by one after the torrent is
+        # started, so they may be a moment behind the tag (CI, 2026-10-06).
+        settle(lambda: len(torrent_rows()) >= 7, 20)
         rows = torrent_rows()
         if sorted(str(r["issue_number"]) for r in rows) != [str(n) for n in range(2, 9)]:
             broken.append("not every wanted issue has a download row on the pack: " + str([r["issue_number"] for r in rows]))
