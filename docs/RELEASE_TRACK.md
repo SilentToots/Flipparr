@@ -275,8 +275,20 @@ request was queued (now an `ETag` and a 304). The catalog payload's size --
 about 6 KB a file, held whole in the server's cache -- is the next ceiling,
 past roughly 10,000 files, and is recorded as such.
 
-Open: the responsive and accessibility matrix; security; operations;
-documentation. From Gate 3: qBittorrent end to end.
+**Security (2026-10-06):** three independent reviews of the code against the
+household model (identity and access; files, archives and fetching; the HTTP
+layer and the container), every finding verified in the code and fixed with
+a test -- DNS rebinding in household mode, sessions surviving a sign-in
+tightening, settings changed by a session alone, a guess burst past the
+throttle, saved secrets sent to a requested address, credentials following
+redirects, the rating gate missed by the avatar route, unbounded archive,
+ebook, pack and image decoding, images cached across profiles, secrets in
+logs, missing response headers, container capabilities -- and the model, its
+limits and the proxy's part written up in [SECURITY.md](SECURITY.md).
+Dependencies audited (pip-audit, npm audit) clean. Deployed as 69462e94.
+
+Open: the responsive and accessibility matrix; operations; documentation.
+From Gate 3: qBittorrent end to end.
 
 ## Carried-forward findings
 
