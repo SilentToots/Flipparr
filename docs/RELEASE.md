@@ -153,6 +153,19 @@ You lose manual corrections, aliases and request history — not files.
 
 ## 5. Release notes
 
+### 0.2.0 — unreleased
+
+**Schema:** 65 (adds `page_panel_history`: the reading a panel correction
+replaced is kept, so corrections can be measured). Upgrading from 0.1.0
+keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
+0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer
+catalog.
+
+- Panel view: the leftover pass now runs on a page read with no detector
+  model and no connector (the default install); a solid band at a panel's
+  edge is no longer made a panel of. Measured against the owner's
+  hand-fixed pages in `docs/PANELS.md`.
+
 ### 0.1.0 — first release
 
 The first installable release of Flipparr, for one household on one Docker

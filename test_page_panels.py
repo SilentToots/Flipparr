@@ -301,6 +301,73 @@ class ModelTierTests(unittest.TestCase):
         self.assertEqual(tops, [0.05, 0.5])
 
 
+class FailureClasses(unittest.TestCase):
+    """The three ways the detector failed on real pages (benchmark of
+    2026-10-06 over 120 hand-fixed pages): drawn here so each fix is held.
+
+    Each fixture is drawn from what the real page's ink mask showed, not from
+    a guess at it; and each failed on the code of that day."""
+
+    def _dark_page_with_crossing_light(self):
+        # Once & Future #11 p6: five panels on black, their gutters crossed by
+        # rain -- thin bright streaks -- so no gutter row is bare. The gutters
+        # are still plain to see: valleys at 5-18% ink between panels at
+        # 60-90%, framed by the panels' own border lines.
+        image, draw = _page(background="black")
+        boxes = [(30, 30, 285, 420), (315, 30, 570, 420), (30, 450, 570, 640), (30, 670, 285, 870), (315, 670, 570, 870)]
+        for box in boxes:
+            draw.rectangle(box, fill="#303030", outline="#d0d0d0", width=3)
+            x0, y0, x1, y1 = box
+            draw.ellipse((x0 + 25, y0 + 25, x1 - 25, y1 - 25), fill="#808080")
+            draw.ellipse((x0 + 60, y0 + 60, x1 - 60, y1 - 60), fill="#141414")
+        for start in range(-900, 600, 45):
+            draw.line((start, 0, start + 900, 900), fill="#c8c8c8", width=2)
+        return image, boxes
+
+    @unittest.expectedFailure
+    def test_a_dark_page_whose_gutters_light_crosses_is_still_cut(self):
+        # Still open (2026-10-06): a relative "valley" pass on the ink
+        # profiles cut this fixture but, on the benchmark, split more real
+        # panels than it found gutters (exact 25 -> 23 of 120, splits
+        # 35 -> 42) and was dropped. The fixture stays, red, until a reading
+        # of dark pages holds on the real ones.
+        image, boxes = self._dark_page_with_crossing_light()
+        result = detect_panels(image)
+        self.assertTrue(result["segmented"], "five framed panels on black are a layout")
+        self.assertEqual(len(result["panels"]), 5)
+
+    def test_a_solid_strip_at_a_panels_foot_is_not_a_panel(self):
+        # Once & Future #5 p5: white gutters, dark art, and a solid black band
+        # at the foot of a panel -- the leftover pass read the band as a
+        # panel of its own because it is dense with "ink". Solid fill has no
+        # texture; a panel has.
+        image, draw = _page()
+        grid = _grid(draw, 2, 2)
+        x0, y0, x1, y1 = grid[0]
+        draw.rectangle((x0, y1 - 60, x1, y1), fill="black")
+        width, height = image.size
+        # The reading as the vision tier leaves it: the first panel settled
+        # above the band (its edge found the bare line the band's top makes).
+        panels = [{"x": bx0 / width, "y": by0 / height, "w": (bx1 - bx0) / width, "h": (by1 - by0) / height}
+                  for bx0, by0, bx1, by1 in grid]
+        panels[0]["h"] = (y1 - 60 - y0) / height
+        grown = add_leftover_panels(page_mask(image), panels)
+        self.assertEqual(len(grown), 4, "the band is left alone, not made a panel of")
+        self.assertEqual(grown[0], panels[0], "and the panel is not grown over it: a band under two panels grew one over the other")
+
+    @unittest.expectedFailure
+    def test_an_inset_is_kept_as_its_own_panel(self):
+        # Open: phase 1c of the panel plan (docs/PANELS.md).
+        # Once & Future #10 p19: a small panel drawn inside a large one. The
+        # vision path merged any box mostly inside another into it; a reader
+        # steps to the inset after its container.
+        container = {"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.5}
+        inset = {"x": 0.6, "y": 0.35, "w": 0.3, "h": 0.18}
+        below = {"x": 0.05, "y": 0.6, "w": 0.9, "h": 0.35}
+        self.assertEqual(len(merge_overlapping([container, inset, below])), 3, "containment is an inset, not a diagonal pair")
+        self.assertTrue(ambiguous_layout([container, inset, below]), "container-then-inset is an order to settle, not row-major")
+
+
 class VisionTierTests(unittest.TestCase):
     """What is asked of a vision model, and what of its answer is believed."""
 

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 64
+SCHEMA_VERSION = 65
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1440,6 +1440,26 @@ class CatalogStore:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (file_id, page_member)
                 );
+                -- What a page's panels were before they were replaced (schema
+                -- 65): the automatic reading a person corrected, the model's
+                -- answer a rescan overwrote. Until this table a correction
+                -- erased the reading it corrected, so nothing could say what
+                -- had been wrong, or how often. `replaced_by` is the source
+                -- that took its place; `reason` is "overwrite" or "forgotten".
+                CREATE TABLE IF NOT EXISTS page_panel_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    page_member TEXT NOT NULL,
+                    file_signature TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    panels_json TEXT NOT NULL,
+                    segmented INTEGER NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    replaced_by TEXT,
+                    reason TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS page_panel_history_page
+                    ON page_panel_history(file_id, page_member, id);
                 /* The people reading this library (schema 49). Profile 1 is
                    the admin and always exists; a household with one person
                    never sees another. A name to sign in with is optional --
@@ -2056,8 +2076,8 @@ class CatalogStore:
                 # pages already asked about are asked under that rule.
                 connection.execute("DELETE FROM page_panels WHERE source='vlm'")
             if stored_version is not None and stored_version < 47:
-                # 47: a corrected answer now has to account for three quarters
-                # of the page (page_panels.VISION_READ_MIN); a reading kept
+                # 47: a corrected answer then had to account for three quarters
+                # of the page (a floor since replaced by page_panels.INK_UNCOVERED_MAX); a reading kept
                 # under the old floor that falls short is asked again. Only
                 # those -- a spread in one library -- not every reading.
                 short = [
@@ -4613,9 +4633,22 @@ class CatalogStore:
             by_run.setdefault(str(row["series_run_id"]), []).append((int(row["id"]), row["issue_number"]))
         return by_run
 
+    @staticmethod
+    def _archive_page_panels(connection: sqlite3.Connection, where: str, args: tuple[Any, ...],
+                             replaced_by: str | None, reason: str) -> None:
+        """Keep the rows `where` names in the history before they go or change."""
+        connection.execute(
+            f"""INSERT INTO page_panel_history(
+                    file_id, page_member, file_signature, source, panels_json, segmented, recorded_at, replaced_by, reason)
+                SELECT file_id, page_member, file_signature, source, panels_json, segmented, ?, ?, ?
+                FROM page_panels WHERE {where}""",
+            (_utc_now(), replaced_by, reason, *args),
+        )
+
     def delete_page_panels(self, file_id: int, member: str) -> bool:
         """Forget one page's panels, a person's included, so the automatic tiers read it again."""
         with self._write_lock, self._connect() as connection:
+            self._archive_page_panels(connection, "file_id=? AND page_member=?", (int(file_id), member), None, "forgotten")
             cursor = connection.execute(
                 "DELETE FROM page_panels WHERE file_id=? AND page_member=?", (int(file_id), member),
             )
@@ -4627,10 +4660,47 @@ class CatalogStore:
             kept = connection.execute(
                 "SELECT COUNT(*) FROM page_panels WHERE file_id=? AND source='manual'", (int(file_id),),
             ).fetchone()[0]
+            self._archive_page_panels(connection, "file_id=? AND source<>'manual'", (int(file_id),), None, "forgotten")
             cursor = connection.execute(
                 "DELETE FROM page_panels WHERE file_id=? AND source<>'manual'", (int(file_id),),
             )
             return {"forgotten": cursor.rowcount, "kept": int(kept)}
+
+    def page_panel_history(self, file_id: int, member: str, limit: int = 5) -> list[dict[str, Any]]:
+        """What this page's panels were before, newest first: the reading a
+        person corrected, the model's answer a rescan replaced."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT source, panels_json, segmented, recorded_at, replaced_by, reason
+                   FROM page_panel_history WHERE file_id=? AND page_member=? ORDER BY id DESC LIMIT ?""",
+                (int(file_id), member, int(limit)),
+            ).fetchall()
+        return [
+            {"source": row["source"], "segmented": bool(row["segmented"]), "panels": _load_json(row["panels_json"], []),
+             "recordedAt": row["recorded_at"], "replacedBy": row["replaced_by"], "reason": row["reason"]}
+            for row in rows
+        ]
+
+    def manual_page_panels_with_history(self) -> list[dict[str, Any]]:
+        """Every hand-fixed page beside the automatic reading it replaced, when one was kept:
+        the benchmark's pairs of (what the machine said, what the person made of it)."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.file_id, p.page_member, p.panels_json, p.updated_at,
+                          (SELECT h.source FROM page_panel_history h
+                            WHERE h.file_id=p.file_id AND h.page_member=p.page_member AND h.replaced_by='manual'
+                            ORDER BY h.id DESC LIMIT 1) AS before_source,
+                          (SELECT h.panels_json FROM page_panel_history h
+                            WHERE h.file_id=p.file_id AND h.page_member=p.page_member AND h.replaced_by='manual'
+                            ORDER BY h.id DESC LIMIT 1) AS before_json
+                   FROM page_panels p WHERE p.source='manual' ORDER BY p.file_id, p.page_member""",
+            ).fetchall()
+        return [
+            {"fileId": int(row["file_id"]), "member": row["page_member"], "panels": _load_json(row["panels_json"], []),
+             "updatedAt": row["updated_at"], "beforeSource": row["before_source"],
+             "before": _load_json(row["before_json"], []) if row["before_json"] else None}
+            for row in rows
+        ]
 
     def manual_page_panels_near(self, file_id: int, limit: int = 2) -> list[dict[str, Any]]:
         """A person's hand-fixed pages nearest this comic: its own first, then its run's, newest first."""
@@ -4659,9 +4729,13 @@ class CatalogStore:
             ).fetchone()
         if row is None:
             return None
+        previous = self.page_panel_history(file_id, member, 1)
         return {
             "fileSignature": row["file_signature"], "source": row["source"],
             "segmented": bool(row["segmented"]), "panels": _load_json(row["panels_json"], []),
+            # The reading this one replaced, when one was kept: what the
+            # machine said before a person fixed the page.
+            "previous": previous[0] if previous else None,
         }
 
     def set_page_panels(
@@ -4677,6 +4751,14 @@ class CatalogStore:
         with self._write_lock, self._connect() as connection:
             if not connection.execute("SELECT 1 FROM files WHERE id=?", (int(file_id),)).fetchone():
                 raise LookupError("Library file was not found")
+            # The reading being replaced is kept, when it is a different
+            # reading: a person's correction over the machine's, a model's
+            # answer over the cut's. The same boxes saved again are not.
+            current = connection.execute(
+                "SELECT source, panels_json FROM page_panels WHERE file_id=? AND page_member=?", (int(file_id), member),
+            ).fetchone()
+            if current is not None and (current["source"] != source or current["panels_json"] != json.dumps(list(panels))):
+                self._archive_page_panels(connection, "file_id=? AND page_member=?", (int(file_id), member), source, "overwrite")
             connection.execute(
                 """INSERT INTO page_panels(
                        file_id, page_member, file_signature, source, panels_json, segmented, updated_at

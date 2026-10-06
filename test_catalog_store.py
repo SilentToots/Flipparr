@@ -2432,7 +2432,7 @@ class CatalogStoreTests(unittest.TestCase):
                 self.assertEqual(connection.execute(
                     "SELECT sab_nzo_id, sab_storage FROM acquisition_release_failures").fetchone(),
                     (f"direct_site:def456:{job_id}", "/config/downloads/direct_site/8"))
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
 
     def test_downloads_in_progress_leave_out_those_whose_request_ended(self):
         """Settings -> System counted six rows of a cancelled request as six
@@ -4935,7 +4935,7 @@ class ReadingListTests(LibraryFixture):
             self.assertEqual(reopened.reading_list_meta(int(arc["id"]))["sortMode"], "custom", "every arc keeps its order")
             self.assertIsNone(reopened.run_collection_backdrop_preference(int(made["id"])))
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
 
     def test_a_profiles_collection_names_are_its_own(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -4967,7 +4967,7 @@ class ReadingListTests(LibraryFixture):
             meta = reopened.reading_list_meta(int(arc["id"]))
             self.assertEqual((meta["ownerId"], meta["shared"]), (None, False), "every arc saved before is the household's")
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
 
     def test_an_arc_read_by_release_date_serves_its_issues_by_cover_date(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -5095,7 +5095,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=56")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
                 names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual({"reading_lists", "reading_list_items"}, names)
             self.assertEqual(reopened.reading_lists_overview(), [])
@@ -5109,7 +5109,7 @@ class ReadingListTests(LibraryFixture):
                 connection.execute("UPDATE schema_info SET version=59")
             reopened = CatalogStore(store.database_path)
             with sqlite3.connect(store.database_path) as connection:
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
             self.assertEqual(reopened.run_collections(), [])
             self.assertEqual(reopened.catalog()["runCollections"], [])
 
@@ -5141,7 +5141,7 @@ class ReadingListTests(LibraryFixture):
             with sqlite3.connect(store.database_path) as connection:
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(acquisition_downloads)")}
                 self.assertIn("taken_by_hand", columns)
-                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], 64)
+                self.assertEqual(connection.execute("SELECT version FROM schema_info").fetchone()[0], catalog_store.SCHEMA_VERSION)
 
     def test_a_library_from_the_first_day_of_story_arcs_gains_the_backdrop_columns(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -5204,10 +5204,41 @@ class PagePanelTests(LibraryFixture):
             panels = [{"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.3}]
             store.set_page_panels(file_id, "p1.jpg", "sig-1", "auto", panels, True)
             self.assertEqual(store.page_panels(file_id, "p1.jpg"), {
-                "fileSignature": "sig-1", "source": "auto", "segmented": True, "panels": panels,
+                "fileSignature": "sig-1", "source": "auto", "segmented": True, "panels": panels, "previous": None,
             })
             store.set_page_panels(file_id, "p1.jpg", "sig-2", "manual", [], False)
             self.assertEqual(store.page_panels(file_id, "p1.jpg")["source"], "manual", "the same page, corrected")
+
+    def test_a_correction_keeps_the_reading_it_replaced(self):
+        """Until schema 65 a person's fix erased the automatic reading it
+        fixed, so nothing could say what had been wrong or how often."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            file_id = self._file_id(store, "Example 001.cbz")
+            auto = [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+            vlm = [{"x": 0, "y": 0, "w": 1, "h": 0.3}, {"x": 0, "y": 0.3, "w": 1, "h": 0.7}]
+            hand = [{"x": 0, "y": 0, "w": 1, "h": 1}]
+            store.set_page_panels(file_id, "p1.jpg", "sig", "auto", auto, True)
+            store.set_page_panels(file_id, "p1.jpg", "sig", "auto", auto, True)
+            self.assertEqual(store.page_panel_history(file_id, "p1.jpg"), [], "the same reading saved again is not history")
+            store.set_page_panels(file_id, "p1.jpg", "sig", "vlm", vlm, True)
+            store.set_page_panels(file_id, "p1.jpg", "sig", "manual", hand, True)
+            history = store.page_panel_history(file_id, "p1.jpg")
+            self.assertEqual([(h["source"], h["replacedBy"], h["reason"]) for h in history],
+                             [("vlm", "manual", "overwrite"), ("auto", "vlm", "overwrite")], "newest first, the chain kept")
+            self.assertEqual(history[0]["panels"], vlm)
+            self.assertEqual(store.page_panels(file_id, "p1.jpg")["previous"]["source"], "vlm", "what the model said, beside the fix")
+            pairs = store.manual_page_panels_with_history()
+            self.assertEqual([(p["member"], p["beforeSource"], p["before"]) for p in pairs], [("p1.jpg", "vlm", vlm)])
+            # Forgetting keeps the row too, under its own reason.
+            store.set_page_panels(file_id, "p2.jpg", "sig", "model", auto, True)
+            store.forget_automatic_page_panels(file_id)
+            self.assertEqual([(h["source"], h["replacedBy"], h["reason"]) for h in store.page_panel_history(file_id, "p2.jpg")],
+                             [("model", None, "forgotten")])
+            self.assertIsNotNone(store.page_panels(file_id, "p1.jpg"), "a person's page is kept by the forget")
+            store.delete_page_panels(file_id, "p1.jpg")
+            self.assertEqual(store.page_panel_history(file_id, "p1.jpg")[0]["source"], "manual")
+            self.assertIsNone(store.page_panels(file_id, "p1.jpg"))
 
     def test_a_vision_models_readings_from_before_46_are_asked_again(self):
         # Before 46 a model's boxes were believed on coverage alone, and a

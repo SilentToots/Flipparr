@@ -87,10 +87,10 @@ def detect_panels(image: Image.Image, session: Any = None, detail: Image.Image |
     higher resolution, since it was exported at 1024px so that thin panels
     are not lost -- and its boxes are scaled into the cut's space. `source`
     says "model" whenever the model was consulted, changed or not: a reading
-    made without it is redone once it is there, and one made with it is not. The model never replaces the cut outright, because a model
-    can leave a panel out -- seen on a real page, where it dropped the first
-    panel and doubled the fourth -- and a panel skipped is worse than two
-    merged. `source` says "model" when the model changed the answer.
+    made without it is redone once it is there, and one made with it is not.
+    The model never replaces the cut outright, because a model can leave a
+    panel out -- seen on a real page, where it dropped the first panel and
+    doubled the fourth -- and a panel skipped is worse than two merged.
     """
     width, height = image.size
     if not width or not height or width > height * SPREAD_RATIO:
@@ -107,9 +107,7 @@ def detect_panels(image: Image.Image, session: Any = None, detail: Image.Image |
             for x0, y0, x1, y1 in model_boxes(session, looked_at)
         ]
         if found:
-            refined = refine(mask, boxes or [mask.getbbox() or (0, 0, width, height)], found, min_area)
-            if refined != boxes:
-                boxes = refined
+            boxes = refine(mask, boxes or [mask.getbbox() or (0, 0, width, height)], found, min_area)
     plausible = _plausible(mask, boxes)
     panels = [
         {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}
@@ -930,6 +928,15 @@ INK_UNCOVERED_MAX = 0.1
 # nearest panel into a field that holds it, the way a reader does by hand.
 LEFTOVER_PANEL_DENSITY = 0.6
 LEFTOVER_SLIVER_DENSITY = 0.3
+# An island this thin along its short side, touching a panel, and solid
+# with ink, is that panel's margin -- the black band at the foot of a dark
+# panel, the edge of a bleed -- and is left alone rather than made a panel
+# of. Seen on a white-gutter page where two such bands were made panels of
+# (2026-10-06). It is not grown into either: a band under two panels grew
+# one of them over the other on four benchmark pages. A thin island that is
+# drawn rather than solid may be a narrow panel, and is still read as one.
+LEFTOVER_THIN = 0.06
+LEFTOVER_SOLID = 0.9
 
 
 def _painted_out(mask: Image.Image, panels: list[dict[str, Any]], pad: int = 0) -> Image.Image:
@@ -979,6 +986,10 @@ def add_leftover_panels(mask: Image.Image, panels: list[dict[str, Any]]) -> list
     for leaf in _cut(remainder, (0, 0, width, height), gutter, min_area / 4):
         density = remainder.crop(leaf).histogram()[255] / _area(leaf)
         rect = {"x": leaf[0] / width, "y": leaf[1] / height, "w": (leaf[2] - leaf[0]) / width, "h": (leaf[3] - leaf[1]) / height}
+        margin = (density >= LEFTOVER_SOLID and min(rect["w"], rect["h"]) < LEFTOVER_THIN
+                  and any(_gap(panel, rect) <= LEFTOVER_PAD for panel in grown))
+        if margin:
+            continue
         if density >= LEFTOVER_PANEL_DENSITY:
             added.append(rect)
         elif density >= LEFTOVER_SLIVER_DENSITY:

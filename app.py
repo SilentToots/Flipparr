@@ -14288,7 +14288,11 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
             if spread:
                 found = None
             elif session is None and not vision:
-                found = panel_finder.detect_panels(image)
+                # The same reading as with the tiers, less the tiers: the
+                # leftover pass included. Calling the detector directly here
+                # skipped it, so a page read with no model and no connector
+                # -- the default install -- never got its dropped panels back.
+                found = _read_page_panels(image, None, False, False, direction)
             else:
                 # The detector reads the 1200px render: it was exported at
                 # 1024px so thin panels survive, and the cut's 600px would

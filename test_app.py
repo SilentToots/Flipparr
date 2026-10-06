@@ -6974,6 +6974,16 @@ class PagePanelTests(unittest.TestCase):
         spread.save(buffer, format="PNG")
         return buffer.getvalue()
 
+    def test_a_page_read_with_no_model_and_no_connector_still_gets_its_leftover_pass(self):
+        """The default install: the cut alone. Calling the detector directly
+        skipped the pass that reads the ink the cut left out, so a dropped
+        panel stayed dropped there and nowhere else (found 2026-10-06)."""
+        with patch("app.panel_model_session", return_value=None), patch("app.vision_model_ready", return_value=False), \
+             patch("app.panel_finder.add_leftover_panels", wraps=app.panel_finder.add_leftover_panels) as leftover:
+            result, _store, _render = self._ask()
+        self.assertTrue(result["segmented"])
+        leftover.assert_called_once()
+
     def test_a_spread_is_read_as_its_two_pages_in_order(self):
         result, store, render = self._ask(png=self._spread_png())
         self.assertEqual([call.args for call in render.call_args_list], [(7, 1), (7, 1, "backdrop")])
