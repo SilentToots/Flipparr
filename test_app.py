@@ -10606,6 +10606,24 @@ class ServiceOutageTests(unittest.TestCase):
         self.assertEqual(view["target"], {"view": "settings", "section": "acquisition"})
         self.assertIsNone(app.notification_view(row, reader), "a reader is not told")
 
+    def test_the_import_workers_first_pass_runs_the_hourly_sweeps(self):
+        """Whatever the machine's uptime. time.monotonic() counts from boot,
+        so a "last swept" of 0.0 read as an hour ago only after an hour of
+        uptime: on a NAS just restarted (or a CI runner) the seeded-torrent
+        and kept-download sweeps waited an hour (drill in CI, 2026-10-06)."""
+        stop = _QuickStop()
+        store = Mock()
+        store.pending_acquisition_downloads.side_effect = lambda: (stop.set(), [])[1]
+        swept = []
+        with patch("app.catalog_store", return_value=store), patch("app.log_event"), \
+                patch("app.clear_abandoned_import_partials"), \
+                patch("app._discard_kept_downloads", side_effect=lambda *a, **k: swept.append("kept")), \
+                patch("app._release_seeded_torrents", side_effect=lambda *a, **k: swept.append("seeded")), \
+                patch("app.time.monotonic", return_value=120.0), \
+                patch.object(app, "_KEPT_SWEPT_AT", list(app._KEPT_SWEPT_AT)):
+            app.acquisition_import_worker(stop)
+        self.assertEqual(swept, ["kept", "seeded"], "two minutes after boot, the first pass still sweeps")
+
     def test_a_finished_download_flipparr_cannot_see_is_a_folder_in_trouble(self):
         stop = _QuickStop()
         store = Mock()

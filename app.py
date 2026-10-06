@@ -8884,7 +8884,12 @@ def _sweep_download_for_other_issues(
 
 # How long a refused download is kept as evidence when its issue never arrives.
 KEPT_REFUSED_DAYS = 7
-_KEPT_SWEPT_AT = [0.0]
+# When the hourly sweeps (kept downloads, seeded torrents) last ran: never,
+# so the import worker's first pass runs them. Starting this at 0.0 read as
+# "an hour ago" only on a machine up for more than an hour -- time.monotonic()
+# counts from boot -- so on a NAS that had just restarted, or a CI runner,
+# the first sweep waited an hour (found by the drill in CI, 2026-10-06).
+_KEPT_SWEPT_AT = [float("-inf")]
 
 
 def _discard_kept_downloads(
