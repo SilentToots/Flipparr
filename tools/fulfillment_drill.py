@@ -245,7 +245,10 @@ class Fakes:
                         return self._json([{
                             "guid": "drill-pack", "title": PACK_TITLE, "protocol": "torrent",
                             "indexer": "Drill Indexer", "size": sum(len(content) for _n, content in fakes.pack_files),
-                            "seeders": 12, "leechers": 1, "publishDate": "2026-09-01T00:00:00Z",
+                            "seeders": 12, "leechers": 1,
+                            # Posted today, like the issues it holds: a fixed date
+                            # would fall a season behind them and be refused.
+                            "publishDate": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                             "infoHash": fakes.pack[1],
                             "downloadUrl": f"http://127.0.0.1:{FAKE_PORT}/prowlarr/1/download?link=pack&file=pack.torrent",
                         }])

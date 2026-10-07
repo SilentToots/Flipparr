@@ -16,6 +16,7 @@ import datetime as dt
 import difflib
 import email.message
 import gzip
+import email.utils
 import hashlib
 import hmac
 import html
@@ -3927,6 +3928,48 @@ def _release_year_conflict(title: str, context: dict[str, Any]) -> str | None:
     return None
 
 
+# A release posted this long before an issue's date cannot be that issue:
+# a digital copy goes up on or after the day it goes on sale, and an issue's
+# date may be its cover date -- historically up to about three months after
+# it went on sale -- so anything nearer than this is given the benefit.
+RELEASE_POSTED_BEFORE_DAYS = 90
+
+
+def _posted_at(value: Any) -> dt.date | None:
+    """An indexer's posting date: ISO 8601 from Prowlarr, RFC 822 from a feed."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return dt.datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    try:
+        return email.utils.parsedate_to_datetime(text).date()
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _release_posted_before_issue(release: dict[str, Any], context: dict[str, Any]) -> str | None:
+    """Why a release posted long before this issue existed is another comic, or None.
+
+    Batman (2025) #14 came out on 2026-10-07; that morning the only release
+    named "Batman 014" without a year was "Batman v1 014" -- the 1942 issue,
+    posted in February 2014 -- and with no year in its name the year check
+    had nothing to refuse, so it scored a strong match and was imported as
+    the new issue (owner, 2026-10-07). The indexer said when it was posted;
+    that is evidence the name cannot give. Only refused when both dates are
+    known: a title alone, or an issue with no date, is judged as before.
+    """
+    posted = _posted_at(release.get("publishDate"))
+    issued = _posted_at(context.get("publicationDate"))
+    if posted is None or issued is None:
+        return None
+    if (issued - posted).days <= RELEASE_POSTED_BEFORE_DAYS:
+        return None
+    return f"Posted {posted:%B %Y}, before this issue came out ({issued:%B %Y})"
+
+
 def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
     title = str(release.get("title") or "")
     # A release that says it is another language is not this comic in any
@@ -3939,6 +3982,9 @@ def _release_candidate_score(release: dict[str, Any], context: dict[str, Any]) -
     conflict_year = _release_year_conflict(title, context)
     if conflict_year:
         return 0, [conflict_year]
+    too_early = _release_posted_before_issue(release, context)
+    if too_early:
+        return 0, [too_early]
     score = 0
     reasons: list[str] = []
     if _release_series_matches(
@@ -4458,7 +4504,7 @@ def _direct_site_candidates(
             refused = {}
     for item in found:
         title = _plain_dashes(item["title"])
-        score, reasons = _release_candidate_score({"title": title}, context)
+        score, reasons = _release_candidate_score({"title": title, "publishDate": item.get("publishDate")}, context)
         pack = _release_pack_coverage(title, context)
         shown = item["title"]
         size = int(item.get("sizeBytes") or 0)

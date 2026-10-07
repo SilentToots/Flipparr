@@ -8507,6 +8507,45 @@ class MangaFiledUnderAnimeTests(unittest.TestCase):
                 self.assertLess(self.score(title, "2", 2021), 85)
 
 
+class PostedBeforeTheIssueTests(unittest.TestCase):
+    """Batman (2025) #14 came out on 2026-10-07. That morning the only release
+    called "Batman 014" with no year in its name was "Batman v1 014" -- the
+    1942 issue, posted in February 2014 -- and it was imported as the new
+    one (owner, 2026-10-07). The indexer's posting date says what the name
+    could not: a release posted years before the issue existed is not it."""
+
+    CONTEXT = {"seriesTitle": "Batman", "issueNumber": "14", "publicationYear": 2026,
+               "publicationDate": "2026-10-07", "seriesYear": 2025, "preferredLanguage": "en"}
+
+    def score(self, title, posted, **context):
+        release = {"title": title, "categories": [{"id": 7030}], "publishDate": posted}
+        return app._release_candidate_score(release, {**self.CONTEXT, **context})
+
+    def test_the_1942_issue_posted_in_2014_is_refused_for_this_weeks(self):
+        score, reasons = self.score("Batman v1 014", "2014-02-23T05:12:00Z")
+        self.assertEqual(score, 0)
+        self.assertEqual(reasons, ["Posted February 2014, before this issue came out (October 2026)"])
+
+    def test_this_weeks_release_is_taken(self):
+        self.assertGreaterEqual(self.score("Batman 014 (2026) (Digital) (Zone-Empire)", "2026-10-07T21:00:00Z")[0], 85)
+        self.assertGreaterEqual(self.score("Batman 014 (Digital)", "2026-10-06T23:00:00Z")[0], 85,
+                                "a day early, as a digital copy can be")
+
+    def test_a_cover_date_months_after_the_sale_is_given_the_benefit(self):
+        # Older issues carry their cover date, up to about three months after
+        # they went on sale -- and were posted on the day they went on sale.
+        self.assertGreaterEqual(self.score("Batman 014 (Digital)", "2012-09-14T00:00:00Z",
+                                           publicationDate="2012-11-30", publicationYear=2012, seriesYear=2011)[0], 85)
+
+    def test_a_feeds_date_reads_as_well_as_prowlarrs(self):
+        self.assertEqual(self.score("Batman v1 014", "Sun, 23 Feb 2014 05:12:00 +0000")[0], 0)
+
+    def test_with_either_date_unknown_nothing_is_refused(self):
+        self.assertGreaterEqual(self.score("Batman v1 014", None)[0], 85, "a title alone is judged as before")
+        self.assertGreaterEqual(self.score("Batman v1 014", "2014-02-23", publicationDate=None)[0], 85)
+        self.assertGreaterEqual(self.score("Batman v1 014", "not a date")[0], 85)
+
+
 class RelaunchIsAnotherComicTests(unittest.TestCase):
     """Ultimate Spider-Man (2000) was filled with Hickman's 2024 relaunch: the
     same name and numbers, and the year only ever added points."""
