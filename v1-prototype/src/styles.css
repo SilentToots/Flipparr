@@ -3892,16 +3892,14 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-page {
   grid-area: 1 / 1; max-width: 100%; max-height: 100dvh; width: auto; height: auto;
   object-fit: contain; visibility: hidden; user-select: none;
-  transition: translate var(--motion-duration-fast) var(--motion-ease-standard);
+  /* No transition on the page's offset. There was one, and a zoom changed
+     the page's size at once while its offset glided after -- the page
+     jumped, then drifted into place (floaty, the owner, 2026-10-07). Panel
+     view's flight between framings is the page's own animation (App.jsx,
+     the FLIP after a step), and a drag is written a frame at a time. */
 }
-/* Not while it is being dragged: an animated translate trails the finger. And
-   a zoomed page moves on its own layer, so a drag is a composite rather than
-   a repaint of a 2x bitmap on every frame. */
-.reader-page.panning { transition: none; }
-/* In panel view the flight between framings is the page's own animation
-   (App.jsx, the FLIP after a step); a transition on top of it would move the
-   page twice. */
-.reader-page.panel-view { transition: none; }
+/* A zoomed page moves on its own layer, so a drag is a composite rather
+   than a repaint of a 2x bitmap on every frame. */
 /* The page dims everywhere but the panel being read, as Kindle's Panel View
    does: a mask with the panel's window at full strength over a layer at less
    than half. It rides on the image itself, so the flight between panels, a

@@ -4,7 +4,7 @@ import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
   panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, readablePanels, WHOLE_PAGE, panelMask,
-  pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, PINCH_OUT_OF_PANEL, MIN_ZOOM, MAX_ZOOM, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
+  pointerDistance, pointerMidpoint, pinchZoom, pinchPan, pinchLeavesPanel, PINCH_OUT_OF_PANEL, MIN_ZOOM, MAX_ZOOM, isSwipe, isFlick, releasedSwipe, verticalClose, fittedSize, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -316,4 +316,37 @@ test("pinching in past a panel's framing asks for the whole page, and nothing el
   assert.equal(pinchLeavesPanel(1, 2, true, true), false, "the whole page is already shown");
   assert.equal(pinchLeavesPanel(1, 2, false, false), false, "page view has no panel to leave");
   assert.equal(pinchLeavesPanel(1, 0, true, false), false, "no framing yet, nothing to leave");
+});
+
+
+// ---- Gestures that went wrong (2026-10-07) ------------------------------------
+
+test("a swipe at an ordinary speed is a swipe when the finger lifts, not a look around", () => {
+  assert.equal(releasedSwipe(120, 20, 450), true);
+  assert.equal(releasedSwipe(-120, 30, 590), true, "either way");
+  assert.equal(releasedSwipe(60, 10, 300), false, "too short a travel to mean a turn");
+  assert.equal(releasedSwipe(120, 100, 300), false, "as much down as across is a look around");
+  assert.equal(releasedSwipe(200, 0, 900), false, "a slow drag is a drag");
+});
+
+test("only a clearly downward swipe closes the reader", () => {
+  assert.equal(verticalClose(10, 150), true);
+  assert.equal(verticalClose(130, 150), false, "150 down and 130 across used to close the comic");
+  assert.equal(verticalClose(0, 100), false, "not far enough");
+  assert.equal(verticalClose(0, -200), false, "up is not close");
+});
+
+test("a pinch that moves follows the hand", () => {
+  assert.deepEqual(pinchPan({ x: 10, y: -5 }, { x: 100, y: 100 }, { x: 130, y: 80 }), { x: 40, y: -25 });
+  assert.deepEqual(pinchPan({ x: 0, y: 0 }, { x: 50, y: 50 }, { x: 50, y: 50 }), { x: 0, y: 0 }, "still fingers, still page");
+});
+
+test("a page is framed at the size the stylesheet lays it out", () => {
+  const viewport = { width: 390, height: 844 };
+  assert.deepEqual(fittedSize({ width: 1300, height: 2000 }, viewport), { width: 390, height: 600 }, "a page fits by width on a phone");
+  assert.deepEqual(fittedSize({ width: 300, height: 500 }, viewport), { width: 300, height: 500 }, "a small page is not blown up");
+  const spread = fittedSize({ width: 2600, height: 2000 }, viewport);
+  assert.equal(spread.width, 390, "a spread fits by width alone");
+  assert.equal(spread.height, 300, "and is as tall as that makes it, not fitted by height");
+  assert.deepEqual(fittedSize({ width: 0, height: 0 }, viewport), { width: 0, height: 0 });
 });

@@ -81,6 +81,47 @@ export function isFlick(dx, dy, elapsed) {
   return elapsed < FLICK_WINDOW_MS && Math.abs(dx) > 36 && Math.abs(dx) > 1.5 * Math.abs(dy);
 }
 
+/**
+ * A swipe read when the finger lifts, in panel view: a flick was decided
+ * within its window, but a swipe at an ordinary speed became a look around
+ * and left the panel sitting wherever the finger stopped. A clear sideways
+ * travel that was quick enough is a swipe whenever it ends (2026-10-07).
+ */
+export function releasedSwipe(dx, dy, elapsed) {
+  return elapsed < 600 && Math.abs(dx) > 80 && Math.abs(dx) > 1.5 * Math.abs(dy);
+}
+
+/**
+ * A swipe down that means "close the reader": clearly down, not a turn
+ * that drifted. 150 across and 130 down used to close the comic.
+ */
+export function verticalClose(dx, dy) {
+  return dy > 120 && dy > 2 * Math.abs(dx);
+}
+
+/**
+ * Where the page sits when two fingers move together: the pan follows their
+ * midpoint, so a pinch that also drags moves the page with the hand rather
+ * than letting it slide away from under it.
+ */
+export function pinchPan(pan, midFrom, midTo) {
+  return { x: pan.x + (midTo.x - midFrom.x), y: pan.y + (midTo.y - midFrom.y) };
+}
+
+/**
+ * The page's laid-out size at 1x, as the stylesheet fits it: by width and
+ * height both, or -- a spread -- by width alone (`.reader-page.spread`
+ * reads across the width). Framing a spread by height put every panel on
+ * it off by the difference.
+ */
+export function fittedSize(natural, viewport) {
+  if (!natural.width || !natural.height) return { width: 0, height: 0 };
+  const fit = isSpread(natural.width, natural.height)
+    ? viewport.width / natural.width
+    : Math.min(1, viewport.width / natural.width, viewport.height / natural.height);
+  return { width: natural.width * fit, height: natural.height * fit };
+}
+
 /** The page an action lands on, never outside the comic. */
 export function pageForAction(index, count, action) {
   if (!count) return 0;

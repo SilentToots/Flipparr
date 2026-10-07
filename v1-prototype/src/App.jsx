@@ -68,7 +68,7 @@ import { creatorRoleLabel, orderedCreators, relatedRuns, arcPublisher } from "./
 import { nextTabBarState, canTuck } from "./tab-bar.js";
 import { sheetPullDecision } from "./sheet.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
-import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, readablePanels, pointerDistance, pointerMidpoint, pinchZoom, pinchLeavesPanel, panelMask, isSwipe, isFlick, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
+import { readingDirection, actionForKey, tapAction, pageForAction, pageWindow, isSpread, clampZoom, clampPan, pagesLeft, pageFilter, swipeAction, zoomAt, panelFocus, panelStep, stepCount, stepAt, stepOf, readablePanels, pointerDistance, pointerMidpoint, pinchZoom, pinchPan, pinchLeavesPanel, panelMask, isSwipe, isFlick, releasedSwipe, verticalClose, fittedSize, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, PULL_REFRESH_PX, loadReaderPrefs, saveReaderPrefs } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   SearchIcon, MobileSearchIcon, ViewOptionsIcon, NotificationsIcon,
@@ -10175,8 +10175,7 @@ function ReaderView({
     const surface = surfaceRef.current;
     if (!image || !surface || !image.naturalWidth) return null;
     const viewport = surface.getBoundingClientRect();
-    const fit = Math.min(1, viewport.width / image.naturalWidth, viewport.height / image.naturalHeight);
-    const base = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
+    const base = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, viewport);
     baseRef.current = base;
     const rects = pagePanels(number);
     const at = stepAt(position, rects.length, stepPrefsRef.current);
@@ -10427,7 +10426,7 @@ function ReaderView({
       if (pinching.current) return;
       const dx = end.clientX - start.x;
       const dy = end.clientY - start.y;
-      if (Math.abs(dy) > 120 && Math.abs(dy) > Math.abs(dx)) { onClose(); return; }
+      if (verticalClose(dx, dy)) { onClose(); return; }
       if (isSwipe(dx, dy, Date.now() - start.at)) {
         // A swipe drags the page with it: left moves the page left, which is
         // forward in a comic and back in manga, the same rule as a tap.
@@ -10580,7 +10579,8 @@ function ReaderView({
       const [a, b] = [...pointers.values()];
       const image = pageRef.current;
       if (zoomRef.current === 1 && image) baseRef.current = { width: image.offsetWidth, height: image.offsetHeight };
-      gesture = { zoom0: zoomRef.current, dist0: pointerDistance(a, b), zoom: zoomRef.current, pan: panRef.current, frame: 0 };
+      gesture = { zoom0: zoomRef.current, dist0: pointerDistance(a, b), zoom: zoomRef.current, pan: panRef.current, frame: 0,
+                  mid: pointerMidpoint(a, b) };
       pinching.current = true;
       // The finger that lifts last fires a click; a page turn on letting go
       // of a pinch is not what the hand meant.
@@ -10627,7 +10627,11 @@ function ReaderView({
       const about = { x: mid.x - (box.left + box.width / 2), y: mid.y - (box.top + box.height / 2) };
       const next = pinchZoom(gesture.zoom0, gesture.dist0, pointerDistance(a, b));
       const { viewport, page } = panBounds();
-      gesture.pan = clampPan(zoomAt(about, gesture.zoom, next, gesture.pan), next, viewport, page, panelModeRef.current);
+      // The hand moving as it pinches drags the page with it; the zoom is
+      // then about where the fingers are now.
+      const dragged = pinchPan(gesture.pan, gesture.mid, mid);
+      gesture.mid = mid;
+      gesture.pan = clampPan(zoomAt(about, gesture.zoom, next, dragged), next, viewport, page, panelModeRef.current);
       gesture.zoom = next;
       zoomRef.current = next;
       panRef.current = gesture.pan;
@@ -10664,14 +10668,20 @@ function ReaderView({
     const pointerId = event.pointerId;
     const image = pageRef.current;
     const start = { x: event.clientX, y: event.clientY, at: Date.now(), pan: panRef.current };
+    // Where the touch began, kept apart from `start`, which a pan moves to
+    // where the look around began.
+    const touched = { x: event.clientX, y: event.clientY, at: start.at };
     const { viewport, page } = panBounds();
     let frame = 0;
     let latest = start.pan;
     let mode = panelModeRef.current && event.pointerType !== "mouse" ? "pending" : "pan";
     if (mode === "pan") setPanning(true);
+    function paintTo(to) {
+      if (image) image.style.translate = `${to.x}px ${to.y}px`;
+    }
     function paint() {
       frame = 0;
-      if (image) image.style.translate = `${latest.x}px ${latest.y}px`;
+      paintTo(latest);
     }
     function letGo() {
       window.removeEventListener("pointermove", onMove);
@@ -10712,7 +10722,31 @@ function ReaderView({
       if (up.pointerId !== pointerId) return;
       letGo();
       cancelAnimationFrame(frame);
+      // The click a lift fires is the drag's, not a tap; but a lift that
+      // fires no click -- the finger left the surface -- must not eat the
+      // next tap either, so the flag is let go of after it.
+      if (dragged.current) window.setTimeout(() => { dragged.current = false; }, 0);
+      if (mode === "pending" && up.type !== "pointercancel") {
+        // A touch that lifted before it read as anything is a tap, and the
+        // click that follows it turns the page or wakes the chrome.
+        return;
+      }
       if (mode !== "pan") return;
+      // A swipe at an ordinary speed, in panel view: a step, not a look
+      // around that leaves the panel wherever the finger stopped.
+      const dx = up.clientX - touched.x;
+      const dy = up.clientY - touched.y;
+      if (panelModeRef.current && up.pointerType !== "mouse" && releasedSwipe(dx, dy, Date.now() - touched.at)) {
+        dragged.current = true;
+        window.setTimeout(() => { dragged.current = false; }, 0);
+        // The page goes back to where the step began; the step frames the next panel.
+        paintTo(start.pan);
+        panRef.current = start.pan;
+        setPanning(false);
+        const action = swipeAction(dx, direction);
+        if (action) go(action);
+        return;
+      }
       paint();
       setPan(latest);
       setPanning(false);
