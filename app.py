@@ -14140,7 +14140,8 @@ def _vision_error_code(exc: urllib.error.HTTPError) -> str:
 
 
 def vision_panels(image: bytes, width: int, height: int, direction: str, mask: Any,
-                  examples: list[tuple[bytes, str]] | None = None) -> list[dict[str, Any]] | None:
+                  examples: list[tuple[bytes, str]] | None = None,
+                  page_ref: dict[str, Any] | None = None) -> list[dict[str, Any]] | None:
     """The panels a vision model sees on a page, or None.
 
     "No panels" is an answer: a splash, a cover, a pin-up is one panel the
@@ -14161,8 +14162,21 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     # boxes that the merge below folded into one (2026-10-06). Numbers only.
     drawn = [{key: round(float(box[key]), 3) for key in ("x", "y", "w", "h")} for box in (boxes or [])]
 
-    def told(outcome: str, **detail: Any) -> None:
+    def told(outcome: str, kept: list[dict[str, Any]] | None = None, **detail: Any) -> None:
         log_event("vision_boxes", outcome=outcome, drawn=len(drawn), boxes=drawn, **detail)
+        # And in the catalog, which a deploy does not throw away as it does
+        # the container's log. A page asked about outside a comic -- a test,
+        # a tool -- has no page to keep it against.
+        if page_ref and page_ref.get("member"):
+            try:
+                catalog_store().record_vision_answer(
+                    page_ref.get("fileId"), str(page_ref["member"]), half=int(page_ref.get("half") or 0),
+                    provider=vision_provider(), outcome=outcome, drawn=drawn,
+                    kept=[{key: round(float(box[key]), 3) for key in ("x", "y", "w", "h")} for box in kept] if kept else None,
+                    detail=detail or None,
+                )
+            except Exception as exc:  # noqa: BLE001 -- the page is read whether or not its answer is kept
+                log_exception("vision_answer_not_kept", exc, level="warning")
 
     if boxes is None:
         told("unreadable")
@@ -14187,7 +14201,7 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     if outside > panel_finder.INK_UNCOVERED_MAX:
         told("refused", merged=len(boxes), why="ink uncovered", uncovered=round(outside, 3))
         return None
-    told("kept", merged=len(boxes), kept=len(refined), uncovered=round(outside, 3))
+    told("kept", kept=refined, merged=len(boxes), uncovered=round(outside, 3))
     return refined
 
 
@@ -14403,7 +14417,8 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
                 # throw that away. Rendered once and cached like any page.
                 detail_bytes = render_file_page(file_id, index, "backdrop")
                 with Image.open(io.BytesIO(detail_bytes)) as detail:
-                    found = _read_page_panels(image, session, vision, every, direction, detail, detail_bytes, examples)
+                    found = _read_page_panels(image, session, vision, every, direction, detail, detail_bytes, examples,
+                                              {"fileId": file_id, "member": member})
         if spread:
             # A spread is two pages, and is read as two: each half through
             # the same tiers, from the renders a size up so that a half is
@@ -14416,8 +14431,9 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
                 with Image.open(io.BytesIO(render_file_page(file_id, index, "read"))) as read_image:
                     details = panel_finder.spread_halves(read_image)
             readings = [
-                _read_page_panels(half, session, vision, every, direction, detail, None, examples)
-                for half, detail in zip(halves, details)
+                _read_page_panels(half, session, vision, every, direction, detail, None, examples,
+                                  {"fileId": file_id, "member": member, "half": side})
+                for side, (half, detail) in enumerate(zip(halves, details), start=1)
             ]
             found = panel_finder.combine_halves(readings, direction)
         store.set_page_panels(file_id, member, signature, found["source"], found["panels"], found["segmented"],
@@ -14433,7 +14449,8 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
 
 def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direction: str,
                       detail: Any = None, detail_bytes: bytes | None = None,
-                      examples: list[tuple[bytes, str]] | None = None) -> dict[str, Any]:
+                      examples: list[tuple[bytes, str]] | None = None,
+                      page_ref: dict[str, Any] | None = None) -> dict[str, Any]:
     """One page (or one half of a spread) through every tier there is.
 
     `image` is what the cut reads; `detail` the same page a size up, for the
@@ -14465,7 +14482,7 @@ def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direc
         if every or not found["segmented"]:
             # An answer the page could correct replaces the local reading;
             # a refused one leaves it standing, asked.
-            boxes = vision_panels(detail_bytes, detail.size[0], detail.size[1], direction, mask, examples)
+            boxes = vision_panels(detail_bytes, detail.size[0], detail.size[1], direction, mask, examples, page_ref)
             if boxes:
                 found = {"segmented": True, "source": "vlm", "panels": boxes}
             else:

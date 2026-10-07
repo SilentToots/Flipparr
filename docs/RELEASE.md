@@ -155,9 +155,11 @@ You lose manual corrections, aliases and request history — not files.
 
 ### 0.2.0 — unreleased
 
-**Schema:** 66 (adds `page_panel_history`: the reading a panel correction
-replaced is kept, so corrections can be measured; and a page fingerprint
-on every panel row, so a hand-made fix follows its page). Upgrading from 0.1.0
+**Schema:** 67 (adds `page_panel_history`: the reading a panel correction
+replaced is kept, so corrections can be measured; a page fingerprint on
+every panel row, so a hand-made fix follows its page; and
+`page_vision_answers`, what a page-reading connector said about each page).
+Upgrading from 0.1.0
 keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
 0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer
 catalog.
@@ -169,6 +171,14 @@ catalog.
   perceptual hash of its render) as well as the file: they survive a run's
   removal, re-attach to a replaced or re-imported comic, and can be
   exported and imported as a file (Settings → Reader → Panel view).
+- Releases posted more than 90 days before an issue came out are refused
+  for it, by the indexer's posting date (a 1942 upload with no year in its
+  name was taken for a new issue on its release day).
+- Reader: your place is saved the moment the reader is left (a closed tab,
+  an app swiped away, a phone locked), not only 900 ms after a page settles;
+  a page image that fails to load says so and offers Try again; a panel
+  request that gets no answer is asked again instead of leaving the page in
+  quadrants. Panel editor: *Single image* marks a splash page outright.
 
 ### 0.1.0 — first release
 

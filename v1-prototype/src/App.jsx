@@ -7665,6 +7665,8 @@ function AcquisitionServiceSettingsModal({ service, onClose, onSaved }) {
 }
 
 function ProviderSettingsModal({ provider, onClose, onSaved }) {
+  // Claude and ChatGPT read pages for panel view; they fill no metadata.
+  const reading = provider.kind === "reading";
   const dialogRef = useDialog(onClose);
   const field = provider.credentialField;
   const [credential, setCredential] = useState("");
@@ -7699,7 +7701,13 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
       await onSaved();
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">Metadata provider</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved · type to replace" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small><Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." /><div className="form-field provider-priority-field"><span>Provider priority</span><GlassSelect label="Provider priority" value={priority} onChange={(next) => setPriority(Number(next))} options={[{ value: 15, label: "Before other optional providers" }, { value: 20, label: "Normal priority" }, { value: 30, label: "Fallback priority" }]} /><small>Built-in GCD structure remains first. Optional providers fill fields that are still missing.</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal provider-settings-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="provider-settings-title" onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close provider settings" /><span className="eyebrow">{reading ? "Page reading" : "Metadata provider"}</span><h2 id="provider-settings-title">Connect {provider.name}</h2><p className="workbench-intro">{provider.description}</p><form onSubmit={save}><label className="form-field"><span>{label}</span><input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={provider.configured ? "Saved · type to replace" : `Enter your ${provider.name} ${label.toLowerCase()}…`} /></label><small className="provider-credential-help">{provider.credentialHelp || "Your key is stored locally and is never returned to the browser after saving."}{provider.credentialUrl ? <> <a className="provider-credential-link" href={provider.credentialUrl} target="_blank" rel="noreferrer noopener">Get a key<ArrowUpRight size={13} weight="bold" /></a></> : null}</small>{reading
+            ? <Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} to read pages`} description={`Panel view asks ${provider.name} about the pages it reads, as set in Settings → Reader. Each page is sent once, as an image.`} />
+            : <Toggle checked={enabled} onChange={setEnabled} title={`Use ${provider.name} for enrichment`} description="Fill missing fields automatically while preserving locked local corrections and higher-priority source data." />}<div className="form-field provider-priority-field"><span>{reading ? "When both are connected" : "Provider priority"}</span><GlassSelect label={reading ? "When both are connected" : "Provider priority"} value={priority} onChange={(next) => setPriority(Number(next))} options={reading
+            ? [{ value: 15, label: "Ask this one first" }, { value: 20, label: "Normal order" }, { value: 30, label: "Ask the other one first" }]
+            : [{ value: 15, label: "Before other optional providers" }, { value: 20, label: "Normal priority" }, { value: 30, label: "Fallback priority" }]} /><small>{reading
+            ? "Only one connector reads a page: with Claude and ChatGPT both on, the one asked first is the one used."
+            : "Built-in GCD structure remains first. Optional providers fill fields that are still missing."}</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
 }
 
 /**
@@ -9787,6 +9795,29 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
       setSaving("");
     }
   }
+  // A splash, a pin-up, a cover: one image, read whole -- said outright and
+  // saved at once. The hint used to say to leave such a page with no panels,
+  // but a page that started with none had nothing to save, and the reader
+  // kept its four quadrants (2026-10-07).
+  async function asOneImage() {
+    setSaving("save");
+    setError("");
+    try {
+      const data = await apiRequest(`/api/v1/files/${fileId}/pages/${pageRef.current}/panels`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ panels: [] }),
+      });
+      onSaved(pageRef.current, data);
+      setReading(data);
+      setPanels(fromReading(data));
+      setSelected(-1);
+      setOrdering(null);
+      setDirty(false);
+    } catch (problem) {
+      setError(problem.message || "The page could not be saved");
+    } finally {
+      setSaving("");
+    }
+  }
   function add() {
     const rect = newPanel(panels);
     setPanels([...panels, rect]);
@@ -9830,7 +9861,7 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
     : loading ? "Reading the page…"
       : panels.length
         ? "Drag a panel to move it, its corners to resize. Drag on the page to draw one. Arrows turn the page; pages save as you leave them."
-        : "Drag on the page to draw the first panel, or leave it with none for a single image.";
+        : "Drag on the page to draw the first panel, or mark it as a single image.";
   return <div className="panel-editor" ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Panels on page ${page + 1}`}>
     <header className="reader-bar reader-bar--top panel-editor-bar">
       <button type="button" className="glass-button glass-button--icon" onClick={finish} disabled={Boolean(saving)} aria-label="Done fixing panels"><X size={20} /></button>
@@ -9865,6 +9896,7 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
           <button type="button" className="glass-button" onClick={add} disabled={busy}><Plus size={16} /> Add panel</button>
           <button type="button" className="glass-button" onClick={() => { setOrdering([]); setSelected(-1); }} disabled={busy || panels.length < 2}><ListBullets size={16} /> Set order</button>
           <button type="button" className="glass-button" onClick={remove} disabled={busy || selected < 0}><Trash size={16} /> Delete</button>
+          <button type="button" className="glass-button" onClick={asOneImage} disabled={busy}><ImageSquare size={16} /> Single image</button>
           {manual ? <button type="button" className="glass-button" onClick={letGo} disabled={Boolean(saving)} aria-busy={saving === "reset"}>
             {saving === "reset" ? <LoadingSpinner size={16} /> : <ArrowCounterClockwise size={16} />} Back to automatic
           </button> : null}
@@ -9873,6 +9905,11 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
     </footer>
   </div>;
 }
+
+// A panel request that got no answer is asked again this many times, after
+// this long and then twice and three times as long.
+const PANEL_RETRIES = 3;
+const PANEL_RETRY_MS = 5000;
 
 // How long a page may take to have its panels found before the reader says
 // it is finding them: an answer within it is not worth a word.
@@ -9962,6 +9999,11 @@ function ReaderView({
   panelsRef.current = panels;
   fileIdRef.current = fileId;
   const asking = useRef(new Set());
+  // Pages whose panel request failed for want of an answer -- the network,
+  // a restart -- and how often. Each is asked again after a pause; one
+  // hiccup used to leave a page in quadrants until the comic was reopened.
+  const panelRetries = useRef({});
+  const [panelRetryTick, setPanelRetryTick] = useState(0);
   const resumingPanel = useRef(null);
   const [night, setNight] = useState({ dim: 1, warm: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -9988,6 +10030,9 @@ function ReaderView({
   const [contents, setContents] = useState(false);
   const [arrows, setArrows] = useState(false);
   const [spreads, setSpreads] = useState({});
+  // Pages whose image did not load, and how many times it has been asked
+  // for: a broken image used to sit there, never framed (2026-10-07).
+  const [pageFailures, setPageFailures] = useState({});
   const surfaceRef = useRef(null);
   const chromeTimer = useRef(null);
   const arrowTimer = useRef(null);
@@ -10075,6 +10120,7 @@ function ReaderView({
   useEffect(() => {
     setPanels({});
     asking.current.clear();
+    panelRetries.current = {};
     setPanel(0);
     setOverview(false);
   }, [fileId]);
@@ -10100,9 +10146,26 @@ function ReaderView({
             setPanel(stepOf(resuming.panel, rects.length, stepPrefsRef.current));
           }
         })
-        .catch(() => { if (fileIdRef.current === asked) setPanels((current) => ({ ...current, [number]: { segmented: false, panels: [] } })); });
+        .catch((problem) => {
+          if (fileIdRef.current !== asked) return;
+          const tries = (panelRetries.current[number] || 0) + 1;
+          panelRetries.current[number] = tries;
+          // An answer -- "not a page of this comic" -- is final; no answer
+          // is asked again, three times, a little later each time. The
+          // page reads whole meanwhile, as it does while panels are found.
+          const answered = problem?.status && problem.status < 500;
+          if (answered || tries >= PANEL_RETRIES) {
+            setPanels((current) => ({ ...current, [number]: { segmented: false, panels: [] } }));
+            return;
+          }
+          window.setTimeout(() => {
+            if (fileIdRef.current !== asked) return;
+            asking.current.delete(number);
+            setPanelRetryTick((tick) => tick + 1);
+          }, PANEL_RETRY_MS * tries);
+        });
     }
-  }, [panelMode, pages.state, count, index, fileId, panels, direction]);
+  }, [panelMode, pages.state, count, index, fileId, panels, direction, panelRetryTick]);
 
   // The framing for one panel of one page, from the shown image's natural
   // size fitted to the surface -- its 1x layout size, whatever zoom it is at.
@@ -10201,7 +10264,7 @@ function ReaderView({
   // be the one page that is forgotten.
   // The place is the page and the panel on it (the step's nearest panel),
   // so panel view resumes where it was left, on any device.
-  const keepPlace = useCallback((page, step = 0) => {
+  const keepPlace = useCallback((page, step = 0, leaving = false) => {
     const panelAt = placePanel(page, step);
     const key = `${page}:${panelAt}`;
     if (!open.current || key === saved.current) return null;
@@ -10209,8 +10272,25 @@ function ReaderView({
     return apiRequest(`/api/v1/files/${fileId}/progress`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ page, panel: panelAt }),
+      // A save made as the page goes away -- a closed tab, an app swiped
+      // off, a phone locked -- is let finish after it has gone.
+      ...(leaving ? { keepalive: true } : {}),
     }).catch(() => { saved.current = null; });
   }, [fileId, placePanel]);
+
+  // The place is saved 900ms after a page settles; a tab closed, an app
+  // swiped away or a phone locked inside that moment lost it. Leaving the
+  // page saves at once (2026-10-07).
+  useEffect(() => {
+    function leave() { keepPlace(at.current, panelRef.current, true); }
+    function hidden() { if (document.visibilityState === "hidden") leave(); }
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [keepPlace]);
 
   useEffect(() => {
     // Nothing is saved while the comic is still opening. A timer started at
@@ -10228,7 +10308,7 @@ function ReaderView({
   // while the last page is still being written and misses the comic you have
   // just been reading.
   useEffect(() => () => {
-    const saving = keepPlace(at.current, panelRef.current);
+    const saving = keepPlace(at.current, panelRef.current, true);
     if (saving) saving.then(() => onProgressSaved?.());
   }, [keepPlace, onProgressSaved]);
 
@@ -10663,6 +10743,13 @@ function ReaderView({
       </div> : null}
       {/* Present always, so the words are announced when they arrive. */}
       <div className="reader-finding" role="status">{showFinding ? <><LoadingSpinner size={16} /><span>Finding panels…</span></> : null}</div>
+      {pageFailures[index]?.failed ? <div className="reader-status reader-status--error reader-page-error" role="alert"
+        onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+        <WarningCircle size={22} /><span>Page {index + 1} could not be loaded.</span>
+        <button type="button" className="glass-button" onClick={() => setPageFailures((current) => ({
+          ...current, [index]: { failed: false, tries: (current[index]?.tries || 0) + 1 },
+        }))}><ArrowsClockwise size={16} /> Try again</button>
+      </div> : null}
       {window_.map((number) => {
         const item = pages.list[number];
         const shown = number === index;
@@ -10670,8 +10757,10 @@ function ReaderView({
         // with a double-tap, is shown undimmed.
         const scrim = shown && panelMode && panelScrim && !overview && !wholePageStep && Boolean(panels[number]);
         const hole = scrim ? panelMask(pagePanels(number)[shownStep.panel]) : null;
-        return <img key={number} src={item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
-          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}`}
+        const tries = pageFailures[number]?.tries || 0;
+        return <img key={`${number}-${tries}`} src={tries ? `${item.readUrl}&retry=${tries}` : item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
+          className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}${pageFailures[number]?.failed ? " failed" : ""}`}
+          onError={() => setPageFailures((current) => ({ ...current, [number]: { failed: true, tries: current[number]?.tries || 0 } }))}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
           ref={shown ? pageRef : undefined}
           style={shown ? {
@@ -10683,6 +10772,7 @@ function ReaderView({
             } : {}),
           } : undefined}
           onLoad={(event) => {
+            if (pageFailures[number]) setPageFailures((current) => { const next = { ...current }; delete next[number]; return next; });
             const { naturalWidth, naturalHeight } = event.target;
             // A spread is shown across the width instead of squeezed into the
             // height; the rule is the backend's, so both agree what one is.

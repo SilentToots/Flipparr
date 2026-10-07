@@ -7312,6 +7312,32 @@ class VisionConnectorTests(unittest.TestCase):
         with Image.open(io.BytesIO(PagePanelTests._page_png(self, **kind))) as image:
             return page_panels.page_mask(image)
 
+    def test_every_answer_is_kept_against_its_page_with_what_became_of_it(self):
+        """The container's log -- where these went first -- is thrown away by
+        every deploy (2026-10-07), so each answer goes into the catalog too."""
+        mask = self._mask(bridged=True)
+        store = Mock()
+        answer = '[{"x1": 14, "y1": 26, "x2": 288, "y2": 200}, {"x1": 26, "y1": 250, "x2": 270, "y2": 440}]'
+        with patch("app.ask_vision_model", return_value=answer), patch("app.catalog_store", return_value=store), \
+             patch("app.vision_provider", return_value="anthropic"), patch("app.log_event"):
+            app.vision_panels(b"jpeg", 300, 450, "ltr", mask, page_ref={"fileId": 7, "member": "p3.jpg"})
+        kept = store.record_vision_answer.call_args
+        self.assertEqual(kept.args, (7, "p3.jpg"))
+        self.assertEqual((kept.kwargs["provider"], kept.kwargs["outcome"], kept.kwargs["half"]), ("anthropic", "kept", 0))
+        self.assertEqual(len(kept.kwargs["drawn"]), 2, "the boxes as the model drew them")
+        self.assertEqual(len(kept.kwargs["kept"]), 2, "and as the page corrected them")
+        store.reset_mock()
+        with patch("app.ask_vision_model", return_value="[]"), patch("app.catalog_store", return_value=store), \
+             patch("app.vision_provider", return_value="anthropic"), patch("app.log_event"):
+            app.vision_panels(b"jpeg", 300, 450, "ltr", mask, page_ref={"fileId": 7, "member": "p5.jpg", "half": 1})
+        whole = store.record_vision_answer.call_args
+        self.assertEqual((whole.kwargs["outcome"], whole.kwargs["drawn"], whole.kwargs["half"]), ("whole", [], 1),
+                         "a 'whole page' the model said, not one the merge made")
+        store.reset_mock()
+        with patch("app.ask_vision_model", return_value="[]"), patch("app.catalog_store", return_value=store), patch("app.log_event"):
+            app.vision_panels(b"jpeg", 300, 450, "ltr", mask)
+        store.record_vision_answer.assert_not_called()
+
     def test_boxes_are_believed_once_the_page_has_corrected_them(self):
         mask = self._mask(bridged=True)
         # Roughly the two panels, drawn a little off; the page puts them right.

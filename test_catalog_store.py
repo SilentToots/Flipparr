@@ -5247,6 +5247,23 @@ class PagePanelTests(LibraryFixture):
             store.panels_attached_from_history(waiting["historyId"])
             self.assertEqual(store.detached_manual_panels_count(), 0)
 
+    def test_vision_answers_are_kept_and_outlive_their_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            file_id = self._file_id(store, "Example 001.cbz")
+            drawn = [{"x": 0.05, "y": 0.04, "w": 0.9, "h": 0.4}, {"x": 0.05, "y": 0.5, "w": 0.9, "h": 0.45}]
+            store.record_vision_answer(file_id, "p1.jpg", provider="anthropic", outcome="whole", drawn=drawn,
+                                       detail={"merged": 1})
+            store.record_vision_answer(file_id, "p2.jpg", half=2, provider="anthropic", outcome="kept", drawn=drawn,
+                                       kept=drawn, detail={"merged": 2})
+            answers = store.vision_answers(file_id)
+            self.assertEqual([(a["member"], a["half"], a["outcome"]) for a in answers], [("p2.jpg", 2, "kept"), ("p1.jpg", 0, "whole")])
+            self.assertEqual(answers[1]["drawn"], drawn)
+            self.assertEqual(answers[1]["detail"], {"merged": 1}, "two boxes drawn, merged to one: the merge made this page whole")
+            store.remove_series_run(int(store.catalog()["series"][0]["id"]))
+            self.assertEqual(len(store.vision_answers()), 2, "the evidence stays when the comic goes")
+            self.assertIsNone(store.vision_answers()[0]["fileId"])
+
     def test_imported_fixes_wait_by_hash_and_are_not_kept_twice(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

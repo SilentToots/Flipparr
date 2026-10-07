@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 66
+SCHEMA_VERSION = 67
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1476,6 +1476,27 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS page_panel_history_page
                     ON page_panel_history(file_id, page_member, id);
+                -- What a vision connector answered about a page, as it said it
+                -- (schema 67): the boxes it drew, what became of them, and why.
+                -- Kept in the catalog because the container's log -- where this
+                -- went first -- is thrown away by every deploy, and a third of
+                -- some runs' pages come back as "the whole page" for reasons
+                -- only these answers can tell apart. `half` is 0 for a page,
+                -- 1 and 2 for a spread's halves. Numbers only: no image.
+                CREATE TABLE IF NOT EXISTS page_vision_answers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                    page_member TEXT NOT NULL,
+                    half INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT,
+                    outcome TEXT NOT NULL,
+                    drawn_json TEXT NOT NULL,
+                    kept_json TEXT,
+                    detail_json TEXT,
+                    recorded_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS page_vision_answers_page
+                    ON page_vision_answers(file_id, page_member, id);
                 /* The people reading this library (schema 49). Profile 1 is
                    the admin and always exists; a household with one person
                    never sees another. A name to sign in with is optional --
@@ -4923,6 +4944,35 @@ class CatalogStore:
              "fixedAt": row["updated_at"], "pageHash": row["page_hash"], "pageDHash": row["page_dhash"],
              "fixedBy": row["fixed_by"], "filename": row["filename"], "present": bool(row["present"]),
              "seriesTitle": row["series_title"], "seriesRunId": row["series_run_id"]}
+            for row in rows
+        ]
+
+    def record_vision_answer(self, file_id: int | None, member: str, *, half: int = 0, provider: str | None,
+                             outcome: str, drawn: list[dict[str, Any]], kept: list[dict[str, Any]] | None = None,
+                             detail: dict[str, Any] | None = None) -> None:
+        """Keep one vision connector's answer about a page, as it was given."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO page_vision_answers(
+                       file_id, page_member, half, provider, outcome, drawn_json, kept_json, detail_json, recorded_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (file_id, member, int(half), provider, outcome, json.dumps(list(drawn)),
+                 json.dumps(list(kept)) if kept is not None else None,
+                 json.dumps(detail) if detail else None, _utc_now()),
+            )
+
+    def vision_answers(self, file_id: int | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        """The vision connector's answers, newest first; one comic's when `file_id` is given."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM page_vision_answers WHERE (? IS NULL OR file_id=?) ORDER BY id DESC LIMIT ?""",
+                (file_id, file_id, int(limit)),
+            ).fetchall()
+        return [
+            {"fileId": row["file_id"], "member": row["page_member"], "half": row["half"], "provider": row["provider"],
+             "outcome": row["outcome"], "drawn": _load_json(row["drawn_json"], []),
+             "kept": _load_json(row["kept_json"], None) if row["kept_json"] else None,
+             "detail": _load_json(row["detail_json"], {}) if row["detail_json"] else {}, "recordedAt": row["recorded_at"]}
             for row in rows
         ]
 
