@@ -179,6 +179,11 @@ catalog.
   a page image that fails to load says so and offers Try again; a panel
   request that gets no answer is asked again instead of leaving the page in
   quadrants. Panel editor: *Single image* marks a splash page outright.
+- The log is kept in `/config/logs` as well as the console, capped at 50 MB
+  (`FLIPPARR_LOG_DIR` moves it). Docker's own copy goes when the container
+  is recreated, which every upgrade does.
+- A page the vision connector never answered is kept among its answers
+  (`failed`, with why), beside whole, kept, refused and unreadable.
 
 ### 0.1.0 — first release
 
@@ -221,7 +226,8 @@ reach it (OPERATING.md, section 2).
   enforced on the server, readers' requests awaiting the admin, shared-device
   sign-out, notifications per profile.
 - *Operations:* one JSON log line per event carrying the request id (also
-  returned as `X-Request-Id`); `/healthz` with the build and the catalog's
+  returned as `X-Request-Id`), kept in `/config/logs` across restarts and
+  upgrades; `/healthz` with the build and the catalog's
   state; start-up refusals in one plain line; backups of `/config` restore
   everything but files; the container runs read-only with every capability
   dropped, under memory and pid limits.

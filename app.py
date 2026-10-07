@@ -179,6 +179,74 @@ def log_event(event: str, level: str = "info", **fields: Any) -> None:
             RECENT_PROBLEMS.append(record)
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
+        if _LOG_FILE is not None:
+            _write_log_file(line)
+
+
+# The same lines in /config/logs once the server is up. The container's own
+# log goes with the container: every deploy that recreated it threw away what
+# a person's reading had left in it (2026-10-07). Capped, the oldest file
+# dropped first, and still a log -- what an analysis needs later is kept in
+# the catalog, not here.
+LOG_FILE_MAX_BYTES = 10 * 1024 * 1024
+LOG_FILES_KEPT = 5
+_LOG_FILE: Any = None  # the open file, or None for the console alone
+
+
+def log_dir() -> Path:
+    return _configured_path("LOG_DIR", catalog_database_path().parent / "logs")
+
+
+def start_log_file(directory: Path | None = None) -> Path | None:
+    """Write every log line to `flipparr.log` in `directory` as well as the
+    console, or say why not and carry on with the console alone."""
+    global _LOG_FILE
+    path = (directory or log_dir()) / "flipparr.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "ab")
+    except OSError as exc:
+        log_event("log_file_unavailable", level="warning", error=shown(exc))
+        return None
+    with _LOG_LOCK:
+        if _LOG_FILE is not None:
+            _LOG_FILE.close()
+        _LOG_FILE = handle
+    return path
+
+
+def _write_log_file(line: str) -> None:
+    """One line to the log file, under `_LOG_LOCK`; past the cap, the files
+    move along (flipparr.log becomes flipparr.log.1, and the last goes)."""
+    global _LOG_FILE
+    try:
+        _LOG_FILE.write(line.encode("utf-8") + b"\n")
+        _LOG_FILE.flush()
+        if _LOG_FILE.tell() < LOG_FILE_MAX_BYTES:
+            return
+        path = Path(_LOG_FILE.name)
+        _LOG_FILE.close()
+        _LOG_FILE = None
+        for number in range(LOG_FILES_KEPT - 1, 0, -1):
+            older = path.with_name(f"{path.name}.{number - 1}") if number > 1 else path
+            if older.exists():
+                os.replace(older, path.with_name(f"{path.name}.{number}"))
+        _LOG_FILE = open(path, "ab")
+    except (OSError, ValueError) as exc:
+        # A full or vanished disk. The console still has every line; one
+        # line there says the file stopped, rather than a failure per line.
+        # (log_event would wait on the lock this holds.)
+        if _LOG_FILE is not None:
+            try:
+                _LOG_FILE.close()
+            except (OSError, ValueError):
+                pass
+        _LOG_FILE = None
+        record = {"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+                  "level": "warning", "event": "log_file_stopped", "error": shown(exc)}
+        RECENT_PROBLEMS.append(record)
+        sys.stdout.write(json.dumps(record, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
 @atexit.register
@@ -190,13 +258,19 @@ def _close_log() -> None:
     fatal error that turned a passing test run into exit 134 in CI. Taking the
     log lock here waits out any line in flight; after it, nothing writes.
     """
-    global _LOG_CLOSED
+    global _LOG_CLOSED, _LOG_FILE
     with _LOG_LOCK:
         _LOG_CLOSED = True
         try:
             sys.stdout.flush()
         except (OSError, ValueError):
             pass
+        if _LOG_FILE is not None:
+            try:
+                _LOG_FILE.close()
+            except (OSError, ValueError):
+                pass
+            _LOG_FILE = None
 
 
 _PATH_IN_TEXT = re.compile(r"(?<![\w:])/(?:[\w.@+-]+/)*[\w.@+-]+")
@@ -14154,13 +14228,7 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     VisionUnavailable, and the page is not counted as asked.
     """
     examples = list(examples or [])
-    text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction, len(examples)), examples)
-    boxes = panel_finder.parse_vision_boxes(text, width, height)
-    # What the model said, before anything here is done to it: a third of
-    # the pages of some runs come out as "the whole page", and until this
-    # was logged nothing could say whether the model saw no panels or drew
-    # boxes that the merge below folded into one (2026-10-06). Numbers only.
-    drawn = [{key: round(float(box[key]), 3) for key in ("x", "y", "w", "h")} for box in (boxes or [])]
+    drawn: list[dict[str, float]] = []
 
     def told(outcome: str, kept: list[dict[str, Any]] | None = None, **detail: Any) -> None:
         log_event("vision_boxes", outcome=outcome, drawn=len(drawn), boxes=drawn, **detail)
@@ -14177,6 +14245,21 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
                 )
             except Exception as exc:  # noqa: BLE001 -- the page is read whether or not its answer is kept
                 log_exception("vision_answer_not_kept", exc, level="warning")
+
+    try:
+        text = ask_vision_model(image, panel_finder.vision_boxes_prompt(width, height, direction, len(examples)), examples)
+    except VisionUnavailable as exc:
+        # A page the connector never answered is kept too: a sitting where
+        # every page came back from the lower tiers reads differently once
+        # it is known the model was refusing (2026-10-07).
+        told("failed", why=str(exc)[:200])
+        raise
+    boxes = panel_finder.parse_vision_boxes(text, width, height)
+    # What the model said, before anything here is done to it: a third of
+    # the pages of some runs come out as "the whole page", and until this
+    # was logged nothing could say whether the model saw no panels or drew
+    # boxes that the merge below folded into one (2026-10-06). Numbers only.
+    drawn[:] = [{key: round(float(box[key]), 3) for key in ("x", "y", "w", "h")} for box in (boxes or [])]
 
     if boxes is None:
         told("unreadable")
@@ -20927,6 +21010,9 @@ def main() -> None:
         log_event("startup_refused", level="error", reason=refused.reason)
         print(str(refused), file=sys.stderr, flush=True)
         raise
+    # After the checks, which have proved /config writable; a refusal above
+    # is on the console, where `docker compose logs` shows it.
+    start_log_file()
     # Which SQLite this is decides WAL or the rollback journal
     # (catalog_store.journal_mode_for); said once, so a log shows it.
     log_event("sqlite_runtime", version=sqlite3.sqlite_version, **found)

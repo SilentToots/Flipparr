@@ -5,6 +5,7 @@ import email.message
 import io
 import pathlib
 import os
+import shutil
 import sqlite3
 import tempfile
 from catalog_store import ADMIN_USER_ID, SCHEMA_VERSION, CatalogStore
@@ -7338,6 +7339,18 @@ class VisionConnectorTests(unittest.TestCase):
             app.vision_panels(b"jpeg", 300, 450, "ltr", mask)
         store.record_vision_answer.assert_not_called()
 
+    def test_a_page_the_connector_never_answered_is_kept_as_failed(self):
+        mask = self._mask(bridged=True)
+        store = Mock()
+        with patch("app.ask_vision_model", side_effect=app.VisionUnavailable("anthropic answered 429 (rate_limit_error)")), \
+             patch("app.catalog_store", return_value=store), patch("app.vision_provider", return_value="anthropic"), \
+             patch("app.log_event"):
+            with self.assertRaises(app.VisionUnavailable, msg="the caller still keeps the lower tiers' reading"):
+                app.vision_panels(b"jpeg", 300, 450, "ltr", mask, page_ref={"fileId": 7, "member": "p3.jpg"})
+        failed = store.record_vision_answer.call_args
+        self.assertEqual((failed.kwargs["outcome"], failed.kwargs["drawn"]), ("failed", []))
+        self.assertEqual(failed.kwargs["detail"], {"why": "anthropic answered 429 (rate_limit_error)"})
+
     def test_boxes_are_believed_once_the_page_has_corrected_them(self):
         mask = self._mask(bridged=True)
         # Roughly the two panels, drawn a little off; the page puts them right.
@@ -11225,4 +11238,69 @@ class SystemStatusTests(unittest.TestCase):
         problems = app.recent_problems()
         self.assertEqual([problem["event"] for problem in problems], ["second_trouble", "first_trouble"])
         self.assertNotIn("abc123", json.dumps(problems))
+
+
+class LogFileTests(unittest.TestCase):
+    """The log lines in /config/logs as well as the console: the container's
+    own log goes with the container, at every deploy (2026-10-07)."""
+
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        with app._LOG_LOCK:
+            if app._LOG_FILE is not None:
+                app._LOG_FILE.close()
+            app._LOG_FILE = None
+
+    def _lines(self, name="flipparr.log"):
+        return [json.loads(line) for line in (self.directory / name).read_text().splitlines()]
+
+    def test_every_line_also_goes_to_the_file_and_survives_a_restart(self):
+        with patch("sys.stdout", new=io.StringIO()) as console:
+            self.assertEqual(app.start_log_file(self.directory), self.directory / "flipparr.log")
+            app.log_event("vision_boxes", outcome="whole", drawn=0)
+            self._stop()
+            app.start_log_file(self.directory)  # the next start appends
+            app.log_event("server_started", port=8787)
+        self.assertEqual([line["event"] for line in self._lines()], ["vision_boxes", "server_started"])
+        self.assertIn("vision_boxes", console.getvalue(), "the console still has every line")
+
+    def test_past_the_cap_the_files_move_along_and_the_oldest_goes(self):
+        with patch("sys.stdout", new=io.StringIO()), patch("app.LOG_FILE_MAX_BYTES", 200), patch("app.LOG_FILES_KEPT", 3):
+            app.start_log_file(self.directory)
+            for number in range(20):
+                app.log_event("tick", number=number, padding="x" * 120)
+        names = sorted(path.name for path in self.directory.iterdir())
+        self.assertEqual(names, ["flipparr.log", "flipparr.log.1", "flipparr.log.2"])
+        newest, older = self._lines("flipparr.log.1"), self._lines("flipparr.log.2")
+        self.assertGreater(newest[0]["number"], older[-1]["number"], ".1 is newer than .2")
+
+    def test_a_directory_it_cannot_write_leaves_the_console_alone(self):
+        blocked = self.directory / "taken"
+        blocked.write_text("a file, not a folder")
+        with patch("sys.stdout", new=io.StringIO()) as console:
+            self.assertIsNone(app.start_log_file(blocked))
+            app.log_event("still_said")
+        self.assertIn("log_file_unavailable", console.getvalue())
+        self.assertIn("still_said", console.getvalue())
+
+    def test_a_file_that_fails_mid_run_stops_once_and_says_so(self):
+        class Full(io.BytesIO):
+            name = "flipparr.log"
+
+            def write(self, data):
+                raise OSError(28, "No space left on device")
+        with app._LOG_LOCK:
+            app._LOG_FILE = Full()
+        app.RECENT_PROBLEMS.clear()
+        with patch("sys.stdout", new=io.StringIO()) as console:
+            app.log_event("first")
+            app.log_event("second")
+        self.assertIsNone(app._LOG_FILE)
+        self.assertEqual(console.getvalue().count("log_file_stopped"), 1)
+        self.assertIn("second", console.getvalue())
+        self.assertEqual([problem["event"] for problem in app.recent_problems()], ["log_file_stopped"])
 

@@ -89,6 +89,7 @@ All settings have working defaults; you only need these if you are changing path
 | `FLIPPARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
 | `FLIPPARR_HTTP_THREADS` | `32` | worker threads answering requests (4-128) |
 | `FLIPPARR_COVER_CACHE_MB` | `512` | covers kept in `/config/cover-cache` so a restart does not re-read every cover; least recently used dropped first |
+| `FLIPPARR_LOG_DIR` | `/config/logs` | where the log is kept as well as the console (`flipparr.log`, then `.1` to `.4`, 10 MB each, oldest dropped) |
 | `FLIPPARR_TEMP_DIR` | *(unset: `/config/tmp`)* | where temporary files go (uploads while they arrive, comic packs being unpacked). Flipparr makes a `flipparr-tmp` folder inside the folder you name and empties only that at start |
 
 Flipparr is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/).
@@ -507,6 +508,9 @@ What is in it, and what you may leave out:
   flight, up to a few gigabytes, all rebuilt on demand. Safe to exclude
   (`--exclude=cover-cache --exclude=reading-cache --exclude=tmp
   --exclude=downloads`).
+- `logs/`: the log, at most 50 MB (five files of 10 MB, the oldest dropped).
+  Safe to exclude (`--exclude=logs`); keep it when the backup is for a
+  report of something that went wrong.
 - `models/`, `avatars/`, `user-covers/`, `arc-index.json`: the panel model you
   copied in, profile pictures, covers you chose, the arc index.
 
@@ -589,6 +593,14 @@ the page says so. **Download diagnostics** saves the same facts, plus which
 services are set up, as a file safe to share when asking for help: it holds
 no passwords, keys, tokens or service addresses. The same data is at
 `GET /api/v1/system/status` (admin).
+
+**The full log** is in `/config/logs/flipparr.log` (one JSON line per event,
+the older files beside it as `flipparr.log.1` to `.4`), as well as in
+`docker compose logs flipparr`. Docker's copy goes when the container is
+recreated, on every upgrade; the file stays. A failure the app reported to
+you carries a request id (`X-Request-Id`); search the log for it. Lines hold
+no passwords, keys or request bodies, but they do name your series and
+files.
 
 **Every series shows "Status unknown".**
 Publication status comes from provider metadata. After a `local` scan, or while
