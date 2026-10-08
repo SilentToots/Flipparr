@@ -3988,7 +3988,7 @@ class CatalogStore:
 
     def set_reading_progress(
         self, file_id: int, page: int, page_count: int, file_signature: str,
-        finished: bool = False, panel: int = 0, *, user_id: int,
+        finished: bool = False, panel: int = 0, *, user_id: int, at: str | None = None,
     ) -> dict[str, Any]:
         """Remember the page (and the panel on it), and when a comic was finished.
 
@@ -3996,14 +3996,22 @@ class CatalogStore:
         the last write wins. That is correct here: both carry the page the
         reader was on, and a page number is not a value two writers can
         disagree about the way a counter would be.
+
+        `at` is when the reader was on that page, for a save that arrives late:
+        Flipparr Reader replays what was read offline when it reconnects. Such
+        a save is kept only if nothing newer is stored, and is stored as of
+        `at`; a save without `at` is now and always wins, as before. Times are
+        compared as instants, not strings (`_utc_now` omits a zero fraction).
         """
         if page < 0 or page_count < 0 or page > max(0, page_count - 1):
             raise ValueError("That page is not in this comic")
         if panel < 0:
             raise ValueError("A panel is counted from the first")
-        now = _utc_now()
+        now = at or _utc_now()
         finished_at = now if finished else None
         with self._write_lock, self._connect() as connection:
+            if at is not None and self._newer_progress_stored(connection, file_id, user_id, at):
+                return self.reading_progress(file_id, user_id=user_id)
             connection.execute(
                 """INSERT INTO reading_progress(
                        user_id, file_id, page, panel, page_count, file_signature, started_at, finished_at, updated_at)
@@ -4019,11 +4027,29 @@ class CatalogStore:
             )
         return self.reading_progress(file_id, user_id=user_id)
 
-    def clear_reading_progress(self, file_id: int, *, user_id: int) -> None:
+    def clear_reading_progress(self, file_id: int, *, user_id: int, at: str | None = None) -> None:
+        """Forget a comic's place. With `at` (a late save, see
+        `set_reading_progress`), only if nothing newer is stored. A cleared
+        place leaves no time behind, so a later late save older than the
+        clear still writes: last write by arrival, there."""
         with self._write_lock, self._connect() as connection:
+            if at is not None and self._newer_progress_stored(connection, file_id, user_id, at):
+                return
             connection.execute(
                 "DELETE FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
             )
+
+    @staticmethod
+    def _newer_progress_stored(connection: sqlite3.Connection, file_id: int, user_id: int, at: str) -> bool:
+        row = connection.execute(
+            "SELECT updated_at FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            return dt.datetime.fromisoformat(row["updated_at"]) > dt.datetime.fromisoformat(at)
+        except (TypeError, ValueError):
+            return False
 
     def recent_reading(self, limit: int = 24, *, user_id: int) -> list[dict[str, Any]]:
         """What was read lately, newest first, with what it belongs to.
@@ -5016,6 +5042,34 @@ class CatalogStore:
         if row["reading_direction"] in ("ltr", "rtl"):
             return row["reading_direction"]
         return "rtl" if row["format"] == "manga" else "ltr"
+
+    def file_offline_context(self, file_id: int) -> dict[str, Any]:
+        """What Flipparr Reader keeps beside a downloaded comic's pages, so it
+        can be listed and opened with no connection: its filename and its run.
+        A file with no run still downloads; `run` is None."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT files.filename, file_identities.series_run_id, file_identities.identity_kind,
+                          file_identities.issue_number, file_identities.volume_number,
+                          series_runs.canonical_title, series_runs.start_year, series_runs.format
+                   FROM files
+                   LEFT JOIN file_identities ON file_identities.file_id=files.id
+                   LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
+                   WHERE files.id=? AND files.present=1""",
+                (int(file_id),),
+            ).fetchone()
+        if row is None:
+            raise LookupError("That comic is not in the library")
+        run = None
+        if row["series_run_id"] is not None:
+            run = {
+                "id": str(row["series_run_id"]), "title": row["canonical_title"],
+                "startYear": row["start_year"], "medium": row["format"],
+            }
+        return {
+            "filename": row["filename"], "run": run, "kind": row["identity_kind"],
+            "issueNumber": row["issue_number"], "volumeNumber": row["volume_number"],
+        }
 
     def issue_file_counts_by_run(self) -> dict[str, int]:
         """How many single-issue comics each run owns, for the Comics grid.

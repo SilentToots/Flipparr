@@ -4220,6 +4220,47 @@ class ReadingProgressTests(LibraryFixture):
             store.clear_reading_progress(first, user_id=ADMIN_USER_ID)
             self.assertIsNone(store.reading_progress(first, user_id=ADMIN_USER_ID))
 
+    def test_a_late_save_is_kept_only_when_nothing_newer_is_stored(self):
+        """Flipparr Reader replays what was read offline when it reconnects:
+        a page reached on the flight must not undo the page reached since on
+        the web, and the late save is stored as of when it was made."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            store.set_reading_progress(first, 10, 24, "sig-a", user_id=ADMIN_USER_ID)
+            older = "2020-01-01T09:00:00+00:00"
+            kept = store.set_reading_progress(first, 3, 24, "sig-a", user_id=ADMIN_USER_ID, at=older)
+            self.assertEqual(kept["page"], 10, "the newer place stands")
+            self.assertEqual(store.set_reading_progress(first, 23, 24, "sig-a", finished=True, user_id=ADMIN_USER_ID,
+                                                        at=older)["finishedAt"], None, "an old finish too")
+            store.clear_reading_progress(first, user_id=ADMIN_USER_ID, at=older)
+            self.assertEqual(store.reading_progress(first, user_id=ADMIN_USER_ID)["page"], 10, "and an old clear")
+            # Newer than what is stored: written, and dated as it was made.
+            later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)).isoformat()
+            moved = store.set_reading_progress(first, 12, 24, "sig-a", user_id=ADMIN_USER_ID, at=later)
+            self.assertEqual((moved["page"], moved["updatedAt"]), (12, later))
+            # Instants, not strings: 05:30 at UTC-5 is after 10:00 UTC, though it sorts before it.
+            second = self._file_id(store, "Example 002.cbz")
+            store.set_reading_progress(second, 5, 24, "sig-a", user_id=ADMIN_USER_ID, at="2026-01-01T10:00:00+00:00")
+            self.assertEqual(store.set_reading_progress(second, 6, 24, "sig-a", user_id=ADMIN_USER_ID,
+                                                        at="2026-01-01T05:30:00.500-05:00")["page"], 6)
+            # Without a time, a save is now and wins, as it always has.
+            self.assertEqual(store.set_reading_progress(first, 1, 24, "sig-a", user_id=ADMIN_USER_ID)["page"], 1)
+            # Nothing stored: a late save writes.
+            third = self._file_id(store, "Example 003.cbz")
+            self.assertEqual(store.set_reading_progress(third, 2, 24, "sig-a", user_id=ADMIN_USER_ID, at=older)["page"], 2)
+
+    def test_a_downloaded_comic_carries_its_filename_and_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            context = store.file_offline_context(first)
+            self.assertEqual(set(context), {"filename", "run", "kind", "issueNumber", "volumeNumber"})
+            self.assertEqual(context["filename"], "Example 001.cbz")
+            self.assertEqual(set(context["run"]), {"id", "title", "startYear", "medium"})
+            with self.assertRaises(LookupError):
+                store.file_offline_context(99999)
+
     def test_what_was_read_lately_comes_back_newest_first_with_its_run(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

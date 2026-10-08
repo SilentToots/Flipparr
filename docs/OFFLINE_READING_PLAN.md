@@ -239,30 +239,34 @@ both so the reader's preloading treats them alike; on the web it resolves
 immediately. The web app must behave exactly as before Phase 1 — that is
 the phase's proof.
 
-### Authentication for the app (Phase 0)
+### Authentication for the app (Phase 0 — built 2026-10-08)
 
-- The app signs in with the existing routes and an app-client form:
-  `POST /api/v1/auth/login` and `POST /api/v1/profiles/switch` with
-  `{…, "client": "app"}` answer `{token, expiresAt, viewer}` in the body
-  instead of (not as well as) setting the cookie. The token is the same
-  signed profile token `issue_profile_token` makes (`app.py` ~L844), always
-  issued with `shared=True` (the `v3` form, which carries the household
-  epoch): an iPad is a shared device, so session versions, profile removal
-  and "forget shared devices" end it exactly as they end a shared cookie.
-- `_resolve_identity` reads `Authorization: Bearer <token>` when there is
-  no session cookie; a request carrying both is refused (400), so a
-  confused client cannot mix identities.
-- `_same_origin` passes when the identity came from the header: a bearer
-  token is not sent by a browser on its own, so a cross-site request cannot
-  carry it (the CSRF reason for the check does not apply). It still runs for
-  cookie requests, unchanged.
-- No CORS headers are added: the app's JSON goes through CapacitorHttp and
-  its pages through the plugin, both native, neither subject to CORS. The
-  web build keeps working same-origin as today.
-- Tests (`test_http_contract.py`): bearer reaches a READER route; a revoked
-  session version is 401 by bearer as by cookie; cookie + bearer → 400; a
-  cross-origin POST with bearer passes and with a cookie is still refused;
-  `client: "app"` sets no cookie; `RouteCensusTests` stays green.
+- Every app request sends `Flipparr-Client: app`. Its session goes as
+  `Authorization: Bearer <token>` and a shared device's token as
+  `Flipparr-Device: <token>`. A session or device token issued on any
+  request (sign-in, a profile switch, a new PIN, the admin's first reader)
+  comes back in the response headers `Flipparr-Session` / `Flipparr-Device`
+  instead of `Set-Cookie`; an empty `Flipparr-Session` means the sign-in
+  ended. No body changes, so every route that re-issues a session already
+  works for the app (`_set_cookie` diverts, `send_response` writes them).
+- The tokens are the same signed tokens the cookies carry and follow the
+  same rules as the web: the admin signing in makes a shared device (a
+  device token, and a `v3` session); a profile picked on a shared device is
+  `v3`, so "forget shared devices" ends it; a reader signing in on their own
+  phone is `v2`, as on the web. Session versions end them as they end cookies.
+- An app request reads no cookies at all (a native cookie jar may keep
+  some): one request, one identity. A browser request's `Authorization`
+  header is never read (a reverse proxy's Basic credentials stay harmless).
+- The cross-site check is skipped for app requests: it guards cookies, an
+  app request reads none, and `Flipparr-Client` forces a CORS preflight that
+  the server never grants (OPTIONS answers 501 with no `Access-Control-*`;
+  `test_no_other_site_may_send_an_app_request` pins it), so another site's
+  page cannot send an app request at all. Cookie requests are checked as
+  before. No CORS headers are added.
+- Tests: `test_flipparr_reader_signs_in_with_tokens_in_headers_never_cookies`
+  and `…_as_the_admin_and_gets_the_shared_device` (`ReaderProfileHttpTests`).
+- Not done: sessions do not slide. An app token expires 30 days after it was
+  issued, like a cookie; the app signs in again (Phase 2 handles the 401).
 
 ### The native plugin (`ios/App/App/FlipparrTransfer/`, Phase 2)
 
@@ -340,13 +344,15 @@ routes the app needs already exist (`access_policy.py` L91–155): `/reading`,
 `/reading-lists/{id}`, `/files/{id}/pages…`, `/progress`, `/panels`, covers.
 
 1. **Bearer auth and `client: "app"`** — see "Authentication for the app".
-2. **`GET /api/v1/app`** at `PUBLIC`, the level `/api/v1/auth/status` uses
-   (`access_policy.py` L76), so the connect screen can recognise a Flipparr
-   server before signing in: `{apiVersion: 1, name: "Flipparr", authMethod}`
-   for anyone, plus `{build, household}` when the request has a viewer.
+2. **`GET /api/v1/app`** at `PUBLIC`, the level `/api/v1/auth/status` uses,
+   so the connect screen can recognise a Flipparr server before signing in:
+   `{name: "Flipparr", apiVersion: 1, version, build, authMethod}` for anyone
+   (`/healthz` already shows the build publicly). `READER_API_VERSION` in
+   `app.py`.
 3. **`GET /api/v1/files/{id}/offline`** → `{fileId, fileSignature,
-   pageCount, bytesEstimate, pages: [{index, readUrl}], series: {runId,
-   title, issueNumber, filename, medium, readingDirection}}`. New
+   pageCount, bytesEstimate, filename, run: {id, title, startYear, medium} |
+   null, kind, issueNumber, volumeNumber, readingDirection, pages: [{index,
+   readUrl}]}` (built; the field set is pinned by the test). New
    `CatalogStore.file_offline_context(file_id)` (one query over `files`,
    `file_identities`, `series_runs`; `LookupError` if absent or
    `present = 0`) and `file_offline_manifest(file_id)` beside `file_pages`,
@@ -386,15 +392,23 @@ routes the app needs already exist (`access_policy.py` L91–155): `/reading`,
    older `at` leaves the row. `test_app.py`: a naive `at` → 400.
    `?vision=no`: a reader with `visionForReaders` on leaves `_VISION_SPEND`
    untouched; the admin gets a stored row whose source is not `vlm`.
-   `ReaderAppContractTests`: the fields the app reads from `/app`,
-   `/reading`, `/reading/runs`, `/reading/lists`, `/series/{id}/reading`,
-   `/files/{id}/offline`, `/pages`, `/panels`, `/progress`.
+   Built 2026-10-08: the field sets of `/app` and `/files/{id}/offline` are
+   pinned in their tests. `ReaderAppContractTests` for `/reading`,
+   `/reading/runs`, `/reading/lists`, `/series/{id}/reading`, `/pages`,
+   `/panels` and `/progress` is written in Phase 2, pinning exactly the
+   fields the app's code reads (unknown until then).
 
 ## Phases, in order
 
 ### Phase 0 — server: bearer auth, `/app`, offline routes, `at`, `?vision=no` (1–2 sessions)
 Everything under "Server additions". Deployable alone at any time (nothing
-sends the new forms yet). Proof: both suite orders green; NAS deploy;
+sends the new forms yet). After the deploy, also check that openresty does not
+answer a preflight itself (the cross-site skip for app requests depends on
+it): `curl -si -X OPTIONS https://<server>/api/v1/profiles/switch -H "Origin:
+https://evil.invalid" -H "Access-Control-Request-Method: POST" -H
+"Access-Control-Request-Headers: flipparr-client"` must show no
+`Access-Control-Allow-*` header; if one appears, the skip goes back to
+"only when the identity came from a bearer token" before the app ships. Proof: both suite orders green; NAS deploy;
 `curl` with a bearer token as the admin and as a limited reader (the
 owner's instance has reader profiles; never clear their records).
 
@@ -475,7 +489,11 @@ owner's instance has reader profiles; never clear their records).
   panels: []}`); the place = `mergeProgress(queue row, server GET when
   online)`; `lastReadAt` and `finished` written to the row on every save.
 - `progressSink`: always append to the queue with `at: new Date().
-  toISOString()`; online, POST and drop the row on success. Body: finished
+  toISOString()`; online, POST and drop the row on success. **A live online
+  save sends no `at`; only a replayed queue row does.** Every `at` is stored
+  as the row's time and the web sends none, so an iPad whose clock runs ten
+  minutes behind would otherwise have its live saves skipped for ten
+  minutes after any web save. Body: finished
   → `{read: true, at}`, else `{page, panel, at}` (`panel` omitted when
   null). `replayProgress()` on launch, reconnect and foreground: rows in
   `at` order; 401 → stop and keep; 404 → drop the row and mark the

@@ -164,6 +164,15 @@ keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
 0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer
 catalog.
 
+- The server side of Flipparr Reader, the coming iPad and iPhone app
+  (`docs/OFFLINE_READING_PLAN.md`, Phase 0). The app sends
+  `Flipparr-Client: app` and carries its session and device tokens in
+  headers, not cookies. `GET /api/v1/app` names the server and its reader
+  API. `GET /api/v1/files/{id}/offline` lists what a download needs, and
+  `POST /api/v1/offline/check` says which downloads a profile may still
+  read. A progress save may carry `at`, so a save replayed after reading
+  offline never undoes a newer one. `?vision=no` asks for a page's panels
+  without the vision model. The web app is unchanged.
 - Panel view: the leftover pass now runs on a page read with no detector
   model and no connector (the default install). Measured against the
   owner's hand-fixed pages in `docs/PANELS.md`.

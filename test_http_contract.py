@@ -1323,6 +1323,63 @@ class HttpContractTests(unittest.TestCase):
             self.assertEqual(cleared.json()["page"], 0)
             self.assertFalse(cleared.json()["stale"], "cleared on purpose is not stale")
 
+    def test_a_late_save_never_undoes_a_newer_one(self):
+        """Flipparr Reader sends `at` with every save and replays the ones
+        made offline when it reconnects."""
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "late.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(4):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            file_id = self._library_file(comic)
+            progress = f"/api/v1/files/{file_id}/progress"
+            self.assertEqual(self.post(progress, {"page": 2}).status, 200)
+            hour_ago = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat()
+            stale = self.post(progress, {"page": 1, "panel": 2, "at": hour_ago})
+            self.assertEqual((stale.status, stale.json()["page"]), (200, 2), "the newer place stands")
+            self.assertEqual(self.post(progress, {"read": True, "at": hour_ago}).json()["page"], 2)
+            self.assertEqual(self.post(progress, {"page": None, "at": hour_ago}).json()["page"], 2, "an old clear too")
+            # A clock that runs ahead is held to the server's now, so it locks nothing out.
+            ahead = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
+            moved = self.post(progress, {"page": 3, "at": ahead}).json()
+            self.assertEqual(moved["page"], 3)
+            self.assertLess(dt.datetime.fromisoformat(moved["updatedAt"]), dt.datetime.fromisoformat(ahead))
+            self.assertEqual(self.post(progress, {"page": 0}).json()["page"], 0, "a save without at still wins")
+            for bad in ("2026-10-08T12:00:00", "yesterday", 1760000000):
+                refused = self.post(progress, {"page": 1, "at": bad})
+                self.assertEqual(refused.status, 400, bad)
+            self.assertIn("time zone", self.post(progress, {"page": 1, "at": "2026-10-08T12:00:00"}).json()["error"])
+
+    def test_a_download_asks_for_panels_without_the_vision_model(self):
+        """`vision=no` keeps a download from spending the model (or a
+        reader's budget); the page is upgraded when it is next read online."""
+        asked = []
+        def panels(file_id, index, *, allow_vision=True):
+            asked.append(allow_vision)
+            return {"fileId": str(file_id), "page": index, "segmented": False, "panels": []}
+        with patch("app.file_page_panels", side_effect=panels):
+            self.assertEqual(self.get("/api/v1/files/12/pages/0/panels?vision=no").status, 200)
+            self.assertEqual(self.get("/api/v1/files/12/pages/0/panels").status, 200)
+        self.assertEqual(asked, [False, True], "the admin reads with the model, and downloads without")
+
+    def test_no_other_site_may_send_an_app_request(self):
+        """App requests skip the cross-site check because a page cannot send
+        `Flipparr-Client` without a CORS preflight, and this server never
+        grants one. If it ever answers a preflight, that reasoning is gone."""
+        asked = request("OPTIONS", self.base + "/api/v1/profiles/switch", headers={
+            "Origin": "https://evil.invalid", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "flipparr-client, content-type",
+        })
+        granted = {key.lower() for key in asked.headers if key.lower().startswith("access-control-allow")}
+        self.assertEqual(granted, set(), asked.headers)
+        self.assertGreaterEqual(asked.status, 400)
+
+    def test_flipparr_reader_finds_a_flipparr_before_signing_in(self):
+        found = self.get("/api/v1/app")
+        self.assertEqual(found.status, 200)
+        self.assertEqual(set(found.json()), {"name", "apiVersion", "version", "build", "authMethod"})
+        self.assertEqual((found.json()["name"], found.json()["apiVersion"]), ("Flipparr", 1))
+
     def test_a_comic_replaced_since_it_was_read_opens_at_the_start(self):
         """The page was kept against a file that no longer exists; page 40 of
         a shorter replacement is a blank screen."""
@@ -1786,6 +1843,9 @@ def _sample(pattern: str) -> str:
 NOT_ADMIN = {
     ("GET", "/healthz"): "public",
     ("GET", "/api/v1/auth/status"): "public",
+    ("GET", "/api/v1/app"): "public",
+    ("GET", "/api/v1/files/1/offline"): "reader",
+    ("POST", "/api/v1/offline/check"): "reader",
     ("POST", "/api/v1/auth/login"): "public",
     ("POST", "/api/v1/auth/logout"): "public",
     ("GET", "/api/v1/profiles"): "household",
@@ -2139,6 +2199,133 @@ class ReaderProfileHttpTests(unittest.TestCase):
         # The admin sets a reader's lock too.
         by_admin = self.call("PATCH", f"/api/v1/users/{sam}", {"switchLock": "pin"}, cookies=admin_cookies)
         self.assertEqual((by_admin.status, by_admin.json()["lock"]), (200, "pin"))
+
+    def app_call(self, method, path, payload=None, token=None, device=None, headers=None):
+        """A request as Flipparr Reader makes it: its own origin, tokens in headers."""
+        body = json.dumps(payload).encode() if payload is not None else (b"{}" if method != "GET" else None)
+        sent = {"Flipparr-Client": "app", "Origin": "capacitor://localhost", **(headers or {})}
+        if token:
+            sent["Authorization"] = f"Bearer {token}"
+        if device:
+            sent["Flipparr-Device"] = device
+        return request(method, self.base + path, body, "application/json" if body is not None else None, headers=sent)
+
+    @staticmethod
+    def header(response, name):
+        return next((value for key, value in response.headers.items() if key.lower() == name.lower()), None)
+
+    def test_flipparr_reader_signs_in_with_tokens_in_headers_never_cookies(self):
+        sam = self._household_with_a_reader()
+        switched = self.app_call("POST", "/api/v1/profiles/switch", {"userId": sam})
+        self.assertEqual(switched.status, 200, switched.body)
+        token = self.header(switched, "Flipparr-Session")
+        self.assertTrue(token and token.startswith("v3."), "a shared device's session, ended by forgetting devices")
+        self.assertEqual(switched.cookies, {}, "the app cannot keep a cookie; none is set")
+        me = self.app_call("GET", "/api/v1/me", token=token)
+        self.assertEqual((me.status, me.json()["profile"]["name"]), (200, "Sam"))
+        # Only the app's requests read a bearer token; a browser's never do.
+        plain = request("GET", self.base + "/api/v1/me", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(plain.status, 401)
+        # The app's cookies, had a native jar kept one, are not read: one identity per request.
+        admin_cookie = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        cookie_header = "; ".join(f"{k}={v}" for k, v in admin_cookie.items())
+        mixed = self.app_call("GET", "/api/v1/me", token=token, headers={"Cookie": cookie_header})
+        self.assertEqual(mixed.json()["profile"]["name"], "Sam")
+        self.assertEqual(self.app_call("GET", "/api/v1/settings", headers={"Cookie": cookie_header}).status, 401,
+                         "an app request with only a cookie is not signed in")
+        # From another origin: a bearer token passes the cross-site check, a cookie still does not.
+        saved = self.app_call("POST", "/api/v1/me/reading-list/run/99999", token=token)
+        self.assertNotEqual(saved.status, 403, saved.body)
+        forged = request("POST", self.base + "/api/v1/me/reading-list/run/99999", b"{}", "application/json",
+                         headers={"Origin": "https://evil.invalid", "Cookie": cookie_header})
+        self.assertEqual((forged.status, forged.json()["error"]), (403, "Cross-site request rejected"))
+        # A session re-issued on a request comes back in the header; the old one ends.
+        pinned = self.app_call("PATCH", "/api/v1/me", {"switchLock": "pin", "pin": "1357"}, token=token)
+        self.assertEqual(pinned.status, 200, pinned.body)
+        renewed = self.header(pinned, "Flipparr-Session")
+        self.assertTrue(renewed and renewed != token)
+        self.assertEqual(self.app_call("GET", "/api/v1/me", token=token).status, 401)
+        self.assertEqual(self.app_call("GET", "/api/v1/me", token=renewed).status, 200)
+        # Signing out says so in the header.
+        out = self.app_call("POST", "/api/v1/auth/logout", token=renewed)
+        self.assertEqual(self.header(out, "Flipparr-Session"), "")
+
+    def test_flipparr_reader_signs_in_as_the_admin_and_gets_the_shared_device(self):
+        self.call("PATCH", "/api/v1/me", {"pin": "2468"})
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        login = self.app_call("POST", "/api/v1/auth/login", {"username": "owner", "password": "the admin password"})
+        self.assertEqual(login.status, 200, login.body)
+        token, device = self.header(login, "Flipparr-Session"), self.header(login, "Flipparr-Device")
+        self.assertTrue(token and device, "the admin signing in makes the iPad a shared device")
+        self.assertEqual(login.cookies, {})
+        made = self.app_call("POST", "/api/v1/users", {"name": "Sam"}, token=token)
+        self.assertEqual(made.status, 201, made.body)
+        token = self.header(made, "Flipparr-Session") or token
+        # The picker needs the shared device, carried in its own header.
+        self.assertEqual(self.app_call("GET", "/api/v1/profiles").status, 401)
+        self.assertEqual(self.app_call("GET", "/api/v1/profiles", device=device).status, 200)
+        sam = self.app_call("POST", "/api/v1/profiles/switch", {"userId": made.json()["id"]}, device=device)
+        self.assertEqual(sam.status, 200, sam.body)
+        self.assertEqual(self.app_call("GET", "/api/v1/me", token=self.header(sam, "Flipparr-Session")).json()["profile"]["name"], "Sam")
+
+    def test_flipparr_reader_downloads_only_what_the_profile_may_read(self):
+        store, run = self._library_of_one_run()
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        comic = root / "Example 001.cbz"
+        with zipfile.ZipFile(comic, "w") as archive:
+            archive.writestr("01.jpg", _png_bytes())
+            archive.writestr("02.jpg", _png_bytes())
+        with sqlite3.connect(store.database_path) as connection:
+            file_id = connection.execute("SELECT id FROM files WHERE path=?", (str(comic),)).fetchone()[0]
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        with patch("app.reading_cache_dir", return_value=root.parent / "reading-cache"):
+            manifest = self.call("GET", f"/api/v1/files/{file_id}/offline", cookies=admin)
+        self.assertEqual(manifest.status, 200, manifest.body)
+        body = manifest.json()
+        # The fields Flipparr Reader reads (reader API 1): add to these, never take away.
+        self.assertEqual(set(body), {"fileId", "fileSignature", "pageCount", "bytesEstimate", "filename", "run", "kind",
+                                     "issueNumber", "volumeNumber", "readingDirection", "pages"})
+        self.assertEqual((body["pageCount"], body["filename"], body["run"]["title"], body["issueNumber"]),
+                         (2, "Example 001.cbz", "Example", "1"))
+        self.assertEqual(body["bytesEstimate"], 2 * app.OFFLINE_PAGE_BYTES_GUESS, "nothing rendered yet")
+        self.assertEqual([page["index"] for page in body["pages"]], [0, 1])
+        self.assertIn("size=read", body["pages"][0]["readUrl"])
+        self.assertIn(f"v={body['fileSignature']}", body["pages"][0]["readUrl"], "a replaced file is a new address")
+        signature = body["fileSignature"]
+        check = [{"fileId": str(file_id), "fileSignature": signature}, {"fileId": "99999", "fileSignature": "x"}]
+        answered = self.call("POST", "/api/v1/offline/check", {"files": check}, cookies=admin)
+        self.assertEqual(answered.json()["files"], [{"fileId": str(file_id), "status": "ok"},
+                                                    {"fileId": "99999", "status": "gone"}])
+        # A limited reader is kept from the run: no manifest, and its download is "hidden".
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "teen"}, cookies=admin)
+        store.record_run_rating(run, "mature", "metron", "Mature (issue 1)")
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        self.assertEqual(self.call("GET", f"/api/v1/files/{file_id}/offline", cookies=reader).status, 404)
+        hidden = self.call("POST", "/api/v1/offline/check", {"files": check[:1]}, cookies=reader).json()["files"]
+        self.assertEqual(hidden, [{"fileId": str(file_id), "status": "hidden"}])
+        # The file replaced since it was downloaded: "changed".
+        time.sleep(0.01)
+        with zipfile.ZipFile(comic, "w") as archive:
+            archive.writestr("01.jpg", _png_bytes())
+        changed = self.call("POST", "/api/v1/offline/check", {"files": check[:1]}, cookies=admin).json()["files"]
+        self.assertEqual(changed, [{"fileId": str(file_id), "status": "changed"}])
+        for bad in ({"files": "all"}, {"files": [{"fileSignature": "x"}]}, {"files": ["1"]},
+                    {"files": [{"fileId": "1", "fileSignature": "x"}] * 501}):
+            self.assertEqual(self.call("POST", "/api/v1/offline/check", bad, cookies=admin).status, 400)
+
+    def test_a_readers_download_spends_none_of_their_vision_budget(self):
+        sam = self._household_with_a_reader()
+        reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+        with patch("app.load_app_settings", return_value={"visionForReaders": True}), \
+                patch("app.vision_budget_allows", return_value=True) as budget, \
+                patch("app.file_page_panels", return_value={"segmented": False, "panels": []}) as panels:
+            self.assertEqual(self.call("GET", "/api/v1/files/12/pages/0/panels?vision=no", cookies=reader).status, 200)
+            budget.assert_not_called()
+            self.assertFalse(panels.call_args.kwargs["allow_vision"])
+            self.call("GET", "/api/v1/files/12/pages/0/panels", cookies=reader)
+            budget.assert_called_once()
+            self.assertTrue(panels.call_args.kwargs["allow_vision"])
 
     def _library_of_one_run(self):
         """A library with one run of three issues, in the database the server uses."""

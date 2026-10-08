@@ -610,6 +610,17 @@ _SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 # A reader signing in on their own phone never gets one.
 _DEVICE_COOKIE = "flipparr_device"
 _DEVICE_TTL_SECONDS = 365 * 24 * 60 * 60
+# Flipparr Reader (the iPad and iPhone app) sends `Flipparr-Client: app` and
+# its session as `Authorization: Bearer <token>`; a shared device's token
+# travels in `Flipparr-Device` both ways, and a session issued or ended on a
+# request comes back in `Flipparr-Session`. See `_resolve_identity`.
+# The reader API Flipparr Reader relies on (the fields pinned by
+# `ReaderAppContractTests`). Raised only for a change an older app cannot
+# read; additions keep it.
+READER_API_VERSION = 1
+APP_CLIENT_HEADER = "Flipparr-Client"
+APP_SESSION_HEADER = "Flipparr-Session"
+APP_DEVICE_HEADER = "Flipparr-Device"
 _PIN_PATTERN = re.compile(r"\d{4,6}")
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 _AUTH_EXEMPT_PATHS = frozenset({"/healthz", "/api/v1/auth/login", "/api/v1/auth/status"})
@@ -904,6 +915,13 @@ def viewer_for(user: dict[str, Any] | None) -> Viewer | None:
         max_rating=user.get("maxRating"), allow_unrated=bool(user.get("allowUnrated")),
         can_discover=bool(user.get("canDiscover", True)),
     )
+
+
+def _bearer_token(authorization: str) -> str:
+    """The token in `Authorization: Bearer <token>`, or "" for anything else
+    (a reverse proxy's Basic credentials among them)."""
+    scheme, _, token = str(authorization or "").strip().partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else ""
 
 
 def resolve_session_token(
@@ -10265,6 +10283,19 @@ def sweep_image_cache(cache_dir: Path, budget: int, interval: float = 60.0) -> i
     return removed
 
 
+def _thumbnail_cache_key(path: Path, member: str, max_dimension: int) -> str:
+    """The name a rendered page is cached under: the file as it is now, the
+    page, and the size, so a replaced file or a new size is a new entry."""
+    stat = path.stat()
+    fingerprint = "\0".join(
+        (
+            str(path.resolve()), str(stat.st_mtime_ns), str(stat.st_size), member,
+            str(max_dimension), str(COVER_THUMBNAIL_QUALITY),
+        )
+    )
+    return hashlib.sha256(fingerprint.encode()).hexdigest()
+
+
 def render_file_cover_thumbnail(
     path: Path, member: str, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION,
     cache_dir: Path | None = None, budget: int | None = None,
@@ -10273,14 +10304,7 @@ def render_file_cover_thumbnail(
     if cache_dir is None:
         cache_dir = cover_cache_dir()
         budget = COVER_CACHE_MAX_BYTES if budget is None else budget
-    stat = path.stat()
-    fingerprint = "\0".join(
-        (
-            str(path.resolve()), str(stat.st_mtime_ns), str(stat.st_size), member,
-            str(max_dimension), str(COVER_THUMBNAIL_QUALITY),
-        )
-    )
-    cache_key = hashlib.sha256(fingerprint.encode()).hexdigest()
+    cache_key = _thumbnail_cache_key(path, member, max_dimension)
     cached = cache_dir / f"{cache_key}.jpg"
     try:
         if cached.is_file():
@@ -13996,6 +14020,74 @@ def file_pages(file_id: int) -> dict[str, Any]:
     }
 
 
+# What a reading-size page is guessed to weigh when it has not been rendered
+# yet: about 10 MB for a 26-page issue at 1800 px. Unmeasured; it only sizes
+# the "will this fit" answer, and the download counts the real bytes.
+OFFLINE_PAGE_BYTES_GUESS = 380_000
+
+
+def file_offline_manifest(file_id: int) -> dict[str, Any]:
+    """Everything Flipparr Reader needs to download a comic and read it with
+    no connection: its pages at reading size, their signature (a replaced
+    file is a new download), a size estimate, and its run."""
+    store = catalog_store()
+    context = store.file_offline_context(file_id)
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    estimate = 0
+    cache_dir = reading_cache_dir()
+    for member in pages:
+        cached = cache_dir / f"{_thumbnail_cache_key(path, member, PAGE_SIZES['read'])}.jpg"
+        try:
+            estimate += cached.stat().st_size
+        except OSError:
+            estimate += OFFLINE_PAGE_BYTES_GUESS
+    return {
+        "fileId": str(file_id), "fileSignature": _file_signature(path), "pageCount": len(pages),
+        "bytesEstimate": estimate, "filename": context["filename"], "run": context["run"],
+        "kind": context["kind"], "issueNumber": context["issueNumber"], "volumeNumber": context["volumeNumber"],
+        "readingDirection": store.file_reading_direction(file_id),
+        "pages": [{"index": index, "readUrl": _page_url(str(file_id), index, path, "read")} for index in range(len(pages))],
+    }
+
+
+def offline_check(entries: Any, may_see: Callable[[int], bool]) -> list[dict[str, str]]:
+    """Which of a device's downloads are still good: `ok`, `changed` (the
+    file was replaced; download again), `gone` (no longer in the library) or
+    `hidden` (this profile may no longer read it). `may_see` is the rating
+    gate for the asking profile."""
+    if not isinstance(entries, list) or len(entries) > OFFLINE_CHECK_MAX:
+        raise ValueError(f"Send up to {OFFLINE_CHECK_MAX} files as a list")
+    store = catalog_store()
+    answers = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Each file is {fileId, fileSignature}")
+        try:
+            file_id = int(entry.get("fileId"))
+        except (TypeError, ValueError):
+            raise ValueError("Each file needs a fileId") from None
+        try:
+            path = store.library_file_path(file_id)
+            signature = _file_signature(path)
+        except (LookupError, OSError):
+            answers.append({"fileId": str(file_id), "status": "gone"})
+            continue
+        if not may_see(file_id):
+            status = "hidden"
+        elif str(entry.get("fileSignature") or "") != signature:
+            status = "changed"
+        else:
+            status = "ok"
+        answers.append({"fileId": str(file_id), "status": status})
+    return answers
+
+
+OFFLINE_CHECK_MAX = 500
+
+
 def vision_provider() -> str | None:
     """Which vision connector is on and keyed: the lowest priority number wins. Never raises."""
     config = load_provider_config()
@@ -14801,8 +14893,28 @@ def file_reading_progress(file_id: int, *, user_id: int) -> dict[str, Any]:
     }
 
 
-def set_file_reading_progress(file_id: int, page: int, panel: int = 0, *, user_id: int) -> dict[str, Any]:
-    """Remember the page, and the panel on it. The count and the signature are the server's to know."""
+def reading_time(value: Any) -> str | None:
+    """A late save's time (`at` on the progress POST): ISO 8601 with a zone,
+    as UTC, and never later than now -- a device whose clock runs ahead must
+    not lock out the saves after it. None when there is none."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("at is a time, like 2026-10-08T14:03:00Z")
+    try:
+        parsed = dt.datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise ValueError("at is a time, like 2026-10-08T14:03:00Z") from None
+    if parsed.tzinfo is None:
+        raise ValueError("at needs its time zone, like 2026-10-08T14:03:00Z")
+    return min(parsed.astimezone(dt.timezone.utc), dt.datetime.now(dt.timezone.utc)).isoformat()
+
+
+def set_file_reading_progress(
+    file_id: int, page: int, panel: int = 0, *, user_id: int, at: str | None = None,
+) -> dict[str, Any]:
+    """Remember the page, and the panel on it. The count and the signature are the server's to know.
+    `at`: a late save, kept only if nothing newer is stored (`set_reading_progress`)."""
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("Pages can only be read from comic archives")
@@ -14815,15 +14927,15 @@ def set_file_reading_progress(file_id: int, page: int, panel: int = 0, *, user_i
         raise ValueError("That panel is not on the page")
     return catalog_store().set_reading_progress(
         file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1, panel=panel,
-        user_id=user_id,
+        user_id=user_id, at=at,
     )
 
 
-def mark_file_read(file_id: int, read: bool, *, user_id: int) -> dict[str, Any]:
+def mark_file_read(file_id: int, read: bool, *, user_id: int, at: str | None = None) -> dict[str, Any]:
     """Mark one comic read -- its place on the last page, finished -- or
     unread, which forgets its place altogether."""
     if not read:
-        catalog_store().clear_reading_progress(file_id, user_id=user_id)
+        catalog_store().clear_reading_progress(file_id, user_id=user_id, at=at)
         return file_reading_progress(file_id, user_id=user_id)
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
@@ -14831,7 +14943,7 @@ def mark_file_read(file_id: int, read: bool, *, user_id: int) -> dict[str, Any]:
     pages = cached_page_members(path)
     if not pages:
         raise ValueError("This comic has no pages")
-    return set_file_reading_progress(file_id, len(pages) - 1, 0, user_id=user_id)
+    return set_file_reading_progress(file_id, len(pages) - 1, 0, user_id=user_id, at=at)
 
 
 def mark_run_reading(series_run_id: int, read: bool, *, user_id: int) -> dict[str, Any]:
@@ -17820,6 +17932,10 @@ class Handler(BaseHTTPRequestHandler):
         for cookie in self._pending_cookies:
             self.send_header("Set-Cookie", cookie)
         self._pending_cookies = []
+        for name, header in ((_SESSION_COOKIE, APP_SESSION_HEADER), (_DEVICE_COOKIE, APP_DEVICE_HEADER)):
+            if self._issued_tokens and name in self._issued_tokens:
+                self.send_header(header, self._issued_tokens[name])
+        self._issued_tokens = {}
         # Returned on every response so a user can quote it and land on the
         # exact server-side record for their request.
         request_id = current_request_id()
@@ -17904,6 +18020,8 @@ class Handler(BaseHTTPRequestHandler):
     viewer: Viewer | None = None
     _household = False
     _pending_cookies: tuple[str, ...] | list[str] = ()
+    _app_client = False
+    _issued_tokens: dict[str, str] | None = None
 
     def _viewer(self) -> Viewer:
         """The profile this request speaks for. Routes past the gate always have one."""
@@ -17925,19 +18043,32 @@ class Handler(BaseHTTPRequestHandler):
         """
         config = load_auth_config()
         store = _profiles_store()
-        cookies = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
         viewer = None
-        session = cookies.get(_SESSION_COOKIE)
+        # Flipparr Reader, the iPad and iPhone app, runs from its own origin
+        # (`capacitor://localhost`), where the browser neither sends this
+        # site's cookies nor lets a cookie be set. It carries the same signed
+        # tokens in headers instead, and is answered in headers
+        # (`send_response`). Its cookies, if a native cookie jar kept any,
+        # are not read: one request, one identity.
+        self._app_client = self.headers.get(APP_CLIENT_HEADER, "").strip().lower() == "app"
+        if self._app_client:
+            session_value = _bearer_token(self.headers.get("Authorization", ""))
+            device_value = self.headers.get(APP_DEVICE_HEADER, "").strip()
+        else:
+            cookies = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+            session = cookies.get(_SESSION_COOKIE)
+            device = cookies.get(_DEVICE_COOKIE)
+            session_value = session.value if session is not None else ""
+            device_value = device.value if device is not None else ""
         # Opened from a shared device's picker: a session re-issued on this
         # request (a new password, forgetting devices) stays one.
-        self._shared_session = bool(session is not None and session.value.startswith("v3."))
-        if session is not None and session.value:
-            viewer, legacy = resolve_session_token(session.value, config, store)
+        self._shared_session = session_value.startswith("v3.")
+        if session_value:
+            viewer, legacy = resolve_session_token(session_value, config, store)
             if viewer is not None and legacy:
                 admin = store.user(ADMIN_USER_ID)
                 self._sign_in_as(admin, config, device=True)
-        device = cookies.get(_DEVICE_COOKIE)
-        self._shared_device_cookie = bool(device is not None and device_token_valid(device.value, config))
+        self._shared_device_cookie = bool(device_value and device_token_valid(device_value, config))
         by_place = (
             config["method"] == "none"
             or bool(config["localBypass"] and is_local_address(self._client_address()))
@@ -17975,6 +18106,13 @@ class Handler(BaseHTTPRequestHandler):
         ]
         if self._request_is_https():
             attributes.append("Secure")
+        if self._app_client and name in (_SESSION_COOKIE, _DEVICE_COOKIE):
+            # The app keeps these itself (the iOS Keychain): a header, not a
+            # cookie. An empty value tells it the sign-in ended.
+            if self._issued_tokens is None:
+                self._issued_tokens = {}
+            self._issued_tokens[name] = value
+            return
         if not isinstance(self._pending_cookies, list):
             self._pending_cookies = []
         # The last word on a cookie wins: an upgrade issued on the way in is
@@ -18152,6 +18290,8 @@ class Handler(BaseHTTPRequestHandler):
         self._full_csp = False
         self._shared_device_cookie = False
         self._shared_session = False
+        self._app_client = False
+        self._issued_tokens = {}
         self._pending_cookies = []
         started = time.monotonic()
         try:
@@ -18179,7 +18319,13 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_json({"error": "Your profile can't do that", "reason": "admin_only"}, 403)
                 return
-            if self.command in {"POST", "PATCH", "DELETE"} and not self._same_origin():
+            # Flipparr Reader's requests come from its own origin by design.
+            # The check guards cookies, and an app request reads none: what it
+            # carries are tokens a page cannot attach on its own, and its
+            # `Flipparr-Client` header makes a browser ask first (a CORS
+            # preflight), which this server never grants -- so another site's
+            # page cannot send one at all (`test_no_other_site_may_send_an_app_request`).
+            if self.command in {"POST", "PATCH", "DELETE"} and not self._app_client and not self._same_origin():
                 self.send_json({"error": "Cross-site request rejected"}, 403)
                 return
             if self.viewer is not None and not self.viewer.is_admin:
@@ -18241,6 +18387,13 @@ class Handler(BaseHTTPRequestHandler):
             healthy, catalog = catalog_health()
             self.send_json({"status": "ok" if healthy else "unhealthy", "version": APP_VERSION, "build": APP_BUILD,
                             "catalog": catalog}, 200 if healthy else 503)
+            return
+        if parsed_url.path == "/api/v1/app":
+            # Reachable unauthenticated, like /healthz (which already shows the
+            # build): Flipparr Reader's connect screen checks that the address
+            # is a Flipparr and that it speaks a reader API the app knows.
+            self.send_json({"name": "Flipparr", "apiVersion": READER_API_VERSION, "version": APP_VERSION,
+                            "build": APP_BUILD, "authMethod": load_auth_config()["method"]})
             return
         if parsed_url.path == "/api/v1/auth/status":
             # Reachable unauthenticated: the app needs to know whether to show a
@@ -18519,8 +18672,12 @@ class Handler(BaseHTTPRequestHandler):
         if file_page_panels_match:
             try:
                 viewer = self._viewer()
-                vision = viewer.is_admin or (
-                    bool(load_app_settings().get("visionForReaders")) and vision_budget_allows(int(viewer.id)))
+                # `vision=no`: a download's panels, from the local tiers only.
+                # Asked before the budget, so a download spends none of it; the
+                # row it stores is upgraded to the model's answer when the page
+                # is next read online (`_file_page_panels`).
+                vision = str(self.query(parsed_url).get("vision") or "") != "no" and (viewer.is_admin or (
+                    bool(load_app_settings().get("visionForReaders")) and vision_budget_allows(int(viewer.id))))
                 payload = file_page_panels(
                     int(file_page_panels_match.group(1)), int(file_page_panels_match.group(2)),
                     allow_vision=vision,
@@ -18658,6 +18815,20 @@ class Handler(BaseHTTPRequestHandler):
                 payload = file_reading_progress(int(file_progress_match.group(1)), user_id=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(payload)
+            return
+        file_offline_match = re.fullmatch(r"/api/v1/files/(\d+)/offline", parsed_url.path)
+        if file_offline_match:
+            # Under /files/{id}/, so the dispatcher's rating gate has already
+            # answered 404 for a profile kept from this comic's run.
+            try:
+                payload = file_offline_manifest(int(file_offline_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 422)
                 return
             self.send_json(payload)
             return
@@ -18811,6 +18982,17 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/panels/import":
             try:
                 self.send_json(import_panel_fixes(catalog_store(), payload, fixed_by=self._viewer_id()))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            return
+        if parsed_url.path == "/api/v1/offline/check":
+            # The files come in the body, so the dispatcher's rating gate did
+            # not see them: each is put to it here, as the avatar route does.
+            viewer = self._viewer()
+            def may_see(file_id: int) -> bool:
+                return viewer.is_admin or not viewer.max_rating or self._run_visible(f"/api/v1/files/{file_id}/pages/0")
+            try:
+                self.send_json({"files": offline_check(payload.get("files"), may_see)})
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             return
@@ -19598,14 +19780,17 @@ class Handler(BaseHTTPRequestHandler):
             file_id = int(file_progress_post.group(1))
             page = payload.get("page")
             try:
+                # Flipparr Reader's saves carry when they were made, so one
+                # replayed after a flight cannot undo a later one.
+                at = reading_time(payload.get("at"))
                 if "read" in payload:
                     # Marked read or unread outright, without a page: the check
                     # on an issue's cover.
                     if not isinstance(payload["read"], bool):
                         raise ValueError("read is true or false")
-                    result = mark_file_read(file_id, payload["read"], user_id=self._viewer_id())
+                    result = mark_file_read(file_id, payload["read"], user_id=self._viewer_id(), at=at)
                 elif page is None:
-                    catalog_store().clear_reading_progress(file_id, user_id=self._viewer_id())
+                    catalog_store().clear_reading_progress(file_id, user_id=self._viewer_id(), at=at)
                     result = file_reading_progress(file_id, user_id=self._viewer_id())
                 else:
                     if not isinstance(page, int) or isinstance(page, bool):
@@ -19613,7 +19798,7 @@ class Handler(BaseHTTPRequestHandler):
                     panel = payload.get("panel", 0)
                     if not isinstance(panel, int) or isinstance(panel, bool):
                         raise ValueError("A panel is a whole number")
-                    result = set_file_reading_progress(file_id, page, panel, user_id=self._viewer_id())
+                    result = set_file_reading_progress(file_id, page, panel, user_id=self._viewer_id(), at=at)
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
