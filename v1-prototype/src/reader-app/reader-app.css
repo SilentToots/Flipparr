@@ -1,6 +1,9 @@
 /* Flipparr Reader's own screens: home, a run's issues. The reader itself is
-   styled by styles.css, shared with the web app. Tokens only, as in
-   styles.css (DESIGN_SYSTEM.md). */
+   styled by styles.css, shared with the web app. Tokens as in styles.css
+   (DESIGN_SYSTEM.md); the exceptions are the cover cards' width range
+   (120-160px, a layout size, as the web grid's card widths are) and 1px
+   hairlines. tests/design-system.test.mjs reads styles.css only, so this
+   file is held to that by review until the test reads it too. */
 
 .app-home, .app-run {
   min-height: 100dvh;

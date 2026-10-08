@@ -472,9 +472,20 @@ from the list below:
   view on).
 - `ReaderAppContractTests` is
   `test_reader_api_1_keeps_every_field_flipparr_reader_reads`.
+- A session that ends while the app is open (a 401 on the home or run
+  screen) re-asks `/auth/status` and lands on "Who's reading?" on a shared
+  device, else sign-in; sign-out on a shared iPad does the same. Checked in
+  the simulator by ending the admin's sessions from the server mid-use.
+- CI builds the app's bundle (`npm run build:reader-app`); it does not run
+  the Xcode build.
 - Not yet: the finish drawer (`onFinish` does nothing in the app; the last
-  page marks the comic read), the reader settings drawer is reachable but
-  untested in the app, iPad layout beyond the phone screen.
+  page marks the comic read); the reader settings drawer is reachable but
+  untested in the app; the iPad layout has not been seen (the iPad simulator
+  waits for the owner to let Claude use it); `reader-app.css` is not read by
+  the design-system test (its exceptions are noted in the file). Phase 3's
+  background-download delegate must drop `Authorization` on a redirect to
+  another host, so the token reaching only the household's server holds by
+  construction (fetchToFile today relies on Flipparr never redirecting).
 - Capacitor 8 project: `capacitor.config.json` (`appId:
   "com.silenttoots.flipparr.view"` — the owner's choice, 2026-10-08,
   permanent once on the App Store; `appName: "Flipparr Reader"`; webDir

@@ -100,16 +100,23 @@ export function ReaderApp() {
       setPhase("connect");
     }} />;
   }
+  // A session that ends while the app is open -- a new PIN, the admin's
+  // first reader, "forget shared devices" -- answers 401: ask the server where
+  // that leaves this device (the picker on a shared one, else sign-in).
+  async function lost() {
+    try { await settle(client, await client.api("/api/v1/auth/status")); } catch { setPhase("signin"); }
+  }
   return <Library key={status.viewer.id} client={client} viewer={status.viewer} household={status.household}
-    onSwitch={() => setPhase("picker")} onSignOut={async () => {
+    onSwitch={() => setPhase("picker")} onLost={lost} onSignOut={async () => {
     try { await client.api("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch { /* signed out either way */ }
-    setPhase("signin");
+    // On a shared iPad the device stays shared: back to "Who's reading?".
+    await lost();
   }} />;
 }
 
 // Signed in: what to read. The reader's host is made here, so every image the
 // home screen and the reader show comes through the app's image source.
-function Library({ client, viewer, household, onSwitch, onSignOut }) {
+function Library({ client, viewer, household, onSwitch, onSignOut, onLost }) {
   const host = useMemo(() => ({
     api: client.api,
     // The panel editor stays in the web app (the owner, 2026-10-08).
@@ -120,9 +127,9 @@ function Library({ client, viewer, household, onSwitch, onSignOut }) {
   const [reading, setReading] = useState(null);
   const [version, setVersion] = useState(0);
   return <ReaderHost.Provider value={host}>
-    {run ? <RunScreen client={client} run={run} version={version} onBack={() => setRun(null)}
+    {run ? <RunScreen client={client} run={run} version={version} onLost={onLost} onBack={() => setRun(null)}
       onRead={(issue, detail) => setReading({ fileId: issue.id, title: `${run.title} #${issue.issueNumber || "?"}`, medium: detail.medium, direction: detail.readingDirection, run })} />
-      : <HomeScreen client={client} viewer={viewer} household={household} version={version} onSignOut={onSignOut} onSwitch={onSwitch} onOpenRun={setRun}
+      : <HomeScreen client={client} viewer={viewer} household={household} version={version} onLost={onLost} onSignOut={onSignOut} onSwitch={onSwitch} onOpenRun={setRun}
         onRead={(item) => setReading({ fileId: item.fileId, title: `${item.seriesTitle} #${item.issueNumber || "?"}`, medium: item.medium })} />}
     {reading ? <ReaderView fileId={reading.fileId} title={reading.title} medium={reading.medium}
       directionOverride={reading.direction} startPage={null} behind={false}
@@ -139,7 +146,7 @@ function Cover({ url, alt = "" }) {
     : <span className="app-card-cover" aria-hidden="true" />;
 }
 
-function HomeScreen({ client, viewer, household, version, onSignOut, onSwitch, onOpenRun, onRead }) {
+function HomeScreen({ client, viewer, household, version, onLost, onSignOut, onSwitch, onOpenRun, onRead }) {
   const [shelf, setShelf] = useState(null);
   const [runs, setRuns] = useState(null);
   const [error, setError] = useState("");
@@ -150,7 +157,11 @@ function HomeScreen({ client, viewer, household, version, onSignOut, onSwitch, o
       setShelf(reading.items || []);
       // Runs with a comic to read; what is only wanted is the web app's.
       setRuns((catalog.series || []).filter((series) => series.owned > 0));
-    }, (err) => live && setError(err.message || "Flipparr could not be reached"));
+    }, (err) => {
+      if (!live) return;
+      if (err.status === 401) { onLost(); return; }
+      setError(err.message || "Flipparr could not be reached");
+    });
     return () => { live = false; };
   }, [client, version]);
   return <main className="app-home">
@@ -190,13 +201,16 @@ function HomeScreen({ client, viewer, household, version, onSignOut, onSwitch, o
   </main>;
 }
 
-function RunScreen({ client, run, version, onBack, onRead }) {
+function RunScreen({ client, run, version, onLost, onBack, onRead }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
-    client.api(`/api/v1/series/${run.id}/reading`).then((answer) => live && setDetail(answer),
-      (err) => live && setError(err.message || "Flipparr could not be reached"));
+    client.api(`/api/v1/series/${run.id}/reading`).then((answer) => live && setDetail(answer), (err) => {
+      if (!live) return;
+      if (err.status === 401) { onLost(); return; }
+      setError(err.message || "Flipparr could not be reached");
+    });
     return () => { live = false; };
   }, [client, run.id, version]);
   const issues = [...(detail?.issues || []), ...(detail?.volumes || [])].filter((issue) => issue.readable);

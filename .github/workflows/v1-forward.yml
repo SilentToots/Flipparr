@@ -66,6 +66,12 @@ jobs:
         working-directory: v1-prototype
       - run: npm run build
         working-directory: v1-prototype
+      # Flipparr Reader's web bundle (the iOS app's UI) from the same source:
+      # a change to the shared reader that breaks the app fails here. The
+      # Xcode build is not run in CI.
+      - name: Build Flipparr Reader's bundle
+        run: npm run build:reader-app
+        working-directory: v1-prototype
       # Includes tests/design-system.test.mjs, which fails on a font
       # size, weight, line height, spacing, radius, colour or breakpoint that
       # is not one of the design system's; it reads the stylesheets as text, so
