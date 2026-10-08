@@ -4098,9 +4098,13 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* Flex, not grid: a grid item's percentage height resolves against an auto
    row and the page grew past the stage; a flex item's resolves against the
    stage itself, whose height the editor's own rows fix. */
-.panel-editor-stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: var(--space-8); box-sizing: border-box; min-height: 0; }
+.panel-editor-stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: var(--space-8); box-sizing: border-box; min-height: 0; touch-action: none; }
 .panel-editor-stage img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; pointer-events: none; }
+/* The layer catches the pointer a finger's width past the page, so an edge
+   handle can be taken from its outer half; the field is the page itself, and
+   every rectangle is placed in its percentages. */
 .panel-editor-layer { position: absolute; touch-action: none; cursor: crosshair; }
+.panel-editor-field { position: absolute; }
 .panel-editor-layer.ordering { cursor: pointer; }
 .panel-editor-box {
   position: absolute; box-sizing: border-box; border: 2px solid var(--violet-text);

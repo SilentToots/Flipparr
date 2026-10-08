@@ -9617,6 +9617,11 @@ function ReaderSettingsDrawer({
 // automatic touches it again until they let it go. The geometry is
 // panel-editor.js; this is the pointer, the paging and the paint.
 const EDITOR_HANDLE_PX = 22;
+// A finger is wider than a pointer: a handle is grabbed from this far with a
+// touch, and the layer catches touches this far outside the page, where the
+// outer half of an edge handle sits -- a touch there used to land on the
+// stage, outside the layer, and go nowhere (owner, 2026-10-07).
+const EDITOR_TOUCH_PX = 40;
 const EDITOR_NUDGE = 0.005;
 
 function PanelEditor({ fileId, count, pages, startPage, readings, direction, onSaved, onClose }) {
@@ -9633,7 +9638,12 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
   const [box, setBox] = useState(null);
   const stageRef = useRef(null);
   const imageRef = useRef(null);
+  const fieldRef = useRef(null);
   const drag = useRef(null);
+  // A pointer's moves are applied once a frame, not once an event: a finger
+  // reports at up to 120Hz, and a render per report lagged it on a phone.
+  const pending = useRef(null);
+  const frame = useRef(0);
   const manual = reading?.source === "manual";
   const pageRef = useRef(page);
   pageRef.current = page;
@@ -9691,14 +9701,19 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
     return () => { image.removeEventListener("load", measure); observer?.disconnect(); };
   }, []);
 
+  // Positions are read against the page itself (the field), not the layer
+  // that catches the pointer, which reaches a handle's width past the page.
   const pointAt = (event) => {
-    const layer = event.currentTarget.getBoundingClientRect();
+    const field = (fieldRef.current || event.currentTarget).getBoundingClientRect();
     return {
-      x: Math.min(1, Math.max(0, (event.clientX - layer.left) / layer.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - layer.top) / layer.height)),
+      x: Math.min(1, Math.max(0, (event.clientX - field.left) / field.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - field.top) / field.height)),
     };
   };
-  const reach = box ? { x: EDITOR_HANDLE_PX / box.width, y: EDITOR_HANDLE_PX / box.height } : { x: 0.03, y: 0.02 };
+  const reachFor = (event) => {
+    const px = event.pointerType === "mouse" ? EDITOR_HANDLE_PX : EDITOR_TOUCH_PX;
+    return box ? { x: px / box.width, y: px / box.height } : { x: 0.05, y: 0.03 };
+  };
 
   function onPointerDown(event) {
     if (event.button || loading || saving) return;
@@ -9711,7 +9726,7 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
       else setOrdering(step.sequence);
       return;
     }
-    const hit = hitTest(panels, point, reach, selected);
+    const hit = hitTest(panels, point, reachFor(event), selected);
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* a pointer the browser does not know: a test's */ }
     if (hit) {
       setSelected(hit.index);
@@ -9721,10 +9736,12 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
       drag.current = { pointerId: event.pointerId, drawing: true, origin: point };
     }
   }
-  function onPointerMove(event) {
+  function applyMove() {
+    frame.current = 0;
     const current = drag.current;
-    if (!current || current.pointerId !== event.pointerId) return;
-    const point = pointAt(event);
+    const point = pending.current;
+    pending.current = null;
+    if (!current || !point) return;
     if (current.drawing) { setDraft(drawnRect(current.origin, point)); return; }
     const dx = point.x - current.origin.x;
     const dy = point.y - current.origin.y;
@@ -9732,9 +9749,17 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
     current.moved = true;
     setPanels((list) => list.map((rect, at) => at === current.index ? dragRect(current.start, current.part, dx, dy) : rect));
   }
+  function onPointerMove(event) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    pending.current = pointAt(event);
+    if (!frame.current) frame.current = requestAnimationFrame(applyMove);
+  }
   function onPointerUp(event) {
     const current = drag.current;
     if (!current || current.pointerId !== event.pointerId) return;
+    // The last move lands before the lift is judged.
+    if (frame.current) { cancelAnimationFrame(frame.current); applyMove(); }
     drag.current = null;
     if (current.drawing) {
       if (draft && isDrawn(draft)) { setPanels((list) => [...list, draft]); setSelected(panels.length); setDirty(true); }
@@ -9876,8 +9901,9 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
     <div className="panel-editor-stage" ref={stageRef} onPointerDown={(event) => { if (event.target === event.currentTarget) setSelected(-1); }}>
       <img ref={imageRef} src={pages[page]?.readUrl} alt="" draggable="false" />
       {box && !loading ? <div className={`panel-editor-layer${ordering ? " ordering" : ""}`}
-        style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+        style={{ left: box.left - EDITOR_TOUCH_PX, top: box.top - EDITOR_TOUCH_PX, width: box.width + 2 * EDITOR_TOUCH_PX, height: box.height + 2 * EDITOR_TOUCH_PX }}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+        <div className="panel-editor-field" ref={fieldRef} style={{ left: EDITOR_TOUCH_PX, top: EDITOR_TOUCH_PX, width: box.width, height: box.height }}>
         {panels.map((rect, at) => {
           const number = ordering ? ordering.indexOf(at) + 1 : at + 1;
           return <div key={at} className={`panel-editor-box${at === selected && !ordering ? " selected" : ""}${ordering && number ? " numbered" : ""}`}
@@ -9887,6 +9913,7 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
           </div>;
         })}
         {draft ? <div className="panel-editor-box drawing" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%`, width: `${draft.w * 100}%`, height: `${draft.h * 100}%` }} /> : null}
+        </div>
       </div> : null}
     </div>
     <footer className="reader-bar reader-bar--bottom panel-editor-tools">
