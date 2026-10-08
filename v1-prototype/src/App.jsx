@@ -10277,6 +10277,31 @@ function ReaderView({
     }).catch(() => { saved.current = null; });
   }, [fileId, placePanel]);
 
+  // The reader is sized from the visual viewport, not left to `inset: 0`.
+  // A fixed element fills iOS Safari's layout viewport, which lags the
+  // screen after a rotation while the toolbar retracts, and the Discover
+  // shelves showed through a strip at the bottom of the comic until Safari
+  // caught up (owner, 2026-10-07). The visual viewport is right at every
+  // moment; a browser without it keeps the stylesheet's 100dvh.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const viewport = window.visualViewport;
+    if (!dialog || !viewport) return undefined;
+    function fit() {
+      dialog.style.setProperty("--reader-top", `${Math.round(viewport.offsetTop)}px`);
+      dialog.style.setProperty("--reader-height", `${Math.round(viewport.height)}px`);
+    }
+    fit();
+    viewport.addEventListener("resize", fit);
+    viewport.addEventListener("scroll", fit);
+    window.addEventListener("orientationchange", fit);
+    return () => {
+      viewport.removeEventListener("resize", fit);
+      viewport.removeEventListener("scroll", fit);
+      window.removeEventListener("orientationchange", fit);
+    };
+  }, [dialogRef]);
+
   // The place is saved 900ms after a page settles; a tab closed, an app
   // swiped away or a phone locked inside that moment lost it. Leaving the
   // page saves at once (2026-10-07).

@@ -3862,7 +3862,14 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    around it competes. The chrome is glass, and gets out of the way while
    reading. */
 .reader {
-  position: fixed; z-index: 90; inset: 0; background: var(--color-black);
+  /* Pinned to the top and as tall as the screen the reader can see: the
+     visual viewport when the browser reports one (App.jsx sets the two
+     variables, and keeps them right through a rotation), else the dynamic
+     viewport height. `inset: 0` alone fills iOS Safari's layout viewport,
+     which lags the screen after a rotation and left the page behind showing
+     through a strip at the bottom. */
+  position: fixed; z-index: 90; inset: 0; top: var(--reader-top, 0); height: var(--reader-height, 100dvh);
+  background: var(--color-black);
   /* One full-width column, said explicitly: left implicit, the column takes
      the width of its narrowest row -- the bottom bar -- and the page shrinks
      to 95px on a phone. */
