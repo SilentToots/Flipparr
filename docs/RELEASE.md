@@ -155,10 +155,12 @@ You lose manual corrections, aliases and request history — not files.
 
 ### 0.2.0 — unreleased
 
-**Schema:** 67 (adds `page_panel_history`: the reading a panel correction
+**Schema:** 68 (adds `page_panel_history`: the reading a panel correction
 replaced is kept, so corrections can be measured; a page fingerprint on
-every panel row, so a hand-made fix follows its page; and
-`page_vision_answers`, what a page-reading connector said about each page).
+every panel row, so a hand-made fix follows its page;
+`page_vision_answers`, what a page-reading connector said about each page;
+and `offline_downloads`, what Flipparr Reader keeps on each device, kept
+after it leaves with when and why).
 Upgrading from 0.1.0
 keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
 0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer

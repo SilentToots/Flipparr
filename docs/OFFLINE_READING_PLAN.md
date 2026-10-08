@@ -64,14 +64,17 @@ telemetry by default: run `npx cap telemetry off` once per machine.
 **Open questions for the owner (not decided; the executing session asks
 before the phase that needs the answer):**
 
-1. *Before Phase 3:* should a download spend the vision model on panels?
+1. ~~Should a download spend the vision model?~~ **Answered 2026-10-08: no;**
+   downloads use the local finder (`?vision=no`). Originally: should a download spend the vision model on panels?
    The plan defaults to `?vision=no` (local tiers only; the model's answer
    arrives when the page is later read online). A five-issue run is ~110
    pages; admin is unmetered, readers 300 pages a day.
 2. ~~Is the panel editor web-only at first?~~ **Answered 2026-10-08: yes.**
    The app's reader hides the editor (`canEditPanels: false`); panels are
    fixed in the web app.
-3. *Before Phase 3:* should the server keep a record of downloads (who,
+3. ~~Keep a record of downloads?~~ **Answered 2026-10-08: yes** --
+   `offline_downloads` (schema 68), `GET/POST /api/v1/offline/downloads`,
+   `POST /api/v1/offline/downloads/remove`. Originally: should the server keep a record of downloads (who,
    which file, when, removed when)? `AGENTS.md` (2026-10-07) says evidence
    a later analysis depends on goes in the catalog, never only on a device
    or in a log. If he will ever want to know how offline reading is used,

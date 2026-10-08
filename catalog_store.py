@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 67
+SCHEMA_VERSION = 68
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1497,6 +1497,27 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS page_vision_answers_page
                     ON page_vision_answers(file_id, page_member, id);
+                -- What Flipparr Reader downloaded for offline reading
+                -- (schema 68): which profile, on which device (a random id
+                -- the app keeps in the Keychain), which comic, when, and when
+                -- and why it left the device. The device knows its own; this
+                -- is how the household's use of offline reading can be seen
+                -- at all (the owner, 2026-10-08). A removal keeps the row,
+                -- with a reason: removed, evicted, hidden, gone, changed,
+                -- signed_out.
+                CREATE TABLE IF NOT EXISTS offline_downloads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    device TEXT NOT NULL,
+                    file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                    file_signature TEXT,
+                    bytes INTEGER,
+                    downloaded_at TEXT NOT NULL,
+                    removed_at TEXT,
+                    removed_reason TEXT
+                );
+                CREATE INDEX IF NOT EXISTS offline_downloads_device
+                    ON offline_downloads(user_id, device, file_id);
                 /* The people reading this library (schema 49). Profile 1 is
                    the admin and always exists; a household with one person
                    never sees another. A name to sign in with is optional --
@@ -4986,6 +5007,67 @@ class CatalogStore:
                  json.dumps(list(kept)) if kept is not None else None,
                  json.dumps(detail) if detail else None, _utc_now()),
             )
+
+    OFFLINE_REMOVAL_REASONS = ("removed", "evicted", "hidden", "gone", "changed", "signed_out")
+
+    def record_offline_download(self, user_id: int, device: str, file_id: int, *,
+                                file_signature: str | None, bytes_: int | None) -> dict[str, Any]:
+        """A comic now on a device for offline reading. Downloading it again
+        while it is still there (a re-download after a change) updates that
+        row rather than adding one."""
+        now = _utc_now()
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                """SELECT id FROM offline_downloads
+                   WHERE user_id=? AND device=? AND file_id=? AND removed_at IS NULL""",
+                (int(user_id), device, int(file_id)),
+            ).fetchone()
+            if row:
+                connection.execute(
+                    "UPDATE offline_downloads SET file_signature=?, bytes=?, downloaded_at=? WHERE id=?",
+                    (file_signature, bytes_, now, row["id"]),
+                )
+                download_id = row["id"]
+            else:
+                download_id = connection.execute(
+                    """INSERT INTO offline_downloads(user_id, device, file_id, file_signature, bytes, downloaded_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (int(user_id), device, int(file_id), file_signature, bytes_, now),
+                ).lastrowid
+        return {"id": download_id, "downloadedAt": now}
+
+    def record_offline_removal(self, user_id: int, device: str, file_id: int, reason: str) -> int:
+        """A comic gone from a device, and why. Answers how many rows it closed."""
+        if reason not in self.OFFLINE_REMOVAL_REASONS:
+            raise ValueError(f"A removal is one of: {', '.join(self.OFFLINE_REMOVAL_REASONS)}")
+        with self._write_lock, self._connect() as connection:
+            return connection.execute(
+                """UPDATE offline_downloads SET removed_at=?, removed_reason=?
+                   WHERE user_id=? AND device=? AND file_id=? AND removed_at IS NULL""",
+                (_utc_now(), reason, int(user_id), device, int(file_id)),
+            ).rowcount
+
+    def offline_downloads(self, user_id: int | None = None, device: str | None = None,
+                          *, on_device: bool = True) -> list[dict[str, Any]]:
+        """Downloads, newest first: one profile's or everyone's, one device's
+        or all, and only what is still on the device unless `on_device` is
+        False."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT offline_downloads.*, files.filename FROM offline_downloads
+                   LEFT JOIN files ON files.id=offline_downloads.file_id
+                   WHERE (? IS NULL OR user_id=?) AND (? IS NULL OR device=?)
+                     AND (? = 0 OR removed_at IS NULL)
+                   ORDER BY offline_downloads.id DESC""",
+                (user_id, user_id, device, device, 1 if on_device else 0),
+            ).fetchall()
+        return [
+            {"id": row["id"], "userId": row["user_id"], "device": row["device"],
+             "fileId": str(row["file_id"]) if row["file_id"] is not None else None, "filename": row["filename"],
+             "fileSignature": row["file_signature"], "bytes": row["bytes"], "downloadedAt": row["downloaded_at"],
+             "removedAt": row["removed_at"], "removedReason": row["removed_reason"]}
+            for row in rows
+        ]
 
     def vision_answers(self, file_id: int | None = None, limit: int = 200) -> list[dict[str, Any]]:
         """The vision connector's answers, newest first; one comic's when `file_id` is given."""

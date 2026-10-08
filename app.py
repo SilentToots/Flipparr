@@ -14088,6 +14088,15 @@ def offline_check(entries: Any, may_see: Callable[[int], bool]) -> list[dict[str
 OFFLINE_CHECK_MAX = 500
 
 
+def offline_device(value: Any) -> str:
+    """A Flipparr Reader install's id: the random string it keeps in the
+    Keychain. Letters, digits and dashes, 8 to 64 of them."""
+    device = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", device):
+        raise ValueError("A device is 8 to 64 letters, digits or dashes")
+    return device
+
+
 def vision_provider() -> str | None:
     """Which vision connector is on and keyed: the lowest priority number wins. Never raises."""
     config = load_provider_config()
@@ -18818,6 +18827,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        if parsed_url.path == "/api/v1/offline/downloads":
+            # A profile's own downloads, on one device or all of its devices.
+            try:
+                device = offline_device(self.query(parsed_url).get("device")) if self.query(parsed_url).get("device") else None
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"downloads": catalog_store().offline_downloads(self._viewer_id(), device)})
+            return
         file_offline_match = re.fullmatch(r"/api/v1/files/(\d+)/offline", parsed_url.path)
         if file_offline_match:
             # Under /files/{id}/, so the dispatcher's rating gate has already
@@ -18984,6 +19002,41 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(import_panel_fixes(catalog_store(), payload, fixed_by=self._viewer_id()))
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
+            return
+        if parsed_url.path in ("/api/v1/offline/downloads", "/api/v1/offline/downloads/remove"):
+            # Flipparr Reader telling the server what it keeps (schema 68). The
+            # file comes in the body, so a new download is put to the rating
+            # gate here; a removal is always accepted, since leaving a device
+            # is never something to refuse.
+            viewer = self._viewer()
+            try:
+                device = offline_device(payload.get("device"))
+                file_id = int(payload.get("fileId"))
+            except (TypeError, ValueError) as exc:
+                self.send_json({"error": shown(exc) or "Say which device and which comic"}, 400)
+                return
+            store = catalog_store()
+            if parsed_url.path.endswith("/remove"):
+                try:
+                    closed = store.record_offline_removal(viewer.id, device, file_id, str(payload.get("reason") or "removed"))
+                except ValueError as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                    return
+                self.send_json({"removed": closed})
+                return
+            if not viewer.is_admin and viewer.max_rating and not self._run_visible(f"/api/v1/files/{file_id}/pages/0"):
+                self.send_json({"error": "Not found"}, 404)
+                return
+            try:
+                store.library_file_path(file_id)
+                size = payload.get("bytes")
+                recorded = store.record_offline_download(
+                    viewer.id, device, file_id, file_signature=str(payload.get("fileSignature") or "") or None,
+                    bytes_=int(size) if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else None)
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            self.send_json(recorded, 201)
             return
         if parsed_url.path == "/api/v1/offline/check":
             # The files come in the body, so the dispatcher's rating gate did

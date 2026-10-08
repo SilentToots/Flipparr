@@ -1846,6 +1846,9 @@ NOT_ADMIN = {
     ("GET", "/api/v1/app"): "public",
     ("GET", "/api/v1/files/1/offline"): "reader",
     ("POST", "/api/v1/offline/check"): "reader",
+    ("GET", "/api/v1/offline/downloads"): "reader",
+    ("POST", "/api/v1/offline/downloads"): "reader",
+    ("POST", "/api/v1/offline/downloads/remove"): "reader",
     ("POST", "/api/v1/auth/login"): "public",
     ("POST", "/api/v1/auth/logout"): "public",
     ("GET", "/api/v1/profiles"): "household",
@@ -2363,6 +2366,35 @@ class ReaderProfileHttpTests(unittest.TestCase):
                                                          "readingDirection": "ltr", "panels": []}):
             panels = self.app_call("GET", f"/api/v1/files/{file_id}/pages/0/panels?vision=no", token=token).json()
         keeps(panels, {"segmented", "panels"}, "/files/{id}/pages/{n}/panels")
+
+    def test_the_server_keeps_what_each_device_downloaded(self):
+        store, run = self._library_of_one_run()
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        with sqlite3.connect(store.database_path) as connection:
+            file_id = connection.execute("SELECT id FROM files WHERE path=?", (str(root / "Example 001.cbz"),)).fetchone()[0]
+        sam = self._household_with_a_reader()
+        token = self.header(self.app_call("POST", "/api/v1/profiles/switch", {"userId": sam}), "Flipparr-Session")
+        body = {"device": "ipad-test-0001", "fileId": str(file_id), "fileSignature": "sig", "bytes": 1234}
+        made = self.app_call("POST", "/api/v1/offline/downloads", body, token=token)
+        self.assertEqual(made.status, 201, made.body)
+        listed = self.app_call("GET", "/api/v1/offline/downloads?device=ipad-test-0001", token=token).json()["downloads"]
+        self.assertEqual([(row["fileId"], row["bytes"]) for row in listed], [(str(file_id), 1234)])
+        self.assertEqual(self.app_call("GET", "/api/v1/offline/downloads?device=other-device-1", token=token).json()["downloads"], [])
+        for bad in ({**body, "device": "x"}, {**body, "fileId": "one"}, {**body, "device": "has spaces in it"}):
+            self.assertEqual(self.app_call("POST", "/api/v1/offline/downloads", bad, token=token).status, 400, bad)
+        self.assertEqual(self.app_call("POST", "/api/v1/offline/downloads", {**body, "fileId": "99999"}, token=token).status, 404)
+        removed = self.app_call("POST", "/api/v1/offline/downloads/remove", {**body, "reason": "evicted"}, token=token)
+        self.assertEqual((removed.status, removed.json()["removed"]), (200, 1))
+        self.assertEqual(self.app_call("GET", "/api/v1/offline/downloads", token=token).json()["downloads"], [])
+        self.assertEqual(self.app_call("POST", "/api/v1/offline/downloads/remove", {**body, "reason": "why"}, token=token).status, 400)
+        # Above Sam's rating: a download is refused like the comic itself.
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "teen"}, cookies=admin)
+        store.record_run_rating(run, "mature", "metron", "Mature (issue 1)")
+        token = self.header(self.app_call("POST", "/api/v1/profiles/switch", {"userId": sam}), "Flipparr-Session")
+        self.assertEqual(self.app_call("POST", "/api/v1/offline/downloads", body, token=token).status, 404)
+        # ...but leaving a device is always accepted.
+        self.assertEqual(self.app_call("POST", "/api/v1/offline/downloads/remove", {**body, "reason": "hidden"}, token=token).status, 200)
 
     def test_a_readers_download_spends_none_of_their_vision_budget(self):
         sam = self._household_with_a_reader()

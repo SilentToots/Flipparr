@@ -4250,6 +4250,30 @@ class ReadingProgressTests(LibraryFixture):
             third = self._file_id(store, "Example 003.cbz")
             self.assertEqual(store.set_reading_progress(third, 2, 24, "sig-a", user_id=ADMIN_USER_ID, at=older)["page"], 2)
 
+    def test_a_download_is_kept_until_it_leaves_the_device_and_then_kept_as_gone(self):
+        """Flipparr Reader's downloads (schema 68): one row while the comic is
+        on a device; leaving keeps the row, with when and why."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            first = self._file_id(store, "Example 001.cbz")
+            made = store.record_offline_download(ADMIN_USER_ID, "ipad-1234", first, file_signature="sig-a", bytes_=900)
+            again = store.record_offline_download(ADMIN_USER_ID, "ipad-1234", first, file_signature="sig-b", bytes_=950)
+            self.assertEqual(made["id"], again["id"], "a re-download while it is there updates the row")
+            store.record_offline_download(ADMIN_USER_ID, "phone-5678", first, file_signature="sig-b", bytes_=950)
+            on_ipad = store.offline_downloads(ADMIN_USER_ID, "ipad-1234")
+            self.assertEqual([(row["fileId"], row["fileSignature"], row["bytes"]) for row in on_ipad], [(str(first), "sig-b", 950)])
+            self.assertEqual(len(store.offline_downloads(ADMIN_USER_ID)), 2, "each device is its own")
+            self.assertEqual(store.record_offline_removal(ADMIN_USER_ID, "ipad-1234", first, "evicted"), 1)
+            self.assertEqual(store.offline_downloads(ADMIN_USER_ID, "ipad-1234"), [])
+            gone = store.offline_downloads(ADMIN_USER_ID, "ipad-1234", on_device=False)
+            self.assertEqual((gone[0]["removedReason"], bool(gone[0]["removedAt"])), ("evicted", True))
+            self.assertEqual(store.record_offline_removal(ADMIN_USER_ID, "ipad-1234", first, "removed"), 0, "nothing left to close")
+            with self.assertRaises(ValueError):
+                store.record_offline_removal(ADMIN_USER_ID, "phone-5678", first, "because")
+            # Downloading it again after it left is a new row: the history stays.
+            store.record_offline_download(ADMIN_USER_ID, "ipad-1234", first, file_signature="sig-c", bytes_=1)
+            self.assertEqual(len(store.offline_downloads(ADMIN_USER_ID, "ipad-1234", on_device=False)), 2)
+
     def test_a_downloaded_comic_carries_its_filename_and_run(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

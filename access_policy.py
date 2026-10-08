@@ -140,6 +140,8 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # downloads on a device are still good.
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/offline", READER),
     (frozenset({"POST"}), r"/api/v1/offline/check", READER),
+    (frozenset({"GET", "POST"}), r"/api/v1/offline/downloads", READER),
+    (frozenset({"POST"}), r"/api/v1/offline/downloads/remove", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages/(\d+)", READER),
     # Reading a page's panels. A reader never spends the vision connector on
     # it unless the admin allows that (`visionForReaders`); correcting panels
