@@ -413,6 +413,24 @@ https://evil.invalid" -H "Access-Control-Request-Method: POST" -H
 owner's instance has reader profiles; never clear their records).
 
 ### Phase 1 — move the reader into `src/reader/` (1 session, no behaviour change)
+**Built 2026-10-08.** `src/reader/ReaderView.jsx` holds the reader, its settings
+drawer and the panel editor; `src/reader/host.js` is `ReaderHost` with `api`
+and `canEditPanels` (the web app provides them in `App`). The dialog stack and
+phone sheets every drawer shares moved to `src/dialogs.jsx`, and `SettingsCard`,
+`Toggle`, `HeaderToggle` to `src/components/SettingsControls.jsx`, because the
+reader needs them and the app will too. `pageSource` and `progressSink` are
+**not** in the host yet: they are added in Phase 2 with the app's
+implementation and tests, so that this phase changes nothing the web app
+renders (an async page source would change when the `<img>` gets its `src`).
+Proof: the harness's new `reader-page` and `reader-panels` states (routed
+place, settings and panels, so a capture writes nothing) and `reader-finish`
+are 0 px from the baseline at both widths; the other differences traced to
+the scratch library changing and to the phone tab highlight's run-to-run
+timing (a second capture of the same build matched HEAD); `layout:check`
+clean; 281 frontend tests; in the browser, the settings drawer opens with the
+admin's panel tools and Escape closes only it. Still owed: the owner's iPad
+gesture check after the next deploy.
+
 - `ReaderView` and what only it uses move to `src/reader/`; `ReaderHost`
   context with the web implementations; `App.jsx` renders it as before.
 - Proof: before the move, on HEAD, capture the reader states

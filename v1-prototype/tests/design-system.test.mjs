@@ -10,7 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { declarations } from "./css-declarations.mjs";
 
@@ -251,7 +251,8 @@ test("backdrop blur is only on the navigation layer", () => {
 // name something the stylesheets define, or the app sets from script.
 test("every custom property used is defined", () => {
   const css = read("styles.css") + read("design-tokens.css");
-  const script = read("App.jsx");
+  // Set from script anywhere in the app: the reader (src/reader) sets its own.
+  const script = readdirSync(SRC, { recursive: true }).filter((name) => /\.jsx?$/.test(name)).map(read).join("\n");
   const defined = new Set([...css.matchAll(/(--[\w-]+)\s*:/g), ...css.matchAll(/@property\s+(--[\w-]+)/g),
     ...script.matchAll(/["'`](--[\w-]+)["'`]/g)].map((m) => m[1]));
   const missing = [...new Set([...read("styles.css").matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]))]

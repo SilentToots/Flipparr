@@ -18,7 +18,66 @@ async function openFirstSeries(page) {
 async function drawerTab(page, label) {
   await openFirstSeries(page);
   await page.locator(`.drawer-tabs button:has-text("${label}")`).first().click();
+  // Known flake (2026-10-08): on a phone the tab's highlight is sometimes
+  // photographed mid-slide although it has settled on the page (sampled: on
+  // the tab within 400ms, and it stays). Likely the full-page shot resizing
+  // the viewport, which makes the highlight measure and slide again. Waiting
+  // longer or for its animations did not help. A drawer-* @phone difference
+  // at the tab strip only: capture the same build twice before believing it.
   await settle(page);
+}
+
+function readerState(name, prefs, proof = []) {
+  return {
+    name,
+    path: "/library/all",
+    waitForCatalog: true,
+    require: [".reader", "img.reader-page.shown", ".reader-count", ...proof],
+    async setup(page) {
+      const origin = new URL(page.url()).origin;
+      const catalog = await (await page.request.get(`${origin}/api/v1/catalog`)).json();
+      const run = (catalog.series || []).find((item) => (item.issues || []).filter((issue) => issue.fileId).length >= 2);
+      if (!run) throw new Error(`${name}: no run with two readable issues in this library`);
+      const fileId = run.issues.find((issue) => issue.fileId).fileId;
+      const pages = await (await page.request.get(`${origin}/api/v1/files/${fileId}/pages`)).json();
+      if (Number(pages.pageCount) < 3) throw new Error(`${name}: the first issue needs three pages`);
+      const me = await (await page.request.get(`${origin}/api/v1/me`)).json();
+      const settings = { panelMode: false, panelScrim: true, panelStartWhole: false, panelReveal: false, ...prefs };
+      await page.route("**/api/v1/me", (route) => (route.request().method() === "GET"
+        ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...me, prefs: { ...(me.prefs || {}), ...settings } }) })
+        : route.continue()));
+      await page.route("**/api/v1/me/prefs", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+      await page.route(`**/api/v1/files/${fileId}/progress`, (route) => route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify(route.request().method() === "GET"
+          ? { fileId: String(fileId), page: 1, panel: 0, pageCount: pages.pageCount, finishedAt: null }
+          : {}),
+      }));
+      await page.route(`**/api/v1/files/${fileId}/pages/*/panels*`, (route) => {
+        const index = Number(new URL(route.request().url()).pathname.split("/")[6]);
+        route.fulfill({
+          status: 200, contentType: "application/json",
+          body: JSON.stringify({
+            fileId: String(fileId), page: index, source: "manual", segmented: true, readingDirection: "ltr",
+            panels: [
+              { id: `${index}-0`, x: 0.04, y: 0.04, w: 0.92, h: 0.44, order: 0 },
+              { id: `${index}-1`, x: 0.04, y: 0.52, w: 0.92, h: 0.44, order: 1 },
+            ],
+          }),
+        });
+      });
+      await page.evaluate((value) => {
+        for (const key of Object.keys(localStorage)) if (/^flipparr\.(u\d+\.)?reader$/.test(key)) localStorage.setItem(key, value);
+      }, JSON.stringify(settings));
+      await page.goto(`${origin}/?read=${fileId}`, { waitUntil: "networkidle", timeout: 45000 });
+      await page.waitForSelector("img.reader-page.shown", { timeout: 30000 });
+      await page.waitForFunction(() => {
+        const img = document.querySelector("img.reader-page.shown");
+        return Boolean(img && img.complete && img.naturalWidth > 0);
+      }, null, { timeout: 30000 });
+      await settle(page, 1500);
+    },
+  };
 }
 
 // `phone: false` keeps a state to the desktop pass: the list toggle and the
@@ -190,6 +249,14 @@ export const states = [
       await settle(page, 800);
     },
   },
+  // The reader mid-issue, by page and by panel. Like reader-finish the place
+  // is routed, not written, and so are the profile's reader settings: they
+  // sync to the server (`PATCH /api/v1/me/prefs`), and a capture that turned
+  // panel view on would leave it on for every later one (2026-10-07). The
+  // panels are stubbed so the capture does not depend on what the finder
+  // made of the scratch library's pages.
+  readerState("reader-page", { panelMode: false }),
+  readerState("reader-panels", { panelMode: true }, ["img.reader-page.shown.panel-view"]),
   { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .appbar-search", ".pull-card:not(.pull-card-skeleton)"] },
   // Wanted is the first tab -- a request's row or the "All caught up" empty
   // state -- unless a reader's request is waiting, when the page opens on the
