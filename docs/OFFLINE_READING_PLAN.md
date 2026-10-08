@@ -478,10 +478,11 @@ from the list below:
   the simulator by ending the admin's sessions from the server mid-use.
 - CI builds the app's bundle (`npm run build:reader-app`); it does not run
   the Xcode build.
+- Seen on the iPad Pro 13-inch simulator: connect, sign in, home and the
+  reader in panel view; covers grow above 640px (180-220px cards).
 - Not yet: the finish drawer (`onFinish` does nothing in the app; the last
   page marks the comic read); the reader settings drawer is reachable but
-  untested in the app; the iPad layout has not been seen (the iPad simulator
-  waits for the owner to let Claude use it); `reader-app.css` is not read by
+  untested in the app; `reader-app.css` is not read by
   the design-system test (its exceptions are noted in the file). Phase 3's
   background-download delegate must drop `Authorization` on a redirect to
   another host, so the token reaching only the household's server holds by

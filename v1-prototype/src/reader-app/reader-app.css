@@ -1,7 +1,8 @@
 /* Flipparr Reader's own screens: home, a run's issues. The reader itself is
    styled by styles.css, shared with the web app. Tokens as in styles.css
    (DESIGN_SYSTEM.md); the exceptions are the cover cards' width range
-   (120-160px, a layout size, as the web grid's card widths are) and 1px
+   (120-160px on a phone, 180-220px above 640px; layout sizes, as the web
+   grid's card widths are), the run list's 720px measure, and 1px
    hairlines. tests/design-system.test.mjs reads styles.css only, so this
    file is held to that by review until the test reads it too. */
 
@@ -121,4 +122,19 @@
   font: inherit;
   font-size: var(--text-sm);
   cursor: pointer;
+}
+
+/* Above a phone (641px, the stylesheet's phone breakpoint): an iPad. Covers
+   at phone size sat small in the corner of a 1032pt screen; here they grow,
+   and the page gets the wider margins the web app gives a tablet. */
+@media (min-width: 641px) {
+  .app-home, .app-run {
+    padding-left: calc(env(safe-area-inset-left) + var(--space-32));
+    padding-right: calc(env(safe-area-inset-right) + var(--space-32));
+  }
+  .app-row { grid-auto-columns: minmax(180px, 220px); gap: var(--space-16); }
+  .app-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-24) var(--space-16); }
+  .app-card strong { font-size: var(--text-md); }
+  .app-card small { font-size: var(--text-sm); }
+  .app-issues { max-width: 720px; }
 }
