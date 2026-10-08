@@ -644,6 +644,22 @@ from the list below:
 - A bundle declares the native plugin version it needs; the app refuses one
   newer than its native layer.
 
+## Known issues
+
+- **A piece of the reader left over the page (owner, 2026-10-08, iPhone,
+  Home Screen web app).** Reading in panel view, the app was left for a
+  video, the phone was turned to landscape, and the app was reopened from
+  its icon: a panel of the comic sat over the Comics page's tabs, and
+  survived page turns, rotation and closing the reader; only quitting the
+  app cleared it. A second shot showed the reader short of the screen with
+  the library under it. Not reproduced by the owner or in the iOS 27
+  simulator, in Safari, as a Home Screen web app or in Flipparr Reader,
+  with the same steps. Surviving the reader's own unmount points at WebKit
+  keeping a stale composited layer (the panel flight is a transform
+  animation) rather than at the reader's markup. If it comes back, note
+  whether a panel was zoomed and how long the app was away. The reader is
+  shared with Flipparr Reader, so a fix lands in both.
+
 ## Risks and limits (say them in the docs and the commits)
 
 - Background downloads stop if the person force-quits the app (iOS cancels

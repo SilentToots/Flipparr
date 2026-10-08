@@ -62,6 +62,7 @@ import {
   slideSheetAway, useDialog, useDrawerExit, useExternalDismiss, usePhoneWidth, useSwipeToDismiss,
 } from "./dialogs.jsx";
 import { ReaderView } from "./reader/ReaderView.jsx";
+import { historyStep } from "./history-step.js";
 import { ReaderHost } from "./reader/host.js";
 import { listCard, communityListLine, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, groupOwnerLine, groupsToAddTo, ARC_SORTS, arcMaker, moveToEdge, issuesInRange } from "./reading-list.js";
 import { jobsNeedingAttention, jobHasFailed } from "./nav-counts.js";
@@ -11019,12 +11020,14 @@ export function App() {
       active, settingsSection, libraryTab, searchQuery: viewQuery, seriesId: selectedSeries?.id, readFileId,
     });
     locationRef.current = target;
-    if (target !== window.location.pathname + window.location.search) {
-      // Over a dialog's own entry rather than on top of it: the dialog is
-      // going with the view, and its entry must not be left to a Back press.
-      if (window.history.state?.dialog) window.history.replaceState(null, "", target);
-      else window.history.pushState(null, "", target);
-    }
+    // Pushed, written over, or Back: history-step.js, which also keeps the
+    // reader's and drawer's entries from being left behind when they close.
+    // On Back, popstate finds the address already matching (locationRef is set
+    // above), so the edge gesture's guard is not asked about it.
+    const step = historyStep(window.location.pathname + window.location.search, target, window.history.state);
+    if (step.kind === "back") window.history.back();
+    else if (step.kind === "replace") window.history.replaceState(step.state, "", target);
+    else if (step.kind === "push") window.history.pushState(step.state, "", target);
   }, [active, settingsSection, libraryTab, viewQuery, selectedSeries?.id, readFileId, pendingSeriesId]);
   // Back and forward move between views, and close the drawer when the entry
   // being returned to did not have it open.
@@ -11066,7 +11069,9 @@ export function App() {
       const reading = new URLSearchParams(locationRef.current.split("?")[1] || "").get("read");
       if (reading && !next.readFileId && isStolenBack(edgeTouch.current.cancelledAt, Date.now())) {
         edgeTouch.current.cancelledAt = 0;
-        window.history.pushState(null, "", locationRef.current);
+        // Put back as it was opened: remembering the page it came from, so
+        // closing it later is still a Back (the location effect).
+        window.history.pushState({ from: window.location.pathname + window.location.search }, "", locationRef.current);
         return;
       }
       // An entry marked for a dialog nobody has open -- development's double
