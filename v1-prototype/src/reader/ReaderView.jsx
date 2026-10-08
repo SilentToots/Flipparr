@@ -18,7 +18,7 @@ import {
 import {
   HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
 } from "../panel-editor.js";
-import { useReaderHost } from "./host.js";
+import { usePageSrc, useReaderHost } from "./host.js";
 
 // --- The reader ---------------------------------------------------------------
 //
@@ -438,6 +438,7 @@ export function ReaderView({
   onFinish, onOpenRun, onProgressSaved, onClose,
 }) {
   const { api: apiRequest } = useReaderHost();
+  const src = usePageSrc();
   // Escape closes the page grid first: it is a layer over the comic, and
   // leaving the comic entirely is not what someone looking at its pages
   // meant by pressing it.
@@ -1324,7 +1325,7 @@ export function ReaderView({
         const scrim = shown && panelMode && panelScrim && !overview && !wholePageStep && Boolean(panels[number]);
         const hole = scrim ? panelMask(pagePanels(number)[shownStep.panel]) : null;
         const tries = pageFailures[number]?.tries || 0;
-        return <img key={`${number}-${tries}`} src={tries ? `${item.readUrl}&retry=${tries}` : item.readUrl} alt={shown ? `Page ${number + 1} of ${count}` : ""}
+        return <img key={`${number}-${tries}`} src={src(tries ? `${item.readUrl}&retry=${tries}` : item.readUrl)} alt={shown ? `Page ${number + 1} of ${count}` : ""}
           className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}${pageFailures[number]?.failed ? " failed" : ""}`}
           onError={() => setPageFailures((current) => ({ ...current, [number]: { failed: true, tries: current[number]?.tries || 0 } }))}
           aria-hidden={shown ? undefined : "true"} decoding="async" draggable="false"
@@ -1383,7 +1384,7 @@ export function ReaderView({
           ref={page.index === index ? (node) => node?.scrollIntoView({ block: "center" }) : undefined}
           onClick={() => goToPage(page.index)}>
           <span className="reader-contents-art">
-            <img src={page.url} alt="" loading="lazy" decoding="async" />
+            <img src={src(page.url)} alt="" loading="lazy" decoding="async" />
             {/* On the page, the way an issue tile says Upcoming or Missing on
                 its cover rather than underneath it. */}
             {page.index === index ? <span className="ownership-source collection">Reading</span> : null}
@@ -1439,7 +1440,7 @@ export function ReaderView({
         {/* The page under the thumb, before letting go: skimming back for the
             page a recap refers to should not cost your place. */}
         {scrub !== null && pages.list[scrub] ? <span className="reader-scrub-preview">
-          <img src={pages.list[scrub].url} alt="" />
+          <img src={src(pages.list[scrub].url)} alt="" />
           <b>{scrub + 1}</b>
         </span> : null}
         <input type="range" min="0" max={count - 1} value={scrub ?? index} aria-label="Page"

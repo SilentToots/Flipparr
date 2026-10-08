@@ -1,0 +1,106 @@
+/* Flipparr Reader's own screens: home, a run's issues. The reader itself is
+   styled by styles.css, shared with the web app. Tokens only, as in
+   styles.css (DESIGN_SYSTEM.md). */
+
+.app-home, .app-run {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  padding: calc(env(safe-area-inset-top) + var(--space-16)) calc(env(safe-area-inset-right) + var(--space-16))
+    calc(env(safe-area-inset-bottom) + var(--space-32)) calc(env(safe-area-inset-left) + var(--space-16));
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  margin-bottom: var(--space-24);
+}
+.app-header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+}
+.app-header p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+
+.app-section { margin-bottom: var(--space-32); }
+.app-section h2 {
+  margin: 0 0 var(--space-12);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.app-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(120px, 160px);
+  gap: var(--space-12);
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  padding-bottom: var(--space-4);
+}
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-16) var(--space-12);
+}
+
+.app-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+.app-card-cover {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  border-radius: var(--radius-8);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  object-fit: cover;
+  display: block;
+}
+.app-card strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+.app-card small { color: var(--muted); font-size: var(--text-xs); }
+
+.app-issues {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-8);
+  background: var(--surface);
+  overflow: hidden;
+}
+.app-issue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--control-height-md);
+  padding: var(--space-12) var(--space-16);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.app-issue:first-child { border-top: 0; }
+.app-issue strong { flex: 1; font-weight: var(--weight-medium); }
+.app-issue small { color: var(--muted); font-size: var(--text-xs); }
+
+.app-empty { color: var(--muted); font-size: var(--text-sm); margin: 0; }

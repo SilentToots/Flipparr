@@ -46,13 +46,18 @@ function requestError(message, extra = {}) {
  * Keychain); `fetchImpl` is the platform's fetch.
  */
 export function createClient({ origin, tokens, fetchImpl = globalThis.fetch }) {
+  /** What every request to this server carries; never sent anywhere else. */
+  function headers() {
+    const sent = { "Flipparr-Client": "app" };
+    if (tokens.session) sent.Authorization = `Bearer ${tokens.session}`;
+    if (tokens.device) sent["Flipparr-Device"] = tokens.device;
+    return sent;
+  }
   async function api(path, options = {}) {
-    const headers = { ...(options.headers || {}), "Flipparr-Client": "app" };
-    if (tokens.session) headers.Authorization = `Bearer ${tokens.session}`;
-    if (tokens.device) headers["Flipparr-Device"] = tokens.device;
+    const sent = { ...(options.headers || {}), ...headers() };
     let response;
     try {
-      response = await fetchImpl(origin + path, { ...options, headers });
+      response = await fetchImpl(origin + path, { ...options, headers: sent });
     } catch (error) {
       throw requestError("Flipparr could not be reached", { network: true, cause: error });
     }
@@ -80,7 +85,7 @@ export function createClient({ origin, tokens, fetchImpl = globalThis.fetch }) {
     }
     return payload;
   }
-  return { origin, api };
+  return { origin, api, headers };
 }
 
 /**
