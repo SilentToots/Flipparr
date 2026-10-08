@@ -1,11 +1,13 @@
 # Offline reading for Flipparr — implementation plan
 
-Written 2026-10-08 for execution by another model without this conversation.
-Repository: `/Users/blee/Developer/Comic Arr Project` (branch `v1-forward`).
-Backend: `app.py`, `catalog_store.py`, `access_policy.py`, tests `test_*.py`
-(Python 3.13 venv; the system python3 is 3.9 and fails). Frontend:
-`v1-prototype/` (React 18, Vite 6; `src/App.jsx` ~13k lines). Line numbers
-are as of 2026-10-08 and drift — search by the names given.
+Written 2026-10-08 for execution by another model without this conversation;
+rewritten the same day around a native reader app (the first draft was a
+Home Screen web app — see "Decisions"). Repository: `/Users/blee/Developer/
+Comic Arr Project` (branch `v1-forward`). Backend: `app.py`,
+`catalog_store.py`, `access_policy.py`, tests `test_*.py` (Python 3.13 venv;
+the system python3 is 3.9 and fails). Frontend: `v1-prototype/` (React 18,
+Vite 6; `src/App.jsx` ~13.2k lines). Line numbers are as of 2026-10-08 and
+drift — search by the names given.
 
 ## Context
 
@@ -13,15 +15,17 @@ Flipparr is a self-hosted comic catalog and reader (pre-release, production
 track; see `AGENTS.md`). The owner reads mostly on an iPad and wants to read
 with no connection to the home server: download issues at home, read on a
 flight, have the reading place sync back. Today nothing works offline: pages
-are served one at a time with `Cache-Control: private, no-cache`, there is no
-service worker, no on-device store, and progress is a last-write-wins POST
-with the server's clock.
+are served one at a time with `Cache-Control: private, no-cache`, nothing is
+stored on the device, and progress is a last-write-wins POST with the
+server's clock.
+
+## Decisions
 
 **Product decisions (the owner's, 2026-10-08 — settled, do not reopen):**
 
 - iPad first (iPhone too). A PWA installed to the Home Screen first; a
   native (Capacitor) shell is deferred behind a trigger, not ruled out —
-  see Architecture.
+  see Architecture. *(Superseded the same day — see the next block.)*
 - Downloadable: one issue; a run's unread issues ("Download the next N
   unread", N chosen in a sheet, default 5); a story arc or reading list
   (whole, in reading order). No automatic downloads.
@@ -35,20 +39,110 @@ with the server's clock.
   the oldest *finished* issues are removed first, never one in progress; a
   download that cannot fit says so.
 
-**Platform facts (checked 2026-10-06, record the sources with the code):**
+**Native reader app (the owner's, 2026-10-08 — settled):**
 
-- A Home Screen web app on iOS/iPadOS keeps its storage (origin quota ~60%
-  of disk; exempt from Safari's 7-day script-storage eviction, which does
-  apply to a plain Safari tab). Sources: MDN "Storage quotas and eviction
-  criteria"; web.dev "Storage for the web".
-- Background Fetch and Background Sync do not work on iOS/iPadOS web apps:
-  downloads run only while the app is in the foreground. Sources:
-  whatpwacando.today/background-fetch, firt.dev/notes/pwa-ios.
-- The shell CSP has `img-src 'self' https: data:` (no `blob:`) and
-  `worker-src 'self'`, `connect-src 'self'`: a same-origin service worker
-  answering the page URLs from the Cache API needs no CSP change.
+- Offline reading is a **native iPad/iPhone reader app** (Capacitor), not a
+  Home Screen web app. Reason: a web app's storage can still be evicted
+  under pressure and is opaque to manage, and its downloads stop whenever it
+  leaves the screen.
+- The app is **reader-only**: connect to a server, sign in, pick a profile,
+  browse what to read (Keep Reading, runs, arcs and reading lists), read
+  with panel view, download, and sync the place. Search, Discover,
+  requests, acquisition, library management, settings beyond the app's own
+  and every admin surface stay in the web app.
+- **One codebase.** The reader is moved out of `App.jsx` into its own
+  module; the web app and the reader app both import it. A reader fix is
+  one commit that reaches both builds.
+- The web app stays a connected app: no service worker, no offline mode.
 
-**Rules that bind every phase** (from `AGENTS.md`, `DESIGN_SYSTEM.md`, memory):
+**Open questions for the owner (not decided; the executing session asks
+before the phase that needs the answer):**
+
+1. *Before Phase 3:* should a download spend the vision model on panels?
+   The plan defaults to `?vision=no` (local tiers only; the model's answer
+   arrives when the page is later read online). A five-issue run is ~110
+   pages; admin is unmetered, readers 300 pages a day.
+2. *Before Phase 2:* is the panel editor web-only at first? The plan says
+   yes: the app's reader hides the editor (an offline edit would need its
+   own queue and conflict rule against the manual-rows-are-sacred rule).
+3. *Before Phase 3:* should the server keep a record of downloads (who,
+   which file, when, removed when)? `AGENTS.md` (2026-10-07) says evidence
+   a later analysis depends on goes in the catalog, never only on a device
+   or in a log. If he will ever want to know how offline reading is used,
+   that is a table (`offline_downloads`, its migration, a reader, a test);
+   otherwise nothing is kept server-side. The plan leaves it out until he
+   answers.
+4. *Phase 8 only:* live updates of the app's UI from the household's own
+   server — yes or no, after reading Apple's rule quoted under "Platform
+   facts". The plan ships without them.
+
+## Platform facts (checked 2026-10-08; record the sources with the code)
+
+- **Capacitor** is at major version 8 (capacitorjs.com/docs; MIT). The app
+  is served from `capacitor://localhost` on iOS; files on disk are shown in
+  the web view through `Capacitor.convertFileSrc(path)`.
+- **Cross-origin:** every request from `capacitor://localhost` to a
+  household's server is cross-site. Flipparr's session is a cookie
+  (`app.py` `_set_cookie` ~L17969, `SameSite=Lax`) and `_same_origin`
+  (~L17888) refuses a state change whose `Origin` is not the `Host`. So the
+  app can use neither the cookie nor `<img src>` pointing at the server, even
+  online. Phase 0 adds a bearer token.
+- **CapacitorHttp** (core plugin, off by default; `plugins.CapacitorHttp.
+  enabled: true`) patches `fetch`/`XMLHttpRequest` to native requests (no
+  CORS). Its docs warn that large payloads over the bridge cause problems
+  and point to file plugins for files: JSON goes through it, **page images
+  never do**.
+- **Background downloads:** iOS keeps a background `URLSession` transfer
+  running while the app is suspended and relaunches the app to deliver
+  completion (`application(_:handleEventsForBackgroundURLSession:
+  completionHandler:)`). A force-quit cancels it. Plugins checked:
+  `@capacitor/file-transfer` (official) is foreground-only; Capawesome's
+  File Transfer (background `URLSession`, Aug 2026) is **Insiders-only**,
+  a paid licence key, unusable in a publicly distributed build; Capgo's
+  Downloader says "under development and not yet ready for production use".
+  **So Flipparr writes its own plugin** (Phase 2), under the repo's licence.
+  Sources: capawesome.io/blog/announcing-the-capacitor-file-transfer-plugin,
+  capgo.app/docs/plugins/downloader, capacitorjs.com/docs/apis/http.
+- **Web storage inside the app:** Apple does not document the eviction rules
+  for a WKWebView's website data under a custom scheme. **Nothing that
+  matters is kept in IndexedDB or localStorage**: rows and pages are files
+  in the app container under `Library/` (iOS does not purge it as it does
+  `Library/Caches`, and the Files app does not show it).
+- **Backups:** iOS includes `Library/` (except `Library/Caches`) in iCloud
+  and device backups by default. Apple's data-storage guidance asks for
+  re-downloadable data to be kept out of backups, and 2 GB of pages in
+  every backup is wrong anyway. The plugin sets `isExcludedFromBackup`
+  (`URLResourceValues`; developer.apple.com, "isExcludedFromBackupKey") on
+  the `flipparr/` folder, and sets it again at launch, because Apple notes
+  some file operations reset it. `@capacitor/filesystem` cannot set it.
+  To confirm on a device in Phase 3: the app's backup size in Settings ›
+  iCloud stays small after five downloads.
+- **App Store rules** (developer.apple.com/app-store/review/guidelines,
+  read 2026-10-08):
+  - 4.2 Minimum Functionality: "elevate it beyond a repackaged website" —
+    a native reader with background downloads and offline reading is the
+    case for it, and it is the reason the app is not a web view of the site.
+  - 2.5.2: apps may not "download, install, or execute code which
+    introduces or changes features or functionality of the app." Live UI
+    updates (Capgo, Appflow) rely on an exception for code run by WebKit
+    that does not change the app's primary purpose, in the Developer
+    Program License Agreement 3.3.1(B). **That wording was seen only in
+    secondary sources (the agreement is behind sign-in) — unverified.**
+    Hence open question 4 and no live updates by default.
+  - App Review needs a working server and account to review a client: the
+    release phase provides a demo server (see Phase 7).
+- **App Transport Security:** a household server on the LAN is often plain
+  `http`. `Info.plist` sets `NSAllowsLocalNetworking` (LAN and `.local`
+  names) and nothing broader; a public `http` address or a self-signed
+  certificate is refused, and the connect screen says so ("Use the https
+  address, or a name on your local network").
+- **Signing:** the Apple Developer Program ($99/yr), the team ID,
+  certificates and provisioning profiles are the owner's. None of them
+  enters git (`AGENTS.md`: no private credentials); the Xcode project reads
+  the team from an untracked `Signing.local.xcconfig`, and `.gitignore`
+  lists it.
+
+## Rules that bind every phase (from `AGENTS.md`, `DESIGN_SYSTEM.md`, memory)
 
 - Tests with every change; backend suites in both orders
   (`python -B -m unittest test_app test_catalog_store test_http_contract
@@ -56,7 +150,8 @@ with the server's clock.
   test_no_undefined_names test_reading_list_formats test_torrent_client
   test_arc_catalog test_provider_evidence test_secret_hygiene`, then
   reversed); frontend `npm test` (node:test over `tests/*.test.mjs`),
-  `npx eslint src tests`, `npx vite build`.
+  `npx eslint src tests`, `npx vite build`, and from Phase 2 the reader-app
+  build too.
 - Design tokens only in `styles.css` (`tests/design-system.test.mjs` fails
   otherwise); Phosphor icons only; mobile-first; reduced motion honoured;
   accessible status messages. For any `styles.css` change run
@@ -64,493 +159,446 @@ with the server's clock.
   after, `npm run visual:compare`, and `npm run layout:check`, against the
   scratch stack (`VISUAL_APP_ORIGIN=http://localhost:4199
   VISUAL_BACKEND_ORIGIN=http://127.0.0.1:8802`; recipe in
-  `tests/visual/README.md`). New screens are added to
-  `tests/visual/states.mjs` and audited by `npm run a11y:audit`.
+  `tests/visual/README.md`). New web screens go into
+  `tests/visual/states.mjs` and `npm run a11y:audit`.
+- New components in their own files, not added to `App.jsx` (`AGENTS.md`:
+  reusable components rather than one monolith).
 - The rating gate is server-side and must hold offline: a page is only on
   the device if the gate answered 200 for this profile when it was
-  downloaded; profiles' caches are separate; on reconnect the device asks
+  downloaded; profiles' files are separate; on reconnect the device asks
   which downloads this profile may no longer see and removes them.
-- Never log secrets; never store the PIN; `support_safe` in log lines.
+- Never log secrets or tokens; never store the PIN; `support_safe` in log
+  lines. The bearer token is kept in the iOS Keychain, never in a file, web
+  storage, a URL or a log.
+- **Panel hold:** panel-finder and vision changes are on hold for the
+  owner's data review (~2026-10-15 to 10-22; memory `panel-scanner-plan`).
+  Phase 0's `?vision=no` is inert until something sends it. The app sends
+  it from Phase 3: until the review is done, Phase 3 onward is tested
+  against the scratch stack, never production.
 - The NAS Docker is the QA runtime. Deploy recipe (memory `flipparr-deploy`):
-  config backup → `git archive HEAD` to a fresh `~/flipparr-build` →
-  `docker build -t flipparr:candidate` → smoke import → SABnzbd download
-  guard (0 downloading) → tag `flipparr:local` → `docker compose up -d
-  --force-recreate flipparr` → `/healthz` shows the build. Deploy backend
-  changes promptly; batch UI polish.
+  config backup + saved `docker logs` → `git archive HEAD` to a fresh
+  `~/flipparr-build` → `docker build -t flipparr:candidate` → smoke import
+  → SABnzbd download guard (0 downloading) → tag `flipparr:local` →
+  `docker compose up -d --force-recreate flipparr` → `/healthz` shows the
+  build. Deploy backend changes promptly; batch UI polish.
 - Commit as `SilentToots <261538712+SilentToots@users.noreply.github.com>`;
   `git checkout .claude/launch.json` before committing; the owner pushes.
 
 ## Architecture
 
-**A same-origin service worker at `/sw.js`, scope `/`, plus an IndexedDB
-store, plus three small server routes.** Pages are kept in the Cache API
-keyed by their exact `readUrl`, so `<img src={item.readUrl}>` in the reader
-is unchanged and no `blob:` is needed; the HTTP cache stays `no-cache` so
-the rating gate still runs for every view that is *not* a download.
+### One codebase, two builds
 
-**The page store is behind an adapter (decided 2026-10-08, after the owner
-weighed a native shell).** `src/page-store.js` exports one interface the
-rest of the code uses: `put(profileId, fileId, index, readUrl, response)`,
-`has`, `delete(profileId, fileId)`, `deleteProfile`, `usage()`, and
-`pageSrc(profileId, fileId, index, readUrl)` — what the reader puts in
-`<img src>`. The web implementation (`src/page-store-web.js`) is the Cache
-API plus the service worker below, and `pageSrc` returns `readUrl`
-unchanged. Nothing outside the adapter may call `caches.*`. The reason: a
-Capacitor shell was considered and deferred, not rejected. WKWebView has
-no service worker outside App-Bound Domains and none from Capacitor's
-custom scheme, so a native build would store pages in the Filesystem and
-`pageSrc` would return `Capacitor.convertFileSrc(path)`; every other part
-of this plan (routes, IndexedDB rows, engine, replay, profiles, eviction,
-run/arc downloads) is shared verbatim. **Trigger for building the shell:**
-the iPad proof at the end of Phase 2 shows foreground-only downloads or
-storage eviction to be a real nuisance. It costs the owner a $99/yr Apple
-Developer Program, signing and TestFlight, and me a Swift background
-`URLSession` plugin (no production Capacitor plugin exists) and live-update
-wiring (Capgo updater, "serve your own zip" mode, MPL-2.0 to be verified)
-so the bundled UI tracks the server's. Not before the trigger.
+```
+v1-prototype/
+  src/reader/           the reader module (moved out of App.jsx in Phase 1)
+  src/App.jsx           the web app; imports src/reader
+  src/reader-app/       the app's own shell; imports src/reader
+  reader-app.html       the app's entry document
+  vite.reader-app.config.mjs   → dist/reader-app
+  capacitor.config.json        webDir: dist/reader-app
+  ios/                  the Capacitor iOS project (Xcode), plugin source
+```
 
-Why not the other web option: IndexedDB blobs shown via
-`URL.createObjectURL` need `blob:` in `img-src` and a rewrite of every
-image element; the Cache API keyed by the real URL needs neither.
+- `npm run build` stays the web build the Dockerfile uses; it does not build
+  the app. `npm run build:reader-app` builds `dist/reader-app`;
+  `npm run ios:sync` runs it and `npx cap sync ios`. CI runs
+  `build:reader-app` (catches a reader change that breaks the app build)
+  but does not build Xcode.
+- **How a reader change reaches each build:** the web on the next NAS
+  deploy; the app on its next build. Phase 7 makes "build and upload to
+  TestFlight" one script (`tools/reader_app_release.sh`), so the lag is a
+  command, not a project. Live updates are Phase 8 and only if the owner
+  says yes to open question 4.
+- **The reader API is a contract.** The app in someone's hands may be older
+  than their server. Reader-class routes the app uses change only by
+  addition; `test_http_contract.py` gains `ReaderAppContractTests` pinning
+  the fields the app reads (below), and `/api/v1/app` (Phase 0) reports
+  `apiVersion` so an app can say "Update Flipparr Reader to read from this
+  server" instead of failing obscurely.
 
-### The service worker (`v1-prototype/src/sw.js` → `dist/client/sw.js`)
+### The reader module (`src/reader/`)
 
-- Built by a second Vite config `v1-prototype/vite.sw.config.mjs`:
-  `build.emptyOutDir: false`, `build.outDir: "dist/client"`,
-  `rollupOptions.input: "src/sw.js"`, `output.entryFileNames: "sw.js"`
-  (no hash), `define: { __FLIPPARR_BUILD__: JSON.stringify(<git sha or
-  Date.now()>) }`. `package.json` `"build": "vite build && vite build -c
-  vite.sw.config.mjs"` — the main build must run first (it empties the
-  folder). The Dockerfile (L11–13, L87) runs `npm run build` and copies
-  `dist/client` → `/app/web`, so nothing else changes for the image; CI's
-  `web` job runs `npm run build` too.
-- Served by `handle_web_asset` (`app.py` ~L20350): root files get
-  `Cache-Control: no-cache` (right for a SW); add `".js": "text/javascript"`
-  to `WEB_ASSET_TYPES` (~L2379) so the type never depends on the host's
-  mimetypes table (`_web_asset_body` appends `; charset=utf-8`). Note: a
-  *missing* `/sw.js` falls back to `index.html` with 200 — the contract test
-  must cover both the file present and absent.
-- eslint: `eslint.config.mjs` gains an override `{ files: ["src/sw.js",
-  "src/sw-routing.js"], languageOptions: { globals: globals.serviceworker } }`
-  (`globals` ^17 is already a dev dependency).
-- Registration in `src/main.jsx` after `window.load`, only when
-  `"serviceWorker" in navigator`, `import.meta.env.PROD`, and the protocol is
-  `https:` or the host is `localhost`/`127.0.0.1`:
-  `navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache:
-  "none" })`. On `updatefound` → `installed` while
-  `navigator.serviceWorker.controller` exists, dispatch a `window` event
-  `flipparr:update-ready`; `App` shows a toast "Flipparr was updated —
-  Reload" (`showToast` ~L11988 gains an optional action); Reload posts
-  `{type: "skip-waiting"}` to the worker and reloads on `controllerchange`.
-- **Fetch rule, exact (pure function `routeFor({method, url, headers})` in
-  `src/sw-routing.js`, tested in `tests/sw-routing.test.mjs`; the worker
-  only applies it):**
-  1. method not GET → network.
-  2. pathname matches `^/api/v1/files/\d+/pages/\d+$` and
-     `searchParams.get("size") === "read"` and the request has no header
-     `x-flipparr-fetch: network` → **pages**: `caches.open("flipparr-pages-u"
-     + activeProfile)` → `cache.match(request.url, {ignoreVary: true})`
-     (full URL, `v=` included; `ignoreVary` because `send_image` answers
-     with `Vary: Cookie` and `Cookie` is a forbidden header the Cache API
-     cannot compare — without the option a match can miss for no visible
-     reason) → hit: return it; miss: `fetch(request)` untouched. The worker
-     never writes to this cache; the download engine is the only writer.
-  3. any other pathname starting `/api/` → network only, never cached.
-  4. pathname starting `/assets/` (hashed, immutable) → cache-first from
-     `flipparr-shell-<build>`.
-  5. navigations and `/`, `/index.html`, `/manifest.webmanifest`, `/brand/*`
-     → **network-first**, falling back to the shell cache only when the
-     network fails; offline with nothing cached → `Response.error()`. (Not
-     stale-while-revalidate: with several deploys a day a bad shell would
-     otherwise stay pinned on every device until a second reload, with no
-     recovery short of clearing site data. The cost is one round trip on a
-     cold start online.)
-  6. anything else (`/healthz`, unknown paths) → network, untouched.
-- `activeProfile`: the page writes `{key: "activeProfile", value: viewerId |
-  null}` to the IndexedDB `settings` store at boot and in `enterProfile`
-  (`App.jsx` ~L252); the worker reads it on its first fetch after start and
-  on `message {type: "profile", id}`. A null profile makes rule 2 fall
-  through to the network.
-- Install: fetch `/index.html`, collect the `/assets/...` `src`/`href`
-  values, cache them with `/`, `/manifest.webmanifest` and the `/brand/*`
-  icons index.html names. Activate: delete other `flipparr-shell-*` caches;
-  **never** touch `flipparr-pages-*`. `__FLIPPARR_BUILD__` in the cache name
-  makes every build a byte-different worker so `updatefound` fires.
+`ReaderView` (`App.jsx` ~L9957–10974) already takes a short prop list —
+`fileId, title, medium, directionOverride, startPage, behind, onFinish,
+onProgressSaved, onOpenRun, onClose` (rendered at ~L13209) — and its pure
+logic is already in `src/reader.js` and `src/panel-editor.js`. It moves to
+`src/reader/ReaderView.jsx` with its helpers, and everything it reached
+from `App.jsx`'s scope becomes an explicit dependency through one context,
+`ReaderHost`:
 
-### The device store (IndexedDB `flipparr-offline`, version 1; `src/offline-db.js`)
+| `ReaderHost` member | web | app |
+|---|---|---|
+| `api(path, options)` | `apiRequest` (cookie, same origin) | native fetch with `Authorization: Bearer` |
+| `pageSource(fileId, index, readUrl)` → `Promise<string>` | resolves `readUrl` unchanged | the downloaded file's `convertFileSrc` URL; online and not downloaded, the plugin fetches the page to a rolling temp file first |
+| `canEditPanels` | the admin, as today | `false` (open question 2) |
+| `toast(message)` | `showToast` | the app's toast |
+| `progressSink(fileId, body)` | POST as today | the queue (Phase 4) then POST |
 
-| store | keyPath | indexes | row |
-|---|---|---|---|
-| `downloads` | `["profileId","fileId"]` | `profileId`; `["profileId","state"]`; `["profileId","lastReadAt"]` | `{profileId, fileId, seriesRunId, seriesTitle, issueNumber, filename, medium, readingDirection, cover (= pageUrls[0]), pageCount, fileSignature, pageUrls[], pagesDone, bytes, state: "queued"|"downloading"|"ready"|"failed"|"stale", downloadedAt, lastReadAt, finished, groupKey, error}` |
-| `panels` | `["profileId","fileId","page"]` | `["profileId","fileId"]` | `{…, data}` — the `/panels` JSON as answered |
-| `progressQueue` | `["profileId","fileId"]` (a later save replaces the row) | `profileId` | `{profileId, fileId, page, panel, at (ISO UTC, `new Date().toISOString()`), finished}` |
-| `profiles` | `profileId` | — | `{profileId, name, colour, role, lock, pinLength, pinHash?, updatedAt}` |
-| `settings` | `key` | — | `activeProfile`, `deviceSalt` (16 random bytes), `capBytes` (default 2 147 483 648), `persisted` |
+`pageSource` is the one place the builds differ for pages. It is async in
+both so the reader's preloading treats them alike; on the web it resolves
+immediately. The web app must behave exactly as before Phase 1 — that is
+the phase's proof.
 
-- Cap accounting: usage = Σ `downloads.bytes` across all profiles (the cap
-  is the device's). `navigator.storage.estimate()` only feeds the Settings
-  usage bar. `navigator.storage.persist()` is requested on the first
-  download; the answer is shown in Settings.
-- `localStorage["flipparr.offline"] = {capBytes, persisted}` for the shell,
-  written with `window.localStorage` directly (per device; `profileStorage()`
-  would namespace it).
-- Eviction (`evictionOrder` in `src/offline.js`): candidates are `state ===
+### Authentication for the app (Phase 0)
+
+- The app signs in with the existing routes and an app-client form:
+  `POST /api/v1/auth/login` and `POST /api/v1/profiles/switch` with
+  `{…, "client": "app"}` answer `{token, expiresAt, viewer}` in the body
+  instead of (not as well as) setting the cookie. The token is the same
+  signed profile token `issue_profile_token` makes (`app.py` ~L844), always
+  issued with `shared=True` (the `v3` form, which carries the household
+  epoch): an iPad is a shared device, so session versions, profile removal
+  and "forget shared devices" end it exactly as they end a shared cookie.
+- `_resolve_identity` reads `Authorization: Bearer <token>` when there is
+  no session cookie; a request carrying both is refused (400), so a
+  confused client cannot mix identities.
+- `_same_origin` passes when the identity came from the header: a bearer
+  token is not sent by a browser on its own, so a cross-site request cannot
+  carry it (the CSRF reason for the check does not apply). It still runs for
+  cookie requests, unchanged.
+- No CORS headers are added: the app's JSON goes through CapacitorHttp and
+  its pages through the plugin, both native, neither subject to CORS. The
+  web build keeps working same-origin as today.
+- Tests (`test_http_contract.py`): bearer reaches a READER route; a revoked
+  session version is 401 by bearer as by cookie; cookie + bearer → 400; a
+  cross-origin POST with bearer passes and with a cookie is still refused;
+  `client: "app"` sets no cookie; `RouteCensusTests` stays green.
+
+### The native plugin (`ios/App/App/FlipparrTransfer/`, Phase 2)
+
+One Swift plugin, `FlipparrTransfer`, MIT like the repo, ~300 lines:
+
+- `fetchToFile({url, path, token})` → `{path, bytes, status, contentType}`:
+  a foreground `URLSession` data task written to `path` (a page for reading
+  online, or one page of a download while the app is in front). Never puts
+  the image over the bridge.
+- `enqueue({id, url, path, token})`, `cancel({id})`, `list()` and events
+  `transferDone`/`transferFailed`: a background `URLSession` (identifier
+  `flipparr.downloads`) download task moved to `path` on completion;
+  survives suspension, delivered on relaunch through the `AppDelegate`
+  hook. Resume data kept on failure.
+- `excludeFromBackup({path})`: sets `isExcludedFromBackup` on the folder;
+  called at launch for `Library/flipparr/`.
+- The token is passed per call from the Keychain wrapper and set as a
+  header; it is never logged.
+- Tests: XCTest for path handling and the done/failed mapping against a
+  `URLProtocol` stub; the JS side behind an interface with an in-memory fake
+  for `node:test`.
+
+### The device store (files in `Library/flipparr/`)
+
+```
+Library/flipparr/
+  servers.json                      {serverUrl, deviceSalt, capBytes}
+  profiles.json                     [{profileId, name, colour, role, lock, pinLength, pinHash?, updatedAt}]
+  u<profileId>/downloads.json       rows, below
+  u<profileId>/progress-queue.json  [{fileId, page, panel, at, finished}]
+  u<profileId>/files/<fileId>/<index>.jpg
+  u<profileId>/files/<fileId>/panels.json
+  tmp/pages/                        the rolling cache for online reading (≤ 200 MB, oldest first)
+```
+
+- A download row: `{fileId, seriesRunId, seriesTitle, issueNumber,
+  filename, medium, readingDirection, pageCount, fileSignature, pageUrls[],
+  pagesDone, bytes, state: "queued"|"downloading"|"ready"|"failed"|"stale",
+  downloadedAt, lastReadAt, finished, groupKey, error}`.
+- `src/reader-app/device-store.js` is the only module that touches
+  `@capacitor/filesystem` (MIT). Every JSON write is atomic (write
+  `<name>.tmp`, then rename). The logic is pure in
+  `src/reader-app/offline.js` and tested with an in-memory store.
+- One server per install for now (`servers.json` has one entry); a second
+  server is "Sign out and connect elsewhere", which removes everything.
+- Cap accounting: usage = Σ `bytes` of every profile's rows (the cap is the
+  device's); the temp page cache is separate and capped at 200 MB.
+- Eviction (`evictionOrder` in `offline.js`): candidates are `state ===
   "ready" && finished`, oldest `lastReadAt` (then `downloadedAt`) first;
-  never `queued`/`downloading`, never unfinished, never the issue being
-  read. If evicting every candidate still cannot fit, the download is
-  refused: "Needs X MB more than the cap allows".
-- `fake-indexeddb` (Apache-2.0, 6.2.5) as a dev dependency for
-  `tests/offline-db.test.mjs`; keep the wrapper thin so `offline.js` (pure)
-  carries the logic.
+  never queued or downloading, never unfinished, never the issue being
+  read. If evicting every candidate still cannot fit: "Needs X MB more than
+  the cap allows".
 
-### Server additions (all reader-class, all through the rating gate)
+### Server additions (Phase 0; all reader-class, all through the rating gate)
 
 Facts to rely on: pages `GET /api/v1/files/{id}/pages` → `{fileId, pageCount,
-pages: [{index, url, readUrl}]}` (`file_pages` ~L13979; `_page_url` ~L13693;
-`_file_signature` ~L13594 = `mtime_ns`-hex + `size`-hex; `cached_page_members`
-~L13664); page image `GET …/pages/{n}?size=read` → JPEG via
-`render_file_page` ~L14850, `send_image` ~L20300 (`private, no-cache`, weak
-ETag, `Vary: Cookie` — keep). Progress table `reading_progress(user_id,
-file_id, page, panel, page_count, file_signature, started_at, finished_at,
-updated_at)` PK (user_id, file_id); `set_reading_progress` (`catalog_store.py`
-~L3989) upserts with `updated_at = _utc_now()`; `file_reading_progress`
-~L14783; `POST /api/v1/files/{id}/progress` ~L19596 accepts `{page, panel?}`
-| `{read: bool}` | `{page: null}`; `set_file_reading_progress` ~L14804.
-Routing: `access_policy.py` `ROUTE_ACCESS` (file routes READER at L134–140;
-unlisted `/api` routes are ADMIN); the dispatcher's rating gate `_run_visible`
-~L18102 already covers every `/api/v1/files/{id}/…` path (404 for a limited
-reader); the avatar POST ~L18862 shows the by-hand gate for an id in a body.
-`send_json` ~L20327 sets `private, no-store`. Adding a reader route = the
-regex in `ROUTE_ACCESS` + the branch in `_route_get`/`_route_post` with the
-same regex + the sample in `NOT_ADMIN` of `test_http_contract.py` (~L1786),
-or `RouteCensusTests` fails.
+pages: [{index, url, readUrl}]}` (`file_pages` ~L13979; `_page_url` ~L13693
+puts `v=<_file_signature>` in every page URL, so a replaced file gets new
+URLs; `_file_signature` ~L13594 = `mtime_ns`-hex + `size`-hex). Page images
+`GET …/pages/{n}?size=read` → JPEG via `render_file_page`, `send_image`
+~L20300 (`private, no-cache`, weak ETag, `Vary: Cookie` — keep). Progress
+table `reading_progress(user_id, file_id, page, panel, page_count,
+file_signature, started_at, finished_at, updated_at)` PK (user_id, file_id);
+`set_reading_progress` (`catalog_store.py` ~L3989) upserts with `updated_at
+= _utc_now()`; `POST /api/v1/files/{id}/progress` (~L19596) accepts `{page,
+panel?}` | `{read: bool}` | `{page: null}` via `set_file_reading_progress`
+~L14804. The rating gate `_run_visible` (~L18102) matches
+`/api/v1/files/(\d+)(?:/.*)?`, so any new route under a file id is gated
+with no extra code; a route with ids in its body is gated by hand. Adding a
+reader route = the regex in `access_policy.py` `ROUTE_ACCESS` + the branch
+in `_route_get`/`_route_post` + the sample in `NOT_ADMIN` of
+`test_http_contract.py` (~L1786), or `RouteCensusTests` fails. The reader
+routes the app needs already exist (`access_policy.py` L91–155): `/reading`,
+`/reading/runs`, `/reading/lists`, `/series/{id}/reading`,
+`/reading-lists/{id}`, `/files/{id}/pages…`, `/progress`, `/panels`, covers.
 
-1. **`GET /api/v1/files/{id}/offline`** → `{fileId, fileSignature, pageCount,
-   bytesEstimate, pages: [{index, readUrl}], series: {runId, title,
-   issueNumber, filename, medium, readingDirection}, cover:
-   "/api/v1/files/{id}/pages/0"}`. New `CatalogStore.file_offline_context
-   (file_id)` (one query over `files`, `file_identities`, `series_runs`;
-   `LookupError` if absent or `present = 0`) and `file_offline_manifest
-   (file_id)` beside `file_pages`, reusing `file_pages`, `_file_signature`,
-   `cached_page_members`, `store.file_reading_direction`. `bytesEstimate` = Σ
-   sizes of reading-size cache files already rendered for this file under
+1. **Bearer auth and `client: "app"`** — see "Authentication for the app".
+2. **`GET /api/v1/app`** at `PUBLIC`, the level `/api/v1/auth/status` uses
+   (`access_policy.py` L76), so the connect screen can recognise a Flipparr
+   server before signing in: `{apiVersion: 1, name: "Flipparr", authMethod}`
+   for anyone, plus `{build, household}` when the request has a viewer.
+3. **`GET /api/v1/files/{id}/offline`** → `{fileId, fileSignature,
+   pageCount, bytesEstimate, pages: [{index, readUrl}], series: {runId,
+   title, issueNumber, filename, medium, readingDirection}}`. New
+   `CatalogStore.file_offline_context(file_id)` (one query over `files`,
+   `file_identities`, `series_runs`; `LookupError` if absent or
+   `present = 0`) and `file_offline_manifest(file_id)` beside `file_pages`,
+   reusing `file_pages`, `_file_signature`, `cached_page_members`,
+   `store.file_reading_direction`. `bytesEstimate` = Σ sizes of
+   reading-size cache files already rendered for this file under
    `reading_cache_dir()`, else `pageCount × 380_000`.
-2. **`POST /api/v1/offline/check`** body `{files: [{fileId, fileSignature}]}`
+4. **`POST /api/v1/offline/check`** body `{files: [{fileId, fileSignature}]}`
    (≤ 500 entries, else 400) → `{files: [{fileId, status: "ok" | "changed" |
    "gone" | "hidden"}]}`. Per file: absent or `present = 0` → `gone`; a
-   non-admin viewer with `max_rating` for whom `self._run_visible(f"/api/v1/
-   files/{fid}/pages/0")` is false → `hidden`; signature ≠ `_file_signature
-   (path)` → `changed`; else `ok`.
-3. **`at` on the progress POST**: optional ISO-8601 time with a zone (a
+   non-admin viewer for whom `self._run_visible(f"/api/v1/files/{fid}/
+   pages/0")` is false → `hidden`; signature ≠ `_file_signature(path)` →
+   `changed`; else `ok`.
+5. **`at` on the progress POST**: optional ISO-8601 time with a zone (a
    naive value → 400). Normalise `at = min(parsed → UTC, now)` so a clock
    ahead cannot lock out later writes. Thread `at` through
-   `set_file_reading_progress` to `set_reading_progress`: when `at` is given,
-   read the stored row's `updated_at`, parse both with
+   `set_file_reading_progress` to `set_reading_progress`: when `at` is
+   given, read the stored row's `updated_at`, parse both with
    `datetime.fromisoformat`, and **skip the write when the stored time is
-   newer** (compare parsed datetimes in Python, not strings: `_utc_now()`
-   omits the fraction when microseconds are 0); a kept write stores
-   `updated_at = at`. Without `at` the write always wins, as before. The
-   docstring says so.
-4. `WEB_ASSET_TYPES[".js"] = "text/javascript"`.
-4a. **`?vision=no` on `GET /api/v1/files/{id}/pages/{n}/panels`** (route
-   ~L18518): when present, `allow_vision=False` and `vision_budget_allows`
-   is **not** called. `file_page_panels` already takes `allow_vision`; the
-   local tiers (ONNX detector, gutter finder) still run and their answer is
-   stored as today, so a page read later online is upgraded by the model
-   exactly as it is now (`upgrade` in `_file_page_panels` ~L14461). The
-   download engine always sends it: a five-issue run download is ~110
-   pages, and the owner's stated cost is a wrong result, not a spent
-   budget — but he has not been asked whether a download should spend the
-   model; this default spends nothing and the handoff names the question.
-   Test: a reader with `visionForReaders` on and the flag set leaves
-   `_VISION_SPEND` untouched; the admin with the flag set gets a stored row
-   whose source is not `vlm`.
-5. Tests: `NOT_ADMIN` gains `("GET", "/api/v1/files/1/offline"): "reader"`
-   and `("POST", "/api/v1/offline/check"): "reader"`; a manifest test
-   modelled on the page-list test (~L1216); `/sw.js` present → 200
-   `text/javascript; charset=utf-8` + `no-cache`, absent → the shell; in
-   `ReaderProfileHttpTests` (~L1976, `call()`): a reader whose `maxRating`
-   is below a run's rating gets 404 from `/offline` and `hidden` from
-   `/offline/check`, the admin gets `ok`; `changed` after rewriting the
-   archive; `gone` for an unknown id. `test_catalog_store.py`: an older
-   replayed save does not overwrite a newer one; a newer one does; no `at`
-   wins. `test_app.py`: POST with an older `at` leaves the page unchanged;
-   a naive `at` → 400.
+   newer** (compare parsed datetimes, not strings: `_utc_now()` omits the
+   fraction when microseconds are 0); a kept write stores `updated_at = at`.
+   It governs every body form (`{page, panel?}`, `{read}`, `{page: null}`).
+   Without `at` the write always wins, as before. The web app keeps sending
+   no `at`.
+6. **`?vision=no` on `GET /api/v1/files/{id}/pages/{n}/panels`** (~L18518):
+   `allow_vision=False` and `vision_budget_allows` is not called. The local
+   tiers still run and their row is stored as today; a later online read
+   upgrades an `auto`/`model` row to the model's answer (`upgrade` in
+   `_file_page_panels` ~L14461, checked 2026-10-08).
+7. Tests: `NOT_ADMIN` gains the new routes; a manifest test modelled on
+   the page-list test (~L1216); in `ReaderProfileHttpTests` (~L1976): a
+   reader whose `maxRating` is below a run's rating gets 404 from
+   `/offline` and `hidden` from `/offline/check`, the admin gets `ok`;
+   `changed` after rewriting the archive; `gone` for an unknown id.
+   `test_catalog_store.py`: an older replayed save does not overwrite a
+   newer one; a newer one does; no `at` wins; `{read: true, at}` with an
+   older `at` leaves the row. `test_app.py`: a naive `at` → 400.
+   `?vision=no`: a reader with `visionForReaders` on leaves `_VISION_SPEND`
+   untouched; the admin gets a stored row whose source is not `vlm`.
+   `ReaderAppContractTests`: the fields the app reads from `/app`,
+   `/reading`, `/reading/runs`, `/reading/lists`, `/series/{id}/reading`,
+   `/files/{id}/offline`, `/pages`, `/panels`, `/progress`.
 
 ## Phases, in order
 
-### Phase 0 — server routes and `at` (1 session, deployable alone)
-Everything under "Server additions". Proof: both suite orders green; deploy
-to the NAS; `curl` the three routes as the admin and as a limited reader
-(the owner's instance has reader profiles; never clear their records).
+### Phase 0 — server: bearer auth, `/app`, offline routes, `at`, `?vision=no` (1–2 sessions)
+Everything under "Server additions". Deployable alone at any time (nothing
+sends the new forms yet). Proof: both suite orders green; NAS deploy;
+`curl` with a bearer token as the admin and as a limited reader (the
+owner's instance has reader profiles; never clear their records).
 
-### Phase 1 — service worker, shell precache, update toast (1 session)
-Files: `src/sw.js`, `src/sw-routing.js`, `vite.sw.config.mjs`,
-`package.json`, `eslint.config.mjs`, `src/main.jsx`, `src/App.jsx`
-(`showToast` action), `src/offline-db.js` (the `settings` read the worker
-needs; plain IDB code importable by a worker), `tests/sw-routing.test.mjs`.
-Proof: `npm run build` leaves `dist/client/sw.js`; served by `app.py` with
-`FLIPPARR_WEB_ROOT=…/dist/client` on `http://localhost`: the worker is
-active, the shell loads with the network set to offline (page images
-absent); a rebuild shows the toast and Reload picks up the new assets;
-`npm test`, eslint, build green; contract tests for `/sw.js`.
+### Phase 1 — move the reader into `src/reader/` (1 session, no behaviour change)
+- `ReaderView` and what only it uses move to `src/reader/`; `ReaderHost`
+  context with the web implementations; `App.jsx` renders it as before.
+- Proof: before the move, on HEAD, capture the reader states
+  (`visual:capture -- --out baseline` including the reader and panel-view
+  states in `tests/visual/states.mjs`; add them first if missing); after,
+  `--out current`, `visual:compare` with no differences, `layout:check`;
+  `npm test`, eslint, build; on the iPad against the scratch stack: page
+  turns, pinch, panel view, rotation, the scrubber, finish → the finish
+  drawer — the gesture work of 2026-10-07/08 (`81f6ed7a`, `2270f714`,
+  `53ebd73a`) must feel identical. Batch the web deploy with the next UI
+  deploy; it changes nothing visible.
 
-### Phase 2 — IndexedDB, download engine, single-issue download, Downloads surface (2 sessions)
-Files: `src/offline.js` (pure: `planDownload(manifest, {capBytes, usageBytes,
-downloads}) → {fits, bytes, evict, shortfall}`, `evictionOrder`,
-`queueProgress` (coalesce per file), `mergeProgress(local, server)` (newer by
-`at`/`updatedAt`), `downloadRow(manifest, profileId, groupKey)`,
-`nextUnread(issues, n)`, `formatBytes`), `src/page-store.js` (the
-adapter interface and the `pageStore` the app imports) +
-`src/page-store-web.js` (Cache API implementation), `src/offline-db.js`,
-`src/offline-downloads.js`, `src/profiles.js` (`READER_SURFACES` gains
-`settings.offline`), `src/App.jsx`, `src/styles.css`, tests
-`tests/offline.test.mjs`, `tests/offline-db.test.mjs`, `tests/profiles.test.mjs`.
+### Phase 2 — the app shell, reading online (2 sessions)
+- Capacitor 8 project: `capacitor.config.json` (`appId:
+  "com.silenttoots.flipparr.reader"` — confirm with the owner, it is
+  permanent once on the App Store; `appName: "Flipparr Reader"`; webDir
+  `dist/reader-app`; `CapacitorHttp.enabled: true`), `ios/` generated by
+  `npx cap add ios`, `Signing.local.xcconfig` untracked, `Info.plist`
+  `NSAllowsLocalNetworking`, `PrivacyInfo.xcprivacy` (required for
+  submission; declares file timestamps and no tracking).
+- `src/reader-app/`: `main.jsx`, `ConnectScreen` (server address → `GET
+  /api/v1/app`; ATS refusal explained), `SignIn`, `ProfilePicker` (reuse the
+  web picker's component if it can be moved out cleanly; else a small one
+  styled from the same tokens), `Home` (Keep Reading from `/reading`, runs
+  from `/reading/runs`, arcs and lists from `/reading/lists`), `RunView`
+  (`/series/{id}/reading`), and the shared `ReaderView` with the app's
+  `ReaderHost`. `keychain.js` wraps a Keychain plugin (choose an MIT one, or
+  add `getToken`/`setToken` to `FlipparrTransfer`; record the choice).
+- `FlipparrTransfer.fetchToFile` for online pages into `tmp/pages/`.
+- The app uses the web's design tokens and Phosphor icons; it is laid out
+  for iPad first and iPhone, mobile-first, reduced motion honoured.
+- Proof: on the owner's iPad (a development build over Xcode): connect to
+  production, sign in, pick a PIN'd profile, read an issue online in page
+  and panel view; a limited reader cannot open a run above its rating;
+  sign out removes the token from the Keychain. `npm test` covers
+  `ReaderHost` (app) against fakes.
 
-- Engine (`src/offline-downloads.js`, in the page, never the worker):
-  an `EventTarget` singleton with `enqueue(fileId, {groupKey})`, `cancel`,
-  `remove`, `removeAll`, `resume`. Loop: first `queued` row of the active
-  profile → `downloading` → `GET /api/v1/files/{id}/offline` (404 → `failed`
-  "hidden", nothing stored; 401/403 → pause the queue) → `planDownload` →
-  evict per plan (delete cache entries and rows) or `failed` "doesn't fit"
-  → pages three at a time: `fetch(readUrl, {cache: "no-store", headers:
-  {"x-flipparr-fetch": "network"}})`; on 200 `image/jpeg` → `pageStore.put
-  (profileId, fileId, index, readUrl, response)` (the web adapter does
-  `cache.put(readUrl, response)` into `flipparr-pages-u<profileId>`), add
-  the body length to `bytes`, `pagesDone++`, emit `progress`; a 404 mid-way removes
-  everything stored for the file (`failed` "hidden"); a network error
-  retries after 1 s, 4 s, 16 s then leaves the row `queued` for `resume()`.
-  Then panels: `GET …/pages/{n}/panels?vision=no` for every page into
-  `panels` (a 4xx stores `{segmented: false, panels: []}`; a network failure
-  does not block `ready` — panels are best-effort; the flag keeps a
-  download from spending the vision budget, see server addition 4a). `state = "ready"`, `downloadedAt`.
-  `resume()` on `visibilitychange` → visible, `online`, and boot.
-  `navigator.storage.persist()` on the first enqueue.
-- UI: `useDownloads()` hook (rows for the active profile, `byFile`, usage).
-  `IssueMenu` (~L7782): "Download for offline" / "Remove download" /
-  "Downloading… (cancel)". `GroupedIssueInventory` tiles and rows
-  (~L7946/7953) and Keep Reading cards (`RecommendedView` ~L3232,
-  `LibraryShelf` ~L3289): `<StatusBadge tone="green">Downloaded</StatusBadge>`.
-  `ProfileView` (~L6012): a "Downloaded" shelf (`LibraryShelf`,
-  `profile-history` cards, `onRead({id: fileId})`) with See all →
-  `/profile/downloads` (`stateFromLocation`/`locationForState` ~L11292/
-  L11306 learn it): rows with state, `formatBytes`, a progress bar
-  "Downloaded N of M pages", Remove, Cancel, Re-download; the phone
-  `ProfileSheet` (~L6070) gets the shelf. Settings: `SETTINGS_SECTIONS`
-  (~L5432) gains `{id: "offline", label: "Offline reading", icon:
-  DownloadSimple, group: "reading", detail: "What this device keeps for
-  reading without a connection, and how much room it may take."}`;
-  `SettingsView` block for `current === "offline"`: cap (`GlassSelect` 1/2/
-  4/8 GB), usage bar (Σ bytes vs cap, `estimate()` beneath), "Remove all
-  downloads" (danger, confirmed), "Kept when storage is low: yes/no" with a
-  Request button; `/settings/offline` validates through `settingsSectionsFor`.
-  New classes `.download-progress`, `.offline-usage-bar` — tokens only.
-- Proof: unit tests; lint; build; on the local prod build download an
-  issue — DevTools shows `flipparr-pages-u1` with `pageCount` entries keyed
-  by the exact `readUrl`; reload offline → the Downloads page lists it;
-  Remove empties the cache. Visual harness before/after at both viewports
-  and `layout:check`.
-- **iPad proof, before Phase 3 starts** (deploy Phases 0–2 to the NAS for
-  it; the UI is deployable without the reader work): on the owner's iPad,
-  installed to the Home Screen over https, download five issues; switch
-  apps mid-download and come back (the queue resumes — note how much was
-  lost); lock the iPad mid-download; leave it eight days and reopen (the
-  rows and cache are still there); Settings shows `persisted`. Record the
-  outcome in `docs/INSTALL_PROOFS.md`. **This is the decision point for
-  the native shell** (see Architecture): if foreground-only downloads or
-  eviction made this a chore, stop and raise it with the owner before
-  Phase 3; if not, the PWA path continues.
+### Phase 3 — downloads (2 sessions)
+- `FlipparrTransfer` background `enqueue` + the `AppDelegate` hook;
+  `src/reader-app/downloads.js` (an `EventTarget` engine): first `queued`
+  row → `downloading` → `GET /files/{id}/offline` (404 → `failed`
+  "hidden", nothing stored; 401 → pause and ask to sign in again) →
+  `planDownload` (evict per plan or `failed` "doesn't fit") → `enqueue`
+  every page to `u<id>/files/<fileId>/<index>.jpg`; on `transferDone`
+  count `bytes` and `pagesDone`; a 404 mid-way removes the file's folder
+  (`failed` "hidden"); then `GET …/panels?vision=no` for every page into
+  `panels.json` (best-effort: failures do not block `ready`). Re-checked
+  on launch and on return to the foreground; `list()` reconciles with the
+  plugin after a relaunch.
+- Single-issue Download in the issue's menu and the reader's settings;
+  `Downloads` screen (state, `formatBytes`, "Downloaded N of M pages",
+  Remove, Cancel, Re-download); Settings: cap (1/2/4/8 GB), usage bar,
+  "Remove all downloads" (confirmed).
+- **Panel hold:** this is the first build that sends `?vision=no`. Its
+  iPad proof runs against the scratch stack (the owner's iPad pointed at
+  the Mac's scratch backend over the LAN), not production, until the
+  owner's panel review is done.
+- Proof: node tests for `planDownload`, `evictionOrder`, `downloadRow`;
+  XCTest for the plugin; on the iPad: download five issues, switch apps
+  and lock the iPad mid-download (it carries on), relaunch (rows match the
+  files), Remove empties the folder.
 
-### Phase 3 — the reader offline, and progress replay (1–2 sessions)
-Files: `src/App.jsx` (`ReaderView` ~L9957–10974, `apiRequest` ~L648,
-`loadCatalog` ~L12030, `App`), `src/offline.js`, `src/offline-progress.js`,
-`tests/offline.test.mjs`.
-- `useNetwork()` in `App`: `online` from `navigator.onLine` and the
-  `online`/`offline` events; `apiRequest` sets `network = "offline"` on a
-  fetch `TypeError` and `"online"` on any response. Distinct from
-  `backendStatus === "offline"` (server down with connectivity).
-- `loadCatalog`: when the failure is a `TypeError` and `!navigator.onLine`,
-  do not show `DEMO_SERIES`; keep `catalog` null, set `network = "offline"`,
-  pause polling until `online`. Library tab: offline, render the Downloaded
-  shelf first and replace the `.backend-banner` (~L3217) with a
-  `role="status"` line "You're offline — N downloaded issues are ready."
-  Opening a non-downloaded issue: toast "This issue isn't downloaded.
-  Connect to read it."
-- `ReaderView` page-load effect (~L10104): first `getDownload(profileId,
-  fileId)`; if `ready` → `list = pageUrls.map((readUrl, index) => ({index,
-  readUrl: pageStore.pageSrc(profileId, fileId, index, readUrl), url:
-  readUrl}))` with no network for pages (on the web `pageSrc` is the
-  identity; it is the one seam a native build changes); the place =
-  `mergeProgress(queue row, server GET when online)`; title and series from
-  the row through a new `offlineTitle` fallback where `readingTitle`
-  currently falls back to "Reading" (~L13170). Panels effect (~L10158):
-  `getPanels` before `apiRequest`; offline with no row → `{segmented: false,
-  panels: []}` (`readablePanels` then shows the whole page / quadrants).
-  `lastReadAt` and `finished` are written to the row on every `keepPlace`.
-- `keepPlace` (~L10293): always `putProgress({profileId, fileId, page, panel,
-  at: new Date().toISOString(), finished})`; online, POST the same body the
-  replay would send and delete the queue row on success. **Body for a queue
-  row, exact:** `finished` → `{read: true, at}`; otherwise `{page, panel, at}`
-  (`panel` omitted when null). `at` governs every form the route accepts
-  (`{page, panel?}`, `{read}`, `{page: null}`) — the Phase 0 merge rule is
-  applied in `set_file_reading_progress` before any of them writes, and the
-  tests cover `{read: true, at}` with an older `at` as well as `{page, at}`.
-  `src/offline-progress.js` `replayProgress()` on boot, `online`, and before
-  `onProgressSaved`: rows in `at` order, POST each; 401/403 → stop and keep
-  the rows; 404 → drop the row and mark the download `failed` "hidden";
-  network error → stop. Replay only when `authStatus.viewer.id ===
-  row.profileId`.
-- Proof: node tests for `mergeProgress` and queue order; Playwright
-  `tests/offline/offline.e2e.mjs` (Chromium against the prod build served
-  by `app.py` on localhost): download an issue → `context.setOffline(true)`
-  → `/?read=<id>` opens, three page turns, panel view shows stored panels,
-  close → `setOffline(false)` → `GET …/progress` reports the page reached;
-  an offline save with an older `at` after a newer online save does not
-  regress the page.
+### Phase 4 — reading offline and progress replay (1–2 sessions)
+- Offline identity: with no connection the app has no `/auth/status`. The
+  active profile is the last one used (`servers.json`), its name and role
+  from `profiles.json`; the app never builds a viewer from nothing (the web
+  app's "no gate" fallback at `App.jsx` ~L12012 is not copied).
+- `useNetwork()`: online from CapacitorHttp responses and `navigator.onLine`;
+  offline, Home shows the Downloaded shelf first with a `role="status"`
+  line "You're offline — N downloaded issues are ready."; opening one that
+  is not downloaded: "This issue isn't downloaded. Connect to read it."
+- The reader opens a `ready` download with no network: `pageSource`
+  returns the file; panels from `panels.json` (none → `{segmented: false,
+  panels: []}`); the place = `mergeProgress(queue row, server GET when
+  online)`; `lastReadAt` and `finished` written to the row on every save.
+- `progressSink`: always append to the queue with `at: new Date().
+  toISOString()`; online, POST and drop the row on success. Body: finished
+  → `{read: true, at}`, else `{page, panel, at}` (`panel` omitted when
+  null). `replayProgress()` on launch, reconnect and foreground: rows in
+  `at` order; 401 → stop and keep; 404 → drop the row and mark the
+  download `failed` "hidden"; network error → stop. A queue is replayed
+  only with its own profile's token.
+- Proof: node tests for `mergeProgress` and queue order; on the iPad in
+  airplane mode: open from cold, read three issues in page and panel view,
+  rotate, lock and unlock; reconnect → the server's `/progress` shows the
+  place; an offline save older than a newer online one does not regress it.
+- **Panel hold:** as in Phase 3, no proof against production before the
+  owner's panel review is done.
 
-### Phase 4 — profiles offline, and the rating re-check (1 session)
-Files: `src/App.jsx` (picker ~L6155–6185, `switchToProfile` ~L13142,
-`enterProfile` ~L252, `signOut` ~L12018, forget devices ~L7339),
-`src/offline-pin.js`, `src/offline-db.js`, `tests/offline-pin.test.mjs`.
-- The `profiles` store is refreshed from `GET /api/v1/profiles` whenever the
+### Phase 5 — profiles offline and the rating re-check (1 session)
+- `profiles.json` is refreshed from `GET /api/v1/profiles` whenever the
   picker loads online; a profile whose `lock` is no longer `pin` loses its
   `pinHash`.
-- `src/offline-pin.js`: `hashPin(pin, salt)` = WebCrypto PBKDF2-SHA256,
-  200 000 iterations, 256 bits, hex; `verifyPin`. The salt is
-  `settings.deviceSalt` (made once with `crypto.getRandomValues`). After a
-  successful online `POST /api/v1/profiles/switch` with a PIN, store
-  `pinHash` on that profile's row. Module header cites the W3C WebCrypto
-  spec (PBKDF2 `deriveBits`) and the OWASP Password Storage Cheat Sheet,
-  and states plainly: this is device-local and unthrottled, weaker than
-  the server's scrypt check (`check_profile_switch` ~L1034), acceptable for
-  a 4–6 digit PIN on a device the household owns; password-locked profiles
-  have no offline unlock; the PIN is never stored or logged.
-- Offline switch: the picker lists the `profiles` store when offline; a
-  PIN'd profile is checked with `verifyPin`; success → `putSetting
-  ("activeProfile", id)`, `localStorage["flipparr.offlineSwitch"] = id`,
-  `enterProfile(id)` (reload). The worker's cache name follows
-  `activeProfile`, so another profile's pages are never served. On
-  reconnect, if `authStatus.viewer.id !== cachedViewerId()` and
-  `flipparr.offlineSwitch` is set, open the picker on that profile ("Enter
-  your PIN to carry on as …") before any replay; a queue is replayed only
-  under its own profile's cookie.
-- Sign-out and forget-devices: delete every `flipparr-pages-*` cache and
-  the `downloads`, `panels`, `progressQueue`, `profiles` stores (the shell
-  cache stays).
-- Reconnect check: on `online`, on boot when online, **and on
-  `visibilitychange` → visible while online** (one POST; cache-first pages
-  would otherwise keep showing a downloaded issue *online* after the admin
-  lowered this profile's rating, until the next boot), `POST /api/v1/
-  offline/check` with every `ready`/`stale` row; `hidden`/`gone` → remove
-  cache entries and rows (toast "N downloads were removed: they're no longer
-  available to this profile"); `changed` → `stale` with Re-download. The
-  window between a rating change and the next check is stated in Risks.
-- Proof: node tests for `hashPin` (a fixed vector checked against
-  `node:crypto` `pbkdf2Sync`) and the offline picker list; Playwright: a
-  reader with `maxRating` below a run → the download fails "hidden" and
-  nothing is cached; the admin lowers a reader's rating → the reader
-  reconnects → the download disappears; two profiles switched offline →
-  each sees only its rows and the other's pages miss the cache.
+- `src/reader-app/offline-pin.js`: `hashPin(pin, salt)` = WebCrypto
+  PBKDF2-SHA256, 200 000 iterations, 256 bits, hex; `verifyPin`; the salt is
+  `deviceSalt`. After a successful online switch with a PIN, store
+  `pinHash` on that profile. The module header cites the W3C WebCrypto
+  spec and the OWASP Password Storage Cheat Sheet and says plainly: device
+  local and unthrottled, weaker than the server's scrypt check
+  (`check_profile_switch` ~L1034), acceptable for a 4–6 digit PIN on a
+  household's device; password-locked profiles cannot be unlocked offline.
+- Offline switch: the picker lists `profiles.json`; success sets the active
+  profile; each profile reads only its own `u<id>/` folder. On reconnect
+  the profile switches online with its PIN before any replay (each profile
+  has its own token in the Keychain, keyed by profile id; a missing or
+  expired one asks for the PIN).
+- Sign out and "forget shared devices" (detected as 401 on every token):
+  remove every `u<id>/` folder, `profiles.json` and the tokens.
+- Reconnect check on launch, reconnect and foreground: `POST
+  /offline/check` with every `ready`/`stale` row; `hidden`/`gone` → remove
+  the files and rows ("N downloads were removed: they're no longer
+  available to this profile"); `changed` → `stale` with Re-download.
+- Proof: node test for `hashPin` against `node:crypto` `pbkdf2Sync`; on the
+  iPad: two profiles switched offline each see only their own downloads; the
+  admin lowers a reader's rating → the reader reconnects → the download
+  disappears.
 
-### Phase 5 — run and arc downloads, eviction, Settings polish (1–2 sessions)
-Files: `src/App.jsx` (`SeriesDrawer` ~L8521, `.comic-drawer-actions` /
-`ReadRunButton` ~L8398, `ReadingListDrawer` ~L9013, `RunCollectionDrawer`
-~L2160, the reader settings drawer), `src/offline.js`, `styles.css`.
-- Run drawer: a secondary "Download" button beside Read → a sheet
-  "Download the next N unread" (stepper 1–20, default 5) from `GET /api/v1/
-  series/{id}/reading` + `nextUnread(issues, n)`; shows Σ `bytesEstimate`
-  (one `/offline` GET per issue), what fits under the cap and what would be
-  evicted; Confirm enqueues with `groupKey: "run:<id>"`.
-- Arc and collection drawers: an Advanced card "Download this arc" (the
-  `advanced-card` + `LoadingSpinner` busy pattern, ~L8786) over the list's
-  items in reading order, `groupKey: "arc:<id>"`.
-- Reader settings drawer: "Download this issue" / "Downloaded".
-- Settings copy for eviction; "Remove finished downloads"; a cap change
-  applies at the next download (say so on the card).
-- Proof: node tests for `nextUnread` and `planDownload` with eviction;
-  Playwright: cap 30 MB, download three issues, finish the first, download
-  a fourth → the finished one goes, an unfinished one never; a fifth that
-  cannot fit says so. Harness states `downloads`, `settings-offline`,
-  `library-offline` (route `**/api/v1/catalog` to abort
-  `internetdisconnected` and `context.setOffline(true)` after load) at
-  both viewports; `a11y:audit` on them.
+### Phase 6 — run and arc downloads, eviction (1–2 sessions)
+- Run view: "Download" beside Read → a sheet "Download the next N unread"
+  (stepper 1–20, default 5) from `/series/{id}/reading` + `nextUnread
+  (issues, n)`; shows Σ `bytesEstimate`, what fits and what would be
+  evicted; `groupKey: "run:<id>"`.
+- Arc and reading list: "Download this arc", in reading order,
+  `groupKey: "arc:<id>"`.
+- Settings: eviction explained; "Remove finished downloads"; a cap change
+  applies at the next download.
+- Proof: node tests for `nextUnread` and `planDownload` with eviction; on
+  the iPad with a 30 MB cap: three issues, finish the first, download a
+  fourth → the finished one goes, an unfinished one never; a fifth that
+  cannot fit says so.
 
-### Phase 6 — docs, harness, the iPad checklist (1 session)
-- `docs/OPERATING.md`: "Offline reading" before "Known limitations": what
-  the device keeps (pages at reading size, panels, places, profile names
-  and a PIN hash), the cap, foreground-only downloads on iOS, Home Screen
-  install needed for storage to persist, how to clear (Settings → Offline
-  reading → Remove all; sign out). `docs/PRIVACY.md`: "On the device".
-  `docs/RELEASE_TRACK.md`: the entry with its evidence. `DESIGN_SYSTEM.md`:
-  the progress and usage bars. `README.md`: one line.
-- iPad checklist (record the outcome in `docs/INSTALL_PROOFS.md`): install
-  to the Home Screen over https; download five issues; airplane mode →
-  open from the Home Screen, read, panel view, rotate, lock and unlock,
-  switch profile with a PIN; leave the device idle eight days and reopen
-  (storage still there); reconnect → progress on the server; the
-  "Update ready" toast after a deploy.
-- Deploy to the NAS (backend in Phase 0 already; the UI batched here).
+### Phase 7 — release path and docs (1 session)
+- `tools/reader_app_release.sh`: `npm run ios:sync`, `xcodebuild archive`,
+  upload to TestFlight with an App Store Connect API key read from the
+  owner's environment (never the repo). One command per release.
+- App Review needs a server: a demo Flipparr with public-domain comics
+  (e.g. Digital Comic Museum titles whose licence permits it — verify each)
+  and a review account, described in the App Review notes; it is not the
+  owner's production instance.
+- Docs: `docs/OPERATING.md` "Flipparr Reader (iPad and iPhone)": connecting,
+  what the device keeps (pages at reading size, panels, places, profile
+  names and a PIN hash), the cap, sign-out removes everything;
+  `docs/PRIVACY.md` "On the device"; `docs/RELEASE_TRACK.md` the entry and
+  its evidence; `docs/INSTALL_PROOFS.md` the iPad checklist; `README.md`
+  one line; `DESIGN_SYSTEM.md` the app's screens and the progress and
+  usage bars.
+- iPad checklist (recorded): TestFlight install; connect over https;
+  download a five-issue run, lock the iPad, come back (finished); airplane
+  mode → read, panel view, rotate, switch profile with a PIN; leave idle
+  eight days (sessions last 30 days, `_SESSION_TTL_SECONDS`) and reopen
+  (downloads still there); reconnect → progress on the server.
 
-## Risks and limits (say them in the docs and the commit)
+### Phase 8 — live updates (only if the owner answers yes to open question 4)
+- `@capgo/capacitor-updater` (MPL-2.0; using it unmodified is compatible
+  with an MIT app — record the check) in manual mode: `download`, `next`,
+  `notifyAppReady` (an update that does not call it is rolled back).
+- The household's server serves the reader-app bundle that matches its own
+  build (built into the Docker image). **Bundles are signed** by the release
+  pipeline and verified against a public key compiled into the app before
+  activation: otherwise a compromised household server could run any code
+  inside the app with the plugin's file and token access. Unsigned or
+  mismatched → keep the bundled UI.
+- A bundle declares the native plugin version it needs; the app refuses one
+  newer than its native layer.
 
-- iOS/iPadOS web apps download only while in the foreground; the queue
-  resumes on return.
-- Storage can still be evicted under pressure even after `persist()`; a
-  plain Safari tab loses everything after seven days unused.
-- Downloading stores panels from the local tiers only (`?vision=no`): an
-  issue read offline shows the detector's answer, not the model's, unless
-  the page was already read online. **Open product question for the owner:**
-  should a download spend the vision model instead (admin: unmetered;
-  readers: 300 pages a day), given a five-issue run is ~110 pages?
-- The rating gate is enforced at download time and re-checked on boot,
-  reconnect and every return to the foreground; between an admin lowering
-  a profile's rating and the next of those events, a downloaded issue is
-  still readable on that device (cache-first). There is no server push.
-- The `at` merge is last-write-wins by time; there is no three-way merge.
+## Risks and limits (say them in the docs and the commits)
+
+- Background downloads stop if the person force-quits the app (iOS cancels
+  the session); they resume on the next launch.
+- The app trails the server's reader by one TestFlight build unless Phase 8
+  is approved.
+- A second codebase does not exist, but a second *build* does: a reader
+  change must pass the app build in CI and the iPad check before an app
+  release.
+- Panels stored by a download come from the local tiers only unless open
+  question 1 says otherwise.
+- The rating gate is enforced at download time and re-checked on launch,
+  reconnect and foreground; between an admin lowering a profile's rating
+  and the next of those, a downloaded issue stays readable on that device.
+- The `at` merge is last-write-wins by the device's clock (clamped to the
+  server's now): a device whose clock runs behind can lose a save to an
+  older one from another device. There is no three-way merge.
 - The offline PIN hash is device-local and unthrottled; password-locked
   profiles cannot be unlocked offline.
-- A replaced file leaves a stale download until reconnect marks it;
-  cache-first means a changed page is not seen until Re-download.
-- Offline there is no catalog: the Downloaded shelf, Keep Reading from
-  downloads and the reader work; drawers and search need a connection.
+- A replaced file leaves a stale download until reconnect marks it.
+- Offline there is no catalog: Home's Downloaded shelf and the reader work;
+  run views and lists need a connection.
+- One server per install.
 
 ## Verification, end to end
 
-1. Backend suites both orders; `npm test`; eslint; `vite build`.
-2. Phase proofs above, each on the scratch stack (`tests/visual/README.md`;
-   the scratch library at `$SCRATCH/stack`, backend on 8802, vite on 4199
-   with `FLIPPARR_API_ORIGIN=http://127.0.0.1:8802`).
-3. `tests/offline/offline.e2e.mjs` end to end in Chromium (and WebKit where
-   Playwright's WebKit supports the APIs; WebKit cannot emulate Safari's
-   chrome or Home Screen storage rules — the iPad checklist covers those).
-   **The offline e2e is the only harness that lets the worker register.**
-   `tests/visual/capture.mjs` and `tests/a11y/audit.mjs` create their
-   contexts with `serviceWorkers: "block"` (Phase 1 adds this the same
-   commit the worker lands): the a11y audit points at 8802 serving the prod
-   build, where `/sw.js` is real, and this project has twice mistaken a
-   stale harness for a product failure — a worker serving yesterday's
-   shell across captures would be a third.
-4. Visual harness and `a11y:audit` on the new states.
-5. NAS deploy and the iPad checklist, recorded.
+1. Backend suites both orders; `npm test`; eslint; `vite build`;
+   `build:reader-app`; XCTest for the plugin.
+2. Phase 1's before/after visual comparison and the iPad gesture check.
+3. Each phase's iPad proof, against production only where the panel hold
+   allows (scratch stack otherwise).
+4. Phase 7's checklist, recorded in `docs/INSTALL_PROOFS.md`.
 
----
+## Not covered here
 
-# Appendix — Panel scanner plan (approved 2026-10-06; status 2026-10-07)
-
-Done: Phase 0 (benchmark `tools/panel_benchmark.py`, `page_panel_history`,
-fixtures), 1d (leftover pass on the default install), vision answers kept
-in `page_vision_answers` (schema 67), panel fixes keyed by page fingerprint
-with export/import (schema 66). Dropped after the benchmark: the relative
-"valley" cut (split more panels than gutters it found) and the solid-band
-rule (broke the vision path's coverage gate in production). Still open:
-1c insets; dark pages crossed by light (`expectedFailure` fixtures in
-`test_page_panels.py`); Phase 2 (vision asked for structure over local
-candidates, more of the owner's pages as examples, record/replay fixture,
-live checkpoint the owner judges) — gated on `page_vision_answers` filling
-during the owner's reading; Phase 3 (editor: source badge, Ask the model,
-merge/split). Rules: never spend the owner's vision key from tools or
-tests; manual rows are sacred and the benchmark; a change that does not
-move the aggregate or regresses white pages is dropped; any change to the
-leftover pass or masks is checked against the vision path's coverage
-(`test_the_leftover_pass_never_leaves_a_solid_band_uncovered`). Evidence in
-`docs/PANELS.md`.
+Panel-scanner work is planned in memory `panel-scanner-plan` and recorded in
+`docs/PANELS.md`; it is on hold until the owner's data review
+(~2026-10-15 to 10-22). This plan does not change the panel finder.
