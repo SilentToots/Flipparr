@@ -450,6 +450,31 @@ gesture check after the next deploy.
   deploy; it changes nothing visible.
 
 ### Phase 2 — the app shell, reading online (2 sessions)
+**Built 2026-10-08, in the simulator; the iPad check waits for the
+owner's Developer Program enrolment.** What was built, and where it differs
+from the list below:
+- `src/reader-app/`: `server.js` (the client), `secure-store.js` (Keychain),
+  `images.js` (every image through `FlipparrNative.fetchToFile`; an online
+  cache per profile in `Library/flipparr/online/u<id>`, trimmed to 200 MB;
+  the token only for the household's own server), `ReaderApp.jsx`
+  (connect, sign in, "Who's reading?", Keep Reading, the runs with comics,
+  a run's issues, the shared reader). Library browsing reads
+  `/api/v1/catalog`, filtered to runs with comics; a lighter endpoint can
+  come later if its size matters on the iPad.
+- `pageSource` arrived here, optional in the host: `usePageSrc` returns the
+  address itself where the host has none, so the web reader is unchanged
+  (reader states 0 px). `progressSink` waits for Phase 4.
+- The keychain is in the app's own plugin, not a third-party one.
+- `ProfileAvatar`, `ProfileTiles` and `PinPad` moved to
+  `src/components/ProfileTiles.jsx`, shared by both pickers.
+- On sign-in the app takes the profile's reader settings from the server,
+  as the web app does: without it the reader used a phone's default (panel
+  view on).
+- `ReaderAppContractTests` is
+  `test_reader_api_1_keeps_every_field_flipparr_reader_reads`.
+- Not yet: the finish drawer (`onFinish` does nothing in the app; the last
+  page marks the comic read), the reader settings drawer is reachable but
+  untested in the app, iPad layout beyond the phone screen.
 - Capacitor 8 project: `capacitor.config.json` (`appId:
   "com.silenttoots.flipparr.view"` — the owner's choice, 2026-10-08,
   permanent once on the App Store; `appName: "Flipparr Reader"`; webDir

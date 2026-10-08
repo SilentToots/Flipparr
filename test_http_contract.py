@@ -2314,6 +2314,56 @@ class ReaderProfileHttpTests(unittest.TestCase):
                     {"files": [{"fileId": "1", "fileSignature": "x"}] * 501}):
             self.assertEqual(self.call("POST", "/api/v1/offline/check", bad, cookies=admin).status, 400)
 
+    def test_reader_api_1_keeps_every_field_flipparr_reader_reads(self):
+        """ReaderAppContractTests, as the plan names it: the fields
+        v1-prototype/src/reader-app and src/reader read from each answer. An
+        installed app may be older than its server, so these change only by
+        addition; removing one is a READER_API_VERSION bump."""
+        store, run = self._library_of_one_run()
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        comic = root / "Example 001.cbz"
+        with zipfile.ZipFile(comic, "w") as archive:
+            archive.writestr("01.jpg", _png_bytes())
+            archive.writestr("02.jpg", _png_bytes())
+        with sqlite3.connect(store.database_path) as connection:
+            file_id = connection.execute("SELECT id FROM files WHERE path=?", (str(comic),)).fetchone()[0]
+        self.call("PATCH", "/api/v1/me", {"pin": "2468"})
+        app.save_auth_config({"method": "forms", "username": "owner", "password": "the admin password"})
+        login = self.app_call("POST", "/api/v1/auth/login", {"username": "owner", "password": "the admin password"})
+        token, device = self.header(login, "Flipparr-Session"), self.header(login, "Flipparr-Device")
+        made = self.app_call("POST", "/api/v1/users", {"name": "Sam"}, token=token)
+        token = self.header(made, "Flipparr-Session") or token
+
+        def keeps(answer, fields, where):
+            self.assertLessEqual(set(fields), set(answer), f"{where} lost {set(fields) - set(answer)}")
+
+        status = self.app_call("GET", "/api/v1/auth/status", token=token).json()
+        keeps(status, {"authenticated", "viewer", "household", "profileRequired"}, "/auth/status")
+        keeps(status["viewer"], {"id", "name", "colour", "avatar"}, "/auth/status viewer")
+        keeps(self.app_call("GET", "/api/v1/me", token=token).json(), {"prefs"}, "/me")
+        profiles = self.app_call("GET", "/api/v1/profiles", device=device).json()["profiles"]
+        keeps(profiles[0], {"id", "name", "colour", "avatar", "lock", "pinLength"}, "/profiles")
+        catalog = self.app_call("GET", "/api/v1/catalog", token=token).json()
+        keeps(catalog["series"][0], {"id", "title", "year", "owned", "cover"}, "/catalog series")
+        reading = self.app_call("GET", f"/api/v1/series/{run}/reading", token=token).json()
+        keeps(reading, {"medium", "readingDirection", "issues", "volumes"}, "/series/{id}/reading")
+        keeps(reading["issues"][0], {"id", "issueNumber", "filename", "readable", "page", "pageCount", "finishedAt"},
+              "/series/{id}/reading issue")
+        pages = self.app_call("GET", f"/api/v1/files/{file_id}/pages", token=token).json()
+        keeps(pages, {"pageCount", "pages"}, "/files/{id}/pages")
+        keeps(pages["pages"][0], {"index", "url", "readUrl"}, "/files/{id}/pages page")
+        saved = self.app_call("POST", f"/api/v1/files/{file_id}/progress", {"page": 0}, token=token)
+        self.assertEqual(saved.status, 200, saved.body)
+        keeps(self.app_call("GET", f"/api/v1/files/{file_id}/progress", token=token).json(),
+              {"page", "panel", "finishedAt"}, "/files/{id}/progress")
+        shelf = self.app_call("GET", "/api/v1/reading", token=token).json()
+        keeps(shelf["items"][0], {"fileId", "seriesTitle", "issueNumber", "page", "pageCount", "medium", "resume"},
+              "/reading item")
+        with patch("app.file_page_panels", return_value={"fileId": str(file_id), "page": 0, "segmented": False,
+                                                         "readingDirection": "ltr", "panels": []}):
+            panels = self.app_call("GET", f"/api/v1/files/{file_id}/pages/0/panels?vision=no", token=token).json()
+        keeps(panels, {"segmented", "panels"}, "/files/{id}/pages/{n}/panels")
+
     def test_a_readers_download_spends_none_of_their_vision_budget(self):
         sam = self._household_with_a_reader()
         reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies

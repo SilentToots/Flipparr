@@ -6,7 +6,6 @@ import {
   UserCircle,
   DeviceMobile,
   Hourglass,
-  Backspace,
   ArrowsClockwise,
   ArrowCounterClockwise,
   ArrowLineDown,
@@ -57,6 +56,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { SettingsCard, Toggle } from "./components/SettingsControls.jsx";
+import { PinPad, ProfileAvatar, ProfileTiles } from "./components/ProfileTiles.jsx";
 import {
   DialogCloseButton, SheetGrabber, closeTopDialog, dialogLeftByBack, dialogMarks, isPhoneWidth, openDialogs,
   slideSheetAway, useDialog, useDrawerExit, useExternalDismiss, usePhoneWidth, useSwipeToDismiss,
@@ -85,7 +85,7 @@ import {
 } from "./design-icons.jsx";
 import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
 import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs, titleLetter, alphaSections, ALPHA_LETTERS } from "./library.js";
-import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, initials, profileColour, nextProfileColour, pinInput, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, ratingSource, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
+import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, nextProfileColour, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, ratingSource, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { ratingRows, limitedProfiles, filterRatingRows, publisherChoices, ratingNote, ratingOutcome } from "./rating-review.js";
 import { keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, localDay } from "./recommended.js";
 import { collectionCards, libraryGridOrder, collectionsFor, collectionMatches, moveRun, countsLine, collectionReadTarget, collectionPlaces, COLLECTION_SORTS } from "./run-collections.js";
@@ -5351,35 +5351,7 @@ function SetupView({ catalog, onFinish }) {
 
 // ---- Reader profiles ----------------------------------------------------------
 //
-// A profile is drawn as a coloured disc with its initials, the way a Plex Home
-// or Netflix profile is; the colours are the design tokens' profile palette.
-function ProfileAvatar({ profile, size = "md" }) {
-  return <span className={`profile-avatar profile-avatar--${size} profile-avatar--${profileColour(profile)}`} aria-hidden="true">
-    {profile?.avatar ? <img src={profile.avatar} alt="" draggable="false" /> : initials(profile?.name)}
-  </span>;
-}
 
-// Profiles to choose from, as Plex and Netflix show them everywhere a profile
-// is chosen -- the picker, the header's menu, its sheet: a large disc, the name
-// under it, and a word for the one reading now or one that asks for a PIN.
-function ProfileTiles({ profiles, current, onChoose, onAdd = null, busy = false }) {
-  return <ul className="profile-picker-list">
-    {profiles.map((profile) => <li key={profile.id}>
-      <button type="button" onClick={() => onChoose(profile)} disabled={busy} aria-current={profile.id === current ? "true" : undefined}>
-        <ProfileAvatar profile={profile} size="lg" />
-        <span className="profile-tile-name">{profile.name}</span>
-        {profile.id === current ? <small>Reading now</small>
-          : isLocked(profile) ? <small><LockSimple size={12} /> Locked</small> : null}
-      </button>
-    </li>)}
-    {onAdd ? <li>
-      <button type="button" onClick={onAdd} disabled={busy}>
-        <span className="profile-avatar profile-avatar--lg profile-avatar--add" aria-hidden="true"><Plus size={32} weight="light" /></span>
-        <span className="profile-tile-name">Add profile</span>
-      </button>
-    </li> : null}
-  </ul>;
-}
 
 // Your picture in every page's header, where Plex keeps it: a tap opens a
 // menu of who else can read here, adding a profile, your own page, and
@@ -5657,71 +5629,6 @@ function ProfileSheet({ onClose, ...props }) {
 // "Who's reading?" -- a shared device with more than one profile asks before
 // showing anyone's library. A profile with a PIN asks for it; the admin
 // without a PIN asks for their password; a reader with neither just opens.
-// A PIN the way a phone's lock screen asks for one: a dot for each digit and
-// a pad of keys -- no field, no Continue. The last digit opens the profile.
-// Bottom right is Cancel until there is a digit to delete. A PIN whose length
-// is not known yet (set before lengths were kept) gets a ✓ key, once.
-const PIN_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
-
-function PinPad({ length = null, busy = false, error = "", onSubmit, onCancel, onInput }) {
-  const [pin, setPin] = useState("");
-  const [shakes, setShakes] = useState(0);
-  const pinRef = useRef("");
-  const submitting = useRef(false);
-  async function submit(value) {
-    if (submitting.current) return;
-    submitting.current = true;
-    const ok = await onSubmit(value);
-    submitting.current = false;
-    // Wrong: the dots shake and empty, ready for another go.
-    if (!ok) { pinRef.current = ""; setPin(""); setShakes((count) => count + 1); }
-  }
-  function press(key) {
-    if (busy || submitting.current) return;
-    if (key === "Enter") {
-      if (!length && pinRef.current.length >= 4) submit(pinRef.current);
-      return;
-    }
-    const next = pinInput(pinRef.current, key);
-    if (next === pinRef.current) return;
-    onInput?.();
-    pinRef.current = next;
-    setPin(next);
-    if (length && next.length === length) submit(next);
-  }
-  // A keyboard types on the pad too. Escape inside an overlay is the dialog's,
-  // which takes it back to the profiles.
-  useEffect(() => {
-    function onKey(event) {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (/^\d$/.test(event.key) || event.key === "Backspace" || event.key === "Enter") {
-        event.preventDefault();
-        press(event.key);
-      } else if (event.key === "Escape") {
-        onCancel();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-  const dots = Math.max(length || 4, pin.length);
-  return <div className="pin-pad" role="group" aria-label="PIN">
-    <div className={`pin-dots${shakes ? " pin-dots--wrong" : ""}`} key={shakes} aria-hidden="true">
-      {Array.from({ length: dots }, (_, index) => <i className={index < pin.length ? "filled" : ""} key={index} />)}
-    </div>
-    <p className="sr-only" aria-live="polite">{length ? `${pin.length} of ${length} digits` : `${pin.length} digits`}</p>
-    <p className="pin-pad-message" role={error ? "alert" : undefined}>{busy ? <LoadingSpinner size={16} /> : error || " "}</p>
-    <div className="pin-keys">
-      {PIN_KEYS.map((key) => <button type="button" className="pin-key" onClick={() => press(key)} disabled={busy} key={key}>{key}</button>)}
-      {length ? <span aria-hidden="true" /> : <button type="button" className="pin-key pin-key--quiet" onClick={() => press("Enter")}
-        disabled={busy || pin.length < 4} aria-label="Enter PIN"><Check size={24} weight="bold" /></button>}
-      <button type="button" className="pin-key" onClick={() => press("0")} disabled={busy}>0</button>
-      {pin ? <button type="button" className="pin-key pin-key--quiet" onClick={() => press("Backspace")} disabled={busy} aria-label="Delete"><Backspace size={24} /></button>
-        : <button type="button" className="pin-key pin-key--quiet pin-key--text" onClick={onCancel} disabled={busy}>Cancel</button>}
-    </div>
-  </div>;
-}
-
 function WhoIsReadingView({ signInAvailable, overlay = false, current = null, ask = null, onClose, canAdd = false, onAdd }) {
   const [profiles, setProfiles] = useState(null);
   const [asking, setAsking] = useState(ask);

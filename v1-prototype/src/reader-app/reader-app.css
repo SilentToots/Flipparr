@@ -104,3 +104,18 @@
 .app-issue small { color: var(--muted); font-size: var(--text-xs); }
 
 .app-empty { color: var(--muted); font-size: var(--text-sm); margin: 0; }
+
+.app-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-8);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
