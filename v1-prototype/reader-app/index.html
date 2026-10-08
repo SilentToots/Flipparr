@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover: the reader runs to the screen's edges, under the
+         notch and the home indicator, as the web app's reader does. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The app's own files have no server in front of them to send a CSP, so
+         it is set here. Requests to the household's server go through the
+         native layer (CapacitorHttp), not the web view's fetch; pages read
+         offline are files shown through capacitor://localhost, so 'self'
+         covers them. -->
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="dark" />
+    <title>Flipparr Reader</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/reader-app/main.jsx"></script>
+  </body>
+</html>

@@ -21,6 +21,11 @@
 //                          rounded tile so it reads on either theme.
 //   favicon.ico            the same 32px tile in the container old browsers
 //                          and some crawlers still ask for at /favicon.ico.
+//   Flipparr Reader (ios/App/App/Assets.xcassets):
+//   AppIcon-512@2x.png     the app's one 1024px icon. Opaque and square: iOS
+//                          masks it, and App Store Connect refuses alpha.
+//   splash-2732x2732*.png  the launch screen: the mark small on black, drawn
+//                          aspect-fill, so it sits centred on every screen.
 
 import { chromium } from "playwright";
 import { readFile, writeFile } from "node:fs/promises";
@@ -53,15 +58,25 @@ const ICONS = [
   ["favicon-16.png", 16, { radius: 0.22, inset: 0.84 }],
 ];
 
+const assets = new URL("../ios/App/App/Assets.xcassets/", here);
+const APP = [
+  ["AppIcon.appiconset/AppIcon-512@2x.png", 1024, { radius: 0, inset: 0.72 }],
+  ["Splash.imageset/splash-2732x2732.png", 2732, { radius: 0, inset: 0.16 }],
+  ["Splash.imageset/splash-2732x2732-1.png", 2732, { radius: 0, inset: 0.16 }],
+  ["Splash.imageset/splash-2732x2732-2.png", 2732, { radius: 0, inset: 0.16 }],
+];
+
 const browser = await chromium.launch();
 const page = await browser.newPage({ deviceScaleFactor: 1 });
-for (const [name, size, shape] of ICONS) {
+async function render(folder, [name, size, shape], opaque = false) {
   await page.setViewportSize({ width: size, height: size });
   await page.setContent(tile(size, shape));
-  const png = await page.screenshot({ omitBackground: true, clip: { x: 0, y: 0, width: size, height: size } });
-  await writeFile(new URL(name, brand), png);
+  const png = await page.screenshot({ omitBackground: !opaque, clip: { x: 0, y: 0, width: size, height: size } });
+  await writeFile(new URL(name, folder), png);
   process.stdout.write(`  ${name}\n`);
 }
+for (const icon of ICONS) await render(brand, icon);
+for (const image of APP) await render(assets, image, true);
 await browser.close();
 
 // favicon.ico: one 32px PNG in an ICO container. The header is six bytes, the

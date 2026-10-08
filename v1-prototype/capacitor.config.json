@@ -1,0 +1,13 @@
+{
+  "appId": "com.silenttoots.flipparr.view",
+  "appName": "Flipparr Reader",
+  "webDir": "dist/reader-app",
+  "ios": {
+    "contentInset": "never"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
