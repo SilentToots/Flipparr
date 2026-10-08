@@ -11129,20 +11129,28 @@ export function App() {
   // cancelled a moment before the pop is that gesture; the reader keeps its
   // entry and stays. The close button, Esc, a pull down and a Back with no
   // edge touch behind it still close it.
+  //
+  // An edge touch that ends normally counts too. Since the reader takes a
+  // swipe to the end (2026-10-07), iOS no longer cancels the touch: the
+  // reader turns the page, the finger lifts, and Safari's Back lands after
+  // it. In the iOS 27 simulator a swipe from the edge closed the reader
+  // that way (2026-10-08).
   const edgeTouch = useRef({ startedAt: 0, cancelledAt: 0 });
   useEffect(() => {
     function onPointerDown(event) {
       if (event.pointerType === "mouse") return;
       edgeTouch.current.startedAt = isEdgeTouch(event.clientX, window.innerWidth) ? Date.now() : 0;
     }
-    function onPointerCancel() {
+    function onPointerEnd() {
       if (edgeTouch.current.startedAt) edgeTouch.current.cancelledAt = Date.now();
     }
     window.addEventListener("pointerdown", onPointerDown, { passive: true, capture: true });
-    window.addEventListener("pointercancel", onPointerCancel, { passive: true, capture: true });
+    window.addEventListener("pointercancel", onPointerEnd, { passive: true, capture: true });
+    window.addEventListener("pointerup", onPointerEnd, { passive: true, capture: true });
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, { capture: true });
-      window.removeEventListener("pointercancel", onPointerCancel, { capture: true });
+      window.removeEventListener("pointercancel", onPointerEnd, { capture: true });
+      window.removeEventListener("pointerup", onPointerEnd, { capture: true });
     };
   }, []);
   useEffect(() => {
