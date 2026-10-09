@@ -17,6 +17,12 @@
 // the foreground; the server keeps a replayed save only if nothing newer is
 // stored, so a flight's reading never undoes a later one.
 //
+// Ratings, run and arc marks and reading-list entries work the same way
+// (Phase 5, offline-changes.js): offline, or when the server stops
+// answering, one waits on the device and is answered from it; every answer
+// the screens draw from shows it until it is sent, after the places, with
+// its `at`.
+//
 // Pure apart from what it is given -- the client (server.js), the device
 // store and the profile's downloads -- so tests/reader-app-transport.test.mjs
 // runs it in node.
@@ -24,6 +30,9 @@ import {
   keepsAnswer, mergeProgress, pageListFromRow, panelsFor, progressFromBody, queueDrop, queueSave, readerRoute,
   replayOrder,
 } from "./offline-reading.js";
+import {
+  answerWhileWaiting, changeFor, dropChange, keptPathFor, queueChange, replayRequest, withChanges, withPlaces,
+} from "./offline-changes.js";
 
 /** How long a request waits before the server counts as unreachable. */
 export const REQUEST_TIMEOUT_MS = 15000;
@@ -41,6 +50,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
   let downloads = null;
   let replaying = null;
   let queueChain = Promise.resolve();
+  let changeChain = Promise.resolve();
   const listeners = new Set();
 
   function setOnline(next) {
@@ -67,6 +77,51 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
     });
     queueChain = run.catch(() => {});
     return run;
+  }
+
+  /** The profile's waiting changes, changed one at a time. */
+  function withChangeQueue(change) {
+    const run = changeChain.then(async () => {
+      const queue = await store.changeQueue(profileId);
+      const next = await change(queue);
+      if (next !== queue) await store.saveChangeQueue(profileId, next);
+      return next;
+    });
+    changeChain = run.catch(() => {});
+    return run;
+  }
+
+  /** An answer with the profile's waiting changes, then its waiting places, laid over it. */
+  async function shown(path, answer) {
+    if (profileId === null || answer == null) return answer;
+    const changed = store.changeQueue ? withChanges(path, answer, await store.changeQueue(profileId)) : answer;
+    return withPlaces(path, changed, await store.progressQueue(profileId));
+  }
+
+  /** A change waiting on the device, and what it answers meanwhile. */
+  async function wait(change) {
+    const queue = await withChangeQueue((current) => queueChange(current, change, now()));
+    const keptPath = keptPathFor(change);
+    const kept = keptPath ? await store.answer(profileId, keptPath) : null;
+    return answerWhileWaiting(change, kept, queue);
+  }
+
+  async function sendChange(path, options, change) {
+    if (!online) return wait(change);
+    try {
+      const answer = await send(path, options);
+      setOnline(true);
+      // Said again since: what waited for this thing is older.
+      await withChangeQueue((queue) => dropChange(queue, change.key));
+      return answer;
+    } catch (error) {
+      if (error.network) {
+        setOnline(false);
+        return wait(change);
+      }
+      if (error.status === 401) onLost();
+      throw error;
+    }
   }
 
   function readyRow(fileId) {
@@ -139,9 +194,15 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       try { body = JSON.parse(options.body || "{}"); } catch { body = {}; }
       return saveProgress(path, route.fileId, body);
     }
+    if (method !== "GET" && profileId !== null) {
+      let body = {};
+      try { body = JSON.parse(options.body || "{}"); } catch { body = {}; }
+      const change = changeFor(path, method, body);
+      if (change) return sendChange(path, options, change);
+    }
     if (!online) {
       const answer = method === "GET" ? await fromDevice(path, route) : undefined;
-      if (answer !== undefined) return answer;
+      if (answer !== undefined) return shown(path, answer);
       throw unreachable();
     }
     try {
@@ -150,13 +211,14 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       if (method === "GET" && profileId !== null) {
         if (keepsAnswer(path)) store.saveAnswer(profileId, path, answer).catch(() => {});
         if (route?.kind === "progress") return mergeProgress(await waitingFor(route.fileId), answer);
+        return shown(path, answer);
       }
       return answer;
     } catch (error) {
       if (error.network) {
         setOnline(false);
         const answer = method === "GET" ? await fromDevice(path, route) : undefined;
-        if (answer !== undefined) return answer;
+        if (answer !== undefined) return shown(path, answer);
       }
       if (error.status === 401) onLost();
       throw error;
@@ -186,6 +248,21 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
           await withQueue((queue) => queueDrop(queue, row.fileId, row.at));
           if (error.status === 404) downloads?.remove(row.fileId, "hidden").catch(() => {});
         }
+      }
+      // Then the ratings, marks and reading-list entries, oldest first.
+      if (!store.changeQueue) return;
+      const changes = [...await store.changeQueue(forProfile)].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      for (const row of changes) {
+        if (profileId !== forProfile || !online) return;
+        try {
+          const { path, options } = replayRequest(row);
+          await send(path, options);
+        } catch (error) {
+          if (error.network) { setOnline(false); return; }
+          if (error.status === 401) { onLost(); return; }
+          // Gone or refused: not sendable later either.
+        }
+        await withChangeQueue((queue) => dropChange(queue, row.key, row.at));
       }
     })().finally(() => { replaying = null; });
     return replaying;

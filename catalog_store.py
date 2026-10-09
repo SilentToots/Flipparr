@@ -4065,10 +4065,14 @@ class CatalogStore:
         row = connection.execute(
             "SELECT updated_at FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
         ).fetchone()
-        if row is None:
-            return False
+        return row is not None and CatalogStore._stored_is_newer(row["updated_at"], at)
+
+    @staticmethod
+    def _stored_is_newer(stored: Any, at: str) -> bool:
+        """Whether a stored time is later than a late write's `at`. Compared as
+        times, not strings: `_utc_now()` drops the fraction when it is zero."""
         try:
-            return dt.datetime.fromisoformat(row["updated_at"]) > dt.datetime.fromisoformat(at)
+            return dt.datetime.fromisoformat(stored) > dt.datetime.fromisoformat(at)
         except (TypeError, ValueError):
             return False
 
@@ -5841,11 +5845,19 @@ class CatalogStore:
             )
         return self.user_prefs(user_id)
 
-    def set_rating(self, kind: str, target_id: int, rating: int | None, *, user_id: int) -> dict[str, Any]:
+    def set_rating(
+        self, kind: str, target_id: int, rating: int | None, *, user_id: int, at: str | None = None,
+    ) -> dict[str, Any]:
         """Rate an issue or a run, or take the rating back.
 
         `None` clears it, which is how a star control undoes itself: pressing
         the star you already gave means "actually, no", not "three again".
+
+        `at` is when a rating made offline was given (Flipparr View replays
+        it on reconnecting): it is kept only if the stored rating is not
+        newer, and stored with that time. A cleared rating leaves no row, so
+        a late rating made before a clear elsewhere still lands; that one
+        case is accepted rather than keeping tombstones.
         """
         if kind not in ("issue", "series"):
             raise ValueError("Only an issue or a run can be rated")
@@ -5861,6 +5873,12 @@ class CatalogStore:
             ).fetchone()
             if exists is None:
                 raise LookupError("That is not in the catalog")
+            if at is not None:
+                stored = connection.execute(
+                    f"SELECT rating, updated_at FROM {table} WHERE user_id=? AND {column}=?", (int(user_id), target_id),
+                ).fetchone()
+                if stored is not None and self._stored_is_newer(stored["updated_at"], at):
+                    return {"id": str(target_id), "yourRating": stored["rating"]}
             if rating is None:
                 connection.execute(f"DELETE FROM {table} WHERE user_id=? AND {column}=?", (int(user_id), target_id))
             else:
@@ -5868,7 +5886,7 @@ class CatalogStore:
                     f"""INSERT INTO {table}(user_id, {column}, rating, updated_at) VALUES (?, ?, ?, ?)
                         ON CONFLICT(user_id, {column}) DO UPDATE SET
                             rating=excluded.rating, updated_at=excluded.updated_at""",
-                    (int(user_id), target_id, rating, _utc_now()),
+                    (int(user_id), target_id, rating, at or _utc_now()),
                 )
         return {"id": str(target_id), "yourRating": rating}
 
@@ -7719,8 +7737,14 @@ class CatalogStore:
                     (int(user_id),))]
         return entries
 
-    def set_reading_list_entry(self, user_id: int, kind: str, target_id: int, on: bool) -> None:
-        """Add to, or take off, a profile's reading list. Adding twice keeps the first date."""
+    def set_reading_list_entry(
+        self, user_id: int, kind: str, target_id: int, on: bool, *, at: str | None = None,
+    ) -> None:
+        """Add to, or take off, a profile's reading list. Adding twice keeps the first date.
+
+        `at`, for a change made offline and replayed: a late removal leaves an
+        entry added after it; a late addition is dated `at`. A late addition
+        after a removal elsewhere still lands (no tombstones are kept)."""
         if kind not in self._READING_LIST_KINDS:
             raise ValueError("A reading list holds runs, story arcs and collections")
         table, column, target = self._READING_LIST_KINDS[kind]
@@ -7730,9 +7754,15 @@ class CatalogStore:
                     raise LookupError("That is not in the library")
                 connection.execute(
                     f"INSERT OR IGNORE INTO {table}(user_id, {column}, created_at) VALUES (?, ?, ?)",
-                    (int(user_id), int(target_id), _utc_now()),
+                    (int(user_id), int(target_id), at or _utc_now()),
                 )
             else:
+                if at is not None:
+                    stored = connection.execute(
+                        f"SELECT created_at FROM {table} WHERE user_id=? AND {column}=?", (int(user_id), int(target_id)),
+                    ).fetchone()
+                    if stored is not None and self._stored_is_newer(stored["created_at"], at):
+                        return
                 connection.execute(f"DELETE FROM {table} WHERE user_id=? AND {column}=?", (int(user_id), int(target_id)))
 
     def set_series_run_family(self, series_run_id: int, series_family_id: int | None) -> dict[str, Any]:

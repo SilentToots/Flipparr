@@ -14955,14 +14955,15 @@ def mark_file_read(file_id: int, read: bool, *, user_id: int, at: str | None = N
     return set_file_reading_progress(file_id, len(pages) - 1, 0, user_id=user_id, at=at)
 
 
-def mark_run_reading(series_run_id: int, read: bool, *, user_id: int) -> dict[str, Any]:
+def mark_run_reading(series_run_id: int, read: bool, *, user_id: int, at: str | None = None) -> dict[str, Any]:
     """Mark every comic of a run read or unread for one profile. A file that
     cannot be paged (not an archive, or empty) is passed over rather than
-    stopping the rest; the answer is the run's reading as it now stands."""
+    stopping the rest; the answer is the run's reading as it now stands.
+    `at`, for a mark made offline: each comic keeps a place newer than it."""
     files = catalog_store().run_reading_files(series_run_id)
     for item in [*files.get("issues", []), *files.get("volumes", [])]:
         try:
-            mark_file_read(int(item["id"]), read, user_id=user_id)
+            mark_file_read(int(item["id"]), read, user_id=user_id, at=at)
         except (ValueError, LookupError, OSError):
             continue
     return series_reading(series_run_id, user_id=user_id)
@@ -15693,17 +15694,17 @@ def reading_by_list(
 
 def mark_reading_list_reading(
     list_id: int, read: bool, *, user_id: int, may_see: "Callable[[int], bool] | None" = None,
-    may_see_unrated: bool = True, viewer: "Viewer | None" = None,
+    may_see_unrated: bool = True, viewer: "Viewer | None" = None, at: str | None = None,
 ) -> dict[str, Any]:
     """Mark every comic of an arc this profile may see read or unread, as
-    `mark_run_reading` does for a run."""
+    `mark_run_reading` does for a run (`at` as there)."""
     if not arc_visible_to(catalog_store().reading_list_meta(list_id), viewer):
         raise LookupError("That story arc is not in the library")
     for item in catalog_store().reading_list_files(list_id):
         if not _arc_item_visible(item["runId"], may_see, may_see_unrated):
             continue
         try:
-            mark_file_read(int(item["id"]), read, user_id=user_id)
+            mark_file_read(int(item["id"]), read, user_id=user_id, at=at)
         except (ValueError, LookupError, OSError):
             continue
     return reading_list_detail(list_id, user_id=user_id, may_see=may_see, may_see_unrated=may_see_unrated, viewer=viewer)
@@ -19468,11 +19469,15 @@ class Handler(BaseHTTPRequestHandler):
         if reading_list_add:
             kind, target = reading_list_add.group(1), int(reading_list_add.group(2))
             try:
+                at = reading_time(payload.get("at")) if isinstance(payload, dict) else None
                 if not self._reading_list_visible(kind, target):
                     raise LookupError("That is not in the library")
-                catalog_store().set_reading_list_entry(self._viewer_id(), kind, target, True)
+                catalog_store().set_reading_list_entry(self._viewer_id(), kind, target, True, at=at)
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(catalog_store().reading_list_entries(self._viewer_id()))
             return
@@ -19817,8 +19822,10 @@ class Handler(BaseHTTPRequestHandler):
         if rating_post:
             kind = "issue" if rating_post.group(1) == "issues" else "series"
             try:
+                # Flipparr View's ratings made offline carry when they were given.
                 result = catalog_store().set_rating(
                     kind, int(rating_post.group(2)), payload.get("rating"), user_id=self._viewer_id(),
+                    at=reading_time(payload.get("at")),
                 )
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
@@ -19924,9 +19931,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 result = mark_reading_list_reading(int(reading_list_reading_post.group(1)), payload["read"],
-                                                   user_id=self._viewer_id(), **self._arc_visibility())
+                                                   user_id=self._viewer_id(), at=reading_time(payload.get("at")),
+                                                   **self._arc_visibility())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
             return
@@ -20001,9 +20012,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Say whether the run is read (true) or unread (false)"}, 400)
                 return
             try:
-                result = mark_run_reading(int(series_reading_post.group(1)), payload["read"], user_id=self._viewer_id())
+                result = mark_run_reading(int(series_reading_post.group(1)), payload["read"], user_id=self._viewer_id(),
+                                          at=reading_time(payload.get("at")))
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
             return
@@ -20406,8 +20421,14 @@ class Handler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         reading_list_remove = re.fullmatch(r"/api/v1/me/reading-list/(run|arc|collection)/(\d+)", parsed_url.path)
         if reading_list_remove:
+            # A DELETE has no body: a removal made offline says when in `?at=`.
+            try:
+                at = reading_time((urllib.parse.parse_qs(parsed_url.query).get("at") or [None])[0])
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
             catalog_store().set_reading_list_entry(
-                self._viewer_id(), reading_list_remove.group(1), int(reading_list_remove.group(2)), False)
+                self._viewer_id(), reading_list_remove.group(1), int(reading_list_remove.group(2)), False, at=at)
             self.send_json(catalog_store().reading_list_entries(self._viewer_id()))
             return
         collection_delete = re.fullmatch(r"/api/v1/run-collections/(\d+)", parsed_url.path)

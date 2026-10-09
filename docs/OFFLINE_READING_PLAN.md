@@ -786,6 +786,21 @@ How:
   bookmark should work the same way. They go in the transport's queue,
   each with its `at`; the screen shows the change at once, and the server
   keeps the latest.
+  Built 2026-10-09:
+  - Server: `at` on `POST /issues|series/{id}/rating`, on `POST
+    /me/reading-list/{kind}/{id}` (and `?at=` on its DELETE, which has no
+    body), and on `POST /series/{id}/reading` and `/reading-lists/{id}/reading`,
+    threaded to each comic's progress. A late write is kept only if the
+    stored row is not newer (`CatalogStore._stored_is_newer`). Limit, said
+    in the code: a cleared rating or removed entry leaves no row, so a late
+    rating or addition made before that clear still lands (no tombstones).
+  - App: `src/reader-app/offline-changes.js`, one row per thing changed in
+    `u<id>/change-queue.json`, sent after the places, oldest first. Waiting
+    changes and waiting places are laid over every answer the screens draw
+    from (`withChanges`, `withPlaces`): ratings on the catalog, entries on
+    the reading list, marks on a run's drawer, its arcs and the cards'
+    summaries. Online, a change goes straight to the server and only waits
+    if the server stops answering.
 - `profiles.json` is refreshed from `GET /api/v1/profiles` whenever the
   picker loads online; a profile whose `lock` is no longer `pin` loses its
   `pinHash`.

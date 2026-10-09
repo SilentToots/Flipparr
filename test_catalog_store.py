@@ -4405,6 +4405,43 @@ class ReadingProgressTests(LibraryFixture):
             self.assertIsNone(store.catalog()["series"][0]["issues"][0]["yourRating"])
             self.assertIsNone(store.catalog()["series"][0]["issueRating"])
 
+    def test_a_rating_made_offline_lands_only_if_nothing_newer_is_stored(self):
+        """Flipparr View replays a rating given offline with when it was
+        given: yesterday's stars cannot undo today's from the web."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            issue = int(store.catalog()["series"][0]["issues"][0]["id"])
+            run = self._run_id(store)
+            store.set_rating("issue", issue, 5, user_id=ADMIN_USER_ID)  # now, from the web
+            late = store.set_rating("issue", issue, 2, user_id=ADMIN_USER_ID, at="2026-01-01T10:00:00+00:00")
+            self.assertEqual(late["yourRating"], 5, "the answer is what stands")
+            self.assertEqual(store.catalog()["series"][0]["issues"][0]["yourRating"], 5)
+            # A late clear is older too, so the stars stay.
+            store.set_rating("issue", issue, None, user_id=ADMIN_USER_ID, at="2026-01-01T10:00:00+00:00")
+            self.assertEqual(store.catalog()["series"][0]["issues"][0]["yourRating"], 5)
+            # Nothing stored: a late rating writes, dated when it was given.
+            store.set_rating("series", run, 3, user_id=ADMIN_USER_ID, at="2026-01-01T10:00:00+00:00")
+            self.assertEqual(store.catalog()["series"][0]["yourRating"], 3)
+            # A newer late rating replaces an older one, compared as times.
+            store.set_rating("series", run, 4, user_id=ADMIN_USER_ID, at="2026-01-01T05:30:00.500-05:00")
+            self.assertEqual(store.catalog()["series"][0]["yourRating"], 4)
+
+    def test_a_reading_list_change_made_offline_does_not_undo_a_later_one(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            run = self._run_id(store)
+            store.set_reading_list_entry(ADMIN_USER_ID, "run", run, True)  # added now
+            # Taken off offline yesterday, replayed today: the later add stands.
+            store.set_reading_list_entry(ADMIN_USER_ID, "run", run, False, at="2026-01-01T10:00:00+00:00")
+            self.assertEqual([entry["id"] for entry in store.reading_list_entries(ADMIN_USER_ID)["runs"]], [str(run)])
+            store.set_reading_list_entry(ADMIN_USER_ID, "run", run, False)
+            # Added offline: dated when it was added.
+            store.set_reading_list_entry(ADMIN_USER_ID, "run", run, True, at="2026-01-01T10:00:00+00:00")
+            self.assertEqual(store.reading_list_entries(ADMIN_USER_ID)["runs"][0]["at"], "2026-01-01T10:00:00+00:00")
+            # A late removal newer than the add takes it off.
+            store.set_reading_list_entry(ADMIN_USER_ID, "run", run, False, at="2026-01-02T10:00:00+00:00")
+            self.assertEqual(store.reading_list_entries(ADMIN_USER_ID)["runs"], [])
+
     def test_only_whole_stars_between_one_and_five_are_a_rating(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

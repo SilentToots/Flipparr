@@ -15,6 +15,8 @@ function setup({ reachable = true } = {}) {
       if (path === "/api/v1/catalog") return { series: [{ id: "61" }] };
       if (path === "/api/v1/files/63/progress" && !options.method) return server.progress;
       if (path === "/api/v1/files/99/progress") throw Object.assign(new Error("gone"), { status: 404 });
+      if (path === "/api/v1/issues/5/rating") return { id: "5", yourRating: JSON.parse(options.body).rating };
+      if (path === "/api/v1/series/61/rating" && server.refuseRatings) throw Object.assign(new Error("no"), { status: 404 });
       return { ok: true };
     },
   };
@@ -25,6 +27,8 @@ function setup({ reachable = true } = {}) {
     async answer(id, path) { return files[`a${id}${path}`] ?? null; },
     async saveAnswer(id, path, value) { files[`a${id}${path}`] = value; },
     async panels() { return { 1: { segmented: true, panels: [{ x: 0 }] } }; },
+    async changeQueue(id) { return files[`c${id}`] || []; },
+    async saveChangeQueue(id, queue) { files[`c${id}`] = queue; },
   };
   const removed = [];
   const read = [];
@@ -134,3 +138,59 @@ test("a request can wait less than the usual time, as a launch's check does", as
   assert.equal(transport.online, false, "and the server counts as unreachable");
 });
 
+
+test("a rating made offline waits, shows at once, and is sent with its time on reconnecting", async () => {
+  const { transport, server, sent, files } = setup();
+  files["a2/api/v1/catalog"] = { series: [{ id: "61", yourRating: null, issues: [{ id: "5", yourRating: null }] }] };
+  server.reachable = false;
+  transport.setOffline();
+  assert.deepEqual(await transport.transport("/api/v1/issues/5/rating", save({ rating: 4 })), { id: "5", yourRating: 4 });
+  const catalog = await transport.transport("/api/v1/catalog");
+  assert.equal(catalog.series[0].issues[0].yourRating, 4, "the stars stay as given");
+  assert.equal(files.c2.length, 1);
+  server.reachable = true;
+  await transport.probe();
+  await transport.replay();
+  const replayed = sent.filter((item) => item.path === "/api/v1/issues/5/rating").at(-1);
+  assert.equal(replayed.body.rating, 4);
+  assert.ok(replayed.body.at, "with when it was given");
+  assert.deepEqual(files.c2, [], "and nothing waits");
+});
+
+test("a reading-list entry taken off offline is sent as a DELETE with ?at=", async () => {
+  const { transport, server, sent, files } = setup();
+  files["a2/api/v1/me/reading-list"] = { runs: [{ id: "61", at: "x" }], arcs: [], collections: [] };
+  server.reachable = false;
+  transport.setOffline();
+  const answer = await transport.transport("/api/v1/me/reading-list/run/61", { method: "DELETE" });
+  assert.deepEqual(answer.runs, [], "the list as it now is");
+  assert.deepEqual((await transport.transport("/api/v1/me/reading-list")).runs, []);
+  server.reachable = true;
+  await transport.probe();
+  await transport.replay();
+  assert.match(sent.at(-1).path, /^\/api\/v1\/me\/reading-list\/run\/61\?at=/);
+  assert.equal(sent.at(-1).method, "DELETE");
+});
+
+test("online, a change goes straight to the server and leaves nothing waiting; one the server stops answering waits", async () => {
+  const { transport, server, files } = setup();
+  assert.deepEqual(await transport.transport("/api/v1/issues/5/rating", save({ rating: 2 })), { id: "5", yourRating: 2 });
+  assert.equal(files.c2, undefined);
+  server.reachable = false;
+  const answer = await transport.transport("/api/v1/series/61/reading", save({ read: true }));
+  assert.equal(transport.online, false);
+  assert.equal(files.c2[0].key, "run-read:61");
+  assert.ok(answer, "answered from the device");
+});
+
+test("a waiting change the server refuses is dropped, not retried forever", async () => {
+  const { transport, server, files } = setup();
+  server.reachable = false;
+  transport.setOffline();
+  await transport.transport("/api/v1/series/61/rating", save({ rating: 3 }));
+  server.reachable = true;
+  server.refuseRatings = true;
+  await transport.probe();
+  await transport.replay();
+  assert.deepEqual(files.c2, []);
+});

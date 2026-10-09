@@ -1523,6 +1523,28 @@ class HttpContractTests(unittest.TestCase):
         self.assertEqual(self.post("/api/v1/series/999999/rating", {"rating": 3}).status, 404)
         self.assertEqual(self.post("/api/v1/issues/999999/rating", {"rating": 3}).status, 404)
 
+    def test_ratings_reading_list_and_run_marks_made_offline_carry_their_time(self):
+        """Flipparr View replays these with `at`, as it does a saved place:
+        a late one keeps what is newer, and a time without a zone is refused."""
+        import app as app_module
+
+        run = self._series_run(app_module.catalog_store(), "Offline Marks Contract")
+        self.post(f"/api/v1/series/{run}/rating", {"rating": 5})
+        late = self.post(f"/api/v1/series/{run}/rating", {"rating": 1, "at": "2026-01-01T10:00:00Z"})
+        self.assertEqual(late.status, 200)
+        self.assertEqual(late.json()["yourRating"], 5, "a newer rating stands")
+        self.assertEqual(self.post(f"/api/v1/series/{run}/rating", {"rating": 2, "at": "2026-01-01T10:00:00"}).status, 400)
+
+        self.post(f"/api/v1/me/reading-list/run/{run}", {})
+        kept = self.delete(f"/api/v1/me/reading-list/run/{run}?at=2026-01-01T10:00:00Z")
+        self.assertEqual(kept.status, 200)
+        self.assertEqual([entry["id"] for entry in kept.json()["runs"]], [str(run)], "added since: it stays")
+        self.assertEqual(self.delete(f"/api/v1/me/reading-list/run/{run}?at=yesterday").status, 400)
+        self.assertEqual(self.post(f"/api/v1/me/reading-list/run/{run}", {"at": "soon"}).status, 400)
+
+        self.assertEqual(self.post(f"/api/v1/series/{run}/reading", {"read": True, "at": "2026-01-01T10:00:00"}).status, 400)
+        self.assertEqual(self.post(f"/api/v1/series/{run}/reading", {"read": True, "at": "2026-01-01T10:00:00Z"}).status, 200)
+
     def test_an_unknown_run_has_nothing_to_read(self):
         self.assertEqual(self.get("/api/v1/series/999999/reading").status, 404)
 
