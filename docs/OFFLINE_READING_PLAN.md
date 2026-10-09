@@ -654,11 +654,6 @@ How:
   - Making arcs and collections in the app.
   - A downloaded issue that is in progress still shows "In progress", not
     "Downloaded". Reading state wins the badge.
-  - The reader API contract test (`READER_API_VERSION`) pins the fields of
-    the Phase 2 screens. The shared cards and drawers now read the full
-    catalog and series shape, so a server field change could break the app
-    without bumping the version. Widen the pinned fields, or pin the
-    catalog shape the shared screens read.
 - **Also checked, after review:**
   - The collection and story-arc drawers in the app: Restart and Reading
     state only. Edit, Arrange, Add, Share, Export and Delete are web tools:
@@ -668,6 +663,13 @@ How:
     Switching profiles forgets the last profile's cached answers.
   - Provider covers are fetched without the household's token (`images.js`
     sends it only to the server's own origin).
+  - The reader API contract covers the shared screens (2026-10-08):
+    `test_reader_api_1_keeps_the_shapes_the_shared_screens_read` reads
+    every GET answer they use, as a reader with the app's headers. It keeps
+    each answer's key sets (objects, and the first level of lists and
+    id-keyed maps; 48 shapes) in `reader_api_1_shapes.json`. Adding a key
+    is free. Losing one fails the test, unless READER_API_VERSION is
+    bumped. `FLIPPARR_WRITE_READER_SHAPES=1` records a deliberate addition.
   - The phone (iPhone 18 Pro simulator, portrait): the web's phone layout,
     with a tab bar that hugs Comics and Downloads, centred; the drawer as a
     full page clear of the Dynamic Island.

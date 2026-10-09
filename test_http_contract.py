@@ -2367,6 +2367,101 @@ class ReaderProfileHttpTests(unittest.TestCase):
             panels = self.app_call("GET", f"/api/v1/files/{file_id}/pages/0/panels?vision=no", token=token).json()
         keeps(panels, {"segmented", "panels"}, "/files/{id}/pages/{n}/panels")
 
+    def test_reader_api_1_keeps_the_shapes_the_shared_screens_read(self):
+        """Flipparr View is built from the web app's own cards, shelves and
+        drawers (Phase 3b), which read far more than the fields pinned above:
+        the whole catalog run, its issues and files, story arcs, collections,
+        the reading list and the shelves. An installed app may be older than
+        its server, so each answer they read keeps every key it has today --
+        objects, and the first level of their lists and id-keyed maps -- in
+        reader_api_1_shapes.json. Adding a key is free; taking one away is a
+        READER_API_VERSION bump. Run with FLIPPARR_WRITE_READER_SHAPES=1 to
+        record a deliberate addition."""
+        store, run = self._library_of_one_run()
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        comic = root / "Example 001.cbz"
+        with zipfile.ZipFile(comic, "w") as archive:
+            archive.writestr("01.jpg", _png_bytes())
+            archive.writestr("02.jpg", _png_bytes())
+            archive.writestr("03.jpg", _png_bytes())
+        with sqlite3.connect(store.database_path) as connection:
+            file_id = connection.execute("SELECT id FROM files WHERE path=?", (str(comic),)).fetchone()[0]
+            # As a rescan would record it, so its place is not stale and the
+            # run's and the arc's reading maps have an entry to pin.
+            stat = comic.stat()
+            connection.execute("UPDATE files SET mtime_ns=?, size_bytes=? WHERE id=?", (stat.st_mtime_ns, stat.st_size, file_id))
+        sam = self._household_with_a_reader()
+        switched = self.app_call("POST", "/api/v1/profiles/switch", {"userId": sam})
+        token, device = self.header(switched, "Flipparr-Session"), self.header(switched, "Flipparr-Device")
+
+        def ok(response, where):
+            self.assertIn(response.status, (200, 201), f"{where}: {response.status} {response.body[:200]}")
+            return response.json()
+
+        # What a reader's library holds: a place, a reading-list entry, a
+        # collection and a story arc of their own.
+        issue_id = next(issue["id"] for issue in ok(self.app_call("GET", "/api/v1/catalog", token=token), "catalog")["series"][0]["issues"]
+                        if str(issue.get("fileId")) == str(file_id))
+        ok(self.app_call("POST", f"/api/v1/files/{file_id}/progress", {"page": 1}, token=token), "progress")
+        ok(self.app_call("POST", f"/api/v1/me/reading-list/run/{run}", {}, token=token), "reading list")
+        ok(self.app_call("POST", "/api/v1/run-collections", {"name": "Weekend reads", "seriesIds": [str(run)]}, token=token), "collection")
+        arc = ok(self.app_call("POST", "/api/v1/reading-lists/manual", {"name": "Harbor nights", "issueIds": [str(issue_id)]}, token=token), "arc")
+
+        answers = {}
+        with patch("app._provider_credential", side_effect=ValueError("not configured")), \
+                patch("app.reading_cache_dir", return_value=root.parent / "reading-cache"), \
+                patch("app.file_page_panels", return_value={"fileId": str(file_id), "page": 0, "segmented": False,
+                                                            "readingDirection": "ltr", "panels": []}):
+            for name, path, extra in (
+                ("auth/status", "/api/v1/auth/status", {}),
+                ("me", "/api/v1/me", {}),
+                ("profiles", "/api/v1/profiles", {"device": device}),
+                ("catalog", "/api/v1/catalog", {}),
+                ("reading", "/api/v1/reading", {}),
+                ("reading/runs", "/api/v1/reading/runs", {}),
+                ("reading/lists", "/api/v1/reading/lists", {}),
+                ("reading-lists", "/api/v1/reading-lists", {}),
+                ("reading-lists/{id}", f"/api/v1/reading-lists/{arc['id']}", {}),
+                ("me/reading-list", "/api/v1/me/reading-list", {}),
+                ("series/{id}/reading", f"/api/v1/series/{run}/reading", {}),
+                ("series/{id}/synopsis", f"/api/v1/series/{run}/synopsis", {}),
+                ("issues/{id}/detail", f"/api/v1/issues/{issue_id}/detail", {}),
+                ("files/{id}/pages", f"/api/v1/files/{file_id}/pages", {}),
+                ("files/{id}/progress", f"/api/v1/files/{file_id}/progress", {}),
+                ("files/{id}/pages/{n}/panels", f"/api/v1/files/{file_id}/pages/0/panels?vision=no", {}),
+                ("files/{id}/offline", f"/api/v1/files/{file_id}/offline", {}),
+            ):
+                answers[name] = ok(self.app_call("GET", path, token=None if extra else token, **extra), name)
+
+        def shape(value, path, out, depth=0):
+            """Every object's keys at its path; a list's or an id-keyed map's
+            elements share one path, their keys together."""
+            if isinstance(value, dict):
+                if value and all(str(key).isdigit() for key in value):
+                    for child in value.values():
+                        shape(child, f"{path}{{}}", out, depth)
+                    return
+                out.setdefault(path, set()).update(value)
+                if depth < 3:
+                    for key, child in value.items():
+                        shape(child, f"{path}.{key}", out, depth + 1)
+            elif isinstance(value, list):
+                for child in value:
+                    shape(child, f"{path}[]", out, depth)
+
+        found = {}
+        for name, answer in answers.items():
+            shape(answer, name, found)
+        pinned_file = Path(__file__).with_name("reader_api_1_shapes.json")
+        if os.environ.get("FLIPPARR_WRITE_READER_SHAPES"):
+            kept = json.loads(pinned_file.read_text()) if pinned_file.exists() else {}
+            merged = {path: sorted(set(kept.get(path, [])) | keys) for path, keys in found.items()}
+            pinned_file.write_text(json.dumps(dict(sorted(merged.items())), indent=1) + "\n")
+        pinned = json.loads(pinned_file.read_text())
+        lost = {path: sorted(set(keys) - found.get(path, set())) for path, keys in pinned.items()
+                if set(keys) - found.get(path, set())}
+        self.assertEqual(lost, {}, "keys Flipparr View may read are gone: bump READER_API_VERSION or bring them back")
+
     def test_the_server_keeps_what_each_device_downloaded(self):
         store, run = self._library_of_one_run()
         root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
