@@ -273,7 +273,7 @@ export function issueCardLabel(issue, medium) {
 /** On this profile's reading list, or not: the bookmark, as Plex's watchlist. */
 /**
  * The drawer's Read button, with Download for the whole run, story arc or
- * collection to its left (the host's `groupDownload`: Flipparr View's,
+ * collection to its right (the host's `groupDownload`: Flipparr View's,
  * Phase 6; the owner, 2026-10-09). Where the host gives none -- the web --
  * this is the Read button alone, exactly as before.
  */
@@ -282,11 +282,11 @@ export function ReadWithDownload({ group, children }) {
   const state = describe && group ? describe(group) : null;
   if (!state) return children;
   return <div className="comic-drawer-read-row">
+    {children}
     <button type="button" className={`secondary-button comic-drawer-download${state.done ? " done" : ""}`}
       aria-busy={state.busy || undefined} aria-label={state.label} title={state.label} onClick={state.onPress}>
       {state.busy ? <LoadingSpinner size={20} /> : state.done ? <CheckCircle size={24} weight="fill" /> : <DownloadSimple size={24} />}
     </button>
-    {children}
   </div>;
 }
 

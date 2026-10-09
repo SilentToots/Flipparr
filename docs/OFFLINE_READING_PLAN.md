@@ -881,7 +881,7 @@ How:
   applies at the next download.
 - Built 2026-10-09 (iPad QA pending):
   - Host slots `groupDownload(group)` and `issueDownload(issue)` (host.js).
-    `ReadWithDownload` puts a round Download left of the drawer's Read
+    `ReadWithDownload` puts a round Download right of the drawer's Read
     button in the run, story arc and collection drawers (the owner moved it
     there from beside the bookmark, 2026-10-09). Each issue tile has a control at its top right, and
     each row one beside the menu, always shown: download, a spinner while it
