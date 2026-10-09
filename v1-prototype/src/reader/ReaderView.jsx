@@ -517,6 +517,9 @@ export function ReaderView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The page's panels, being corrected by hand over the page itself.
   const [fixingPanels, setFixingPanels] = useState(false);
+  // The host can take panel fixing away while the editor is open: Flipparr
+  // View does when the server stops answering, as a fix saves to it.
+  const canFixPanels = useHost().canEditPanels;
   // Reading an issue's panels again: the comic's automatic readings are
   // forgotten on the server (a person's pages stay theirs) and the reader's
   // own map emptied, so each page is read afresh as it is reached -- for a
@@ -1421,7 +1424,7 @@ export function ReaderView({
       onReadAgain={readPanelsAgain}
       onClose={() => setSettingsOpen(false)} /> : null}
 
-    {fixingPanels && pages.list[index] ? <PanelEditor fileId={fileId} count={count} pages={pages.list} startPage={index} readings={panels} direction={direction}
+    {fixingPanels && canFixPanels && pages.list[index] ? <PanelEditor fileId={fileId} count={count} pages={pages.list} startPage={index} readings={panels} direction={direction}
       onSaved={(number, data) => setPanels((current) => ({ ...current, [number]: data }))}
       onClose={(number) => {
         // The reader picks up where the editor left off, from the first

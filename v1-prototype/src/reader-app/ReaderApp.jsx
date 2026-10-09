@@ -506,7 +506,10 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // downloads, or once it is here, where the tile has nothing else to say.
   const host = useMemo(() => ({
     api: apiRequest,
-    canEditPanels: false,
+    // Panel fixes as on the web (the admin's), and only while Flipparr
+    // answers: a fix saves to the server as it is made (the owner,
+    // 2026-10-09; fixes made offline and sent later are a later step).
+    canEditPanels: online && viewer.role === "admin",
     canManage: false,
     pageSource,
     issueExtras: (issue) => {
@@ -545,7 +548,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       })),
     }] : []),
   // downloadVersion: the menu and badge follow the downloads as they change.
-  }), [pageSource, downloads, downloadVersion, showToast, online]);
+  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role]);
 
   const header = useMemo(() => ({
     profile: {
