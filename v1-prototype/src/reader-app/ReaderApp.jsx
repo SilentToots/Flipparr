@@ -289,7 +289,7 @@ export function ReaderApp() {
     }} />;
   }
   if (phase === "picker") {
-    return <PickerScreen client={client} current={status?.viewer?.id ?? null} ask={asking}
+    return <PickerScreen client={client} current={status?.viewer?.id ?? null} ask={asking} online={online}
       onClose={status?.viewer ? () => { setAsking(null); setPhase("ready"); } : null}
       onSwitched={async () => settle(client, await client.api("/api/v1/auth/status"))}
       onSwitchedOffline={async (answer) => {
@@ -345,7 +345,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     const onVisible = () => { if (document.visibilityState === "visible" && transport?.online) checkDownloads(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  });
+  // checkDownloads reads only these.
+  }, [downloads, transport]);
   useEffect(() => {
     // Removals that waited for the server, from the last time it was away.
     if (online) { downloads.flushRemovals().catch(() => {}); checkDownloads(); }
@@ -667,7 +668,7 @@ function SignInScreen({ client, onSignedIn, onForget }) {
 // profile used on this iPad before opens with its own kept session -- its
 // PIN checked against the hash kept after the server last accepted it
 // (offline-pin.js); a password-locked profile waits for Flipparr.
-function PickerScreen({ client, current, ask = null, onClose, onSwitched, onSwitchedOffline, onForget }) {
+function PickerScreen({ client, current, online = true, ask = null, onClose, onSwitched, onSwitchedOffline, onForget }) {
   const [profiles, setProfiles] = useState(null);
   const [offline, setOffline] = useState(false);
   const [asking, setAsking] = useState(null);
@@ -679,6 +680,8 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched, onSwit
     let live = true;
     (async () => {
       const kept = await deviceStore.profiles();
+      // Known to be offline: the kept list at once, not after the network gives up.
+      if (!online && kept.length) { if (live) { setOffline(true); setProfiles(kept); } return; }
       try {
         const data = await client.api("/api/v1/profiles");
         const merged = mergeProfiles(kept, data.profiles || []);

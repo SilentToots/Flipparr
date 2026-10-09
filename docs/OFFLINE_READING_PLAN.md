@@ -845,6 +845,10 @@ How:
   - Open: a profile's waiting changes and places are sent only when that
     profile is next active online; sending every profile's with its kept
     session on reconnect is a follow-up.
+  - Open: one issue marked read offline shows on its row in the run's
+    drawer and its arcs, but the run's card count and Read badge
+    (`/reading/runs`) catch up only on reconnecting; a whole run marked
+    does update the card.
 
 ### Phase 6 — run and arc downloads, eviction (1–2 sessions)
 - **The owner, testing on his iPad (2026-10-09):** Download is buried
