@@ -15,7 +15,7 @@ import { READING_STATES } from "../reading-target.js";
 import { collectionsFor } from "../run-collections.js";
 import { orderedCreators, relatedRuns } from "../run-details.js";
 
-import { ComicDrawerCreators, ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTopBar, GroupDownloadButton, ReadRunButton, ReadingListToggle, RunSynopsis, StarRating, toneProps, useArtTone } from "./frame.jsx";
+import { ComicDrawerCreators, ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTopBar, ReadRunButton, ReadWithDownload, ReadingListToggle, RunSynopsis, StarRating, toneProps, useArtTone } from "./frame.jsx";
 import { CollectionCoverage, CollectionManagement, EDIT_SECTIONS, FileInventory, GroupedIssueInventory, IssueCatalogCard, SeriesEditPanel, VolumeInventory } from "./inventory.jsx";
 import { ArrowCounterClockwise, ArrowLeft, ArrowsClockwise, Books, Check, Hourglass, ImageSquare, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
 import { useManages, useImageSrc } from "../host.js";
@@ -202,7 +202,6 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
       onBack={edit !== null ? () => setEdit(edit ? "" : null) : parentCollection ? onBack : undefined}
       stacked={edit !== null}
       closeLabel="Close series details">
-      {edit === null ? <GroupDownloadButton group={{ kind: "run", id: String(series.id), title: series.title }} /> : null}
       {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "run", series.id)} title={series.title}
         onChange={(on) => onToggleReadingList("run", series.id, on)} /> : null}
       {edit === null && admin ? <>
@@ -263,7 +262,9 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
       />
     </div> : <>
     <div className="comic-drawer-actions">
-      <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead} />
+      <ReadWithDownload group={{ kind: "run", id: String(series.id), title: series.title }}>
+        <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead} />
+      </ReadWithDownload>
     </div>
     <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>

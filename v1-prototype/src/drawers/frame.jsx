@@ -272,19 +272,22 @@ export function issueCardLabel(issue, medium) {
  */
 /** On this profile's reading list, or not: the bookmark, as Plex's watchlist. */
 /**
- * Download for a whole run, story arc or collection, beside the bookmark and
- * shaped like it (the host's `groupDownload`: Flipparr View's; the web gives
- * none, and this draws nothing).
+ * The drawer's Read button, with Download for the whole run, story arc or
+ * collection to its left (the host's `groupDownload`: Flipparr View's,
+ * Phase 6; the owner, 2026-10-09). Where the host gives none -- the web --
+ * this is the Read button alone, exactly as before.
  */
-export function GroupDownloadButton({ group }) {
+export function ReadWithDownload({ group, children }) {
   const describe = useContext(Host)?.groupDownload;
-  const state = describe ? describe(group) : null;
-  if (!state) return null;
-  return <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${state.done ? " active" : ""}`}
-    aria-busy={state.busy || undefined} aria-label={state.label} title={state.label} onClick={state.onPress}>
-    {state.busy ? <LoadingSpinner size={18} /> : state.done ? <CheckCircle size={20} weight="fill" /> : <DownloadSimple size={20} />}
-    <b>{state.busy ? "Downloading" : state.done ? "Downloaded" : "Download"}</b>
-  </button>;
+  const state = describe && group ? describe(group) : null;
+  if (!state) return children;
+  return <div className="comic-drawer-read-row">
+    <button type="button" className={`secondary-button comic-drawer-download${state.done ? " done" : ""}`}
+      aria-busy={state.busy || undefined} aria-label={state.label} title={state.label} onClick={state.onPress}>
+      {state.busy ? <LoadingSpinner size={20} /> : state.done ? <CheckCircle size={24} weight="fill" /> : <DownloadSimple size={24} />}
+    </button>
+    {children}
+  </div>;
 }
 
 export function ReadingListToggle({ on, title, onChange, className = "glass-button glass-button--icon comic-drawer-follow-button", label = false }) {

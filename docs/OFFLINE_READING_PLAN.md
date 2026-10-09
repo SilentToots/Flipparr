@@ -881,8 +881,9 @@ How:
   applies at the next download.
 - Built 2026-10-09 (iPad QA pending):
   - Host slots `groupDownload(group)` and `issueDownload(issue)` (host.js).
-    `GroupDownloadButton` sits beside the bookmark in the run, story arc and
-    collection drawers. Each issue tile has a control at its top right, and
+    `ReadWithDownload` puts a round Download left of the drawer's Read
+    button in the run, story arc and collection drawers (the owner moved it
+    there from beside the bookmark, 2026-10-09). Each issue tile has a control at its top right, and
     each row one beside the menu, always shown: download, a spinner while it
     downloads, a green check once here. The "Downloaded" mark beside the
     number is gone, as the control says it. The web draws none of these

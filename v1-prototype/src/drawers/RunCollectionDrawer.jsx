@@ -10,7 +10,7 @@ import { EMPTY_ENTRIES, isOnReadingList } from "../reading-list-tab.js";
 import { groupOwnerLine } from "../reading-list.js";
 import { readingVerb } from "../reading-target.js";
 import { COLLECTION_SORTS, collectionReadTarget } from "../run-collections.js";
-import { ComicDrawerRow, ComicDrawerRunCard, DrawerTabs, DrawerTopBar, GroupDownloadButton, ReadRunButton, ReadingListToggle, RunSynopsis, toneProps, useArtTone, useRunReading } from "./frame.jsx";
+import { ComicDrawerRow, ComicDrawerRunCard, DrawerTabs, DrawerTopBar, ReadRunButton, ReadWithDownload, ReadingListToggle, RunSynopsis, toneProps, useArtTone, useRunReading } from "./frame.jsx";
 import { BackdropPicker, GroupArrange, GroupArrangeCard, GroupCoverPicker, GroupDeleteCard, GroupEditScreen, GroupReadingCards, GroupShareCard, RunCollectionRow, useGroupBackdrop } from "./groups.jsx";
 
 import { ImageSquare, PencilSimple, Plus } from "@phosphor-icons/react";
@@ -124,7 +124,6 @@ export function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_
         onBack={edit !== null ? () => setEdit(edit && edit !== "arrange" ? "" : null) : undefined}
         stacked={edit !== null}
         closeLabel="Close collection">
-        {edit === null ? <GroupDownloadButton group={{ kind: "collection", id: String(card.id), title: card.name, runIds: (card.runIds || []).map(String) }} /> : null}
         {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "collection", card.id)} title={card.name}
           onChange={(on) => onToggleReadingList("collection", card.id, on)} /> : null}
         {edit === null && canEdit ? <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => { setError(""); setEdit(""); }} aria-label={`Edit ${card.name}`} title="Edit"><PencilSimple size={20} /></button> : null}
@@ -168,7 +167,9 @@ export function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_
         </> : null}
       </div> : <>
         {readRun && readTarget?.runId === String(readRun.id) && readingVerb(readTarget.resume) && onRead ? <div className="comic-drawer-actions">
-          <ReadRunButton reading={readTarget} title={readRun.title} medium={readRun.medium} onRead={onRead} />
+          <ReadWithDownload group={{ kind: "collection", id: String(card.id), title: card.name, runIds: (card.runIds || []).map(String) }}>
+            <ReadRunButton reading={readTarget} title={readRun.title} medium={readRun.medium} onRead={onRead} />
+          </ReadWithDownload>
         </div> : null}
         <DrawerTabs tabs={tabs} tab={tab} onTab={setTab} label="Collection details" tabsRef={tabsRef} glass={tabGlass} />
         <div className="comic-drawer-body" key={tab}>
