@@ -1,1 +1,6 @@
 CAPACITOR_DEBUG = true
+
+// The owner's signing team, for builds on a real device: DEVELOPMENT_TEAM in
+// ios/Signing.local.xcconfig, which git ignores (never in the repo). Without
+// it, simulator builds work as before.
+#include? "Signing.local.xcconfig"

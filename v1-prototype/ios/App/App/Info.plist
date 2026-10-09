@@ -6,6 +6,8 @@
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Flipparr View reaches your Flipparr server when it is on your home network.</string>
 	<key>CFBundleDisplayName</key>
         <string>Flipparr View</string>
 	<key>CFBundleExecutable</key>
