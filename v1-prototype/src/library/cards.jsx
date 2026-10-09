@@ -2,11 +2,12 @@ import { CoverArt, SeriesCover } from "../components/CoverArt.jsx";
 import { StatusBadge } from "../components/StatusBadge";
 import { ActiveRunIcon, CollectionIcon, FollowedIcon } from "../design-icons.jsx";
 import { issueLabel } from "../discover.js";
-import { isAdmin } from "../profiles.js";
+
 import { arcMaker, arcOwnerLine, arcYears } from "../reading-list.js";
 import { collectionReadTarget, countsLine } from "../run-collections.js";
-import { useViewer } from "../viewer.js";
+
 import { BookOpen, Check, CheckCircle, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
+import { useManages } from "../host.js";
 
 export function publicationState(series) {
   const state = series?.publicationStatus || "unknown";
@@ -52,7 +53,7 @@ export function Ownership({ series, compact = false }) {
   // "Match needs attention" is the admin's to act on. A reader sees what is
   // owned -- as a count alone, since a run waiting on its match has no total
   // to trust yet.
-  const admin = isAdmin(useViewer());
+  const admin = useManages();
   const reviewing = series.status === "warning" && admin;
   const catalogUnknown = series.catalogKnown === false || series.status === "unknown" || (series.status === "warning" && !admin);
   const volumeCount = series.inventory?.editionCount || 0;

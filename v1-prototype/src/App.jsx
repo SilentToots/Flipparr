@@ -8,13 +8,10 @@ import {
   Hourglass,
   ArrowsClockwise,
   ArrowCounterClockwise,
-  ArrowLineDown,
-  ArrowLineUp,
   DownloadSimple,
   ListNumbers,
   ListPlus,
   CaretRight,
-  CaretUpDown,
   Heartbeat,
   LockSimple,
   Sparkle,
@@ -22,7 +19,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
-  ImageSquare,
   Books,
   CaretDown,
   Trash,
@@ -31,15 +27,12 @@ import {
   Copy,
   ClockCounterClockwise,
   CloudArrowDown,
-  DotsSixVertical,
   Database,
-  DotsThree,
   Eye,
   FolderOpen,
   Gear,
   Info,
   Pulse,
-  Star,
   HardDrive,
   ListBullets,
   ListChecks,
@@ -50,8 +43,7 @@ import {
   SignOut,
   UploadSimple,
   WarningCircle,
-  X,
-} from "@phosphor-icons/react";
+  X } from "@phosphor-icons/react";
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
@@ -59,20 +51,19 @@ import { SettingsCard, Toggle } from "./components/SettingsControls.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "./components/ProfileTiles.jsx";
 import {
   DialogCloseButton, SheetGrabber, closeTopDialog, dialogLeftByBack, dialogMarks, isPhoneWidth, openDialogs,
-  slideSheetAway, useDialog, useDrawerExit, useExternalDismiss, usePhoneWidth, useSwipeToDismiss,
-} from "./dialogs.jsx";
+  slideSheetAway, useDialog, useDrawerExit, usePhoneWidth, useSwipeToDismiss } from "./dialogs.jsx";
 import { ReaderView } from "./reader/ReaderView.jsx";
 import { historyStep } from "./history-step.js";
 import { Host } from "./host.js";
-import { listCard, communityListLine, arcMatches, arcYears, nextInList, skippedLine, foldArcRuns, arcOwnerLine, groupOwnerLine, groupsToAddTo, ARC_SORTS, moveToEdge, issuesInRange } from "./reading-list.js";
+import { apiRequest, forgetAnswers, lastAnswer, rememberAnswer } from "./api.js";
+import { listCard, communityListLine, arcMatches, arcYears, foldArcRuns, groupOwnerLine, groupsToAddTo, issuesInRange } from "./reading-list.js";
 import { jobsNeedingAttention, jobHasFailed } from "./nav-counts.js";
 import { agoPhrase, coolingProviders, formatBytes, problemTitle, scanBadge, waitingWork, workerAdvice, workerBadge } from "./system-status.js";
-import { artTone } from "./art-tone.js";
+
 import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList, isWorking, jobsForTab, releaseSearchSummary, tabCount, waitingIssues, RECENT_ARRIVAL_DAYS, takeAnywayCopy, releaseSendLabel, releaseTransport, downloadStateLabel, sourceOrder, sourceRows, groupServices } from "./pull-list.js";
 import {
-  needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, bellCount, timeAgo,
-} from "./notifications.js";
-import { creatorRoleLabel, orderedCreators, relatedRuns, arcPublisher } from "./run-details.js";
+  needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, bellCount, timeAgo } from "./notifications.js";
+import { arcPublisher } from "./run-details.js";
 import { nextTabBarState, canTuck } from "./tab-bar.js";
 import { countUpDuration, countUpValue } from "./count-up.js";
 import { isEdgeTouch, isStolenBack, PULL_REFRESH_PX } from "./reader.js";
@@ -82,29 +73,35 @@ import {
   ComicsIcon, DiscoverIcon, PullListIcon,
   GridViewIcon, ListViewIcon, FollowingIcon,
   ActiveRunIcon, FollowedIcon, SettingsNavIcon,
-  PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, DrawerCloseIcon, CollectionIcon, ReadingListIcon,
-} from "./design-icons.jsx";
-import { readingVerb, readingNoun, readingAriaLabel, READING_STATES } from "./reading-target.js";
+  PullIcon, ShelfBackIcon, ShelfNextIcon, ClearSearchIcon, CollectionIcon, ReadingListIcon } from "./design-icons.jsx";
+
 import { SORT_OPTIONS, LIBRARY_DEFAULTS, sortLibrary, inProgress, loadLibraryPrefs, saveLibraryPrefs } from "./library.js";
-import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, nextProfileColour, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, ratingSource, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
+import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, nextProfileColour, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { ratingRows, limitedProfiles, filterRatingRows, publisherChoices, ratingNote, ratingOutcome } from "./rating-review.js";
 import { keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, localDay } from "./recommended.js";
-import { collectionCards, libraryGridOrder, collectionsFor, collectionMatches, moveRun, collectionReadTarget, collectionPlaces, COLLECTION_SORTS } from "./run-collections.js";
-import { EMPTY_ENTRIES, isOnReadingList, withEntry, readingListItems, sortReadingList } from "./reading-list-tab.js";
-import { READING_DIRECTIONS } from "./reader.js";
-import { RATING_SOURCES, runRating, filledStars, ratingForPress, ratingLabel } from "./ratings.js";
+import { collectionCards, libraryGridOrder, collectionMatches, collectionPlaces } from "./run-collections.js";
+import { EMPTY_ENTRIES, withEntry, readingListItems, sortReadingList } from "./reading-list-tab.js";
+
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, READER_PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
-  runModes, completeRunToPull, issueLabel, libraryRunMatches,
-} from "./discover.js";
+  runModes, completeRunToPull, issueLabel, libraryRunMatches } from "./discover.js";
 import { requestKey, waitingKeys, runRequested, requestScope, adminQueue, isFollow, swipeDecision, ratingTone, UNDO_MS, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
 import { ViewerContext, useViewer } from "./viewer.js";
 import { CoverArt, DiscoverCover, SeriesCover } from "./components/CoverArt.jsx";
 import { ArcGrid, CollectionCard, MonitoringStatus, Ownership, PublicationStatus, SeriesList, arcOwnership, publicationState } from "./library/cards.jsx";
 import { AlphaRail } from "./library/AlphaRail.jsx";
 import { LibraryShelf, useShelfPaging } from "./library/shelves.jsx";
+import { GlassSegmented, GlassSelect, LoadingSpinner, useGlassIndicator } from "./components/glass.jsx";
+import { FinishDrawer } from "./drawers/FinishDrawer.jsx";
+import { ReadingListDrawer } from "./drawers/ReadingListDrawer.jsx";
+import { RunCollectionDrawer } from "./drawers/RunCollectionDrawer.jsx";
+import { SeriesDrawer } from "./drawers/SeriesDrawer.jsx";
+import { ComicDrawerCreators, ComicDrawerRow, ComicDrawerRunCard, DiscoverDrawerHero, DrawerPrimary, DrawerTabs, FollowSwitch, ProviderCredit, PullCardSkeleton, RunSynopsis, formatLongDate, toneProps, useArtTone, useRunReading } from "./drawers/frame.jsx";
+import { BackdropPicker, CoverPicker, DragOrderList } from "./drawers/groups.jsx";
+import { ActionMenu, GroupedIssueInventory, downloadFrom } from "./drawers/inventory.jsx";
+import { CollectedEditionsContext, EDITION_KIND_LABELS, editionKindLabel, identityKey, volumeTerminology } from "./editions.js";
 
 const NAV_ITEMS = [
   // Above 640px only, as the Apple TV app's sidebar leads with Search: its
@@ -162,17 +159,6 @@ const DEMO_META_ITEMS = [
   { file: "nightshift_vol2.cbz", issue: "Conflicting volume metadata", detail: "The filename and external catalog disagree with ComicInfo.xml.", severity: "warning", category: "metadata", code: "metadata_conflict" },
 ];
 
-const EDITION_KIND_LABELS = {
-  omnibus: "Omnibus",
-  compendium: "Compendium",
-  deluxe_edition: "Deluxe volume",
-  graphic_novel: "Graphic novel",
-  hardcover: "Hardcover",
-  collected_volume: "Collected volume",
-  collection: "Collected volume",
-  edition: "Volume",
-};
-
 const ACQUISITION_LABELS = {
   volumes: "Volumes preferred",
   issues: "Single issues preferred",
@@ -198,17 +184,6 @@ const DOWNLOAD_STATUS_LABELS = {
   imported: "Added to library",
   failed: "Import needs attention",
 };
-
-function editionKindLabel(kind) {
-  return EDITION_KIND_LABELS[kind] || "Volume";
-}
-
-// Collected editions are always catalogued; this flag only gates the surfaces
-// for browsing and managing them (the Volumes tab, its stats, and editing an
-// edition's issue contents). Wording is deliberately unchanged: a trade or
-// hardcover is still a volume, and the files stay visible and fixable either
-// way — the user just isn't offered edition management.
-const CollectedEditionsContext = createContext(false);
 
 // Browser storage is the profile's own (profiles.js). Which profile was last
 // reading on this device is known before anything renders, so the first
@@ -250,7 +225,7 @@ async function syncReaderPrefs() {
 // the one sure way that nothing -- a cached answer, an open drawer, a
 // component's state -- carries one profile's library into another's.
 function enterProfile(viewerId) {
-  LAST_ANSWERS.clear();
+  forgetAnswers();
   try {
     if (viewerId) {
       window.localStorage.setItem(VIEWER_CACHE_KEY, String(viewerId));
@@ -264,10 +239,6 @@ function enterProfile(viewerId) {
   window.location.reload();
 }
 
-function useCollectedEditions() {
-  return useContext(CollectedEditionsContext);
-}
-
 // What every page header needs from the app and no page owns: the bell's
 // notifications, and the app's search -- the current query and where a
 // search goes.
@@ -277,16 +248,6 @@ function HeaderBell() {
   const header = useContext(HeaderContext);
   if (!header) return null;
   return <NotificationsBell bell={header.bell} />;
-}
-
-
-function volumeTerminology(value) {
-  if (!value) return value;
-  return String(value)
-    .replace(/collected[- ]editions/gi, "volumes")
-    .replace(/collected[- ]edition/gi, "volume")
-    .replace(/collection (coverage|contents|identity|source)/gi, "volume $1")
-    .replace(/file edition/gi, "file volume");
 }
 
 function parseIssueInput(value) {
@@ -300,13 +261,6 @@ function parseIssueInput(value) {
     for (let issue = start; issue <= end; issue += 1) issues.push(String(issue));
   }
   return [...new Set(issues)];
-}
-
-function identityKey(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, "");
 }
 
 function familyRepresentsSeries(family) {
@@ -372,98 +326,6 @@ function logicalCatalogSeries(catalog, fallback = []) {
   ].sort((a, b) => a.title.localeCompare(b.title));
 }
 
-// What each GET last answered, for a view coming back: a tab switch unmounts
-// the view it leaves, and a view mounting with nothing showed its skeleton
-// while it asked again for what it had a moment ago -- the Comics grid, the
-// release shelves, the settings toggles. Seeded from here, it draws at once
-// with the last answer and refreshes behind it.
-const LAST_ANSWERS = new Map();
-function lastAnswer(path) { return LAST_ANSWERS.get(path) ?? null; }
-
-async function apiRequest(path, options) {
-  const response = await fetch(path, options);
-  const payload = await response.json();
-  if (response.ok && (!options?.method || options.method === "GET")) LAST_ANSWERS.set(path, payload);
-  if (!response.ok) {
-    const error = new Error(payload.error || `Request failed (${response.status})`);
-    // Carry the status alongside the message. Callers need to tell "you are
-    // signed out" apart from "the backend is down", and the message alone
-    // cannot do that -- the server sends readable prose, not a status code.
-    error.status = response.status;
-    // And the whole answer: a refusal can name what already exists.
-    error.payload = payload;
-    // Why, when the server says: "profile_required" asks for the picker.
-    error.reason = payload.reason || "";
-    throw error;
-  }
-  return payload;
-}
-
-// One glass pill that slides to whichever item is selected, as iOS does,
-// rather than each item lighting up on its own. It is measured before paint so
-// it never lands late, and only animates once it has a position to animate
-// from. The phone's tab bar and the comic drawer's tabs share it.
-// A damped spring, sampled into a CSS linear() curve.
-//
-// iOS's motion is spring based rather than bezier: it carries past its target
-// and settles back, which no cubic-bezier can say. linear() can, by naming
-// enough points along the real curve. Apple's own tab bar is quoted around
-// response 0.3 with a damping fraction near 0.6; this is a little stiffer, so
-// the pill settles rather than wobbles.
-const GLASS_SPRING_DURATION = 460;
-
-function springEasing(response = 0.3, damping = 0.66, samples = 40) {
-  const omega = (2 * Math.PI) / response;
-  const omegaDamped = omega * Math.sqrt(1 - damping * damping);
-  const seconds = GLASS_SPRING_DURATION / 1000;
-  const points = [];
-  for (let step = 0; step <= samples; step += 1) {
-    const time = (step / samples) * seconds;
-    const decay = Math.exp(-damping * omega * time);
-    const value = 1 - decay * (
-      Math.cos(omegaDamped * time) + ((damping * omega) / omegaDamped) * Math.sin(omegaDamped * time)
-    );
-    points.push(Number(value.toFixed(4)));
-  }
-  // The last point has to be exactly 1, or the pill settles slightly off.
-  points[points.length - 1] = 1;
-  return `linear(${points.join(",")})`;
-}
-
-const GLASS_TRAVEL_EASING = springEasing();
-
-// Something with weight, thrown: it stretches along the way it is going,
-// arrives compressed, and springs back. The stretch follows the distance
-// travelled, so a neighbouring tab barely deforms and a jump across the bar
-// does it visibly.
-function animateGlassIndicator(glass, from, to) {
-  if (!glass || typeof glass.animate !== "function") return;
-  if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
-  const distance = Math.abs(to.left - from.left);
-  if (distance < 1) return;
-  const pull = Math.min(0.22, distance / Math.max(to.width * 4, 1));
-  const options = { duration: GLASS_SPRING_DURATION, fill: "none" };
-  // Two animations rather than one: position springs, and the squish runs on
-  // its own shorter curve. Separate properties, so they do not overwrite each
-  // other the way two transforms would.
-  glass.animate(
-    [
-      { translate: `${from.left}px ${from.top}px`, width: `${from.width}px`, height: `${from.height}px` },
-      { translate: `${to.left}px ${to.top}px`, width: `${to.width}px`, height: `${to.height}px` },
-    ],
-    { ...options, easing: GLASS_TRAVEL_EASING },
-  );
-  glass.animate(
-    [
-      { scale: "1 1", offset: 0 },
-      { scale: `${(1 + pull).toFixed(3)} ${(1 - pull * 0.55).toFixed(3)}`, offset: 0.35 },
-      { scale: `${(1 - pull * 0.42).toFixed(3)} ${(1 + pull * 0.32).toFixed(3)}`, offset: 0.68 },
-      { scale: "1 1", offset: 1 },
-    ],
-    { ...options, easing: "cubic-bezier(.33, .1, .24, 1)" },
-  );
-}
-
 // The pages' one tab control (Pull List, Settings), after iOS 26's segmented
 // control: a pill track with a glass thumb that slides to the open tab. The
 // run drawer's tabs are the same glass on its violet bar. A row wider than
@@ -494,20 +356,6 @@ function SegmentedTabs({ label, items, value, onChange }) {
       className={`segmented-tab${value === item.id ? " active" : ""}${item.className ? ` ${item.className}` : ""}`}
       onClick={() => onChange(item.id)} key={item.id}
     >{item.label}{item.count}</button>)}
-  </div>;
-}
-
-// A choice of one, as SegmentedTabs draws it but choosing a setting rather
-// than a page: grid or list, runs or collections. An item with only an icon
-// names itself with `title`.
-function GlassSegmented({ label, items, value, onChange, className = "" }) {
-  const [trackRef, glass] = useGlassIndicator(".segmented-tab.active", [value, items.map((item) => item.id).join()]);
-  return <div className={`segmented-tabs ${className}`.trim()} role="radiogroup" aria-label={label} ref={trackRef}>
-    <span className="glass-indicator" aria-hidden="true" style={glass || { opacity: 0 }} />
-    {items.map((item) => <button type="button" role="radio" aria-checked={value === item.id}
-      className={`segmented-tab${item.label ? "" : " segmented-tab--icon"}${value === item.id ? " active" : ""}`}
-      aria-label={item.label ? undefined : item.title} title={item.label ? undefined : item.title}
-      disabled={item.disabled} onClick={() => onChange(item.id)} key={item.id}>{item.icon}{item.label}</button>)}
   </div>;
 }
 
@@ -542,65 +390,6 @@ function useCountUp(value) {
 
 function CountUp({ value }) {
   return <>{useCountUp(value).toLocaleString()}</>;
-}
-
-function useGlassIndicator(selector, deps, quietRef = null) {
-  const containerRef = useRef(null);
-  const [style, setStyle] = useState(null);
-  // Where the pill was last placed, so a move knows where it is coming from.
-  const placedRef = useRef(null);
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (!container) return undefined;
-    function place() {
-      // A container taken out of the document reports every size as zero, and
-      // the observer fires on the way out. Measuring then threw the pill's
-      // position away, so a tab strip that unmounted and came back -- the run
-      // drawer's, while Edit is open -- returned with no tab marked at all.
-      if (!container.isConnected) return;
-      // Told to keep quiet -- the container is mid-animation -- the pill is
-      // hidden and forgets where it was, so when it is placed again it
-      // appears there rather than travelling from where the animation began.
-      if (quietRef?.current) {
-        setStyle(null);
-        placedRef.current = null;
-        return;
-      }
-      const active = container.querySelector(selector);
-      if (!active || !active.offsetWidth) {
-        setStyle(null);
-        placedRef.current = null;
-        return;
-      }
-      const next = {
-        left: active.offsetLeft, top: active.offsetTop,
-        width: active.offsetWidth, height: active.offsetHeight,
-      };
-      setStyle({
-        translate: `${next.left}px ${next.top}px`,
-        width: `${next.width}px`,
-        height: `${next.height}px`,
-      });
-      const previous = placedRef.current;
-      placedRef.current = next;
-      // Only a pill that moves is animated. Re-placing it where it already
-      // is -- a label beside it changed -- ran a no-op animation on a
-      // backdrop-filter layer, and Safari left the glyph next to it
-      // unpainted (the "I" of Issues, 2026-09-28).
-      const moved = previous && ["left", "top", "width", "height"].some((key) => previous[key] !== next[key]);
-      if (container.dataset.glassPlaced && moved) {
-        animateGlassIndicator(container.querySelector(".glass-indicator"), previous, next);
-      }
-      if (!container.dataset.glassPlaced) requestAnimationFrame(() => { container.dataset.glassPlaced = "true"; });
-    }
-    place();
-    if (typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(place);
-    observer.observe(container);
-    [...container.children].filter((child) => !child.classList.contains("glass-indicator")).forEach((child) => observer.observe(child));
-    return () => observer.disconnect();
-  }, deps);
-  return [containerRef, style];
 }
 
 // The phone's tab bar gets out of the way while you read, as iOS apps do:
@@ -765,129 +554,6 @@ function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, a
       </div>
     </aside>
   );
-}
-
-// A choice from a list, as iOS 26's pop-up button: a capsule showing the
-// current value, which opens a glass menu of the options with a check on the
-// chosen one. It replaces the native select, whose open list the browser
-// draws in its own style. The menu is drawn over everything (a portal, placed
-// from the button's position) so a dialog's scrolling body cannot clip it,
-// and it joins the dialog stack, so Escape closes the menu and not the dialog
-// under it. `label` names the control for assistive technology.
-function GlassSelect({ value, options, onChange, label, placeholder = "", disabled = false, className = "" }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef(null);
-  // With a placeholder, nothing chosen shows it, muted; without one, the
-  // first option stands in, as a native select's does.
-  const current = options.find((option) => String(option.value) === String(value)) || (placeholder ? null : options[0]);
-  // Choosing or Escape hands focus back to the button, as a native select
-  // does; a tap elsewhere leaves it where the tap put it. Safari does not
-  // focus a button on click, so nothing can be left to the browser.
-  function close(refocus) {
-    setOpen(false);
-    // After the menu has gone and its dialog-stack cleanup has run; a timeout
-    // rather than a frame, which a background tab never draws.
-    if (refocus) window.setTimeout(() => triggerRef.current?.focus(), 0);
-  }
-  function openWith(event) {
-    if (disabled) return;
-    if (event.type === "keydown") {
-      if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
-      event.preventDefault();
-    }
-    setOpen(true);
-  }
-  return <>
-    <button type="button" ref={triggerRef} className={`glass-select ${className}`.trim()} disabled={disabled}
-      aria-haspopup="listbox" aria-expanded={open} aria-label={`${label}: ${current?.label ?? placeholder}`}
-      onClick={() => (open ? setOpen(false) : openWith({ type: "click" }))} onKeyDown={openWith}>
-      <span className={current ? "" : "glass-select-placeholder"}>{current ? current.label : placeholder}</span><CaretUpDown size={16} aria-hidden="true" />
-    </button>
-    {open ? <GlassSelectMenu options={options} value={current?.value} label={label} anchor={triggerRef}
-      onChoose={(next) => { close(true); if (String(next) !== String(value)) onChange(next); }}
-      onClose={() => close(true)} onDismiss={() => close(false)} /> : null}
-  </>;
-}
-
-function GlassSelectMenu({ options, value, label, anchor, onChoose, onClose, onDismiss }) {
-  const menuRef = useDialog(onClose);
-  const [place, setPlace] = useState(null);
-  // Under the button, or over it when there is more room above; never wider
-  // than the window, and scrolling past its own height.
-  useLayoutEffect(() => {
-    const button = anchor.current?.getBoundingClientRect();
-    const menu = menuRef.current;
-    if (!button || !menu) return;
-    const gap = 6;
-    const margin = 12;
-    const below = window.innerHeight - button.bottom - gap - margin;
-    const above = button.top - gap - margin;
-    const height = menu.scrollHeight;
-    const up = height > below && above > below;
-    const maxHeight = Math.max(120, up ? above : below);
-    const width = Math.min(Math.max(button.width, 220), window.innerWidth - margin * 2);
-    const left = Math.min(Math.max(margin, button.left), window.innerWidth - margin - width);
-    setPlace({
-      left, width, maxHeight,
-      ...(up ? { bottom: window.innerHeight - button.top + gap } : { top: button.bottom + gap }),
-      transformOrigin: up ? "bottom left" : "top left",
-    });
-  }, []);
-  // The chosen option has focus once placed, as a native list opens on it.
-  useEffect(() => {
-    if (!place) return;
-    (menuRef.current?.querySelector('[aria-selected="true"]') || menuRef.current?.querySelector('[role="option"]'))?.focus();
-  }, [place]);
-  // A tap outside closes it; so does the page or dialog scrolling under it,
-  // which would leave it hanging away from its button.
-  useEffect(() => {
-    function outside(event) {
-      if (menuRef.current?.contains(event.target) || anchor.current?.contains(event.target)) return;
-      onDismiss();
-    }
-    function scrolled(event) {
-      if (!menuRef.current?.contains(event.target)) onDismiss();
-    }
-    document.addEventListener("pointerdown", outside, true);
-    window.addEventListener("scroll", scrolled, true);
-    window.addEventListener("resize", onDismiss);
-    return () => {
-      document.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("scroll", scrolled, true);
-      window.removeEventListener("resize", onDismiss);
-    };
-  }, [onDismiss]);
-  function onKeyDown(event) {
-    const items = [...(menuRef.current?.querySelectorAll('[role="option"]') || [])];
-    const index = items.indexOf(document.activeElement);
-    let next = null;
-    if (event.key === "ArrowDown") next = index + 1;
-    else if (event.key === "ArrowUp") next = index - 1;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = items.length - 1;
-    else if (event.key.length === 1 && /\S/.test(event.key)) {
-      // Type-ahead: the next option starting with the letter pressed.
-      const letter = event.key.toLowerCase();
-      const order = [...items.slice(index + 1), ...items.slice(0, index + 1)];
-      order.find((item) => item.textContent.trim().toLowerCase().startsWith(letter))?.focus();
-      return;
-    }
-    if (next === null) return;
-    event.preventDefault();
-    items[(next + items.length) % items.length]?.focus();
-  }
-  return createPortal(<div className="glass-menu glass-select-menu" ref={menuRef} role="listbox" aria-label={label}
-    style={place ? { ...place } : { visibility: "hidden", top: 0, left: 0 }} onKeyDown={onKeyDown}
-    onMouseDown={(event) => event.stopPropagation()}>
-    {options.map((option) => {
-      const chosen = String(option.value) === String(value);
-      return <button type="button" role="option" aria-selected={chosen} className={chosen ? "selected" : ""}
-        onClick={() => onChoose(option.value)} key={String(option.value)}>
-        <span className="sort-menu-check" aria-hidden="true">{chosen ? <Check size={16} weight="bold" /> : null}</span>
-        <span>{option.label}</span>
-      </button>;
-    })}
-  </div>, document.body);
 }
 
 // The bell (rebuilt 2026-09-27). Two halves: what needs you, worked out from
@@ -1066,8 +732,6 @@ function NotificationsBell({ bell }) {
   </div>;
 }
 
-const LoadingSpinner = LoadingIndicator;
-
 // Every page's top, at every width (chosen 2026-09-17, replacing the violet
 // app bar): the page's name alone -- the same on every page, so nothing sits
 // under it -- then search, its actions, one primary action and
@@ -1225,20 +889,6 @@ function HeaderSearchField({ field, className = "page-header-search" }) {
         keyboard user gets something to land on. */}
     <button type="submit" className="sr-only">Search</button>
   </form>;
-}
-
-function CollectionCoverage({ series, editionsOn }) {
-  const directOwned = series.issues?.filter((issue) => issue.directOwned).length ?? 0;
-  const inVolumes = series.issues?.filter((issue) => issue.collectionOwned).length ?? 0;
-  const toVerify = editionsOn
-    ? series.editions?.reduce((count, edition) => count + (edition.coverageGroups?.filter((claim) => !claim.resolved).length ?? 0), 0) ?? 0
-    : 0;
-  // A collected-volume series owns volumes, not loose issues, so every figure
-  // here read 0 -- "0 Single issues owned / 0 Issues in volumes" sitting
-  // directly beneath "3 volumes owned". Most of a collected library is these,
-  // so most series showed a panel of zeros that read as "you own nothing".
-  if (!directOwned && !inVolumes && !toVerify) return null;
-  return <section className="coverage-overview"><span><strong>{directOwned}</strong>Single issues owned</span><span><strong>{inVolumes}</strong>Issues in volumes</span>{editionsOn ? <span><strong>{toVerify}</strong>Volume contents to verify</span> : null}</section>;
 }
 
 function CollectionGroups({ families, onOpenCollection }) {
@@ -1437,353 +1087,6 @@ function AddToGroupSheet({ kind, groups, ids, itemName, onClose, onAdd, onCreate
   </div>;
 }
 
-/** A read group's Edit: its name and summary on the screen, one Save, and the pickers a step in. */
-function GroupEditScreen({ name, summary, summaryLabel = "Summary", busy, onSave, rows }) {
-  const [nameDraft, setNameDraft] = useState(name);
-  const [summaryDraft, setSummaryDraft] = useState(summary || "");
-  const changed = nameDraft.trim() !== name || summaryDraft.trim() !== String(summary || "").trim();
-  return <div className="edit-index">
-    <form className="group-edit-form" onSubmit={(event) => {
-      event.preventDefault();
-      if (changed && nameDraft.trim().length >= 2) onSave({ name: nameDraft.trim(), summary: summaryDraft.trim() });
-    }}>
-      <label className="form-field"><span>Name</span><input value={nameDraft} maxLength={80} required onChange={(event) => setNameDraft(event.target.value)} /></label>
-      <label className="form-field"><span>{summaryLabel}</span><textarea value={summaryDraft} maxLength={2000} rows={4} onChange={(event) => setSummaryDraft(event.target.value)} placeholder="Optional" /></label>
-      <div className="metadata-edit-actions group-edit-actions"><button type="submit" className="primary-button" disabled={Boolean(busy) || !changed || nameDraft.trim().length < 2} aria-busy={busy === "save" || undefined}>Save</button></div>
-    </form>
-    <div className="edit-rows">
-      {rows.map((row) => <button type="button" className="edit-row" key={row.id} disabled={row.disabled} onClick={row.onOpen}>
-        <span><strong>{row.label}</strong><small>{row.detail}</small></span>
-        <CaretRight size={17} />
-      </button>)}
-    </div>
-  </div>;
-}
-
-/** A read group's Cover, a step in from Edit: a picture of your own, or one of its own covers. */
-function GroupCoverPicker({ choices, current, busy, uploadError, onUpload, onChoose, empty }) {
-  return <>
-    {onUpload ? <div className="arc-cover-upload">
-      <label className={`secondary-button upload-cover-button${busy === "upload" ? " busy" : ""}`}>
-        {busy === "upload" ? <LoadingSpinner size={18} /> : <UploadSimple size={18} />} Upload an image
-        <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" disabled={busy === "upload"}
-          onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onUpload(file); }} />
-      </label>
-      {uploadError ? <p className="workbench-error" role="alert">{uploadError}</p> : null}
-    </div> : null}
-    <div className="arc-cover-choices" role="radiogroup" aria-label="Cover">
-      {choices.length ? choices.map((choice) => <button type="button" key={choice.id} role="radio" aria-checked={choice.id === current} className={choice.id === current ? "active" : ""}
-        onClick={() => onChoose(choice)} disabled={Boolean(busy)}>
-        <DiscoverCover src={choice.url} alt="" glyph={22} /><small>{choice.label}</small>
-      </button>) : empty}
-    </div>
-  </>;
-}
-
-/**
- * The page behind a read group's header: chosen from its own comics, or found
- * in the first of them, as a run's is. Nothing until this group's answer is
- * in, so another group's page never flashes behind a new title.
- */
-function useGroupBackdrop(path, id) {
-  const [backdrop, setBackdrop] = useState({ forId: null, url: null, source: null, fileId: null, page: null });
-  const [failed, setFailed] = useState(false);
-  const [version, setVersion] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let live = true;
-    setFailed(false);
-    apiRequest(`${path}/backdrop`)
-      .then((answer) => { if (live) setBackdrop({ ...answer, forId: id }); })
-      .catch(() => { if (live) setBackdrop({ forId: id, url: null, source: "none", fileId: null, page: null }); });
-    return () => { live = false; };
-  }, [path, id, version]);
-  async function save(body) {
-    setBusy(true); setError("");
-    try {
-      await apiRequest(`${path}/backdrop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      setVersion((value) => value + 1);
-      return true;
-    } catch (failure) { setError(failure.message); return false; } finally { setBusy(false); }
-  }
-  const shown = backdrop.forId === id ? backdrop : null;
-  return { shown, page: shown?.url && !failed ? shown.url : null, onFail: () => setFailed(true), save, busy, error };
-}
-
-// One row of an Arrange list: to either end -- the way through a long list,
-// where dragging is slow -- or out of the group. A menu rather than three
-// buttons, so a phone row keeps room for the item's name.
-function OrderRowMenu({ label, first, last, removeLabel, onMove, onRemove }) {
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef(null);
-  const close = useCallback(() => setOpen(false), []);
-  const items = [
-    ...(first || !onMove ? [] : [{ key: "top", label: "Move to top", icon: <ArrowLineUp size={16} />, onSelect: () => onMove("top") }]),
-    ...(last || !onMove ? [] : [{ key: "bottom", label: "Move to bottom", icon: <ArrowLineDown size={16} />, onSelect: () => onMove("bottom") }]),
-    { key: "remove", label: removeLabel, icon: <X size={16} />, onSelect: onRemove },
-  ];
-  return <>
-    <button type="button" ref={buttonRef} className="glass-button glass-button--icon arc-order-menu" onClick={() => setOpen((value) => !value)}
-      aria-haspopup="menu" aria-expanded={open} aria-label={`Options for ${label}`} title="Options">
-      <DotsThree size={18} weight="bold" />
-    </button>
-    {open ? <ActionMenu anchor={buttonRef} label={`Options for ${label}`} items={items} onClose={close} /> : null}
-  </>;
-}
-
-/**
- * A read group's Arrange tab, for whoever may change it: the order it is read
- * in (a saved mode), and in your own order a drag list whose rows' menus move
- * one to an end or take it out. Every change saves at once. Below, Add.
- */
-function GroupArrange({ noun, groupNoun, ids, sortMode, sortOptions, busy, onSortMode, onReorder, onRemove, nameOf, renderRow, rowClassName, onAdd, addLabel, empty }) {
-  const custom = sortMode === "custom";
-  const aNoun = `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
-  const modeLabel = sortOptions.find((item) => item.id === sortMode)?.label?.toLowerCase() || sortMode;
-  const row = (id, index) => <>
-    {renderRow(id, index)}
-    <OrderRowMenu label={nameOf(id)} first={index === 0} last={index === ids.length - 1} removeLabel={`Remove from the ${groupNoun}`}
-      onMove={custom ? (edge) => onReorder(moveToEdge(ids, id, edge)) : null} onRemove={() => onRemove(id)} />
-  </>;
-  if (!ids.length) return empty;
-  return <div className="group-arrange">
-    <div className="form-field group-order-field"><span>Order</span>
-      <GlassSelect label="Order" value={sortMode} onChange={onSortMode} className="glass-select--fill"
-        options={sortOptions.map((item) => ({ value: item.id, label: item.label }))} /></div>
-    <p className="settings-card-note">{custom
-      ? `Drag ${aNoun} by its handle, or use the arrow keys on it. Its menu moves it to the top or bottom, or takes it out of this ${groupNoun} only.`
-      : `Read by ${modeLabel}. Choose Your order to arrange them by hand. ${aNoun[0].toUpperCase()}${aNoun.slice(1)}'s menu takes it out of this ${groupNoun} only.`}</p>
-    {custom ? <DragOrderList ids={ids} rowClassName={rowClassName}
-      label={(id, index, total) => `${nameOf(id)}, ${index + 1} of ${total}`}
-      onReorder={onReorder} renderRow={row} />
-      : <ol className="source-order-list">{ids.map((id, index) => <li className={`source-order-row ${rowClassName?.(id) || ""}`} key={id}>{row(id, index)}</li>)}</ol>}
-    {onAdd ? <button type="button" className="glass-button comic-drawer-add" onClick={onAdd} disabled={Boolean(busy)}><Plus size={18} /> {addLabel}</button> : null}
-  </div>;
-}
-
-/** Arrange, as one card in a read group's Advanced: how it is read now, and a step into the list. */
-function GroupArrangeCard({ noun, count, sortMode, sortOptions, onOpen }) {
-  const mode = sortOptions.find((item) => item.id === sortMode)?.label || "Your order";
-  const items = `${count} ${noun}${count === 1 ? "" : "s"}`;
-  return <section className="advanced-card">
-    <div><strong>Arrange</strong><p>{sortMode === "custom" ? `${items}, in your order.` : `${items}, read by ${mode.toLowerCase()}.`} Change the order, move one to the top or bottom, or take one out.</p></div>
-    <button type="button" onClick={onOpen}><ListNumbers size={16} /> Arrange</button>
-  </section>;
-}
-
-/** Sharing a read group, in Advanced: its maker's switch, or the admin's Stop sharing on someone else's. */
-function GroupShareCard({ group, noun, busy, onShare, onStopSharing }) {
-  if (group?.mine) return <section className="advanced-card">
-    <div><strong>Share with the household</strong><p>{group.shared
-      ? `Everyone in the household sees this ${noun} and reads along. Only you change it.`
-      : `Only you see this ${noun}. Shared, everyone in the household can read it; only you change it.`}</p></div>
-    <FollowSwitch following={Boolean(group.shared)} busy={busy === "share"} label={group.shared ? "Shared" : "Not shared"} onChange={onShare} />
-  </section>;
-  if (group?.manageable && group?.shared && group?.ownerName) return <section className="advanced-card">
-    <div><strong>Shared by {group.ownerName}</strong><p>Stop sharing takes it out of everyone&rsquo;s comics but {group.ownerName}&rsquo;s. It stays theirs.</p></div>
-    <button type="button" onClick={onStopSharing} disabled={busy === "share"}><X size={16} /> Stop sharing</button>
-  </section>;
-  return null;
-}
-
-/** Restart and Reading state, in a read group's Advanced, for every profile. */
-function GroupReadingCards({ noun, firstLabel, onRestart, allRead, anyRead, busy, onMark }) {
-  return <>
-    {onRestart ? <section className="advanced-card">
-      <div><strong>Start from the beginning</strong><p>Opens {firstLabel} from its first page. Your place moves once you turn a page there.</p></div>
-      <button type="button" onClick={onRestart}><ArrowCounterClockwise size={16} /> Restart</button>
-    </section> : null}
-    {onMark ? <section className="advanced-card">
-      <div><strong>Reading state</strong><p>{allRead
-        ? `Every comic here is read. Marking the ${noun} unread forgets your place in all of them, for your profile only.`
-        : anyRead
-          ? `Some of this ${noun} is read or in progress. Mark it all read, or unread to forget every place -- someone else's reading on your profile included.`
-          : `Marks every comic of this ${noun} read, for your profile only.`}</p></div>
-      <div className="advanced-card-actions">
-        {!allRead ? <button type="button" disabled={Boolean(busy)} onClick={() => onMark(true)}><Check size={16} weight="bold" /> Mark read</button> : null}
-        {allRead || anyRead ? <button type="button" disabled={Boolean(busy)} onClick={() => onMark(false)}><ArrowCounterClockwise size={16} /> Mark unread</button> : null}
-      </div>
-    </section> : null}
-  </>;
-}
-
-/** Deleting a read group, last in Advanced: the comics themselves stay. */
-function GroupDeleteCard({ group, noun, name, onDelete }) {
-  const keeps = noun === "collection" ? "Every run in it stays in your library." : "The comics themselves stay, in their runs.";
-  return <section className="advanced-card danger">
-    <div><strong>Delete this {noun}</strong><p>{group?.mine && group?.shared ? `Removes it from your comics and everyone it is shared with. ${keeps}` : `Removes it from your comics. ${keeps}`}</p></div>
-    <button type="button" onClick={() => { if (window.confirm(`Delete ${name}? ${keeps}`)) onDelete(); }}><Trash size={16} /> Delete</button>
-  </section>;
-}
-
-/**
- * A collection, in the comic drawers' frame as a story arc is (owner,
- * 2026-10-02): Overview, Runs, Arrange for whoever may change it, Advanced
- * for everyone; Edit is its name and summary, with Cover and Header
- * background a step in. Whose it is decides who changes it, as an arc's.
- */
-function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_ENTRIES, onToggleReadingList, onClose, onOpenSeries, onRead, onSave, onDelete, onAddRuns, onUploadCover, onMarkRuns }) {
-  const { closing, requestClose } = useDrawerExit(onClose);
-  const dialogRef = useDialog(requestClose);
-  useSwipeToDismiss(dialogRef, requestClose);
-  const reading = useRunReading(readingVersion);
-  const [tab, setTab] = useState("overview");
-  // null: reading; "": Edit; "cover" | "backdrop": a picker, a step in.
-  const [edit, setEdit] = useState(null);
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  async function act(kind, work) {
-    setBusy(kind);
-    setError("");
-    try { await work(); return true; } catch (failure) { setError(failure.message); return false; } finally { setBusy(""); }
-  }
-  const canEdit = Boolean(card.editable);
-  const runs = card.runs || [];
-  const runIds = runs.map((run) => String(run.id));
-  const runsById = useMemo(() => Object.fromEntries(runs.map((run) => [String(run.id), run])), [runs]);
-  const issueTotals = runs.reduce((sum, run) => ({ owned: sum.owned + (Number(run.owned) || 0), total: sum.total + (Number(run.total) || 0) }), { owned: 0, total: 0 });
-  const { run: readRun, started, finished, allRead, anyRead } = collectionReadTarget(card, reading);
-  const [readTarget, setReadTarget] = useState(null);
-  useEffect(() => {
-    if (!readRun?.id) { setReadTarget(null); return undefined; }
-    let live = true;
-    apiRequest(`/api/v1/series/${readRun.id}/reading`)
-      .then((data) => { if (live) setReadTarget({ ...data, runId: String(readRun.id) }); })
-      .catch(() => { if (live) setReadTarget(null); });
-    return () => { live = false; };
-  }, [readRun?.id, readingVersion]);
-  const backdrop = useGroupBackdrop(`/api/v1/run-collections/${card.id}`, card.id);
-  const coverArt = card.cover || null;
-  // A cover that cannot be fetched is no backdrop, rather than a broken image.
-  const [artFailed, setArtFailed] = useState(null);
-  const heroArt = backdrop.shown ? backdrop.page || (coverArt && artFailed !== coverArt ? coverArt : null) : null;
-  const toned = toneProps(useArtTone(coverArt));
-  const files = useMemo(() => runs.flatMap((run) => run.fileDetails || []), [runs]);
-  const tabs = [["overview", "Overview"], ["runs", `Runs (${card.runCount})`], ["advanced", "Advanced"]];
-  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, card.id, edit]);
-  // The cover is the uploaded picture, a run's cover chosen for it, or the first run's.
-  const chosenCover = card.coverImage ? "upload" : card.coverSeriesId ? String(card.coverSeriesId) : "auto";
-  const coverChoices = [
-    ...(card.coverImage ? [{ id: "upload", url: card.coverImage, label: "Your picture" }] : []),
-    ...(runs.length ? [{ id: "auto", url: runs[0].cover, label: "The first run's" }] : []),
-    ...runs.map((run) => ({ id: String(run.id), url: run.cover, label: `${run.title}${/^\d{4}$/.test(String(run.year)) ? ` (${run.year})` : ""}` })),
-  ];
-  const ownerLine = groupOwnerLine(card);
-  const firstRunId = runs[0]?.id ? String(runs[0].id) : null;
-  // Starting over, as an arc's Advanced offers: the first run's first
-  // readable comic, looked up when Advanced is opened.
-  const [firstFile, setFirstFile] = useState(null);
-  useEffect(() => {
-    if (tab !== "advanced" || !firstRunId) return undefined;
-    let live = true;
-    apiRequest(`/api/v1/series/${firstRunId}/reading`)
-      .then((data) => { if (live) setFirstFile((data.issues || []).find((file) => file.readable) || null); })
-      .catch(() => { if (live) setFirstFile(null); });
-    return () => { live = false; };
-  }, [tab, firstRunId, readingVersion]);
-  const readingBadge = allRead ? { tone: "green", text: "Read" } : started || finished ? { tone: "violet", text: `In progress · ${finished} of ${runs.length} read` } : null;
-  const EDIT_ROWS = [
-    { id: "cover", label: "Cover", detail: "A picture you upload, or one of its runs' covers.", onOpen: () => setEdit("cover") },
-    { id: "backdrop", label: "Header background", detail: "A page from one of its comics, behind the header.", disabled: !files.length, onOpen: () => setEdit("backdrop") },
-  ];
-  const editTitle = edit === "arrange" ? "Arrange" : edit ? EDIT_ROWS.find((row) => row.id === edit)?.label : "Edit collection";
-  const arrangeView = <GroupArrange noun="run" groupNoun="collection" ids={runIds} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} busy={busy}
-            onSortMode={(next) => act("sort", () => onSave(card.id, { sortMode: next }))}
-            onReorder={(order) => act("order", () => onSave(card.id, { order }))}
-            onRemove={(id) => act("remove", () => onSave(card.id, { remove: [String(id)] }))}
-            nameOf={(id) => runsById[id]?.title || "Run"}
-            renderRow={(id) => <RunCollectionRow run={runsById[id]} />}
-            onAdd={onAddRuns} addLabel="Add runs" empty={<div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing to arrange yet</strong><span>Add runs from your library to start it.</span>
-              <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button></div>} />;
-  const advanced = <div className="advanced-tools">
-    <div className="drawer-facts"><span><strong>{card.runCount}</strong>Runs</span><span><strong>{issueTotals.owned}</strong>Issues here</span><span><strong>{started}</strong>In progress</span></div>
-    {/* Arrange lives in Advanced, for whoever may change it (owner, 2026-10-02). */}
-    {/* Arrange is a card here that steps into its own screen, as Edit's
-        pickers do, rather than a long list over the rest (2026-10-02). */}
-    {canEdit && runs.length ? <GroupArrangeCard noun="run" count={runs.length} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} onOpen={() => setEdit("arrange")} /> : null}
-    <GroupShareCard group={card} noun="collection" busy={busy}
-      onShare={(on) => act("share", () => onSave(card.id, { shared: on }))}
-      onStopSharing={() => act("share", () => onSave(card.id, { shared: false }))} />
-    <GroupReadingCards noun="collection" firstLabel="the first run’s first issue"
-      onRestart={firstFile && onRead ? () => onRead({ id: firstFile.id, fromStart: true }) : null}
-      allRead={allRead} anyRead={anyRead} busy={busy}
-      onMark={runs.length && onMarkRuns ? (read) => act("mark", () => onMarkRuns(runs, read)) : null} />
-    {card.manageable ? <GroupDeleteCard group={card} noun="collection" name={card.name} onDelete={() => act("delete", () => onDelete(card.id))} /> : null}
-  </div>;
-  const emptyRuns = <div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing in it yet</strong><span>{canEdit ? "Add runs from your library to start it." : "Runs added to it show up here."}</span>
-    {canEdit ? <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button> : null}</div>;
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
-      role="dialog" aria-modal="true" aria-labelledby="run-collection-title" onMouseDown={(event) => event.stopPropagation()}>
-      <DrawerTopBar
-        title={edit !== null ? editTitle : card.name}
-        onClose={requestClose}
-        onBack={edit !== null ? () => setEdit(edit && edit !== "arrange" ? "" : null) : undefined}
-        stacked={edit !== null}
-        closeLabel="Close collection">
-        {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "collection", card.id)} title={card.name}
-          onChange={(on) => onToggleReadingList("collection", card.id, on)} /> : null}
-        {edit === null && canEdit ? <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => { setError(""); setEdit(""); }} aria-label={`Edit ${card.name}`} title="Edit"><PencilSimple size={20} /></button> : null}
-      </DrawerTopBar>
-      <header className="comic-drawer-hero">
-        {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={backdrop.page ? backdrop.onFail : () => setArtFailed(heroArt)} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
-        <span className="comic-drawer-scrim" aria-hidden="true" />
-        <div className="comic-drawer-identity">
-          <div className="comic-drawer-cover">{canEdit ? <button type="button" className="drawer-cover-button" onClick={() => setEdit("cover")} aria-label={`Change the cover for ${card.name}`}><DiscoverCover src={coverArt} alt={`${card.name} cover`} glyph={30} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <DiscoverCover src={coverArt} alt={`${card.name} cover`} glyph={30} />}</div>
-          <div className="comic-drawer-copy">
-            <div className="comic-drawer-titles">
-              <h2 id="run-collection-title">{card.name}</h2>
-              {/* As its card and a run's: the one publisher, if it is one, then
-                  the years; what it is, a badge, as on the card. */}
-              {card.publisher || card.years ? <p>{[card.publisher, card.years].filter(Boolean).join(" • ")}</p> : null}
-            </div>
-            <div className="comic-drawer-statuses">
-              <StatusBadge tone="muted">Collection</StatusBadge>
-              {ownerLine ? <StatusBadge tone="muted">{ownerLine}</StatusBadge> : null}
-              {readingBadge ? <StatusBadge tone={readingBadge.tone}>{readingBadge.text}</StatusBadge> : null}
-            </div>
-            {issueTotals.total ? <Ownership series={arcOwnership({ owned: issueTotals.owned, issueCount: issueTotals.total, missing: issueTotals.total - issueTotals.owned })} compact /> : null}
-          </div>
-        </div>
-      </header>
-      {error ? <p className="workbench-error comic-drawer-error" role="alert">{error}</p> : null}
-      {edit !== null ? <div className="comic-drawer-body comic-drawer-edit">
-        {edit === "" ? <GroupEditScreen name={card.name} summary={card.summary} busy={busy} rows={EDIT_ROWS}
-          onSave={(changes) => act("save", () => onSave(card.id, changes)).then((done) => { if (done) setEdit(null); })} /> : null}
-        {edit === "cover" ? <GroupCoverPicker choices={coverChoices} current={chosenCover} busy={busy}
-          onUpload={onUploadCover ? (file) => act("upload", () => onUploadCover(card.id, file)).then((done) => { if (done) setEdit(""); }) : null}
-          onChoose={(choice) => act("cover", () => onSave(card.id, choice.id === "upload" ? {}
-            : { coverSeriesId: choice.id === "auto" ? null : choice.id, ...(card.coverImage ? { coverImage: null } : {}) })).then((done) => { if (done) setEdit(""); })} /> : null}
-        {edit === "arrange" ? arrangeView : null}
-        {edit === "backdrop" ? <>
-          <p className="backdrop-workbench-intro">Choose a page from one of {card.name}&rsquo;s comics to show behind the drawer&rsquo;s header.</p>
-          <BackdropPicker series={{ id: `collection-${card.id}`, title: card.name, fileDetails: files }} current={backdrop.shown}
-            busy={backdrop.busy} error={backdrop.error}
-            onChoose={(fileId, page) => backdrop.save({ fileId, page }).then((done) => { if (done) setEdit(""); })}
-            onAutomatic={() => backdrop.save({ source: "auto" }).then((done) => { if (done) setEdit(""); })} />
-        </> : null}
-      </div> : <>
-        {readRun && readTarget?.runId === String(readRun.id) && readingVerb(readTarget.resume) && onRead ? <div className="comic-drawer-actions">
-          <ReadRunButton reading={readTarget} title={readRun.title} medium={readRun.medium} onRead={onRead} />
-        </div> : null}
-        <DrawerTabs tabs={tabs} tab={tab} onTab={setTab} label="Collection details" tabsRef={tabsRef} glass={tabGlass} />
-        <div className="comic-drawer-body" key={tab}>
-          {tab === "overview" ? <>
-            {card.summary ? <RunSynopsis text={card.summary} heading="About" /> : null}
-            {runs.length ? <div className="comic-drawer-shelf-group">
-              <ComicDrawerRow title="Runs" count={runs.length}>{runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries(item)} key={run.id} />)}</ComicDrawerRow>
-              {canEdit ? <button type="button" className="glass-button comic-drawer-add" onClick={onAddRuns}><Plus size={18} /> Add runs</button> : null}
-            </div> : emptyRuns}
-          </> : null}
-          {tab === "runs" ? (runs.length ? <SeriesList series={runs} view="grid" reading={reading || {}} onOpen={onOpenSeries} onRead={onRead} /> : emptyRuns) : null}
-          {tab === "advanced" ? advanced : null}
-        </div>
-      </>}
-    </aside>
-  </div>;
-}
-
 /**
  * "Add to story arc…" from an issue's menu or a run's selection: the shared
  * Add sheet, with the arcs this profile may change. A new arc made here
@@ -1920,24 +1223,6 @@ function ArcIssuePickerModal({ list, series, onClose, onAdded }) {
   </div>;
 }
 
-/** Download what a route answers as a file, the session's cookie and all. */
-function downloadFrom(url) {
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "";
-  document.body.append(link);
-  link.click();
-  link.remove();
-}
-
-function RunCollectionRow({ run }) {
-  if (!run) return null;
-  return <>
-    <span className="rating-review-cover"><CoverArt id={run.id} title={run.title} cover={run.cover} coverCandidates={run.coverCandidates} decorative placeholderSize={16} /></span>
-    <span><strong>{run.title}{/^\d{4}$/.test(String(run.year)) ? ` (${run.year})` : ""}</strong><small>{run.publisher}</small></span>
-  </>;
-}
-
 /** Runs to add to a collection: the Set ratings list, choosing runs instead. */
 function RunPickerModal({ title, series, already = [], onClose, onAdd }) {
   const dialogRef = useDialog(onClose);
@@ -2057,16 +1342,6 @@ function PullCard({ issue, state, onPull, onOpen }) {
       </div>
     </div>
   </article>;
-}
-
-// The skeleton occupies the loaded card's box exactly. A shelf that grows when
-// its comics arrive moves everything under it, which is the moment the reader
-// is most likely to be reaching for something.
-function PullCardSkeleton() {
-  return <div className="pull-card pull-card-skeleton" aria-hidden="true">
-    <span className="discover-cover" />
-    <div className="pull-card-body"><h3><i /></h3><div className="pull-card-action"><i /></div></div>
-  </div>;
 }
 
 const SHELF_COPY = {
@@ -2469,18 +1744,6 @@ function LibraryViewSheet({ view, onView, sort, onSort, followingOnly, onFollowi
       <section className="library-sheet library-sheet--drawer">{controls}</section>
     </aside>
   </div>;
-}
-
-function useRunReading(version) {
-  const [runs, setRuns] = useState(() => lastAnswer("/api/v1/reading/runs")?.runs ?? null);
-  useEffect(() => {
-    let live = true;
-    apiRequest("/api/v1/reading/runs")
-      .then((data) => { if (live) setRuns(data.runs || {}); })
-      .catch(() => { if (live) setRuns((current) => current || {}); });
-    return () => { live = false; };
-  }, [version]);
-  return runs;
 }
 
 // The same map for story arcs: where each saved arc was left.
@@ -3078,69 +2341,7 @@ function DiscoverView({
   </>;
 }
 
-function formatLongDate(iso) {
-  if (!iso) return "";
-  const date = new Date(`${String(iso).slice(0, 10)}T12:00:00`);
-  return Number.isNaN(date.getTime())
-    ? "" : date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
 const PREVIEW_PROVIDER_NAMES = { metron: "Metron", comic_vine: "Comic Vine", gcd: "Grand Comics Database" };
-
-// A drawer's colour, from its art (see art-tone.js). The page can only read
-// the pixels of an image from this origin, so a remote cover is read through
-// the server's small swatch of it. Tones are kept per image for the session.
-const ART_TONES = new Map();
-
-function useArtTone(src) {
-  const [tone, setTone] = useState(() => (src && ART_TONES.get(src)) || null);
-  useEffect(() => {
-    if (!src) {
-      setTone(null);
-      return undefined;
-    }
-    if (ART_TONES.has(src)) {
-      setTone(ART_TONES.get(src));
-      return undefined;
-    }
-    let live = true;
-    // Only a tone that resolved is kept. A swatch that failed to load -- a
-    // blip on the proxy, a container restarting -- used to be remembered as
-    // "no tone" for the rest of the session, so the run stayed untoned on
-    // every reopen until a refresh emptied the map.
-    const settle = (value) => {
-      if (value) ART_TONES.set(src, value);
-      if (live) setTone(value);
-    };
-    let local = false;
-    try { local = new URL(src, window.location.href).origin === window.location.origin; } catch { local = false; }
-    const image = new Image();
-    image.decoding = "async";
-    image.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = 24;
-        canvas.height = 24;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        context.drawImage(image, 0, 0, 24, 24);
-        settle(artTone(context.getImageData(0, 0, 24, 24).data));
-      } catch {
-        settle(null);
-      }
-    };
-    image.onerror = () => settle(null);
-    image.src = local ? src : `/api/v1/art-swatch?src=${encodeURIComponent(src)}`;
-    return () => { live = false; };
-  }, [src]);
-  return tone;
-}
-
-// The drawer's class and style for a tone, or nothing for art without one.
-function toneProps(tone) {
-  return tone
-    ? { className: " toned", style: { "--art-tone": tone.tone, "--art-tone-deep": tone.deep } }
-    : { className: "", style: undefined };
-}
 
 // A drawer's top bar, after Plex's detail page. It stays pinned: at the top
 // it is clear, with the close control as a glass circle over the art; once
@@ -3149,107 +2350,10 @@ function toneProps(tone) {
 // it also tells the header how far it has gone -- the art darkens and drifts
 // at a slower pace than the page, and stretches when pulled down at the top.
 
-// On a phone a drawer is a page pushed over the one it came from, so it
-// leaves with the back arrow, as an iPhone page does; above 640px it is a
-// panel beside the page and closes with the X. `onBack`, when the drawer was
-// opened from another (a run from its collection), is where back goes.
-function DrawerTopBar({ title, onClose, onBack, closeLabel, stacked = false, children }) {
-  const phone = usePhoneWidth();
-  const barRef = useRef(null);
-  const [pinned, setPinned] = useState(false);
-  useEffect(() => {
-    const drawer = barRef.current?.closest(".series-drawer");
-    if (!drawer) return undefined;
-    let frame = 0;
-    function update() {
-      frame = 0;
-      const y = drawer.scrollTop;
-      const hero = drawer.querySelector(".comic-drawer-hero");
-      const heading = drawer.querySelector(".comic-drawer-titles h2");
-      drawer.style.setProperty("--hero-scroll", `${Math.max(0, y)}px`);
-      drawer.style.setProperty("--hero-pull", `${Math.max(0, -y)}px`);
-      drawer.style.setProperty("--hero-progress", String(Math.min(1, Math.max(0, y / (hero?.offsetHeight || 1)))));
-      if (heading && barRef.current) {
-        setPinned(heading.getBoundingClientRect().bottom <= barRef.current.getBoundingClientRect().bottom);
-      }
-    }
-    function onScroll() {
-      if (!frame) frame = requestAnimationFrame(update);
-    }
-    update();
-    drawer.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      drawer.removeEventListener("scroll", onScroll);
-      cancelAnimationFrame(frame);
-    };
-  }, []);
-  return <div className={`comic-drawer-bar${pinned ? " pinned" : ""}`} ref={barRef}>
-    {/* Back at every width while a section is pushed: a close button there
-        would throw away the drawer rather than the section. */}
-    {stacked || phone
-      ? <button type="button" className="glass-button glass-button--icon comic-drawer-close" onClick={onBack || onClose} aria-label="Back"><ArrowLeft size={20} /></button>
-      : <button type="button" className="glass-button glass-button--icon comic-drawer-close" onClick={onClose} aria-label={closeLabel}><DrawerCloseIcon size={null} /></button>}
-    <span className="comic-drawer-bar-title" aria-hidden="true">{title}</span>
-    <span className="comic-drawer-bar-end">{children}</span>
-  </div>;
-}
-
-// The run drawer's header, for the Discover drawers: the cover as art behind a
-// violet-to-black scrim, the cover itself, the title, a byline and chips. The
-// same classes as the Comics drawer, so the two read as one kind of panel.
-function DiscoverDrawerHero({ art, cover, title, titleId, byline, onClose, closeLabel, children, actions = null, ownership = null }) {
-  // A picture that cannot be fetched is no backdrop, rather than a broken image.
-  const [failed, setFailed] = useState(null);
-  const shown = art && failed !== art ? art : null;
-  return <><DrawerTopBar title={title} onClose={onClose} closeLabel={closeLabel}>{actions}</DrawerTopBar><header className="comic-drawer-hero">
-    {shown ? <>
-      <img className="comic-drawer-backdrop" src={shown} alt="" aria-hidden="true" key={shown} onError={() => setFailed(shown)} />
-      <img className="comic-drawer-backdrop blurred" src={shown} alt="" aria-hidden="true" key={`${shown}-blurred`} onError={() => setFailed(shown)} />
-    </> : null}
-    <span className="comic-drawer-scrim" aria-hidden="true" />
-    <div className="comic-drawer-identity">
-      <div className="comic-drawer-cover">{cover}</div>
-      <div className="comic-drawer-copy">
-        <div className="comic-drawer-titles">
-          <h2 id={titleId}>{title}</h2>
-          {byline ? <p>{byline}</p> : null}
-        </div>
-        {children ? <div className="comic-drawer-statuses">{children}</div> : null}
-        {ownership}
-      </div>
-    </div>
-  </header></>;
-}
-
-/**
- * The one thing a drawer is for, as the big pill under its header -- Read in
- * the library's drawers (`ReadRunButton`), and here Pull, Request or Save in
- * Discover's and Read next after a comic. The verb is bright, what it acts on
- * beside it, and a line under it says what happened or what will.
- */
-function DrawerPrimary({ icon, verb, noun = "", onClick, disabled = false, busy = false, settled = false, note = "", label }) {
-  return <div className="comic-drawer-actions">
-    <button type="button" className={`primary-button comic-drawer-read${settled ? " comic-drawer-read--settled" : ""}`}
-      onClick={onClick} disabled={disabled || busy} aria-busy={busy || undefined} aria-label={label}>
-      {busy ? <LoadingIndicator size={20} /> : icon}
-      <span>{verb}{noun ? <b>{noun}</b> : null}</span>
-    </button>
-    {note ? <small className="comic-drawer-action-note" role="status" aria-live="polite">{note}</small> : null}
-  </div>;
-}
-
 // A label such as "Pull 12 released issues" as the band's verb and its object.
 function splitAction(text) {
   const [verb, ...rest] = String(text || "").split(" ");
   return { verb, noun: rest.join(" ") };
-}
-
-// Discover's drawers' tabs: the library drawers' bar, glass pill and all.
-function DrawerTabs({ tabs, tab, onTab, label, tabsRef, glass, disabled = () => false }) {
-  return <nav className="drawer-tabs comic-drawer-tabs" aria-label={label} ref={tabsRef}>
-    <span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={glass || { opacity: 0 }} />
-    {tabs.map(([id, text]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => onTab(id)} key={id} disabled={disabled(id)}>{text}</button>)}
-  </nav>;
 }
 
 /**
@@ -3320,52 +2424,6 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
       </div>
     </aside>
   </div>;
-}
-
-/**
- * A run's issues, and how much of the run to take.
- *
- * Three ends, said before the button is pressed: following keeps watching for
- * new issues; the other two take what is chosen, once. Ticking an issue is
- * choosing, so it switches the mode itself rather than asking first.
- */
-// What a run is about, in its catalog's own words. Clamped: Comic Vine's lead
-// paragraph can run long, and in both drawers the issues are the point.
-// `heading` is null where the text sits under a heading of its own already,
-// as the finish drawer's next-issue card does.
-// Where a description or a match came from, linked back to it. Comic Vine
-// asks every page that uses its data to link back; Google Books asks for
-// "Powered by Google" beside its results; the rest are owed the credit.
-const PROVIDER_HOMES = {
-  "Metron": "https://metron.cloud/",
-  "Comic Vine": "https://comicvine.gamespot.com/",
-  "Grand Comics Database": "https://www.comics.org/",
-  "GCD": "https://www.comics.org/",
-  "Open Library": "https://openlibrary.org/",
-  "Google Books": "https://books.google.com/",
-};
-
-function ProviderCredit({ source, url }) {
-  const href = /^https?:\/\//i.test(String(url || "")) ? url : PROVIDER_HOMES[source];
-  const name = source === "Google Books" ? "Google Books · Powered by Google" : source;
-  return href ? <a className="provider-credit" href={href} target="_blank" rel="noopener noreferrer">{name}</a> : name;
-}
-
-function RunSynopsis({ text, source, sourceUrl, sourcePrefix = "From", loading = false, heading = "Story" }) {
-  const [open, setOpen] = useState(false);
-  if (loading) return <section className="run-synopsis" role="status" aria-busy="true" aria-label="Loading the story">
-    <span className="discover-drawer-lines" aria-hidden="true"><i /><i /><i /></span>
-  </section>;
-  if (!text) return null;
-  const long = text.length > 220;
-  return <section className="run-synopsis" aria-label={heading || "Story"}>
-    {heading ? <h3>{heading}</h3> : null}
-    <p className={long && !open ? "clamped" : ""}>{text}</p>
-    <footer>
-      {long ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>{open ? "Show less" : "Read more"}</button> : null}
-      {source ? <small>{sourcePrefix} <ProviderCredit source={source} url={sourceUrl} /></small> : null}
-    </footer>
-  </section>;
 }
 
 // A catalog run, as the comics drawer shows a library one: the art, then --
@@ -3480,6 +2538,13 @@ function StoryArcDrawer({ arc, waiting, onPull, onSave, onRead, onClose }) {
   </div>;
 }
 
+/**
+ * A run's issues, and how much of the run to take.
+ *
+ * Three ends, said before the button is pressed: following keeps watching for
+ * new issues; the other two take what is chosen, once. Ticking an issue is
+ * choosing, so it switches the mode itself rather than asking first.
+ */
 function DiscoverRunDrawer({ item, query, settled, followRequested = false, onFollow, onUnfollow, onPullIssues, onClose }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
@@ -4750,7 +3815,6 @@ function PanelFixesCard() {
   </div>;
 }
 
-
 // A phone's first level of Settings, after iPhone Settings: grouped rows of
 // an icon and a name, each opening its section as a page. A count rides
 // beside the name rather than in a column of its own, which would set every
@@ -5009,7 +4073,6 @@ function SetupView({ catalog, onFinish }) {
 
 // ---- Reader profiles ----------------------------------------------------------
 //
-
 
 // Your picture in every page's header, where Plex keeps it: a tap opens a
 // menu of who else can read here, adding a profile, your own page, and
@@ -6499,7 +5562,6 @@ function SharedDevicesCard() {
   </SettingsCard>;
 }
 
-
 // The sources that need no account, as one line after the ones that do: they
 // have nothing to configure, so they sit below the real choices rather than
 // as cards competing with them. Setup and Settings both use it.
@@ -6519,213 +5581,6 @@ function Provider({ provider, onConfigure, concise = false }) {
   // the pill only once it reports something the button does not.
   const showState = !concise || provider.builtIn || provider.configured || provider.enabled;
   return <div className={`provider-row ${provider.enabled ? "enabled" : ""}`}><Database size={23} weight="duotone" /><span><span className="provider-title-line"><strong>{provider.name}</strong>{showState ? <b className={`provider-state ${provider.enabled ? "connected" : provider.configured ? "paused" : "optional"}`}>{status}</b> : null}</span><small>{concise ? provider.setupSummary || provider.description : provider.description}</small><em>{provider.capabilities.join(" · ")}</em></span>{provider.builtIn ? <b className="provider-priority">Priority {provider.priority}</b> : <button onClick={onConfigure}>{provider.configured ? "Manage" : "Configure"}</button>}</div>;
-}
-
-/**
- * The download order, dragged into shape by each row's handle. The handle
- * alone starts a drag, so a touch on the row still scrolls the page; on it,
- * the arrow keys move the source a place at a time, because dragging must
- * never be the only way (WCAG 2.5.7). The order is saved once, on drop.
- */
-/**
- * A list put in order by dragging each row's handle (Download order, and a
- * collection's runs). Only the handle takes the touch, so a swipe on a row
- * still scrolls; on the focused handle the arrow keys move it a place, since
- * dragging must never be the only way (WCAG 2.5.7). The order is reported
- * once, on drop. `label(id, index, total)` names a handle; `renderRow(id,
- * index)` draws the rest of its row.
- */
-// How long a finger holds a handle still before the row lifts. Shorter and a
-// scroll that starts on the handle picks a run up; much longer and the hold
-// feels like nothing is happening.
-const DRAG_HOLD_MS = 250;
-// How far a finger may wander during the hold and still be holding.
-const DRAG_HOLD_SLOP = 8;
-
-function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }) {
-  const saved = ids.map(String);
-  const savedKey = saved.join();
-  const latestSaved = useRef(saved);
-  latestSaved.current = saved;
-  const onReorderRef = useRef(onReorder);
-  onReorderRef.current = onReorder;
-  const [order, setOrder] = useState(saved);
-  const [drag, setDrag] = useState(null);
-  // The handlers read these rather than state: the touch listeners are
-  // attached once, and must see the order and the drag as they are now.
-  const orderRef = useRef(order);
-  orderRef.current = order;
-  const dragRef = useRef(null);
-  // Saves still on their way. Until they land the list keeps the order it was
-  // put in by hand: following the saved order meanwhile snapped a dropped row
-  // back, then forward again seconds later once the catalog had reloaded (a
-  // collection's runs, 2026-10-01). A save that fails puts it back.
-  const pending = useRef(0);
-  const listRef = useRef(null);
-  const rowRefs = useRef({});
-  const handleRefs = useRef({});
-  const refocus = useRef(null);
-  // Where each row stood before a swap, so the ones that make way glide.
-  const before = useRef(null);
-  useEffect(() => { if (!drag && !pending.current) setOrder(savedKey ? savedKey.split(",") : []); }, [savedKey, drag]);
-  useEffect(() => {
-    if (refocus.current) { handleRefs.current[refocus.current]?.focus(); refocus.current = null; }
-  });
-  useLayoutEffect(() => {
-    const tops = before.current;
-    before.current = null;
-    if (!tops || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    for (const [id, top] of Object.entries(tops)) {
-      const node = rowRefs.current[id];
-      const delta = node ? top - node.getBoundingClientRect().top : 0;
-      if (Math.abs(delta) > 0.5) {
-        node.animate?.([{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
-          { duration: 160, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
-      }
-    }
-  }, [order]);
-  // A row's own content is drawn once per order, not on every move of the
-  // pointer: only the dragged row's offset changes while it follows a finger.
-  const rows = useMemo(() => Object.fromEntries(order.map((id, index) => [id, renderRow(id, index)])), [order, renderRow]);
-  function remember(except) {
-    before.current = Object.fromEntries(orderRef.current.filter((id) => id !== except)
-      .map((id) => [id, rowRefs.current[id]?.getBoundingClientRect().top ?? 0]));
-  }
-  function report(next) {
-    pending.current += 1;
-    let failed = false;
-    Promise.resolve().then(() => onReorderRef.current(next))
-      .then((result) => { failed = result === false; }, () => { failed = true; })
-      .finally(() => {
-        pending.current -= 1;
-        if (failed && !pending.current) setOrder(latestSaved.current);
-      });
-  }
-  function begin(id, y) {
-    const next = { id, startY: y, offset: 0, before: orderRef.current.join() };
-    dragRef.current = next;
-    setDrag(next);
-  }
-  function moveTo(y) {
-    const current = dragRef.current;
-    if (!current) return;
-    let { startY } = current;
-    let offset = y - startY;
-    let next = orderRef.current;
-    const index = next.indexOf(current.id);
-    const below = rowRefs.current[next[index + 1]];
-    const above = rowRefs.current[next[index - 1]];
-    // Past half a neighbour, the two trade places and the pointer's origin
-    // moves with the row, so it stays under the finger.
-    if (below && offset > below.offsetHeight / 2) {
-      next = moveRun(next, current.id, index + 1);
-      startY += below.offsetHeight; offset -= below.offsetHeight;
-    } else if (above && offset < -above.offsetHeight / 2) {
-      next = moveRun(next, current.id, index - 1);
-      startY -= above.offsetHeight; offset += above.offsetHeight;
-    }
-    if (next !== orderRef.current) { remember(current.id); orderRef.current = next; setOrder(next); }
-    dragRef.current = { ...current, startY, offset };
-    setDrag(dragRef.current);
-  }
-  function end() {
-    const current = dragRef.current;
-    if (!current) return;
-    dragRef.current = null;
-    setDrag(null);
-    if (orderRef.current.join() !== current.before) report(orderRef.current);
-  }
-  // A finger lifts a row by holding its handle still (Reminders, Keep): a
-  // touch on the handle used to start a drag at once, so scrolling a long
-  // list with a thumb on that edge moved runs (owner, 2026-10-01). Until
-  // the hold completes the handle scrolls like the rest of the row; once it
-  // has, the page holds still and the row follows. A mouse drags at once.
-  const startHold = useRef(null);
-  startHold.current = { begin, moveTo, end };
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return undefined;
-    let timer = 0;
-    let held = null;
-    let startY = 0;
-    let lifted = false;
-    const reset = () => { window.clearTimeout(timer); timer = 0; held = null; lifted = false; };
-    const onStart = (event) => {
-      const handle = event.target.closest?.("[data-drag-id]");
-      if (!handle || event.touches.length !== 1) return;
-      held = handle.dataset.dragId;
-      startY = event.touches[0].clientY;
-      lifted = false;
-      timer = window.setTimeout(() => {
-        timer = 0;
-        lifted = true;
-        startHold.current.begin(held, startY);
-      }, DRAG_HOLD_MS);
-    };
-    const onMove = (event) => {
-      if (!held) return;
-      const y = event.touches[0].clientY;
-      if (!lifted) {
-        // Moving before the hold is up is a scroll: let it be one.
-        if (Math.abs(y - startY) > DRAG_HOLD_SLOP) reset();
-        return;
-      }
-      event.preventDefault();
-      startHold.current.moveTo(y);
-    };
-    const onEnd = () => {
-      const wasLifted = lifted;
-      reset();
-      if (wasLifted) startHold.current.end();
-    };
-    list.addEventListener("touchstart", onStart, { passive: true });
-    list.addEventListener("touchmove", onMove, { passive: false });
-    list.addEventListener("touchend", onEnd);
-    list.addEventListener("touchcancel", onEnd);
-    return () => {
-      reset();
-      list.removeEventListener("touchstart", onStart);
-      list.removeEventListener("touchmove", onMove);
-      list.removeEventListener("touchend", onEnd);
-      list.removeEventListener("touchcancel", onEnd);
-    };
-  }, []);
-  function pointerDown(event, id) {
-    if (event.pointerType !== "mouse" || event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    begin(id, event.clientY);
-  }
-  function key(event, id) {
-    const delta = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
-    if (!delta) return;
-    event.preventDefault();
-    const index = order.indexOf(id);
-    if (index + delta < 0 || index + delta >= order.length) return;
-    const next = moveRun(order, id, index + delta);
-    refocus.current = id;
-    remember(null);
-    orderRef.current = next;
-    setOrder(next);
-    report(next);
-  }
-  return <ol className="source-order-list" ref={listRef}>
-    {order.map((id, index) => {
-      const dragging = drag?.id === id;
-      return <li className={`source-order-row ${rowClassName?.(id) || ""} ${dragging ? "source-order-row--dragging" : ""}`}
-        key={id} ref={(node) => { rowRefs.current[id] = node; }} style={dragging ? { transform: `translateY(${drag.offset}px)`, willChange: "transform" } : undefined}>
-        <button type="button" className="source-order-handle" data-drag-id={id} ref={(node) => { handleRefs.current[id] = node; }}
-          aria-label={`${label(id, index, order.length)}. Drag, or press the up and down arrow keys, to reorder.`}
-          title="Hold and drag to reorder"
-          onPointerDown={(event) => pointerDown(event, id)}
-          onPointerMove={(event) => { if (event.pointerType === "mouse") moveTo(event.clientY); }}
-          onPointerUp={(event) => { if (event.pointerType === "mouse") end(); }}
-          onPointerCancel={(event) => { if (event.pointerType === "mouse") end(); }}
-          onKeyDown={(event) => key(event, id)}><DotsSixVertical size={20} weight="bold" /></button>
-        {rows[id]}
-      </li>;
-    })}
-  </ol>;
 }
 
 function SourceOrderList({ rows, onReorder }) {
@@ -6841,1138 +5696,6 @@ function ProviderSettingsModal({ provider, onClose, onSaved }) {
             : "Built-in GCD structure remains first. Optional providers fill fields that are still missing."}</small></div>{result ? <p className="provider-test-result"><CheckCircle size={17} weight="fill" /> {result}</p> : null}{error ? <p className="workbench-error" role="alert">{error}</p> : null}<div className="provider-modal-actions"><button type="button" className="secondary-button" onClick={test} disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "test" ? <><LoadingSpinner size={17} /> Testing…</> : "Test"}</button><span />{provider.configured ? <button type="button" className="danger-button" onClick={removeCredentials} disabled={Boolean(busy)}>Remove</button> : null}<button className="primary-button" disabled={Boolean(busy) || (!credential && !provider.configured)}>{busy === "save" ? <><LoadingSpinner size={17} /> Saving…</> : "Save"}</button></div></form></section></div>;
 }
 
-/**
- * What an issue's Read control says, from the file behind it.
- *
- * Simpler than a run's: an issue is one comic, so it is unread, part-read or
- * finished. Nothing is offered for an issue with no readable file -- missing,
- * upcoming, a PDF, or owned only inside a volume, which the row already says.
- */
-function issueReadState(issue, readingFiles) {
-  const file = issue?.fileId ? readingFiles?.[String(issue.fileId)] : null;
-  if (!file?.readable) return null;
-  // The same rule the server's resolver uses for a run: a record that is not
-  // finished is a place to continue from, whatever page it is on. Two rules
-  // for one question is exactly what the resolver exists to prevent.
-  const place = file.stale ? null : file;
-  if (!place?.pageCount) return { label: "Read", fraction: 0, detail: "", finished: false };
-  if (place.finishedAt) return { label: "Read again", fraction: 0, detail: "", finished: true };
-  return {
-    label: "Continue", fraction: Math.min(1, (place.page + 1) / place.pageCount),
-    detail: `page ${place.page + 1} of ${place.pageCount}`, finished: false,
-  };
-}
-
-// A small menu of actions on one thing, drawn over everything from its
-// button's position (as GlassSelect's list is), right edge under the button's.
-// It joins the dialog stack, so Escape closes it and not what is under it.
-function ActionMenu({ anchor, label, items, onClose }) {
-  const menuRef = useDialog(onClose);
-  const [place, setPlace] = useState(null);
-  useLayoutEffect(() => {
-    const button = anchor.current?.getBoundingClientRect();
-    const menu = menuRef.current;
-    if (!button || !menu) return;
-    const gap = 6;
-    const margin = 12;
-    const width = Math.min(240, window.innerWidth - margin * 2);
-    const below = window.innerHeight - button.bottom - gap - margin;
-    const up = menu.scrollHeight > below && button.top - gap - margin > below;
-    setPlace({
-      width, left: Math.min(Math.max(margin, button.right - width), window.innerWidth - margin - width),
-      ...(up ? { bottom: window.innerHeight - button.top + gap } : { top: button.bottom + gap }),
-      transformOrigin: up ? "bottom right" : "top right",
-    });
-  }, []);
-  useEffect(() => {
-    function outside(event) {
-      if (menuRef.current?.contains(event.target) || anchor.current?.contains(event.target)) return;
-      onClose();
-    }
-    document.addEventListener("pointerdown", outside, true);
-    window.addEventListener("scroll", onClose, true);
-    return () => {
-      document.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("scroll", onClose, true);
-    };
-  }, [onClose]);
-  return createPortal(<div className="glass-menu glass-select-menu action-menu" ref={menuRef} role="menu" aria-label={label}
-    style={place ? { ...place } : { visibility: "hidden", top: 0, left: 0 }} onMouseDown={(event) => event.stopPropagation()}>
-    {items.map((item) => <button type="button" role="menuitem" key={item.key} disabled={item.disabled} onClick={() => { onClose(); item.onSelect(); }}>
-      <span className="sort-menu-check" aria-hidden="true">{item.icon}</span>
-      <span>{item.label}</span>
-    </button>)}
-  </div>, document.body);
-}
-
-// What can be done to one issue, as every reader offers it: a menu from a
-// "..." (shown on hover on a desktop, always to a finger) or a long press on
-// the tile -- never a tap on the cover, which opens the comic. Read or
-// continue it, mark it read or unread for this profile, and, for the admin,
-// edit its metadata.
-function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, onAddToArc, className, longPress = false }) {
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef(null);
-  const close = useCallback(() => setOpen(false), []);
-  useEffect(() => {
-    if (!longPress) return undefined;
-    const tile = buttonRef.current?.closest(".issue-tile");
-    if (!tile) return undefined;
-    let timer = 0;
-    let held = false;
-    const cancel = () => { window.clearTimeout(timer); timer = 0; };
-    function onDown(event) {
-      if (event.pointerType === "mouse" || event.button !== 0) return;
-      held = false;
-      timer = window.setTimeout(() => { held = true; setOpen(true); }, 500);
-    }
-    // A press that became the menu must not also open the comic on release.
-    function onClick(event) {
-      if (held) { event.preventDefault(); event.stopPropagation(); held = false; }
-    }
-    tile.addEventListener("pointerdown", onDown);
-    tile.addEventListener("pointermove", cancel);
-    tile.addEventListener("pointerup", cancel);
-    tile.addEventListener("pointercancel", cancel);
-    tile.addEventListener("click", onClick, true);
-    return () => {
-      cancel();
-      tile.removeEventListener("pointerdown", onDown);
-      tile.removeEventListener("pointermove", cancel);
-      tile.removeEventListener("pointerup", cancel);
-      tile.removeEventListener("pointercancel", cancel);
-      tile.removeEventListener("click", onClick, true);
-    };
-  }, [longPress]);
-  const label = issueLabel(issue.number, medium);
-  const items = [];
-  if (read && onRead) items.push({ key: "read", label: read.label, icon: <BookOpen size={16} weight="fill" />, onSelect: () => onRead({ id: issue.fileId }) });
-  // Part-read, it can be finished or forgotten; read, forgotten; untouched,
-  // finished. Someone else's place on your profile is cleared the same way.
-  if (read && onMark && !read.finished) items.push({ key: "mark-read", label: "Mark as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMark(issue, true) });
-  if (read && onMark && (read.finished || read.fraction)) items.push({ key: "mark-unread", label: "Mark as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMark(issue, false) });
-  // Owned or missing alike: an arc holds the issue either way, and pulls it.
-  if (onAddToArc && /^\d+$/.test(String(issue.id))) items.push({ key: "arc", label: "Add to story arc\u2026", icon: <ListNumbers size={16} />, onSelect: () => onAddToArc(issue) });
-  if (onEditIssue) items.push({ key: "edit", label: "Edit issue metadata", icon: <PencilSimple size={16} />, onSelect: () => onEditIssue(issue) });
-  if (!items.length) return null;
-  return <>
-    <button type="button" ref={buttonRef} className={className} onClick={() => setOpen((value) => !value)}
-      aria-haspopup="menu" aria-expanded={open} aria-label={`Options for ${label}`} title="Options">
-      <DotsThree size={18} weight="bold" />
-    </button>
-    {open ? <ActionMenu anchor={buttonRef} label={`Options for ${label}`} items={items} onClose={close} /> : null}
-  </>;
-}
-
-// What an issue's badge says about reading it, in the ownership badge's spot,
-// once the issue is owned: "In progress" over its bar, "Read" when finished.
-// Unread is plain, as in every reader looked at (Komga, Plex, Panels).
-function readingBadge(read) {
-  if (!read) return null;
-  if (read.finished) return { label: "Read", tone: "reading-read" };
-  if (read.fraction) return { label: "In progress", tone: "reading-progress" };
-  return null;
-}
-
-// The run's own menu in its group header: mark every issue read, or unread.
-function RunMenu({ runRead, runStarted, onMarkRun }) {
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef(null);
-  const close = useCallback(() => setOpen(false), []);
-  const items = [
-    ...(runRead ? [] : [{ key: "mark-read", label: "Mark run as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMarkRun(true) }]),
-    ...(runRead || runStarted ? [{ key: "mark-unread", label: "Mark run as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMarkRun(false) }] : []),
-  ];
-  return <>
-    <button type="button" ref={buttonRef} className="issue-group-menu" onClick={() => setOpen((value) => !value)}
-      aria-haspopup="menu" aria-expanded={open} aria-label="Options for this run" title="Options">
-      <DotsThree size={18} weight="bold" />
-    </button>
-    {open ? <ActionMenu anchor={buttonRef} label="Options for this run" items={items} onClose={close} /> : null}
-  </>;
-}
-
-function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, onAddIssuesToArc, empty = null, runRead = false, runStarted = false, readingFiles, medium }) {
-  // Covers are why the tab exists, so posters lead. A long run is also less
-  // scrolling this way than as tall rows: four across beats one down.
-  const [view, setView] = useState("grid");
-  // Select (Komga's and Kavita's pattern): tick many issues, then add them
-  // to a story arc at once. A tap toggles instead of reading.
-  const [selecting, setSelecting] = useState(false);
-  const [selected, setSelected] = useState(() => new Set());
-  const selectable = onAddIssuesToArc ? (issues || []).filter((issue) => /^\d+$/.test(String(issue.id))) : [];
-  function endSelecting() { setSelecting(false); setSelected(new Set()); }
-  function toggleSelected(id) {
-    setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  }
-  const selectToggle = (issue) => selecting && /^\d+$/.test(String(issue.id))
-    ? <button type="button" className={`issue-select-toggle${selected.has(String(issue.id)) ? " selected" : ""}`} aria-pressed={selected.has(String(issue.id))}
-      aria-label={`Select ${issueLabel(issue.number, medium)}`} onClick={() => toggleSelected(String(issue.id))}>
-      <span className="issue-select-check" aria-hidden="true">{selected.has(String(issue.id)) ? <Check size={14} weight="bold" /> : null}</span>
-    </button> : null;
-  if (!issues?.length && empty) return empty;
-  if (!issues?.length) return <div className="drawer-empty"><BookOpen size={26} weight="duotone" /><strong>No issue list linked yet</strong><span>Flipparr will add series runs and their issues automatically when a match is found.</span></div>;
-  const groups = [];
-  const byRun = new Map();
-  for (const issue of issues) {
-    const key = String(issue.contextRunId || issue.contextLabel || "unknown");
-    if (!byRun.has(key)) {
-      const group = {
-        key,
-        title: issue.contextGroupName || issue.contextLabel || "Unknown run",
-        runTitle: issue.contextLabel,
-        year: issue.contextYear,
-        type: issue.contextType || "main",
-        issues: [],
-      };
-      byRun.set(key, group);
-      groups.push(group);
-    }
-    byRun.get(key).issues.push(issue);
-  }
-  // The same toggle and icons as the Comics toolbar, in the first run's
-  // header rather than on a row of its own above it.
-  // The Comics tools row's switch, so grid or list reads the same everywhere.
-  const viewToggle = <GlassSegmented label="Choose issue view" value={view} onChange={setView} className="issue-view-toggle"
-    items={[{ id: "grid", title: "Grid view", icon: <GridViewIcon /> }, { id: "list", title: "List view", icon: <ListViewIcon /> }]} />;
-  const allSelected = selectable.length > 0 && selectable.every((issue) => selected.has(String(issue.id)));
-  return <div className={`grouped-issue-inventory ${view}${selecting ? " selecting" : ""}`}>
-    {groups.map((group, groupIndex) => {
-    const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
-    return <section className="issue-run-group" key={group.key}>
-      <header><div><span>{group.type === "specials" ? "Special / one-shot" : group.type === "arc" ? "Story arc" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && (selectable.length || (onMarkRun && readingFiles)) ? <span className="issue-run-group-tools">{selectable.length ? <button type="button" className="glass-button issue-select-button" aria-pressed={selecting} onClick={() => (selecting ? endSelecting() : setSelecting(true))}>{selecting ? "Cancel" : "Select"}</button> : null}{onMarkRun && readingFiles && !selecting ? <RunMenu runRead={runRead} runStarted={runStarted} onMarkRun={onMarkRun} /> : null}</span> : null}</div></header>
-      <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
-        // "Volume 5" under "Vol. 5" says it twice.
-        const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
-          || (medium === "manga" && identityKey(issue.title) === identityKey(`Volume ${issue.number}`));
-        const releaseLabel = issue.publicationDate
-          ? new Date(`${issue.publicationDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-          : issue.publicationYear ? `Published ${issue.publicationYear}` : "Release date unknown";
-        // Owned as a single issue is what the Issues tab already says, so it
-        // carries no badge; the other states are news and keep theirs.
-        const stateLabel = issue.ownership === "both" ? "Single + volume"
-          : issue.ownership === "direct" ? null
-          : issue.ownership === "collection" ? "In volume"
-          : issue.releaseState === "upcoming" ? "Upcoming"
-          : issue.releaseState === "unknown" ? "Date needed" : "Missing";
-        const owned = issue.ownership !== "unowned";
-        const read = issueReadState(issue, readingFiles);
-        if (view === "grid") {
-          // A missing issue keeps its tile, dimmed, so a gap in a run is
-          // visible rather than silently absent from the grid.
-          return <article className={`issue-tile ${owned ? "" : "unowned"}`} key={issue.id}>
-            {selectToggle(issue)}
-            {/* The badge sits over the cover, beside it rather than inside it,
-                so a missing issue's dimmed cover does not dim its badge too. */}
-            <span className="issue-tile-art">
-              <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
-              {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
-                : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}
-              {/* Inside the cover's box, not the tile's: anchored to the tile
-                  it would sit under the issue title. */}
-              {read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
-                aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
-                title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
-              {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
-              <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-tile-menu" longPress />
-            </span>
-            {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
-            <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong>
-            {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
-          </article>;
-        }
-        return <article key={issue.id}>{selectToggle(issue)}<span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions">{!stateLabel && readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}<IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-row-menu" /></div></article>;
-      })}</div>
-    </section>;
-  })}
-    {selecting ? <div className="issue-select-bar" role="toolbar" aria-label="Selected issues">
-      <span className="issue-select-count"><strong role="status">{selected.size} selected</strong>
-        <button type="button" onClick={() => setSelected(allSelected ? new Set() : new Set(selectable.map((issue) => String(issue.id))))}>{allSelected ? "Clear all" : "Select all"}</button></span>
-      <button type="button" className="primary-button" disabled={!selected.size}
-        onClick={() => { onAddIssuesToArc(selectable.filter((issue) => selected.has(String(issue.id)))); endSelecting(); }}><ListNumbers size={17} /> Add to story arc</button>
-    </div> : null}
-  </div>;
-}
-
-function VolumeInventory({ editions }) {
-  if (!editions?.length) return <div className="drawer-empty"><Books size={26} weight="duotone" /><strong>No volumes linked yet</strong><span>Collected files will appear here after inventory.</span></div>;
-  return <div className="edition-inventory">{editions.map((edition) => { const title = edition.subtitle ? `${edition.title}: ${edition.subtitle}` : edition.title; return <article key={edition.logicalVolumeKey || edition.id}><span className="edition-cover"><CoverArt id={`edition-${edition.id}`} title={title} cover={edition.cover} decorative placeholderSize={20} /></span><div className="edition-card-content"><header><div><strong>{title}</strong><small>{[edition.publisher, edition.publicationYear, edition.format].filter(Boolean).join(" · ") || "Volume details incomplete"}</small></div><span><b>{editionKindLabel(edition.editionKind)}{edition.volume ? ` · Vol. ${edition.volume}` : ""}</b><small>{edition.copyCount > 1 ? `${edition.copyCount} library files` : edition.source || "Local metadata"}</small>{edition.coverageOverrideCount ? <small>{edition.coverageOverrideCount} local contents correction{edition.coverageOverrideCount === 1 ? "" : "s"}</small> : null}</span></header>{edition.isbns?.length ? <p><b>ISBN</b> {edition.isbns.join(", ")}</p> : null}<div className="coverage-groups">{edition.coverageGroups?.length ? edition.coverageGroups.map((coverage) => <div className={coverage.resolved ? "resolved" : "unresolved"} key={`${coverage.seriesLabel}-${coverage.issueLabel}-${coverage.source}`}><span><strong>{coverage.seriesLabel} #{coverage.issueLabel}</strong><small>{coverage.resolved ? "Counts toward canonical ownership" : "Visible claim; canonical numbering unresolved"}</small></span><b>{coverage.confidence}</b><p>{coverage.source}{coverage.evidence ? ` · ${volumeTerminology(coverage.evidence)}` : ""}</p></div>) : <div className="no-coverage"><WarningCircle size={18} /><span><strong>Contents not established</strong><small>{volumeTerminology(edition.coverageStatus) || "No structured issue coverage was returned by the current sources."}</small></span></div>}</div></div></article>; })}</div>;
-}
-
-function FileActionButtons({ file, readable, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
-  const editionsOn = useCollectedEditions();
-  // Editing a collected edition's issue contents is an edition-management
-  // surface; the file itself stays visible and fixable either way.
-  // Read comes first: it is the only thing here you would do for pleasure.
-  // Whether it can be read is the server's answer, from the file's first
-  // bytes -- the suffix lies in both directions. A .cb7 needs a tool the
-  // container may not carry, and a zip named .bin opens perfectly.
-  return <>{readable ? <button onClick={() => onRead(file)}><BookOpen size={14} /> Read</button>
-    : <small className="file-not-readable">Not a readable archive</small>}{file.identityKind === "edition" && editionsOn ? <button onClick={() => onOpenContents(file)}><ListBullets size={14} /> Issues</button> : null}<button onClick={() => onReplace(file)}><CloudArrowDown size={14} /> Replace</button><button onClick={() => onChangeRun(file)}><Books size={14} /> Change run</button><button onClick={() => onOpenCover(file)}><BookOpen size={14} /> Cover</button><button onClick={() => onOpenWorkbench(file, "match")}><ArrowsClockwise size={14} /> Fix match</button><button onClick={() => onOpenWorkbench(file, "edit")}><PencilSimple size={14} /> Metadata</button></>;
-}
-
-// A phone's file row: the same tools as the desktop's buttons, from a "..."
-// beside the file, as an issue row's menu is (owner, 2026-10-01: the old
-// labelled Actions button sat on a row of its own under every file).
-function FileMenu({ file, readable, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
-  const editionsOn = useCollectedEditions();
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef(null);
-  const close = useCallback(() => setOpen(false), []);
-  const items = [
-    readable ? { key: "read", label: "Read", icon: <BookOpen size={16} />, onSelect: () => onRead(file) }
-      : { key: "read", label: "Not a readable archive", icon: <BookOpen size={16} />, disabled: true, onSelect: () => {} },
-    ...(file.identityKind === "edition" && editionsOn ? [{ key: "issues", label: "Issues", icon: <ListBullets size={16} />, onSelect: () => onOpenContents(file) }] : []),
-    { key: "replace", label: "Replace", icon: <CloudArrowDown size={16} />, onSelect: () => onReplace(file) },
-    { key: "run", label: "Change run", icon: <Books size={16} />, onSelect: () => onChangeRun(file) },
-    { key: "cover", label: "Cover", icon: <BookOpen size={16} />, onSelect: () => onOpenCover(file) },
-    { key: "match", label: "Fix match", icon: <ArrowsClockwise size={16} />, onSelect: () => onOpenWorkbench(file, "match") },
-    { key: "edit", label: "Metadata", icon: <PencilSimple size={16} />, onSelect: () => onOpenWorkbench(file, "edit") },
-  ];
-  const label = `Actions for ${file.filename}`;
-  return <>
-    <button type="button" ref={buttonRef} className="file-menu-button" onClick={() => setOpen((value) => !value)}
-      aria-haspopup="menu" aria-expanded={open} aria-label={label} title="Actions">
-      <DotsThree size={22} weight="bold" />
-    </button>
-    {open ? <ActionMenu anchor={buttonRef} label={label} items={items} onClose={close} /> : null}
-  </>;
-}
-
-function FileInventory({ files, readingFiles, onRead, onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
-  if (!files?.length) return <div className="drawer-empty"><HardDrive size={26} weight="duotone" /><strong>No local files linked</strong></div>;
-  return <div className="file-inventory">{files.map((file) => <article key={file.path}><HardDrive size={20} weight="duotone" /><div><strong>{file.filename}</strong><small>{file.identityKind === "issue" ? "Single issue" : editionKindLabel(file.editionKind)} · {(file.sizeBytes / 1024 / 1024).toFixed(1)} MB</small>{file.metadataLocked ? <small className="metadata-lock"><ShieldCheck size={13} weight="fill" /> Local corrections locked</small> : null}</div><span className="file-row-actions"><FileActionButtons file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></span><FileMenu file={file} readable={Boolean(readingFiles?.[String(file.id)]?.readable)} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /></article>)}</div>;
-}
-
-function IssueCatalogCard({ series, catalogKnown, syncing, error, lastResult, onSync, onReviewFiles, onFindRun }) {
-  const catalog = series.issueCatalog || { status: "unknown", syncReady: false };
-  const collectionIssueCount = series.issues?.filter((issue) => issue.collectionOwned).length || 0;
-  const directFiles = series.inventory?.directIssueFiles || 0;
-  const editionCount = series.inventory?.editionCount || 0;
-  const issues = series.issues || [];
-  const numberedOnly = catalog.titlePolicy === "numbered_only";
-  const missingTitleIssues = numberedOnly ? [] : issues.filter((issue) => !String(issue.title || "").trim());
-  const upcomingUntitled = missingTitleIssues.filter((issue) => issue.releaseState === "upcoming");
-  const repairableTitles = missingTitleIssues.filter((issue) => issue.releaseState !== "upcoming");
-  const missingDateIssues = issues.filter((issue) => issue.publicationYear == null);
-  const repairableFields = repairableTitles.length + missingDateIssues.length;
-  const resultMetadata = lastResult?.metadata;
-  const repairedFields = (resultMetadata?.repairedTitleCount || 0) + (resultMetadata?.repairedDateCount || 0);
-  const providerErrors = lastResult?.providerErrors || [];
-  const checkedAt = catalog.lastSyncedAt ? new Date(catalog.lastSyncedAt).toLocaleString() : null;
-  if (catalogKnown) {
-    let tone = repairableFields ? "repairing" : "";
-    let heading = "Issue details complete";
-    let outcome = `No missing issue titles or release dates across ${catalog.issueCount || issues.length} issues.`;
-    if (syncing) {
-      heading = "Checking metadata sources";
-      outcome = "Looking for newly available issue titles and release dates.";
-    } else if (error || catalog.error) {
-      tone = "error";
-      heading = "Metadata check couldn’t finish";
-      outcome = "Existing issue information is unchanged. You can try again without losing local corrections.";
-    } else if (repairableFields) {
-      heading = `${repairableFields} issue detail${repairableFields === 1 ? " is" : "s are"} still unavailable`;
-      const parts = [];
-      if (repairableTitles.length) parts.push(`${repairableTitles.length} missing title${repairableTitles.length === 1 ? "" : "s"}`);
-      if (missingDateIssues.length) parts.push(`${missingDateIssues.length} missing release date${missingDateIssues.length === 1 ? "" : "s"}`);
-      outcome = `${parts.join(" and ")}. Enabled providers were checked but do not currently supply ${repairableFields === 1 ? "this field" : "these fields"}.`;
-    } else if (numberedOnly) {
-      heading = "Issue metadata current";
-      outcome = "This run is listed by issue number. The matched sources do not publish separate issue titles.";
-    } else if (upcomingUntitled.length) {
-      heading = "Metadata current";
-      const labels = upcomingUntitled.map((issue) => `#${issue.number}`).join(", ");
-      outcome = `${labels} ${upcomingUntitled.length === 1 ? "is" : "are"} upcoming; ${upcomingUntitled.length === 1 ? "its title has" : "their titles have"} not been announced yet.`;
-    }
-    return <section className={`issue-catalog-card synced ${tone}`}><div className="issue-catalog-outcome"><strong>{heading}</strong><small>{outcome}</small>{repairedFields ? <em><CheckCircle size={14} weight="fill" /> {repairedFields} field{repairedFields === 1 ? "" : "s"} filled during the latest check.</em> : resultMetadata && !syncing ? <em>No additional fields were available during the latest check.</em> : null}<details><summary>View metadata details</summary><div className="issue-catalog-details"><p>{catalog.detail || `The issue list is linked through ${catalog.provider?.toUpperCase() || "the metadata provider"}.`}</p>{checkedAt ? <time>Last checked {checkedAt}</time> : null}{providerErrors.length ? <ul>{providerErrors.map((item) => <li key={item.provider}><b>{item.provider}</b>: {item.error}</li>)}</ul> : null}<p>Local corrections remain locked and are never replaced by provider refreshes.</p></div></details></div><button onClick={onSync} disabled={syncing}>{syncing ? <LoadingSpinner size={17} /> : <ArrowsClockwise size={17} />} {syncing ? "Checking…" : "Refresh details"}</button>{error || catalog.error ? <p>{error || catalog.error}</p> : null}</section>;
-  }
-  if (catalog.syncReady) {
-    const providerNames = (catalog.anchorProviders || []).map((provider) => ({ gcd: "GCD", metron: "Metron", comic_vine: "Comic Vine" }[provider] || provider));
-    const providerLabel = providerNames.length ? providerNames.join(" and ") : "a metadata service";
-    return <section className="issue-catalog-card ready"><div><strong>Complete issue list is ready to load</strong><small>Your confirmed issue match is linked through {providerLabel}. Loading the run will add complete issue numbering and improve ownership totals.</small></div><button onClick={onSync} disabled={syncing} aria-busy={syncing}>{syncing ? <LoadingSpinner size={17} /> : <CloudArrowDown size={17} />} Load issue list</button>{error || catalog.error ? <p>{error || catalog.error}</p> : null}</section>;
-  }
-  if (editionCount > 0 && directFiles === 0) return <section className="issue-catalog-card pending"><div><strong>Find the full series</strong><small>We can see {collectionIssueCount} issue{collectionIssueCount === 1 ? "" : "s"} covered by your volumes. Flipparr can find the complete issue list, related miniseries, and specials automatically.</small><em>You choose how to acquire gaps; provider-run maintenance stays automatic.</em></div><button onClick={() => onFindRun(series)}><MagnifyingGlass size={17} /> Find full series</button></section>;
-  if (directFiles > 0) return <section className="issue-catalog-card pending"><div><strong>Confirm one issue match to load the full series</strong><small>Your issue files are in the library, but none is linked to a verified external issue yet. Review one file and use Fix Match to choose the correct result.</small></div><button onClick={onReviewFiles}><Eye size={17} /> Review issue files</button></section>;
-  return <section className="issue-catalog-card pending"><div><strong>Full issue list not available</strong><small>No verified issue-run evidence is available yet. Your existing library records are still safe and usable.</small><em>No action is required.</em></div></section>;
-}
-
-function CollectionManagement({ series, families, allSeries, onCreateFamily, onSetFamily }) {
-  const [name, setName] = useState("");
-  const [targetFamily, setTargetFamily] = useState("");
-  const [candidateRun, setCandidateRun] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const family = families.find((item) => item.id === series.family?.id);
-  const familyRunIds = new Set(family?.runIds || []);
-  const otherFamilies = families.filter((item) => item.id !== family?.id);
-  const availableRuns = allSeries.filter((item) => !familyRunIds.has(item.id));
-  async function create(event) {
-    event.preventDefault();
-    if (!name.trim()) return;
-    setBusy(true); setError("");
-    const result = await onCreateFamily(name.trim(), [series.id]);
-    if (result.ok) setName(""); else setError(result.error);
-    setBusy(false);
-  }
-  async function assign(runId, familyId) {
-    setBusy(true); setError("");
-    const result = await onSetFamily(runId, familyId || null);
-    if (!result.ok) setError(result.error);
-    setBusy(false);
-  }
-  return <div className="family-management">
-    <section className={`current-family ${family ? "linked" : ""}`}><Books size={24} weight="duotone" /><div><span>{family ? "Collection" : "Independent publication run"}</span><strong>{family?.name || series.title}</strong><small>{family ? `${family.runCount} runs are grouped in this collection. Each run keeps its own numbering and metadata.` : "This run is currently shown independently. It can be added to a collection without merging its identity."}</small></div></section>
-    {family ? <section className="family-members"><header><strong>Publication runs</strong><small>Remove any run to show it independently again.</small></header>{family.runs.map((run) => <article key={run.id}><div><strong>{run.title}</strong><small>{run.year} · {run.total} issue{run.total === 1 ? "" : "s"}</small></div><button disabled={busy} onClick={() => assign(run.id, null)}>Remove</button></article>)}</section> : null}
-    {family && availableRuns.length ? <section className="family-assignment"><h3>Add or move a run into this collection</h3><div><GlassSelect label="Run to add" placeholder="Choose a run…" value={candidateRun} onChange={setCandidateRun} className="glass-select--fill" options={availableRuns.map((run) => ({ value: run.id, label: `${run.title} (${run.year})${run.family ? ` · from ${run.family.name}` : ""}` }))} /><button disabled={busy || !candidateRun} onClick={() => assign(candidateRun, family.id)}><Plus size={17} /> Add run</button></div><small>Moving a run changes only its collection membership.</small></section> : null}
-    {otherFamilies.length ? <section className="family-assignment"><h3>{family ? "Move this run to another collection" : "Add this run to an existing collection"}</h3><div><GlassSelect label="Collection" placeholder="Choose a collection…" value={targetFamily} onChange={setTargetFamily} className="glass-select--fill" options={otherFamilies.map((item) => ({ value: item.id, label: `${item.name} · ${item.runCount} run${item.runCount === 1 ? "" : "s"}` }))} /><button disabled={busy || !targetFamily} onClick={() => assign(series.id, targetFamily)}>{family ? "Move run" : "Join collection"}</button></div></section> : null}
-    <form className="family-create-form" onSubmit={create}><h3>Create a new collection from this run</h3><p>The current run will move into the new collection. Files, issues, volumes, aliases, and provider matches stay on the run.</p><div><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Collection name…" /><button disabled={busy || !name.trim()}><Plus size={17} /> Create collection</button></div></form>
-    {error ? <p className="workbench-error" role="alert">{error}</p> : null}
-  </div>;
-}
-
-// Following is on or off, so it is a switch -- not a button that changes into
-// "View wanted issues" once pressed, beside a second button that undoes it.
-function FollowSwitch({ following, busy = false, label, onChange }) {
-  return <label className={`follow-switch${busy ? " busy" : ""}`}>
-    <input type="checkbox" role="switch" checked={following} disabled={busy}
-      aria-checked={following} onChange={(event) => onChange(event.target.checked)} />
-    <i aria-hidden="true" />
-    <span>{busy ? <LoadingSpinner size={14} /> : null}{label}</span>
-  </label>;
-}
-
-// "#1 · The Dark Knight" -- the run's own title would say the same thing on
-// every card, so the number leads and the issue's title follows when it has
-// one worth showing.
-function issueCardLabel(issue, medium) {
-  const number = issueLabel(issue.number, medium);
-  const generic = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
-    || (medium === "manga" && identityKey(issue.title) === identityKey(`Volume ${issue.number}`));
-  return generic ? number : `${number} · ${issue.title}`;
-}
-
-// What a run's Edit panel can change, in the order it lists them. Assets
-// first: they are what people come here to change, and they are the two the
-// drawer's header used to spend its only button on.
-const EDIT_SECTIONS = [
-  ["cover", "Series cover", "Use another issue's art, a provider's cover, or your own image."],
-  ["background", "Header background", "The page behind this drawer's header."],
-];
-
-/**
- * Edit, the way iOS Settings works: a list, then one section at a time, with
- * Back to where you came from.
- *
- * It is a panel inside the drawer rather than a dialog over it. That is what
- * keeps one scrim on screen -- tapping outside dismisses the drawer, as it
- * always did -- and it means the cover and background pickers are shown in
- * place rather than stacked as a second modal, which this app has never done
- * and whose layering is decided by render order rather than by design.
- *
- * What it holds is what a run can actually change. A run's title, publisher
- * and year come from the provider it is matched to and there is no route to
- * override them, so they are shown as facts with the one action that does
- * change them, rather than as fields that would quietly discard what you type.
- */
-function SeriesEditPanel({
-  series, section, onSection, shownBackdrop, medium, readingFiles, directionOverride, onSetDirection,
-  cover, onSelectCover, onUploadCover, coverBusy, coverError,
-  onChooseBackdrop, onAutomaticBackdrop, backdropBusy, backdropError,
-  alternateTitles, aliasForm, onFixMatch, onSetFormat, onSetAgeRating,
-}) {
-  if (section === "cover") {
-    return <div className="edit-section">
-      <p className="edit-section-intro">Choose art from the comic, a metadata provider, or upload your own image. The comic file is not altered.</p>
-      {cover
-        ? <CoverPicker data={cover} busy={coverBusy} error={coverError} onSelect={onSelectCover} onUpload={onUploadCover} />
-        : <div className="edit-section-status" role="status"><LoadingSpinner size={18} /> Looking for cover art…</div>}
-    </div>;
-  }
-  if (section === "background") {
-    return <div className="edit-section">
-      <p className="edit-section-intro">Choose a page from {series.title} to show behind this header.</p>
-      <BackdropPicker series={series} current={shownBackdrop} busy={backdropBusy} error={backdropError} readable={readingFiles}
-        onChoose={onChooseBackdrop} onAutomatic={onAutomaticBackdrop} />
-    </div>;
-  }
-  return <div className="edit-index">
-    {/* Facts, not fields. A run's identity is its provider match, and the
-        honest way to offer a change is the match, not a text box that would
-        be thrown away. */}
-    <section className="edit-identity">
-      <dl>
-        <div><dt>Title</dt><dd>{series.title}</dd></div>
-        {series.publisher ? <div><dt>Publisher</dt><dd>{series.publisher}</dd></div> : null}
-        {series.year ? <div><dt>Year</dt><dd>{series.year}</dd></div> : null}
-      </dl>
-      <p>These come from the run this is matched to. Fix the match to change them.</p>
-      <button type="button" className="ghost-button" onClick={() => onFixMatch(series)}><MagnifyingGlass size={16} /> Fix series match</button>
-    </section>
-    <div className="edit-rows">
-      {EDIT_SECTIONS.map(([id, label, detail]) => <button type="button" className="edit-row" onClick={() => onSection(id)} key={id}>
-        <span><strong>{label}</strong><small>{detail}</small></span>
-        <CaretRight size={17} />
-      </button>)}
-    </div>
-    <section className="advanced-card">
-      <div><strong>{medium === "manga" ? "Filed as manga" : "Filed as a comic"}</strong><p>{medium === "manga" ? "Searched and filed by volume, in the Manga folder." : "Manga is searched and filed by volume, in the Manga folder."} Change it if the publisher misled Flipparr.</p></div>
-      <button type="button" onClick={() => onSetFormat?.(series, medium === "manga" ? "comic" : "manga")}><Books size={16} /> {medium === "manga" ? "File as comic" : "File as manga"}</button>
-    </section>
-    {/* How it is filed and which way it turns are not the same question: an
-        English edition of a manga is printed left to right, and no provider
-        records that, so it is the reader's to say. */}
-    <section className="advanced-card edit-direction">
-      <div>
-        <strong>Reading direction</strong>
-        <p>{directionOverride
-          ? `Set by hand: ${directionOverride === READING_DIRECTIONS.rtl ? "right to left" : "left to right"}.`
-          : medium === "manga"
-            ? "Right to left, because this is filed as manga."
-            : "Left to right, because this is filed as a comic."}</p>
-      </div>
-      <GlassSegmented label="Choose reading direction" value={directionOverride || "auto"}
-        onChange={(next) => onSetDirection?.(series, next === "auto" ? null : next)}
-        className="direction-toggle"
-        items={[
-          { id: "auto", label: "Auto" },
-          { id: READING_DIRECTIONS.ltr, title: "Left to right", icon: <ArrowRight size={16} /> },
-          { id: READING_DIRECTIONS.rtl, title: "Right to left", icon: <ArrowLeft size={16} /> },
-        ]} />
-    </section>
-    {/* Who may read it. What Metron or the cover said is kept; the admin's
-        choice outranks it, and "Auto" goes back to it. */}
-    <section className="advanced-card edit-rating">
-      <div>
-        <strong>Age rating</strong>
-        <p>{ratingSource(series)}</p>
-      </div>
-      {/* A list, not a segmented control: five ratings do not fit across a phone. */}
-      <GlassSelect label="Age rating" value={series.ageRatingOverride || "auto"}
-        onChange={(next) => onSetAgeRating?.(series, next === "auto" ? null : next)}
-        options={[{ value: "auto", label: series.ageRatingFound ? `Auto (${RATING_LABELS[series.ageRatingFound]})` : "Auto" },
-          ...RATINGS.map((id) => ({ value: id, label: RATING_LABELS[id] }))]} />
-    </section>
-    {/* Small enough to edit where it is: only the cover and background
-        pickers are big enough to step into (owner, 2026-10-01). */}
-    <section className="advanced-card edit-titles">
-      <div><strong>Alternate titles</strong><p>Other names this run&rsquo;s comics are filed under. Scans use these automatically; add one only if a scan keeps missing a file.</p></div>
-      {alternateTitles.length ? <div className="alias-list">{alternateTitles.map((item) => <span className={item.confirmed ? "confirmed" : ""} key={`${item.name}-${item.source}`}><strong>{item.name}</strong><small>{item.confirmed ? "Manually confirmed" : item.source}</small></span>)}</div> : null}
-      {aliasForm}
-    </section>
-  </div>;
-}
-
-/**
- * The run's one reading action, worded by what the server resolved.
- *
- * It renders nothing at all when there is nothing readable. A greyed-out Read
- * would say the library holds a comic it does not, and "why is this disabled"
- * is a worse question than "where is the button".
- */
-/** On this profile's reading list, or not: the bookmark, as Plex's watchlist. */
-function ReadingListToggle({ on, title, onChange, className = "glass-button glass-button--icon comic-drawer-follow-button", label = false }) {
-  return <button type="button" className={`${className}${on ? " active" : ""}`} aria-pressed={on}
-    aria-label={on ? `Take ${title} off your reading list` : `Add ${title} to your reading list`}
-    title={on ? "On your reading list" : "Add to reading list"} onClick={() => onChange(!on)}>
-    <ReadingListIcon size={20} />{label ? (on ? " On your reading list" : " Add to reading list") : <b>{on ? "Listed" : "Read later"}</b>}
-  </button>;
-}
-
-function ReadRunButton({ reading, title, medium, onRead }) {
-  const target = reading?.resume;
-  // "Continue Issue #7", about the comic that opens rather than the run: the
-  // verb bright, the comic it names beside it. Starting the run over lives in
-  // Advanced -- it is a tool, not something a reader reaches for mid-run.
-  const verb = readingVerb(target);
-  if (!verb || !onRead) return null;
-  const issue = readingNoun(target, medium);
-  return <button type="button" className="primary-button comic-drawer-read"
-    onClick={() => onRead({ id: target.fileId })}
-    aria-label={readingAriaLabel(target, medium, title)}>
-    <BookOpen size={20} weight="fill" />
-    <span>{verb}{issue ? <b>{issue}</b> : null}</span>
-  </button>;
-}
-
-/**
- * Five stars, and whose they are.
- *
- * Read-only when it is showing the average of a run's rated issues: those
- * stars are a summary, and pressing one would silently turn it into a rating
- * of the run itself. The control says which it is in its accessible name and
- * draws the average in outline so the two never look alike.
- */
-function StarRating({ rating, title, size = 18, onRate }) {
-  const [hover, setHover] = useState(0);
-  const average = rating.source === RATING_SOURCES.average;
-  const shown = hover || filledStars(rating.value);
-  const label = ratingLabel(rating, title);
-  if (!onRate || average) {
-    return <span className={`star-rating${average ? " average" : ""}`} role="img" aria-label={label} title={label}>
-      {[1, 2, 3, 4, 5].map((star) => <Star key={star} size={size}
-        weight={shown >= star ? "fill" : shown >= star - 0.5 ? "duotone" : "regular"} />)}
-      {average ? <small>{rating.value}</small> : null}
-    </span>;
-  }
-  return <span className="star-rating" role="group" aria-label={label} onMouseLeave={() => setHover(0)}>
-    {[1, 2, 3, 4, 5].map((star) => <button type="button" key={star}
-      onMouseEnter={() => setHover(star)}
-      onClick={() => onRate(ratingForPress(star, rating.value))}
-      aria-pressed={rating.value >= star}
-      aria-label={star === rating.value
-        ? `Remove your rating of ${star} star${star === 1 ? "" : "s"}`
-        : `Rate ${star} star${star === 1 ? "" : "s"}`}>
-      <Star size={size} weight={shown >= star ? "fill" : "regular"} />
-    </button>)}
-  </span>;
-}
-
-function ComicDrawerRow({ title, count, children }) {
-  const { scroller, atStart, atEnd, measure, page } = useShelfPaging([count]);
-  // When every card fits there is nothing to page through, so no arrows.
-  const fits = atStart && atEnd;
-  return <section className="comic-drawer-row" aria-label={title}>
-    <header>
-      <h3>{title}</h3>
-      {fits ? null : <div className="shelf-scroll">
-        <button type="button" onClick={() => page(-1)} disabled={atStart} aria-label={`Scroll ${title} back`}><ShelfBackIcon /></button>
-        <button type="button" onClick={() => page(1)} disabled={atEnd} aria-label={`Scroll ${title} forward`}><ShelfNextIcon /></button>
-      </div>}
-    </header>
-    <div className="comic-drawer-shelf" ref={scroller} onScroll={measure}>{children}</div>
-  </section>;
-}
-
-// An issue you do not own keeps its card, dimmed, with the same state badge
-// the Issues tab gives it -- a gap in a run should look like a gap.
-function ComicDrawerIssueCard({ issue, medium, onOpen, onRead, readingFiles }) {
-  const owned = issue.ownership !== "unowned";
-  const state = issue.ownership === "collection" ? "In volume"
-    : owned ? null
-    : issue.releaseState === "upcoming" ? "Upcoming"
-    : issue.releaseState === "unknown" ? "Date needed" : "Missing";
-  const label = issueCardLabel(issue, medium);
-  // A cover you can read opens the comic; one you cannot still opens the list.
-  // The two are told apart by the label, which is what Komga and Kavita do.
-  const read = onRead ? issueReadState(issue, readingFiles) : null;
-  return <article className={`pull-card comic-drawer-card${owned ? "" : " unowned"}`}>
-    <button type="button" className="discover-open"
-      onClick={read ? () => onRead({ id: issue.fileId }) : onOpen}
-      aria-label={read
-        ? `${read.label} ${label}${read.detail ? `, ${read.detail}` : ""}`
-        : `${label}${state ? `, ${state.toLowerCase()}` : ""}. Show all issues`}>
-      <span className="comic-drawer-card-art">
-        <DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={30} />
-        {state ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{state}</span> : null}
-        {read ? <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span> : null}
-        {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}{read?.finished ? <span className="issue-tile-mark done" aria-hidden="true"><Check size={13} weight="bold" /></span> : null}
-      </span>
-    </button>
-    <div className="pull-card-body"><h3 title={label}>{label}</h3></div>
-  </article>;
-}
-
-function ComicDrawerRunCard({ run, onOpen }) {
-  return <article className="pull-card comic-drawer-card">
-    <button type="button" className="discover-open" onClick={() => onOpen(run)} aria-label={`Open ${run.title}${run.year ? ` (${run.year})` : ""}`}>
-      <span className="comic-drawer-card-art"><span className="discover-cover"><SeriesCover series={run} decorative /></span></span>
-    </button>
-    <div className="pull-card-body"><h3 title={run.title}>{run.title}</h3></div>
-  </article>;
-}
-
-// Everyone credited, as the file writes it: one run of names. Past two lines
-// it folds, and opening it lists each person with what they did.
-function ComicDrawerCreators({ creators }) {
-  const [open, setOpen] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const namesRef = useRef(null);
-  useEffect(() => {
-    const node = namesRef.current;
-    if (!node || open) return;
-    setOverflows(node.scrollHeight > node.clientHeight + 1);
-  }, [creators, open]);
-  return <section className="comic-drawer-creators" aria-label="Creators">
-    <h3>Creators</h3>
-    {open
-      ? <ul className="comic-drawer-creator-list">{creators.map((creator) => <li key={creator.name}><strong>{creator.name}</strong><span>{creatorRoleLabel(creator.roles)}</span></li>)}</ul>
-      : <p ref={namesRef} className="comic-drawer-creator-names">{creators.map((creator) => creator.name).join(", ")}</p>}
-    {overflows || open ? <button type="button" className="comic-drawer-more" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? "Show less" : `Show all ${creators.length} creators`}</button> : null}
-  </section>;
-}
-
-function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRead, onMarkIssue, onMarkRun, readingVersion = 0,
-  coverBusy = false, coverError = "", onSelectSeriesCover, onUploadSeriesCover,
-  backdropBusy = false, backdropError = "", onSaveBackdrop, onSetDirection, onRate, onRateIssue, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0, requested = false, onSetAgeRating,
-  runCollections = [], onOpenRunCollection, onAddToCollection,
-  readingList = EMPTY_ENTRIES, onToggleReadingList, onAddToArc, onAddIssuesToArc }) {
-  const admin = isAdmin(useViewer());
-  const inCollections = collectionsFor(series.id, runCollections);
-  const { closing, requestClose } = useDrawerExit(onClose);
-  const dialogRef = useDialog(requestClose);
-  const editionsOn = useCollectedEditions();
-  useSwipeToDismiss(dialogRef, requestClose);
-  useExternalDismiss(dismissSignal, requestClose);
-  const [alias, setAlias] = useState("");
-  const [savingAlias, setSavingAlias] = useState(false);
-  const [aliasError, setAliasError] = useState("");
-  const [syncingIssues, setSyncingIssues] = useState(false);
-  const [syncError, setSyncError] = useState("");
-  const [lastSyncResult, setLastSyncResult] = useState(null);
-  const autoRepairKey = useRef(null);
-  const [tab, setTab] = useState("overview");
-  // null when not editing, "" for the list of sections, else the section. It
-  // is drawer state, so opening another comic leaves editing behind.
-  const [edit, setEdit] = useState(null);
-  const [coverOptions, setCoverOptions] = useState(null);
-  const loadCoverOptions = useCallback(() => {
-    if (!series?.id) return;
-    apiRequest(`/api/v1/series/${series.id}/cover`)
-      .then(setCoverOptions).catch(() => setCoverOptions(null));
-  }, [series?.id]);
-  useEffect(() => {
-    if (edit !== "cover") return;
-    setCoverOptions(null);
-    loadCoverOptions();
-  }, [edit, loadCoverOptions]);
-  // Asked for when the drawer opens: the blurb is not in the catalog, and
-  // most runs are never opened.
-  const [synopsis, setSynopsis] = useState({ state: "loading", text: null, source: null });
-  useEffect(() => {
-    if (!series?.id) return undefined;
-    let live = true;
-    setSynopsis({ state: "loading", text: null, source: null });
-    apiRequest(`/api/v1/series/${series.id}/synopsis`)
-      .then((data) => { if (live) setSynopsis({ state: "done", text: data.synopsis, source: data.providerName }); })
-      .catch(() => { if (live) setSynopsis({ state: "done", text: null, source: null }); });
-    return () => { live = false; };
-  }, [series?.id]);
-  // What can be read here, and where each comic was left. Its own request
-  // rather than the catalog's: reading changes on every page turn, and the
-  // catalog is refetched on scans and downloads, so folding one into the
-  // other guarantees a progress bar that lies.
-  const [reading, setReading] = useState(null);
-  useEffect(() => {
-    if (!series?.id) return undefined;
-    let live = true;
-    setReading(null);
-    apiRequest(`/api/v1/series/${series.id}/reading`)
-      .then((data) => { if (live) setReading(data); })
-      .catch(() => { if (live) setReading(null); });
-    return () => { live = false; };
-  }, [series?.id, readingVersion]);
-  const readingFiles = useMemo(() => Object.fromEntries(
-    [...(reading?.issues || []), ...(reading?.volumes || [])].map((file) => [String(file.id), file]),
-  ), [reading]);
-  const issueCatalog = series?.issueCatalog || { status: "unknown" };
-  const catalogKnown = ["complete", "complete_to_date"].includes(issueCatalog.status);
-  const repairableIssueDetails = (series?.issues || []).filter((issue) => (
-    (issueCatalog.titlePolicy !== "numbered_only" && !String(issue.title || "").trim() && issue.releaseState !== "upcoming")
-    || issue.publicationYear == null
-  )).length;
-  const lastCheckedAge = issueCatalog.lastSyncedAt ? Date.now() - Date.parse(issueCatalog.lastSyncedAt) : Infinity;
-  const currentRepairKey = `${series?.id || "none"}:${issueCatalog.lastSyncedAt || "never"}`;
-  useEffect(() => {
-    if (!series || !catalogKnown || !repairableIssueDetails || lastCheckedAge < 6 * 60 * 60 * 1000 || autoRepairKey.current === currentRepairKey) return;
-    autoRepairKey.current = currentRepairKey;
-    syncIssues(true);
-  }, [series?.id, catalogKnown, repairableIssueDetails, currentRepairKey]);
-  useEffect(() => {
-    // Volumes and Collection disappear when collected editions are turned off.
-    if (!editionsOn && (tab === "editions" || tab === "family")) setTab("overview");
-  }, [editionsOn, tab]);
-  // The comic drawer (node-id=72-1306): a page from the comic behind the
-  // header -- the one the reader chose, or a spread found for them -- and the
-  // runs here that share a maker or a publisher. The cover stands in when
-  // there is no page to use, or the page will not load.
-  const [backdrop, setBackdrop] = useState({ forId: null, url: null, source: null, fileId: null, page: null });
-  const [backdropFailed, setBackdropFailed] = useState(false);
-  useEffect(() => {
-    if (!series?.id) return undefined;
-    let live = true;
-    setBackdropFailed(false);
-    apiRequest(`/api/v1/series/${series.id}/backdrop`)
-      .then((data) => { if (live) setBackdrop({ ...data, forId: series.id }); })
-      .catch(() => { if (live) setBackdrop({ forId: series.id, url: null, source: "none", fileId: null, page: null }); });
-    return () => { live = false; };
-  }, [series?.id, backdropVersion]);
-  const shownBackdrop = backdrop.forId === series?.id ? backdrop : null;
-  const coverArt = series?.coverCandidates?.[0] || series?.cover || null;
-  const pageArt = shownBackdrop?.url && !backdropFailed ? shownBackdrop.url : null;
-  // Nothing until this run's answer arrives, so the last run's page never
-  // flashes behind a new title.
-  const heroArt = shownBackdrop ? pageArt || coverArt : null;
-  const toned = toneProps(useArtTone(coverArt));
-  const related = useMemo(() => (series ? relatedRuns(series, allSeries || []) : null), [series, allSeries]);
-  const creators = useMemo(() => orderedCreators(series?.creators), [series?.creators]);
-  // `edit` is a dependency because the strip is unmounted while editing: the
-  // pill has to be measured again against the node that comes back.
-  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, series?.id, editionsOn, edit]);
-  useEffect(() => { dialogRef.current?.scrollTo?.({ top: 0 }); }, [series?.id]);
-  if (!series) return null;
-  const identityStrength = series.identityConfidence == null ? "Unknown" : series.identityConfidence >= 85 ? "High" : series.identityConfidence >= 65 ? "Medium" : "Low";
-  async function saveAlias(event) {
-    event.preventDefault();
-    if (!alias.trim()) return;
-    setSavingAlias(true);
-    setAliasError("");
-    const result = await onAddAlias(series.id, alias.trim());
-    if (result.ok) setAlias("");
-    else setAliasError(result.error);
-    setSavingAlias(false);
-  }
-  async function syncIssues(automatic = false) {
-    setSyncingIssues(true);
-    setSyncError("");
-    const result = await onSyncIssues(series.id, automatic);
-    if (!result.ok) setSyncError(result.error);
-    else setLastSyncResult(result.result);
-    setSyncingIssues(false);
-  }
-  const groupedIssues = (series.issues || []).map((issue) => ({
-    ...issue,
-    contextRunId: series.id,
-    contextLabel: series.title,
-    contextYear: series.year,
-    contextGroupName: series.title,
-    contextType: "main",
-  }));
-  const isFollowing = series.monitoringStatus === "monitored";
-  // Starting over is offered once the run has been started at all; before
-  // that there is nothing to go back to.
-  const restartFile = reading?.resume
-    && [READING_STATES.continue, READING_STATES.next, READING_STATES.finished].includes(reading.resume.state)
-    ? reading.issues?.find((file) => file.readable) || null
-    : null;
-  // Marking the whole run: read when any of it is not, unread once all of it is.
-  const readableFiles = [...(reading?.issues || []), ...(reading?.volumes || [])].filter((file) => file.readable);
-  const runAllRead = readableFiles.length > 0 && readableFiles.every((file) => file.finishedAt && !file.stale);
-  // The run's own status in the hero, in the issue badge's words: "Read", or
-  // "In progress" with how many are read, once any of it has been opened.
-  const runReadCount = readableFiles.filter((file) => file.finishedAt && !file.stale).length;
-  const runStarted = readableFiles.some((file) => file.pageCount && !file.stale);
-  const runReadingBadge = runAllRead ? { tone: "green", text: "Read" }
-    : runStarted ? { tone: "violet", text: `In progress · ${runReadCount} of ${readableFiles.length} read` } : null;
-  const wantedIssueCount = Math.max(0, Number(series.releaseSummary?.releasedMissing ?? series.unowned ?? Math.max(0, (series.total || 0) - (series.owned || 0))));
-  // Volumes and Collection belong to collected-edition support; the counts
-  // live on the tabs, so the header does not repeat them.
-  const tabs = [
-    ["overview", "Overview"],
-    ["issues", `Issues (${series.issues?.length ?? 0})`],
-    ...(editionsOn ? [["editions", `Volumes (${series.editions?.length ?? 0})`]] : []),
-    // Files, Collection and Advanced are where a run is repaired: the admin's.
-    ...(admin ? [["files", `Files (${series.fileDetails?.length ?? 0})`]] : []),
-    ...(editionsOn && admin ? [["family", "Family"]] : []),
-    ...(admin ? [["advanced", "Advanced"]] : []),
-  ];
-  const alternateTitles = (series.aliases || []).filter((item) => identityKey(item.name) !== identityKey(series.title));
-  // A new tab's content slides in from the side it lies on, so moving right
-  // reads as moving right. Nothing slides on the drawer's first render.
-  const shownTab = useRef(tab);
-  const tabMove = useRef("");
-  if (shownTab.current !== tab) {
-    const order = tabs.map(([id]) => id);
-    tabMove.current = order.indexOf(tab) > order.indexOf(shownTab.current) ? "next" : "back";
-    shownTab.current = tab;
-  }
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}><aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef} data-in-address="" role="dialog" aria-modal="true" aria-labelledby="series-drawer-title" onMouseDown={(event) => event.stopPropagation()}>
-    <DrawerTopBar
-      title={edit ? (EDIT_SECTIONS.find(([id]) => id === edit)?.[1] || series.title) : edit === "" ? "Edit run" : series.title}
-      onClose={requestClose}
-      onBack={edit !== null ? () => setEdit(edit ? "" : null) : parentCollection ? onBack : undefined}
-      stacked={edit !== null}
-      closeLabel="Close series details">
-      {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "run", series.id)} title={series.title}
-        onChange={(on) => onToggleReadingList("run", series.id, on)} /> : null}
-      {edit === null && admin ? <>
-        <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${isFollowing ? " active" : ""}`}
-          onClick={() => (isFollowing ? onUnfollow(series) : onRequest())}
-          disabled={requestBusy || unfollowBusy} aria-pressed={isFollowing}
-          aria-label={isFollowing ? `Stop following ${series.title}` : `Follow ${series.title}`}
-          title={isFollowing ? "Following" : "Follow run"}>
-          {requestBusy || unfollowBusy ? <LoadingSpinner size={18} /> : <FollowedIcon size={20} />}
-          <b>{isFollowing ? "Unfollow" : "Follow"}</b>
-        </button>
-        <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => setEdit("")} aria-label={`Edit ${series.title}`} title="Edit"><PencilSimple size={20} /></button>
-      </> : null}
-      {/* A reader asks for a run to be followed; the admin decides. */}
-      {edit === null && !admin && !isFollowing ? <button type="button"
-        className={`glass-button glass-button--icon comic-drawer-follow-button${requested ? " active" : ""}`}
-        onClick={() => onRequest()} disabled={requestBusy || requested}
-        aria-label={requested ? `Following ${series.title} is requested` : `Request a follow of ${series.title}`}
-        title={requested ? "Waiting for approval" : "Ask for this run to be followed: new issues as they come out"}>
-        {requestBusy ? <LoadingSpinner size={18} /> : requested ? <Hourglass size={20} /> : <FollowedIcon size={20} />}
-        <b>{requested ? "Follow requested" : "Request follow"}</b>
-      </button> : null}
-    </DrawerTopBar>
-    <header className="comic-drawer-hero">
-      {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={pageArt ? () => setBackdropFailed(true) : undefined} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
-      <span className="comic-drawer-scrim" aria-hidden="true" />
-      {parentCollection ? <button type="button" className="drawer-back-link" onClick={onBack}><ArrowLeft size={17} /><span>Back to <strong>{parentCollection.name}</strong></span></button> : null}
-      <div className="comic-drawer-identity">
-        <div className="comic-drawer-cover">{onChangeSeriesCover && admin ? <button type="button" className="drawer-cover-button" onClick={() => onChangeSeriesCover(series)} aria-label={`Change the cover for ${series.title}`}><SeriesCover series={series} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <SeriesCover series={series} />}</div>
-        <div className="comic-drawer-copy">
-          <div className="comic-drawer-titles">
-            <h2 id="series-drawer-title">{series.title}</h2>
-            <p>{[series.publisher, series.year].filter(Boolean).join(" • ")}</p>
-          </div>
-          <div className="comic-drawer-statuses"><PublicationStatus series={series} /><MonitoringStatus series={series} />{series.ageRating ? <StatusBadge tone={ratingTone(series.ageRating.replace("_", " "))}>Rated {RATING_LABELS[series.ageRating]}</StatusBadge> : null}{runReadingBadge ? <StatusBadge tone={runReadingBadge.tone}>{runReadingBadge.text}</StatusBadge> : null}{editionsOn && series.family ? <button type="button" className="family-link-chip" onClick={() => setTab("family")}><Books size={14} /> {series.family.name}</button> : null}</div>
-          <Ownership series={series} compact />
-          {isFollowing && wantedIssueCount && admin ? <button type="button" className="comic-drawer-link" onClick={onViewRequests}>View {wantedIssueCount} wanted issue{wantedIssueCount === 1 ? "" : "s"}</button> : null}
-        </div>
-      </div>
-    </header>
-    {/* Reading and following, together, above the tabs and on every one of
-        them. They are what this drawer is for; everything below is detail. */}
-    {edit !== null ? <div className="comic-drawer-body comic-drawer-edit">
-      <SeriesEditPanel
-       
-        series={series} section={edit} onSection={setEdit} shownBackdrop={shownBackdrop} medium={series.medium}
-        readingFiles={readingFiles}
-        cover={coverOptions} coverBusy={coverBusy} coverError={coverError}
-        onSelectCover={(source, url, fileId) => onSelectSeriesCover?.(source, url, fileId, series.id).then(loadCoverOptions)}
-        onUploadCover={(file) => onUploadSeriesCover?.(file, series.id).then(loadCoverOptions)}
-        backdropBusy={backdropBusy} backdropError={backdropError}
-        onChooseBackdrop={(fileId, page) => onSaveBackdrop?.({ fileId, page }, "Header background updated", series.id)}
-        onAutomaticBackdrop={() => onSaveBackdrop?.({ source: "auto" }, "Automatic background restored", series.id)}
-        alternateTitles={alternateTitles} onFixMatch={onFixSeriesMatch} onSetFormat={onSetFormat}
-        directionOverride={series.readingDirection} onSetDirection={onSetDirection} onSetAgeRating={onSetAgeRating}
-        aliasForm={<form className="alias-form" onSubmit={saveAlias}><label><span>Add a title alias</span><div><input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="Alternate series title…" /><button disabled={savingAlias || !alias.trim()} aria-busy={savingAlias}>{savingAlias ? <LoadingSpinner size={18} /> : <Plus size={18} />} Add</button></div></label>{aliasError ? <small className="form-error" role="alert">{aliasError}</small> : null}</form>}
-      />
-    </div> : <>
-    <div className="comic-drawer-actions">
-      <ReadRunButton reading={reading} title={series.title} medium={series.medium} onRead={onRead} />
-    </div>
-    <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
-    <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
-      {tab === "overview" ? <>
-        {/* The stars sit here, not in the header: there they outweighed the cover on a phone. */}
-        <section className="comic-drawer-rating" aria-label="Your rating"><h3>Your rating</h3><StarRating rating={runRating(series)} title={series.title} size={24} onRate={(value) => onRate?.(series, value)} /></section>
-        <RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} sourcePrefix="Source:" key={series.id} />
-        {series.issues?.length ? <ComicDrawerRow title="Issues" count={series.issues.length}>{series.issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium={series.medium} onOpen={() => setTab("issues")} onRead={onRead} readingFiles={readingFiles} key={issue.id || issue.number} />)}</ComicDrawerRow> : null}
-        {creators.length ? <ComicDrawerCreators creators={creators} key={`creators-${series.id}`} /> : null}
-        {/* Its collections, and "Add to collection" under them, as an arc's
-            shelf has "Add issues" (the same sheet an issue's "…" opens). */}
-        {inCollections.length ? <div className="comic-drawer-shelf-group">
-          <ComicDrawerRow title="In Collections" count={inCollections.length}>{inCollections.map((card) => <ComicDrawerRunCard
-            run={{ id: card.key, title: card.name, cover: card.cover, coverCandidates: card.coverCandidates }}
-            onOpen={() => onOpenRunCollection?.(card)} key={card.key} />)}</ComicDrawerRow>
-          {onAddToCollection ? <button type="button" className="glass-button comic-drawer-add" onClick={() => onAddToCollection(series)}><CollectionIcon size={18} /> Add to collection</button> : null}
-        </div> : onAddToCollection ? <button type="button" className="glass-button comic-drawer-add" onClick={() => onAddToCollection(series)}><CollectionIcon size={18} /> Add to collection</button> : null}
-        {related?.moreBy ? <ComicDrawerRow title={`More From ${related.moreBy.name}`} count={related.moreBy.runs.length}>{related.moreBy.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
-        {related?.publisher ? <ComicDrawerRow title={`More From ${related.publisher.name}`} count={related.publisher.runs.length}>{related.publisher.runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries?.(item)} key={run.id} />)}</ComicDrawerRow> : null}
-      </> : null}
-      {tab === "issues" ? <GroupedIssueInventory issues={groupedIssues} onEditIssue={admin ? onEditIssue : undefined} onRead={onRead} onRate={onRateIssue} onMark={onMarkIssue} onAddToArc={onAddToArc} onAddIssuesToArc={onAddIssuesToArc ? (chosen) => onAddIssuesToArc(chosen, series.title) : undefined} onMarkRun={onMarkRun ? (read) => onMarkRun(series, read) : undefined} runRead={runAllRead} runStarted={runStarted} readingFiles={readingFiles} medium={series.medium} /> : null}
-      {tab === "editions" && editionsOn ? <VolumeInventory editions={series.editions} /> : null}
-      {tab === "files" ? <FileInventory files={series.fileDetails} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
-      {tab === "family" && editionsOn ? <CollectionManagement series={series} families={families} allSeries={allSeries} onCreateFamily={onCreateFamily} onSetFamily={onSetFamily} /> : null}
-      {tab === "advanced" ? <div className="advanced-tools">
-        {/* Moved off the header: useful when repairing a run, noise when reading one. */}
-        <div className="drawer-facts"><span><strong>{series.fileDetails?.length ?? series.owned}</strong>Comic files</span><span><strong>{series.inventory?.directIssueFiles ?? 0}</strong>Single issues</span>{editionsOn ? <span><strong>{series.inventory?.editionCount ?? series.editions?.length ?? 0}</strong>Volumes</span> : null}<span><strong>{identityStrength}</strong>Match confidence</span></div>
-        {/* Single issues are already a fact above; the volume split only means something with editions on. */}
-        {editionsOn ? <CollectionCoverage series={series} editionsOn={editionsOn} /> : null}
-        <IssueCatalogCard series={series} catalogKnown={catalogKnown} syncing={syncingIssues} error={syncError} lastResult={lastSyncResult} onSync={syncIssues} onReviewFiles={() => setTab("files")} onFindRun={onFindRun} />
-        {/* Covers, titles and the match moved into Edit. Advanced keeps what
-            repairs a run rather than what dresses it. */}
-        <section className="advanced-card">
-          <div><strong>Edit this run</strong><p>Its cover, header background, alternate titles, how it is filed, and the run it is matched to.</p></div>
-          <button type="button" onClick={() => setEdit("")}><PencilSimple size={16} /> Edit</button>
-        </section>
-        {restartFile && onRead ? <section className="advanced-card">
-          <div><strong>Start from the beginning</strong><p>Opens the run&rsquo;s first issue from its first page. Your place in the run moves once you turn a page there.</p></div>
-          <button type="button" onClick={() => onRead({ id: restartFile.id, fromStart: true })}><ArrowCounterClockwise size={16} /> Restart</button>
-        </section> : null}
-        {readableFiles.length && onMarkRun ? <section className="advanced-card">
-          <div><strong>Reading state</strong><p>{runAllRead
-            ? "Every issue is read. Marking the run unread forgets your place in all of them, for your profile only."
-            : runStarted
-              ? "Some of this run is read or in progress. Mark it all read, or unread to forget every place -- someone else's reading on your profile included."
-              : "Marks every issue of this run read, for your profile only. Each issue's menu does the same for one."}</p></div>
-          <div className="advanced-card-actions">
-            {!runAllRead ? <button type="button" onClick={() => onMarkRun(series, true)}><Check size={16} weight="bold" /> Mark read</button> : null}
-            {runAllRead || runStarted ? <button type="button" onClick={() => onMarkRun(series, false)}><ArrowCounterClockwise size={16} /> Mark unread</button> : null}
-          </div>
-        </section> : null}
-        <section className="advanced-card">
-          <div><strong>Combine duplicate run</strong><p>One run split into two entries? Merge them. Files on disk aren&rsquo;t changed.</p></div>
-          <button type="button" onClick={() => onMergeRun(series)}><Books size={16} /> Combine</button>
-        </section>
-        <section className="advanced-card">
-          <div><strong>Rebuild this run</strong><p>Clear the titles, dates and covers Flipparr worked out, and work them out again from these files. Your corrections are kept.</p>{rebuildResult ? <small className="rebuild-result">{rebuildResult}</small> : null}</div>
-          <button type="button" onClick={() => onRebuildRun(series)} disabled={rebuilding}>{rebuilding ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {rebuilding ? "Rebuilding…" : "Rebuild"}</button>
-        </section>
-        <section className="advanced-card danger">
-          <div><strong>Remove from library</strong><p>Removes the run and deletes its comic files from disk. You&rsquo;ll see what goes first. This can&rsquo;t be undone.</p></div>
-          <button type="button" onClick={() => onRemove?.(series)}><Trash size={16} /> Remove</button>
-        </section>
-      </div> : null}
-    </div>
-    </>}
-  </aside></div>;
-}
-
-/**
- * The end of an issue.
- *
- * It opens over the reader rather than inside it, which is why it is the app's
- * drawer and not a card of its own: the same panel, the same top bar, the same
- * four ways out. Dismissing it puts you back on the last page, because the
- * reader underneath never unmounted -- so there is nothing here called "Keep
- * reading" or "Done". Leaving is leaving.
- *
- * What it says is what a bookshelf says when you close a book: this is what
- * you finished, what did you think of it, here is the next one and what it is
- * about, and here is the rest of the run.
- */
-function FinishDrawer({ series, issue, nextIssue, medium, title, readingVersion = 0, fileId = "", list = null,
-  onPullMissing, onRequestMissing, onRateIssue, onRead, onOpenSeries, onClose }) {
-  const { closing, requestClose } = useDrawerExit(onClose);
-  const dialogRef = useDialog(requestClose);
-  useSwipeToDismiss(dialogRef, requestClose);
-  const admin = isAdmin(useViewer());
-  // Opened from a story arc: the next comic is the arc's next, whatever run
-  // it is in, and the issues passed over to reach it are named. Asked again
-  // after this very comic changed the arc's places.
-  const [arc, setArc] = useState(null);
-  useEffect(() => {
-    if (!list?.id) { setArc(null); return undefined; }
-    let live = true;
-    apiRequest(`/api/v1/reading-lists/${list.id}`)
-      .then((data) => { if (live) setArc(data); })
-      .catch(() => { if (live) setArc(null); });
-    return () => { live = false; };
-  }, [list?.id, readingVersion]);
-  const arcNext = useMemo(() => (arc ? nextInList(arc.items, fileId || issue?.fileId) : null), [arc, fileId, issue?.fileId]);
-  const arcName = arc?.name || list?.name || "the arc";
-  const inArc = Boolean(list && arc);
-  const art = issue?.fileCover || issue?.cover || series?.cover || null;
-  const toned = toneProps(useArtTone(art));
-  // The run's progress has just changed -- by this very comic -- so the shelf
-  // asks again rather than showing places that are one issue out of date.
-  const [reading, setReading] = useState(null);
-  useEffect(() => {
-    if (!series?.id) return undefined;
-    let live = true;
-    apiRequest(`/api/v1/series/${series.id}/reading`)
-      .then((data) => { if (live) setReading(data); })
-      .catch(() => { if (live) setReading(null); });
-    return () => { live = false; };
-  }, [series?.id, readingVersion]);
-  const readingFiles = useMemo(() => Object.fromEntries(
-    [...(reading?.issues || []), ...(reading?.volumes || [])].map((file) => [String(file.id), file]),
-  ), [reading]);
-  // What the next issue is about, asked for when the drawer opens. It is the
-  // next issue's blurb, not this one's: a card offering a comic is where a
-  // description earns its place, and one about the comic you have just read
-  // is a recap. Nothing is asked when the run is over.
-  const [detail, setDetail] = useState({ state: "loading", data: null });
-  const offeredIssueId = inArc ? arcNext?.next?.issueId : nextIssue?.id;
-  useEffect(() => {
-    if (!offeredIssueId) return undefined;
-    let live = true;
-    setDetail({ state: "loading", data: null });
-    apiRequest(`/api/v1/issues/${offeredIssueId}/detail`)
-      .then((data) => { if (live) setDetail({ state: "done", data }); })
-      .catch(() => { if (live) setDetail({ state: "done", data: { status: "unavailable" } }); });
-    return () => { live = false; };
-  }, [offeredIssueId]);
-  const description = detail.state === "loading" ? <RunSynopsis loading heading={null} />
-    : detail.data?.description
-      ? <RunSynopsis heading={null} text={detail.data.description} source={detail.data.providerName} />
-      : <p className="discover-note">{detail.data?.status === "unavailable"
-        ? "This issue’s details are unavailable right now."
-        : "No description on record for this issue."}</p>;
-  const heading = issue
-    ? `${issueLabel(issue.number, medium)}${issue.title ? ` · ${issue.title}` : ""}`
-    : title;
-  // Everything else in the run, including what is missing from it: "next" skips
-  // the issues you do not own, and a shelf that hid them would make that skip
-  // look like the run itself.
-  const rest = (series?.issues || []).filter((item) => (
-    item !== issue && item !== nextIssue
-  ));
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer comic-drawer finish-drawer${toned.className} ${closing ? "closing" : ""}`}
-      style={toned.style} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="finish-drawer-title"
-      onMouseDown={(event) => event.stopPropagation()}>
-      <DiscoverDrawerHero art={art} titleId="finish-drawer-title" title={heading}
-        cover={<DiscoverCover src={art} alt="" glyph={30} />}
-        byline={issue ? series?.title : null}
-        onClose={requestClose} closeLabel="Close">
-        <span className="finish-done"><CheckCircle size={15} weight="fill" /> Finished</span>
-      </DiscoverDrawerHero>
-      {/* Reading on is the band's pill, as Read is every comic drawer's; the
-          card below says what it is and what was passed over to reach it. */}
-      {onRead && inArc && arcNext?.next ? <DrawerPrimary icon={<BookOpen size={20} weight="fill" />} verb="Read"
-        noun={`Issue ${issueLabel(arcNext.next.number, "comic")}`} label={`Read ${arcNext.next.seriesTitle} ${issueLabel(arcNext.next.number, "comic")}, next in ${arcName}`}
-        onClick={() => onRead({ id: arcNext.next.fileId, listId: list.id, listName: arcName })} />
-        : onRead && !inArc && nextIssue ? <DrawerPrimary icon={<BookOpen size={20} weight="fill" />} verb="Read"
-          noun={issueLabel(nextIssue.number, medium).startsWith("#") ? `Issue ${issueLabel(nextIssue.number, medium)}` : issueLabel(nextIssue.number, medium)}
-          label={`Read ${[series?.title, issueLabel(nextIssue.number, medium)].filter(Boolean).join(" ")}, next in this run`}
-          onClick={() => onRead({ id: nextIssue.fileId })} /> : null}
-      <div className="comic-drawer-body">
-        {/* The two cards sit close, as one pair of things to do; the shelf
-            below keeps the body's own distance. */}
-        <div className="finish-cards">
-        {issue && onRateIssue ? <section className="finish-card finish-card--rating" aria-label="Your rating">
-          <h3>What did you think?</h3>
-          <StarRating size={28} title={issue.title || issueLabel(issue.number, medium)}
-            rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }}
-            onRate={(value) => onRateIssue(issue, value)} />
-        </section> : null}
-
-        {inArc && onRead ? (arcNext?.next ? <section className="finish-next-block" aria-label={`Next in ${arcName}`}>
-          <h3>Next in {arcName}</h3>
-          <div className="finish-card finish-next">
-            <DiscoverCover src={arcNext.next.fileCover || arcNext.next.cover} alt="" glyph={24} />
-            <div className="finish-next-copy">
-              <strong>{arcNext.next.seriesTitle} {issueLabel(arcNext.next.number, "comic")}</strong>
-              {/* What was passed over to get here, and the way to close the
-                  gap. Reading is never blocked by it. */}
-              {arcNext.skipped.length ? <p className="finish-skipped">
-                <WarningCircle size={15} weight="fill" aria-hidden="true" />
-                <span>{skippedLine(arcNext.skipped)}</span>
-                {!arcNext.skipped.every((item) => item.queued) && (admin ? onPullMissing : onRequestMissing)
-                  ? <button type="button" onClick={() => (admin ? onPullMissing : onRequestMissing)(arc)}>{admin ? "Pull" : "Request"}</button> : null}
-              </p> : null}
-              {description}
-            </div>
-          </div>
-        </section> : <>
-          <p className="finish-last">That is the last comic in {arcName}.</p>
-          {arcNext?.skipped?.length ? <p className="finish-skipped">
-            <WarningCircle size={15} weight="fill" aria-hidden="true" />
-            <span>{skippedLine(arcNext.skipped)}</span>
-            {!arcNext.skipped.every((item) => item.queued) && (admin ? onPullMissing : onRequestMissing)
-              ? <button type="button" onClick={() => (admin ? onPullMissing : onRequestMissing)(arc)}>{admin ? "Pull" : "Request"}</button> : null}
-          </p> : null}
-        </>) : null}
-        {!(inArc && arcNext?.next) ? (nextIssue && onRead ? <section className="finish-next-block" aria-label="Next in this run">
-          <h3>Next in this run</h3>
-          <div className="finish-card finish-next">
-            <DiscoverCover src={nextIssue.fileCover || nextIssue.cover} alt="" glyph={24} />
-            <div className="finish-next-copy">
-              {/* Named the way a shelf names it: the run and the number, then
-                  the story's own title as the thing you are being offered. */}
-              <strong>{[series?.title, issueLabel(nextIssue.number, medium)].filter(Boolean).join(" ")}</strong>
-              {nextIssue.title ? <span className="finish-next-title">{nextIssue.title}</span> : null}
-              {description}
-            </div>
-          </div>
-        </section> : <p className="finish-last">That is the last comic this run has.</p>) : null}
-        </div>
-
-        {rest.length ? <ComicDrawerRow title="More from this run" count={rest.length}>
-          {rest.map((item) => <ComicDrawerIssueCard key={item.id} issue={item} medium={medium}
-            readingFiles={readingFiles} onRead={onRead}
-            onOpen={() => { requestClose(); onOpenSeries?.(series); }} />)}
-        </ComicDrawerRow> : null}
-      </div>
-    </aside>
-  </div>;
-}
-
 function SeriesMergeWorkbench({ data, busy, error, onClose, onTargetChange, onConfirm }) {
   const dialogRef = useDialog(onClose);
   const [allowProviderConflicts, setAllowProviderConflicts] = useState(false);
@@ -7984,303 +5707,6 @@ function SeriesMergeWorkbench({ data, busy, error, onClose, onTargetChange, onCo
 function StoryArcList({ arcs, emptyTitle, onOpenSeries }) {
   if (!arcs.length) return <div className="drawer-empty"><Books size={27} weight="duotone" /><strong>{emptyTitle}</strong><span>Runs are discovered automatically. Manual grouping is available under Advanced tools.</span></div>;
   return <div className="story-arc-list">{arcs.map((arc) => <article key={arc.id}><header><div><span>{arc.type === "specials" ? "Specials / one-shots" : "Series run"}</span><strong>{arc.name}</strong></div><b className={arc.status}>{arc.status === "complete" ? "Complete" : arc.status === "partial" ? "Partially owned" : arc.status === "cataloged" ? "Not owned" : "Missing"}</b></header><div className="arc-progress-copy"><strong>{arc.ownedIssueCount} of {arc.issueCount || "unknown"} issues owned</strong><span>{arc.volumeCount} volume{arc.volumeCount === 1 ? "" : "s"} · {arc.fileCount} file{arc.fileCount === 1 ? "" : "s"}</span></div><div className="arc-run-links">{arc.runs.map((run) => <button onClick={() => onOpenSeries(run)} key={run.id}><span>{run.title} ({run.year})</span><ArrowRight size={15} /></button>)}</div></article>)}</div>;
-}
-
-// A saved story arc, drawn as a run is: the same top bar, hero, Read button,
-// tabs, issue tiles and menus, files and Advanced tools -- so knowing one
-// drawer is knowing the other (owner, 2026-09-28). Its issues are in the
-// household's order across runs; each says whether it is here, on the way
-// or missing, and whether this profile has read it. The admin can rename it,
-// choose its cover from its own comics, put the issues in another order or
-// take some out, refresh it from where it came, pull what is missing, or
-// delete it.
-function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingList = EMPTY_ENTRIES, onToggleReadingList, onClose, onRead, onOpenSeries, onMarkIssue, onRateIssue, onEditIssue,
-  onPullMissing, onRequestMissing, onRefresh, onDelete, onMark, onChanged, onAddToArc, onGone, onAddIssues,
-  onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
-  const { closing, requestClose } = useDrawerExit(onClose);
-  const dialogRef = useDialog(requestClose);
-  useSwipeToDismiss(dialogRef, requestClose);
-  const admin = isAdmin(useViewer());
-  const [detail, setDetail] = useState({ state: "loading", data: null, error: "" });
-  const [tab, setTab] = useState("overview");
-  // null: reading; "": Edit; "cover" | "backdrop": a picker, a step in -- as a collection's.
-  const [edit, setEdit] = useState(null);
-  const [busy, setBusy] = useState("");
-  const load = useCallback(async () => {
-    try {
-      setDetail({ state: "done", data: await apiRequest(`/api/v1/reading-lists/${list.id}`), error: "" });
-    } catch (error) {
-      setDetail({ state: "error", data: null, error: error.message });
-    }
-  }, [list.id]);
-  useEffect(() => { load(); }, [load, readingVersion]);
-  const data = detail.data;
-  const items = data?.items || [];
-  const name = data?.name || list.name;
-  // Whose the arc is decides who changes it: the household's are the
-  // admin's, a hand-made one its maker's. The admin may also take a shared
-  // one back out of the household's view, or delete it.
-  const canEdit = Boolean(data?.editable);
-  const canManage = Boolean(data?.manageable);
-  const ownerLine = arcOwnerLine(data || list);
-  const context = { listId: list.id, listName: name };
-  // Until the detail is in, the card the drawer opened from already knows
-  // the arc's names and counts, so the frame is drawn at once, as a run's
-  // is, and the detail only fills it.
-  const seriesNames = data ? [...new Set(items.map((issue) => issue.seriesTitle))] : (list.seriesTitles || []);
-  const multiSeries = seriesNames.length > 1;
-  const counts = {
-    issues: data ? items.length : (list.issueCount ?? 0),
-    owned: data ? (data.owned ?? 0) : (list.owned ?? 0),
-    missing: data ? (data.missing ?? 0) : (list.missing ?? 0),
-  };
-  // Where the order came from: Metron, or a reading list someone made.
-  const sourceHost = (() => { try { return data?.sourceUrl ? new URL(data.sourceUrl).hostname.replace(/^www\./, "") : ""; } catch { return ""; } })();
-  const origin = data?.source === "cbl" ? `From a reading list${sourceHost ? ` · ${sourceHost}` : ""}` : data?.provider === "metron" ? "From Metron" : null;
-  // The arc's comics as the reader knows them, keyed by file, in the shape
-  // the run drawer's tiles and cards read (`issueReadState`).
-  const readingFiles = useMemo(() => Object.fromEntries(items.filter((item) => item.fileId).map((item) => [String(item.fileId), {
-    id: item.fileId, readable: item.readable, page: item.page, pageCount: item.pageCount, finishedAt: item.finishedAt, stale: item.stale,
-  }])), [items]);
-  const runsById = useMemo(() => Object.fromEntries((allSeries || []).map((run) => [String(run.id), run])), [allSeries]);
-  const arcByline = useMemo(() => {
-    const publisher = data?.items ? arcPublisher(data, new Map(Object.entries(runsById))) : list?.publisher || "";
-    return [publisher, arcYears(data || list)].filter(Boolean).join(" • ");
-  }, [data, list, runsById]);
-  // Each item as a catalog issue: the run's own record when the issue is in
-  // the library (so its title, date and rating are the real ones), else a
-  // stand-in that says what is missing. Across several series the tile's
-  // small line names the series, since "#16" alone would not.
-  const issues = useMemo(() => items.map((item) => {
-    const run = item.runId ? runsById[String(item.runId)] : null;
-    const known = run?.issues?.find((issue) => String(issue.id) === String(item.issueId)) || null;
-    const base = known || {
-      id: item.issueId || `arc-item-${item.id}`, number: item.number, title: null, cover: item.cover, fileCover: item.fileCover,
-      fileId: item.fileId, ownership: item.owned ? "direct" : "unowned", publicationDate: item.coverDate,
-      releaseState: item.coverDate ? "released" : "unknown", acquisitionState: item.queued ? "queued" : undefined,
-    };
-    const ownTitle = known?.title && identityKey(known.title) !== identityKey(`Issue ${known.number}`) ? known.title : null;
-    return {
-      ...base, fileCover: base.fileCover || item.fileCover, cover: base.cover || item.cover,
-      title: multiSeries ? [item.seriesTitle, ownTitle].filter(Boolean).join(" · ") : ownTitle,
-      arcItemId: item.id, seriesTitle: item.seriesTitle, runId: item.runId, queued: item.queued,
-      contextRunId: `arc-${list.id}`, contextLabel: name, contextGroupName: name, contextType: "arc",
-    };
-  }), [items, runsById, multiSeries, list.id, name]);
-  const runsInArc = useMemo(() => [...new Set(items.map((item) => item.runId).filter(Boolean))].map((id) => runsById[String(id)]).filter(Boolean), [items, runsById]);
-  const files = useMemo(() => {
-    const wanted = new Set(items.map((item) => item.fileId).filter(Boolean).map(String));
-    return runsInArc.flatMap((run) => (run.fileDetails || []).filter((file) => wanted.has(String(file.id))));
-  }, [items, runsInArc]);
-  const backdrop = useGroupBackdrop(`/api/v1/reading-lists/${list.id}`, list.id);
-  const readableFiles = items.filter((item) => item.fileId && item.readable);
-  const allRead = readableFiles.length > 0 && readableFiles.every((item) => item.finishedAt && !item.stale);
-  const readCount = readableFiles.filter((item) => item.finishedAt && !item.stale).length;
-  const started = readableFiles.some((item) => item.pageCount && !item.stale);
-  const readingBadgeText = allRead ? { tone: "green", text: "Read" } : started ? { tone: "violet", text: `In progress · ${readCount} of ${readableFiles.length} read` } : null;
-  const restartFile = readableFiles[0] || null;
-  const coverArt = data?.cover || list.cover || null;
-  const heroArt = backdrop.shown ? backdrop.page || coverArt : null;
-  const toned = toneProps(useArtTone(coverArt));
-  // A collection's tabs, with an arc's Issues for its Runs, and Files for the
-  // admin; Arrange is in Advanced, as a collection's is.
-  const tabs = [
-    ["overview", "Overview"],
-    ["issues", `Issues (${counts.issues})`],
-    ...(admin ? [["files", `Files (${data ? files.length : counts.owned})`]] : []),
-    ["advanced", "Advanced"],
-  ];
-  const [tabsRef, tabGlass] = useGlassIndicator("button.active", [tab, list.id, edit]);
-  const shownTab = useRef(tab);
-  const tabMove = useRef("");
-  if (shownTab.current !== tab) {
-    const ids = tabs.map(([id]) => id);
-    tabMove.current = ids.indexOf(tab) > ids.indexOf(shownTab.current) ? "next" : "back";
-    shownTab.current = tab;
-  }
-  async function run(kind, action) {
-    if (busy) return;
-    setBusy(kind);
-    try { await action(); await load(); onChanged?.(); } finally { setBusy(""); }
-  }
-  async function patch(body) {
-    await apiRequest(`/api/v1/reading-lists/${list.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  }
-  // A picture of your own: made a JPEG of bounded size on the server, as a
-  // run's uploaded cover is, and kept among the choices after.
-  const [uploadError, setUploadError] = useState("");
-  async function uploadCover(file) {
-    setUploadError("");
-    try {
-      await apiRequest(`/api/v1/reading-lists/${list.id}/cover/upload`, { method: "POST", headers: { "Content-Type": file.type }, body: file });
-    } catch (failure) { setUploadError(failure.message); throw failure; }
-  }
-  const itemsById = useMemo(() => Object.fromEntries(items.map((item) => [String(item.id), item])), [items]);
-  const itemName = (item) => `${item.seriesTitle} #${item.number}`;
-  const coverChoices = [
-    ...(data?.uploadedCover ? [{ id: data.uploadedCover, url: data.uploadedCover, label: "Your picture" }] : []),
-    ...(data?.cover && data.cover.startsWith("http") ? [{ id: data.cover, url: data.cover, label: data.provider === "metron" ? "Metron's cover" : "The list's cover" }] : []),
-    ...items.filter((item) => item.fileCover).map((item) => ({ id: item.fileCover, url: item.fileCover, label: `${item.seriesTitle} #${item.number}` })),
-  ];
-  const missingCount = counts.missing;
-  // A reader asks for an arc by its Metron id; one made by hand asks issue
-  // by issue, from each missing issue's run.
-  const canAskMissing = admin || Boolean(data?.providerArcId);
-  const pullLabel = admin ? `Pull ${missingCount} missing` : `Request ${missingCount} missing`;
-  const pullMissing = () => run("pull", () => (admin ? onPullMissing : onRequestMissing)(data));
-  const EDIT_ROWS = [
-    { id: "cover", label: "Cover", detail: "A picture you upload, the one it came with, or one of its comics' covers.", onOpen: () => setEdit("cover") },
-    { id: "backdrop", label: "Header background", detail: "A page from one of its comics, behind the header.", disabled: !files.length, onOpen: () => setEdit("backdrop") },
-  ];
-  const arrangeView = data ? <GroupArrange noun="issue" groupNoun="arc" ids={items.map((item) => String(item.id))} sortMode={data.sortMode || "custom"} sortOptions={ARC_SORTS} busy={busy}
-            onSortMode={(next) => run("sort", () => patch({ sortMode: next }))}
-            onReorder={(order) => run("order", () => patch({ order }))}
-            onRemove={(id) => run("remove", () => patch({ remove: [id] }))}
-            nameOf={(id) => (itemsById[id] ? itemName(itemsById[id]) : "Issue")}
-            rowClassName={(id) => (itemsById[id]?.owned ? "" : "arc-order-row--missing")}
-            renderRow={(id, index) => {
-              const issue = itemsById[id];
-              if (!issue) return null;
-              return <>
-                <b className="source-order-position" aria-hidden="true">{index + 1}</b>
-                <span className="rating-review-cover"><DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={16} /></span>
-                <span><strong>{itemName(issue)}</strong>
-                  <small>{[issue.seriesYear ? `${issue.seriesTitle} (${issue.seriesYear})` : null, formatLongDate(issue.coverDate), issue.owned ? "In library" : issue.queued ? "On the way" : "Missing"].filter(Boolean).join(" \u00b7 ")}</small></span>
-              </>;
-            }}
-            onAdd={onAddIssues ? () => onAddIssues(data) : null} addLabel="Add issues"
-            empty={<div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing to arrange yet</strong><span>Add issues from any run, owned or missing.</span>
-              {onAddIssues ? <button type="button" className="ghost-button" onClick={() => onAddIssues(data)}><Plus size={17} /> Add issues</button> : null}</div>} /> : null;
-  const advanced = <div className="advanced-tools">
-    <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
-    {canEdit && items.length ? <GroupArrangeCard noun="issue" count={items.length} sortMode={data?.sortMode || "custom"} sortOptions={ARC_SORTS} onOpen={() => setEdit("arrange")} /> : null}
-    {origin ? <p className="settings-card-note drawer-provenance">{origin}</p> : null}
-    <GroupShareCard group={data} noun="story arc" busy={busy}
-      onShare={(on) => run("share", () => patch({ shared: on }))}
-      onStopSharing={async () => {
-        // Unshared, it is no longer the admin's to see: the drawer closes
-        // rather than reloading into "not in the library".
-        setBusy("share");
-        try { await patch({ shared: false }); onGone?.(`${name} is no longer shared with the household`); } catch (failure) { setBusy(""); window.alert(failure.message); }
-      }} />
-    <GroupReadingCards noun="story arc" firstLabel="the arc\u2019s first comic"
-      onRestart={restartFile && onRead ? () => onRead({ id: restartFile.fileId, fromStart: true, ...context }) : null}
-      allRead={allRead} anyRead={started} busy={busy}
-      onMark={readableFiles.length && onMark ? (read) => run("mark", () => onMark(list, read)) : null} />
-    {missingCount && canAskMissing ? <section className="advanced-card">
-      <div><strong>{pullLabel}</strong><p>{admin ? "Asks for every issue of the arc that is not here and not on its way, one pull per series." : "Asks the admin for the issues of this arc that are not here yet."}</p></div>
-      <button type="button" onClick={pullMissing} disabled={busy === "pull"}><CloudArrowDown size={16} /> {admin ? "Pull" : "Request"}</button>
-    </section> : null}
-    {admin && (data?.providerArcId || data?.sourceUrl) ? <section className="advanced-card">
-      <div><strong>{data.providerArcId ? "Refresh from Metron" : "Refresh from its link"}</strong><p>Takes new details and any new issues, slotted in after their neighbours. Your order is kept, and nothing you took out comes back.</p></div>
-      <button type="button" onClick={() => run("refresh", () => onRefresh(data))} disabled={busy === "refresh"}>{busy === "refresh" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} Refresh</button>
-    </section> : null}
-    {items.length ? <section className="advanced-card">
-      <div><strong>Export as a reading list</strong><p>A CBL file in this order, with each issue&rsquo;s catalog ids, that Kavita, Komga and Mylar import. JSON is the Comic Reading List standard.</p></div>
-      <div className="advanced-card-actions">
-        <button type="button" onClick={() => downloadFrom(`/api/v1/reading-lists/${list.id}/export?format=cbl`)}><DownloadSimple size={16} /> CBL</button>
-        <button type="button" onClick={() => downloadFrom(`/api/v1/reading-lists/${list.id}/export?format=json`)}><DownloadSimple size={16} /> JSON</button>
-      </div>
-    </section> : null}
-    {canManage ? <GroupDeleteCard group={data} noun="story arc" name={name} onDelete={() => onDelete(data || list)} /> : null}
-  </div>;
-  return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
-    <aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
-      role="dialog" aria-modal="true" aria-labelledby="reading-list-title" onMouseDown={(event) => event.stopPropagation()}>
-      <DrawerTopBar
-        title={edit === "arrange" ? "Arrange" : edit ? (EDIT_ROWS.find((row) => row.id === edit)?.label || name) : edit === "" ? "Edit story arc" : name}
-        onClose={requestClose}
-        onBack={edit !== null ? () => setEdit(edit && edit !== "arrange" ? "" : null) : undefined}
-        stacked={edit !== null}
-        closeLabel="Close story arc">
-        {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "arc", list.id)} title={name}
-          onChange={(on) => onToggleReadingList("arc", list.id, on)} /> : null}
-        {edit === null && data && missingCount && canAskMissing ? <button type="button" className="glass-button glass-button--icon comic-drawer-follow-button"
-          onClick={pullMissing} disabled={busy === "pull"} aria-label={pullLabel} title={pullLabel}>
-          {busy === "pull" ? <LoadingSpinner size={18} /> : <CloudArrowDown size={20} />}
-          <b>{admin ? "Pull" : "Request"}</b>
-        </button> : null}
-        {edit === null && canEdit ? <button type="button" className="glass-button glass-button--icon comic-drawer-edit-button" onClick={() => setEdit("")} aria-label={`Edit ${name}`} title="Edit"><PencilSimple size={20} /></button> : null}
-      </DrawerTopBar>
-      <header className="comic-drawer-hero">
-        {heroArt ? <><img className="comic-drawer-backdrop" src={heroArt} alt="" aria-hidden="true" key={heroArt} onError={backdrop.page ? backdrop.onFail : undefined} /><img className="comic-drawer-backdrop blurred" src={heroArt} alt="" aria-hidden="true" key={`${heroArt}-blurred`} /></> : null}
-        <span className="comic-drawer-scrim" aria-hidden="true" />
-        <div className="comic-drawer-identity">
-          <div className="comic-drawer-cover">{canEdit ? <button type="button" className="drawer-cover-button" onClick={() => setEdit("cover")} aria-label={`Change the cover for ${name}`}><DiscoverCover src={coverArt} alt={`${name} cover`} glyph={30} /><span className="drawer-cover-hint"><ImageSquare size={15} /> Change cover</span></button> : <DiscoverCover src={coverArt} alt={`${name} cover`} glyph={30} />}</div>
-          <div className="comic-drawer-copy">
-            <div className="comic-drawer-titles">
-              <h2 id="reading-list-title">{name}</h2>
-              {/* As its card and a run's "Publisher • year": the one publisher,
-                  if it is one, then the years; what it is, a badge. The counts
-                  are the ownership line's, the series its Runs shelf's. */}
-              {arcByline ? <p>{arcByline}</p> : null}
-            </div>
-            <div className="comic-drawer-statuses">
-              <StatusBadge tone="violet">Story arc</StatusBadge>
-              {ownerLine ? <StatusBadge tone="muted">{ownerLine}</StatusBadge> : null}
-              {data?.queued ? <StatusBadge tone="violet">{data.queued} on the way</StatusBadge> : null}
-              {readingBadgeText ? <StatusBadge tone={readingBadgeText.tone}>{readingBadgeText.text}</StatusBadge> : null}
-            </div>
-            <Ownership series={arcOwnership({ owned: counts.owned, issueCount: counts.issues, missing: counts.missing })} compact />
-          </div>
-        </div>
-      </header>
-      {detail.state === "error" ? <div className="comic-drawer-body"><div className="shelf-message">
-        <WarningCircle size={18} />
-        <span><strong>This arc could not be opened</strong><small>{detail.error}</small></span>
-        <button type="button" onClick={load}>Try again</button>
-      </div></div> : null}
-      {edit !== null && data ? <div className="comic-drawer-body comic-drawer-edit">
-        {/* As a collection's: the name and description on the screen, the
-            pickers a step in; the order is the Arrange tab's (2026-10-02). */}
-        {edit === "" ? <GroupEditScreen name={name} summary={data.description} summaryLabel="Description" busy={busy} rows={EDIT_ROWS}
-          onSave={({ name: nextName, summary: description }) => run("save", () => patch({ name: nextName, description })).then(() => setEdit(null), () => {})} /> : null}
-        {edit === "cover" ? <GroupCoverPicker choices={coverChoices} current={coverArt} busy={busy} uploadError={uploadError}
-          onUpload={(file) => run("upload", () => uploadCover(file)).then(() => setEdit(""), () => {})}
-          onChoose={(choice) => run("cover", () => patch({ cover: choice.url })).then(() => setEdit(""), () => {})}
-          empty={<div className="drawer-empty"><ImageSquare size={26} weight="duotone" /><strong>No covers to choose from yet</strong><span>The arc's covers come from the comics of it that are here.</span></div>} /> : null}
-        {edit === "arrange" ? arrangeView : null}
-        {edit === "backdrop" ? <>
-          <p className="backdrop-workbench-intro">Choose a page from one of {name}&rsquo;s comics to show behind the drawer&rsquo;s header.</p>
-          <BackdropPicker series={{ id: `arc-${list.id}`, title: name, fileDetails: files }} readable={readingFiles} current={backdrop.shown}
-            busy={backdrop.busy} error={backdrop.error}
-            onChoose={(fileId, page) => backdrop.save({ fileId, page }).then((done) => { if (done) setEdit(""); })}
-            onAutomatic={() => backdrop.save({ source: "auto" }).then((done) => { if (done) setEdit(""); })} />
-        </> : null}
-      </div> : detail.state !== "error" ? <>
-        <div className="comic-drawer-actions">
-          {data ? <ReadRunButton reading={data} title={name} medium="comic" onRead={(target) => onRead({ ...target, ...context })} /> : null}
-        </div>
-        {/* The labels come from the card and do not change when the detail
-            lands, so nothing settles under the glass pill once it is placed. */}
-        <DrawerTabs tabs={tabs} tab={tab} onTab={setTab} label="Story arc details" tabsRef={tabsRef} glass={tabGlass} disabled={(id) => !data && id !== "overview"} />
-        <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
-          {!data ? <div role="status" aria-busy="true" aria-label={`Opening ${name}`}>
-            <RunSynopsis loading heading="About" />
-            <ComicDrawerRow title="Reading order" count={counts.issues}>{Array.from({ length: Math.min(6, Math.max(1, counts.issues)) }, (_, index) => <PullCardSkeleton key={index} />)}</ComicDrawerRow>
-          </div> : null}
-          {data && tab === "overview" ? <>
-            {data.description ? <RunSynopsis text={data.description} heading="About" source={data.source === "manual" ? null : data.source === "cbl" ? (data.sourceName || "the reading list") : "Metron"} /> : null}
-            {!items.length ? <div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run, owned or missing. Each goes on the end; arrange them in Advanced." : "Its issues show up here once they are added."}</span>
-              {canEdit && onAddIssues ? <button type="button" className="ghost-button" onClick={() => onAddIssues(data)}><Plus size={17} /> Add issues</button> : null}</div> : null}
-            {/* The band above holds Read alone, as a run's does; adding is
-                done where the issues are, under their shelf. */}
-            {items.length ? <div className="comic-drawer-shelf-group">
-              <ComicDrawerRow title="Reading order" count={issues.length}>{issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium="comic" onOpen={() => setTab("issues")} onRead={onRead ? (target) => onRead({ ...target, ...context }) : undefined} readingFiles={readingFiles} key={issue.id} />)}</ComicDrawerRow>
-              {canEdit && onAddIssues ? <button type="button" className="glass-button comic-drawer-add" onClick={() => onAddIssues(data)}><Plus size={18} /> Add issues</button> : null}
-            </div> : null}
-            {runsInArc.length && onOpenSeries ? <ComicDrawerRow title="Runs in this arc" count={runsInArc.length}>{runsInArc.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries(item)} key={run.id} />)}</ComicDrawerRow> : null}
-          </> : null}
-          {data && tab === "issues" ? <GroupedIssueInventory issues={issues} onEditIssue={admin ? (issue) => (issue.runId ? onEditIssue?.(issue) : undefined) : undefined}
-            onRead={onRead ? (target) => onRead({ ...target, ...context }) : undefined} onRate={onRateIssue} onMark={onMarkIssue} onAddToArc={onAddToArc}
-            empty={<div className="drawer-empty"><ListNumbers size={26} weight="duotone" /><strong>Nothing in this arc yet</strong><span>{canEdit ? "Add issues from any run to start its reading order." : "Its issues show up here once they are added."}</span></div>}
-            onMarkRun={onMark ? (read) => run("mark", () => onMark(list, read)) : undefined} runRead={allRead} runStarted={started} readingFiles={readingFiles} medium="comic" /> : null}
-          {data && tab === "files" ? <FileInventory files={files} readingFiles={readingFiles} onRead={onRead} onOpenWorkbench={onOpenWorkbench} onOpenCover={onOpenCover} onOpenContents={onOpenContents} onChangeRun={onChangeRun} onReplace={onReplace} /> : null}
-          {data && tab === "advanced" ? advanced : null}
-        </div>
-      </> : null}
-    </aside>
-  </div>;
 }
 
 function CollectionDrawer({ collection, tab, onTabChange, onClose, onFindStructure, onOpenSeries, onOpenContents, onRequest, onViewRequests, requestBusy, onEditIssue, onUnfollow, unfollowBusy = false, requested = false }) {
@@ -8495,76 +5921,11 @@ function SeriesMatchWorkbench({ data, loading, busy, error, onClose, onSearch, o
   </div>;
 }
 
-/**
- * The cover picker itself, without a window around it.
- *
- * Two things host this: the modal below, which the Files tab opens for one
- * file's cover, and the run drawer's Edit panel, which shows it in place. One
- * body so the two cannot drift into saying different things about the same
- * choice.
- */
-function CoverPicker({ data, busy, error, onSelect, onUpload }) {
-  const selectedSource = data.covers.selectedSource;
-  // A run has many options from the same source, so identity is the option
-  // id where the payload carries one, not the source alone.
-  const isSelected = (option) => (
-    data.covers.selectedOptionId
-      ? data.covers.selectedOptionId === option.optionId
-      : selectedSource === option.source && (!data.covers.selectedUrl || data.covers.selectedUrl === option.url)
-  );
-  return <>
-    <div className="cover-option-grid">{data.covers.options.map((option) => <article className={isSelected(option) ? "selected" : ""} key={option.optionId || `${option.source}-${option.url}`}><img src={option.url} alt={option.label} /><div><strong>{option.label}</strong><small>{option.detail}</small><button disabled={busy} onClick={() => onSelect(option.source, option.url, option.fileId)}>{isSelected(option) ? "Selected" : "Use cover"}</button></div></article>)}</div>
-    <div className="cover-picker-actions"><button className="ghost-button" disabled={busy} onClick={() => onSelect("auto", null)}><ArrowsClockwise size={17} /> Use automatic cover</button><label className="primary-button upload-cover-button"><UploadSimple size={18} /> Upload image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" disabled={busy} onChange={(event) => event.target.files?.[0] && onUpload(event.target.files[0])} /></label></div>
-    {error ? <p className="workbench-error" role="alert">{error}</p> : null}
-  </>;
-}
-
 function CoverWorkbench({ data, title, busy, error, onClose, onSelect, onUpload }) {
   const dialogRef = useDialog(onClose);
   return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}><section className="modal cover-workbench" role="dialog" aria-modal="true" aria-labelledby="cover-workbench-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}><DialogCloseButton onClose={onClose} label="Close cover picker" /><span className="eyebrow">Change cover</span><h2 id="cover-workbench-title">{title || data.file?.filename}</h2><p className="workbench-intro">Choose art from the comic, a metadata provider, or upload your own image. This does not alter the original comic file.</p>
     <CoverPicker data={data} busy={busy} error={error} onSelect={onSelect} onUpload={onUpload} />
   </section></div>;
-}
-
-// The page behind a run's drawer header: pick an issue, then one of its pages.
-// Pages load one issue at a time, as thumbnails the server renders from the
-// file, so a long run costs nothing until an issue is opened.
-const PAGE_ARCHIVE_EXTENSIONS = new Set(["cbz", "cbr", "cb7", "cbt", "zip", "rar"]);
-
-/** The background picker, hosted by the modal below and by the Edit panel. */
-function BackdropPicker({ series, current, busy, error, readable, onChoose, onAutomatic }) {
-  const files = useMemo(() => [...(series.fileDetails || [])]
-    .filter((file) => (readable ? readable[String(file.id)]?.readable
-      : PAGE_ARCHIVE_EXTENSIONS.has(String(file.extension || "").replace(".", "").toLowerCase())))
-    .sort((a, b) => String(a.filename).localeCompare(String(b.filename), undefined, { numeric: true, sensitivity: "base" })), [series.fileDetails, readable]);
-  const [fileId, setFileId] = useState(() => (files.some((file) => file.id === current?.fileId) ? current.fileId : files[0]?.id) || "");
-  const [pages, setPages] = useState({ state: "loading", list: [], error: "" });
-  useEffect(() => {
-    if (!fileId) { setPages({ state: "done", list: [], error: "" }); return undefined; }
-    let live = true;
-    setPages({ state: "loading", list: [], error: "" });
-    apiRequest(`/api/v1/files/${fileId}/pages`)
-      .then((data) => { if (live) setPages({ state: "done", list: data.pages || [], error: "" }); })
-      .catch((loadError) => { if (live) setPages({ state: "done", list: [], error: loadError.message }); });
-    return () => { live = false; };
-  }, [fileId]);
-  return <>
-    <div className="backdrop-workbench-tools">
-      <label><span>Issue</span><GlassSelect label="Issue" value={fileId} onChange={setFileId} className="glass-select--fill" options={files.map((file) => ({ value: file.id, label: String(file.filename).replace(/\.[^.]+$/, "") }))} /></label>
-      <button type="button" className="secondary-button" onClick={onAutomatic} disabled={busy || current?.source !== "chosen"}>Use automatic page</button>
-    </div>
-    {error ? <p className="form-error" role="alert">{error}</p> : null}
-    {!files.length ? <p className="backdrop-workbench-status">This run has no comic archives to take a page from.</p> : null}
-    {pages.state === "loading" && files.length ? <div className="backdrop-workbench-status" role="status"><LoadingSpinner size={18} /> Reading pages…</div> : null}
-    {pages.error ? <p className="form-error" role="alert">{pages.error}</p> : null}
-    {pages.state === "done" && !pages.error && pages.list.length ? <div className="backdrop-page-grid">{pages.list.map((page) => {
-      const selected = current?.fileId === fileId && current?.page === page.index;
-      return <button type="button" className={`backdrop-page${selected ? " selected" : ""}`} aria-pressed={selected} disabled={busy} onClick={() => onChoose(fileId, page.index)} key={page.index}>
-        <img src={page.url} alt="" loading="lazy" />
-        <span>Page {page.index + 1}</span>
-      </button>;
-    })}</div> : null}
-  </>;
 }
 
 function BackdropWorkbench({ series, current, busy, error, onClose, onChoose, onAutomatic }) {
@@ -8822,7 +6183,6 @@ function useNarrowWidth() {
   }, []);
   return narrow;
 }
-
 
 // Comics' tabs after Recommended, which is plain /library: Plex and Komga
 // open a library on its home, and so does a tap on Comics.
@@ -9589,7 +6949,7 @@ export function App() {
         throw error;
       }
       catalogEtag.current = response.headers.get("ETag") || null;
-      LAST_ANSWERS.set("/api/v1/catalog", data);
+      rememberAnswer("/api/v1/catalog", data);
       setCatalog(data);
       setBackendStatus("live");
       return data;

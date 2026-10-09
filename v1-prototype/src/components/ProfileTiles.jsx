@@ -1,16 +1,18 @@
 // A profile's disc, the profile tiles every picker shows, and the PIN pad:
-// shared by the web app and Flipparr Reader, so a household sees the same
+// shared by the web app and Flipparr View, so a household sees the same
 // "Who's reading?" on both.
 import { useEffect, useRef, useState } from "react";
 import { Backspace, Check, LockSimple, Plus } from "@phosphor-icons/react";
 import { LoadingIndicator as LoadingSpinner } from "./LoadingIndicator";
 import { initials, isLocked, pinInput, profileColour } from "../profiles.js";
+import { useImageSrc } from "../host.js";
 
 // A profile is drawn as a coloured disc with its initials, the way a Plex Home
 // or Netflix profile is; the colours are the design tokens' profile palette.
 export function ProfileAvatar({ profile, size = "md" }) {
+  const imageSrc = useImageSrc();
   return <span className={`profile-avatar profile-avatar--${size} profile-avatar--${profileColour(profile)}`} aria-hidden="true">
-    {profile?.avatar ? <img src={profile.avatar} alt="" draggable="false" /> : initials(profile?.name)}
+    {profile?.avatar ? <img src={imageSrc(profile.avatar)} alt="" draggable="false" /> : initials(profile?.name)}
   </span>;
 }
 
