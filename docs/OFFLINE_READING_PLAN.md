@@ -899,7 +899,9 @@ How:
     "opened"`; the owner, 2026-10-09), so it can be finished offline. It
     counts against the limit, and one that cannot fit is read online with a
     word saying so. Always on for now; a switch belongs in Phase 7's
-    Settings.
+    Settings, beside "Download the next issue too" (off by default, the
+    owner's call 2026-10-09: when on, opening a comic also downloads the
+    next unread issue of its run or arc, as Kindle can).
   - Offline, the controls still show what is here, and a press says to
     connect.
 - Proof: node tests for `nextUnread` and `planDownload` with eviction; on
