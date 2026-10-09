@@ -11,7 +11,7 @@ import { EMPTY_ENTRIES, isOnReadingList } from "../reading-list-tab.js";
 import { ARC_SORTS, arcOwnerLine, arcYears } from "../reading-list.js";
 import { arcPublisher } from "../run-details.js";
 
-import { ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTabs, DrawerTopBar, PullCardSkeleton, ReadRunButton, ReadingListToggle, RunSynopsis, formatLongDate, toneProps, useArtTone } from "./frame.jsx";
+import { ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTabs, DrawerTopBar, GroupDownloadButton, PullCardSkeleton, ReadRunButton, ReadingListToggle, RunSynopsis, formatLongDate, toneProps, useArtTone } from "./frame.jsx";
 import { BackdropPicker, GroupArrange, GroupArrangeCard, GroupCoverPicker, GroupDeleteCard, GroupEditScreen, GroupReadingCards, GroupShareCard, useGroupBackdrop } from "./groups.jsx";
 import { FileInventory, GroupedIssueInventory, downloadFrom } from "./inventory.jsx";
 import { ArrowsClockwise, CloudArrowDown, DownloadSimple, ImageSquare, ListNumbers, PencilSimple, Plus, WarningCircle } from "@phosphor-icons/react";
@@ -229,6 +229,7 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
         onBack={edit !== null ? () => setEdit(edit && edit !== "arrange" ? "" : null) : undefined}
         stacked={edit !== null}
         closeLabel="Close story arc">
+        {edit === null ? <GroupDownloadButton group={{ kind: "arc", id: String(list.id), title: name }} /> : null}
         {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "arc", list.id)} title={name}
           onChange={(on) => onToggleReadingList("arc", list.id, on)} /> : null}
         {edit === null && data && missingCount && canAskMissing ? <button type="button" className="glass-button glass-button--icon comic-drawer-follow-button"

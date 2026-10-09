@@ -14,7 +14,7 @@ import { RATING_SOURCES, filledStars, ratingForPress, ratingLabel } from "../rat
 import { readingAriaLabel, readingNoun, readingVerb } from "../reading-target.js";
 import { creatorRoleLabel } from "../run-details.js";
 import { issueReadState } from "./inventory.jsx";
-import { ArrowLeft, BookOpen, Check, Star } from "@phosphor-icons/react";
+import { ArrowLeft, BookOpen, Check, CheckCircle, DownloadSimple, Star } from "@phosphor-icons/react";
 
 // The skeleton occupies the loaded card's box exactly. A shelf that grows when
 // its comics arrive moves everything under it, which is the moment the reader
@@ -271,6 +271,22 @@ export function issueCardLabel(issue, medium) {
  * is a worse question than "where is the button".
  */
 /** On this profile's reading list, or not: the bookmark, as Plex's watchlist. */
+/**
+ * Download for a whole run, story arc or collection, beside the bookmark and
+ * shaped like it (the host's `groupDownload`: Flipparr View's; the web gives
+ * none, and this draws nothing).
+ */
+export function GroupDownloadButton({ group }) {
+  const describe = useContext(Host)?.groupDownload;
+  const state = describe ? describe(group) : null;
+  if (!state) return null;
+  return <button type="button" className={`glass-button glass-button--icon comic-drawer-follow-button${state.done ? " active" : ""}`}
+    aria-busy={state.busy || undefined} aria-label={state.label} title={state.label} onClick={state.onPress}>
+    {state.busy ? <LoadingSpinner size={18} /> : state.done ? <CheckCircle size={20} weight="fill" /> : <DownloadSimple size={20} />}
+    <b>{state.busy ? "Downloading" : state.done ? "Downloaded" : "Download"}</b>
+  </button>;
+}
+
 export function ReadingListToggle({ on, title, onChange, className = "glass-button glass-button--icon comic-drawer-follow-button", label = false }) {
   return <button type="button" className={`${className}${on ? " active" : ""}`} aria-pressed={on}
     aria-label={on ? `Take ${title} off your reading list` : `Add ${title} to your reading list`}

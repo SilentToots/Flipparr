@@ -119,6 +119,46 @@ export function planDownload(estimate, { capBytes = DEFAULT_CAP_BYTES, rows = []
   return { fits: false, evict: [], shortfall: estimate - free };
 }
 
+/**
+ * The next `n` comics to download from a run, arc or collection, in the
+ * order given (the order the drawer shows): readable, not finished (one
+ * part-read counts), and not already on the device or on its way.
+ * `files`: [{fileId, finishedAt, readable}].
+ */
+export function nextUnread(files, n, { onDevice = new Set() } = {}) {
+  const have = new Set([...onDevice].map(String));
+  const seen = new Set();
+  const picked = [];
+  for (const file of files || []) {
+    const id = file?.fileId == null ? "" : String(file.fileId);
+    if (!id || seen.has(id) || have.has(id) || file.readable === false || file.finishedAt) continue;
+    seen.add(id);
+    picked.push(id);
+    if (picked.length >= n) break;
+  }
+  return picked;
+}
+
+/**
+ * Whether a batch fits under the cap, all at once: `estimates` are
+ * [{fileId, bytes}] in order. Finished comics make way, read longest ago
+ * first, as for one download. {fits, total, evict: [fileId], shortfall,
+ * fitting}: `fitting` is how many from the front fit when not all do.
+ */
+export function planDownloads(estimates, { capBytes = DEFAULT_CAP_BYTES, rows = [], reading = null } = {}) {
+  const total = estimates.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
+  const whole = planDownload(total, { capBytes, rows, reading });
+  if (whole.fits) return { fits: true, total, evict: whole.evict, shortfall: 0, fitting: estimates.length };
+  let fitting = 0;
+  let running = 0;
+  for (const item of estimates) {
+    running += Number(item.bytes) || 0;
+    if (!planDownload(running, { capBytes, rows, reading }).fits) break;
+    fitting += 1;
+  }
+  return { fits: false, total, evict: [], shortfall: whole.shortfall, fitting };
+}
+
 /** Bytes as a person reads them: 950 KB, 12.4 MB, 1.8 GB. */
 export function formatBytes(bytes) {
   const value = Math.max(0, Number(bytes) || 0);

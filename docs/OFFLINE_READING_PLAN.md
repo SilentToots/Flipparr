@@ -879,6 +879,23 @@ How:
   `groupKey: "arc:<id>"`.
 - Settings: eviction explained; "Remove finished downloads"; a cap change
   applies at the next download.
+- Built 2026-10-09 (iPad QA pending):
+  - Host slots `groupDownload(group)` and `issueDownload(issue)` (host.js).
+    `GroupDownloadButton` sits beside the bookmark in the run, story arc and
+    collection drawers. Each issue tile has a control at its top right, and
+    each row one beside the menu, always shown: download, a spinner while it
+    downloads, a green check once here. The "Downloaded" mark beside the
+    number is gone, as the control says it. The web draws none of these
+    (visual compare: 0 px at both widths).
+  - `DownloadSheet`: the next unread in the drawer's order (`groupFiles`,
+    `nextUnread`; a collection's runs in its order). A run or collection
+    defaults to 5, an arc to every unread one. It shows the size and what
+    makes way (`planDownloads`), or how many fit. `downloadMany` starts
+    them under `groupKey` `run:|arc:|collection:<id>` and stops at the first
+    that cannot fit.
+  - Downloads: "Remove finished downloads (N)".
+  - Offline, the controls still show what is here, and a press says to
+    connect.
 - Proof: node tests for `nextUnread` and `planDownload` with eviction; on
   the iPad with a 30 MB cap: three issues, finish the first, download a
   fourth → the finished one goes, an unfinished one never; a fifth that

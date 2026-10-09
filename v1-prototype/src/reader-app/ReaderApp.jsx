@@ -36,7 +36,8 @@ import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
-import { CAP_CHOICES, formatBytes, progressOf, usageBytes } from "./offline.js";
+import { CAP_CHOICES, formatBytes, nextUnread, planDownloads, progressOf, usageBytes } from "./offline.js";
+import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
 /** How long a launch's background check of the session waits for the server. */
@@ -510,8 +511,20 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     setSelectedList(list);
   }
 
+  // Downloading needs Flipparr; offline, the controls still show what is
+  // here, and a press says why nothing starts.
+  const [downloadGroup, setDownloadGroup] = useState(null);
+  const issueName = (issue) => `${issue.contextLabel || "Issue"} #${issue.number}`;
+  const downloadIssue = useCallback((issue) => {
+    if (!online) { showToast("Connect to Flipparr to download.", "error"); return; }
+    downloads.download(issue.fileId).then(() => showToast(`Downloading ${issueName(issue)}`),
+      (error) => showToast(error.message || "Could not download", "error"));
+  }, [online, downloads, showToast]);
+
   // Download and Remove download, in an issue's menu; its badge while it
-  // downloads, or once it is here, where the tile has nothing else to say.
+  // downloads, or once it is here, where the tile has nothing else to say;
+  // and Phase 6's controls seen without a menu: one on every issue, and
+  // Download for a whole run, arc or collection beside its bookmark.
   const host = useMemo(() => ({
     api: apiRequest,
     // Panel fixes as on the web (the admin's), and only while Flipparr
@@ -531,8 +544,30 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       if (row?.state === "failed") {
         return [{ key: "offline-retry", label: "Try the download again", icon: <ArrowClockwise size={16} />, onSelect: () => downloads.retry(issue.fileId) }];
       }
-      return [{ key: "offline", label: "Download", icon: <DownloadSimple size={16} />,
-        onSelect: () => downloads.download(issue.fileId).then(() => showToast(`Downloading ${label}`), (error) => showToast(error.message || "Could not download", "error")) }];
+      return [{ key: "offline", label: "Download", icon: <DownloadSimple size={16} />, onSelect: () => downloadIssue(issue) }];
+    },
+    issueDownload: (issue) => {
+      const row = downloads.row(issue.fileId);
+      const label = issueName(issue);
+      if (row?.state === "downloading") {
+        return { busy: true, label: `Downloading ${label}, ${Math.round(progressOf(row) * 100)}%`, onPress: () => {} };
+      }
+      if (row?.state === "ready" || row?.state === "stale") {
+        return { done: true, label: `${label} is on this device`,
+          onPress: () => showToast(`${label} is on this device. Remove it from its \u2026 menu or from Downloads.`) };
+      }
+      if (row?.state === "failed") return { label: `Try downloading ${label} again`, onPress: () => downloads.retry(issue.fileId) };
+      return { label: `Download ${label}`, onPress: () => downloadIssue(issue) };
+    },
+    groupDownload: (group) => {
+      const mine = downloads.rows.filter((row) => row.groupKey === `${group.kind}:${group.id}`);
+      const busy = mine.some((row) => row.state === "downloading");
+      const done = !busy && mine.some((row) => row.state === "ready");
+      return {
+        busy, done,
+        label: busy ? `Downloading from ${group.title}` : done ? `Issues of ${group.title} are on this device; download more` : `Download ${group.title}`,
+        onPress: () => (online ? setDownloadGroup(group) : showToast("Connect to Flipparr to download.", "error")),
+      };
     },
     notice: offlineNotice,
     issueBadge: (issue) => {
@@ -540,10 +575,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       if (row?.state === "downloading") return { label: `Downloading ${Math.round(progressOf(row) * 100)}%`, tone: "reading-progress" };
       return null;
     },
-    // Downloaded: a mark beside the number, as a locked issue's shield is,
-    // so it shows whatever the badge says about reading.
-    issueMark: (issue) => (issue.fileId && downloads.row(issue.fileId)?.state === "ready"
-      ? <DownloadSimple className="issue-host-mark" size={12} weight="bold" aria-label="Downloaded" /> : null),
+    // Downloaded is said by the issue's own control now (Phase 6), so the
+    // mark beside its number is not drawn twice.
     // Downloaded, on Recommended: first while offline, when it is what can
     // be read; after Keep Reading otherwise.
     shelves: () => (readyRows.length ? [{
@@ -556,7 +589,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       })),
     }] : []),
   // downloadVersion: the menu and badge follow the downloads as they change.
-  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role]);
+  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role, downloadIssue]);
 
   const header = useMemo(() => ({
     profile: {
@@ -610,6 +643,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       {selectedList ? <ReadingListDrawer key={selectedList.id} list={selectedList} allSeries={series} {...reading} groupTools={false}
         onClose={() => setSelectedList(null)} onMarkIssue={actions.markIssueRead} onRateIssue={actions.rateIssue}
         onMark={actions.markListRead} onGone={(message) => { setSelectedList(null); if (message) showToast(message); }} /> : null}
+      {downloadGroup ? <DownloadSheet group={downloadGroup} downloads={downloads} onClose={() => setDownloadGroup(null)}
+        onStarted={(message, tone) => { setDownloadGroup(null); showToast(message, tone); }} /> : null}
       {pullPill}
       {toastElement}
     </div>
@@ -837,11 +872,111 @@ function useDownloadRows(downloads) {
 // pattern: a page header over cards. Storage first (how much is used, and
 // the limit -- the comics finished longest ago make way), then each download,
 // which opens to read, with a way to take it off the device.
+/**
+ * The comics of a run, story arc or collection, in the order its drawer
+ * shows them: `{fileId, finishedAt, readable}` for `nextUnread`.
+ */
+async function groupFiles(group) {
+  const fromRun = (reading) => [...(reading?.issues || []), ...(reading?.volumes || [])]
+    .map((file) => ({ fileId: file.id, finishedAt: file.finishedAt, readable: file.readable }));
+  if (group.kind === "run") return fromRun(await apiRequest(`/api/v1/series/${group.id}/reading`));
+  if (group.kind === "arc") {
+    const arc = await apiRequest(`/api/v1/reading-lists/${group.id}`);
+    return (arc?.items || []).map((item) => ({ fileId: item.fileId, finishedAt: item.finishedAt, readable: item.readable }));
+  }
+  const files = [];
+  for (const runId of group.runIds || []) files.push(...fromRun(await apiRequest(`/api/v1/series/${runId}/reading`)));
+  return files;
+}
+
+/**
+ * Download for a whole run, story arc or collection (Phase 6): the next
+ * unread, as many as chosen (5 for a run or collection, every one for an
+ * arc), what they come to, and what would make way -- before anything
+ * starts. One per press, in the drawer's order, under one groupKey.
+ */
+function DownloadSheet({ group, downloads, onClose, onStarted }) {
+  const dialogRef = useDialog(onClose);
+  const [files, setFiles] = useState(null);
+  const [count, setCount] = useState(null);
+  const [plan, setPlan] = useState(null);
+  const [cap, setCap] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const onDevice = useMemo(() => new Set(downloads.rows
+    .filter((row) => ["ready", "stale", "downloading"].includes(row.state)).map((row) => row.fileId)), [downloads]);
+  const unread = useMemo(() => (files ? nextUnread(files, Infinity, { onDevice }) : []), [files, onDevice]);
+  useEffect(() => {
+    let live = true;
+    groupFiles(group).then((found) => {
+      if (!live) return;
+      setFiles(found);
+      const waiting = nextUnread(found, Infinity, { onDevice }).length;
+      setCount(group.kind === "arc" ? waiting : Math.min(5, waiting));
+    }, (failure) => { if (live) setError(failure.message || "Could not look at what to download"); });
+    deviceStore.capBytes().then((bytes) => { if (live) setCap(bytes); });
+    return () => { live = false; };
+  // Once, for the group it was opened for.
+  }, []);
+  const chosen = useMemo(() => unread.slice(0, count || 0), [unread, count]);
+  useEffect(() => {
+    if (!chosen.length || !cap) { setPlan(null); return undefined; }
+    let live = true;
+    setPlan(null);
+    (async () => {
+      const estimates = [];
+      // A few at a time: each is one small request to the server.
+      for (let start = 0; start < chosen.length; start += 6) {
+        const batch = await Promise.all(chosen.slice(start, start + 6).map((fileId) => apiRequest(`/api/v1/files/${fileId}/offline`)
+          .then((manifest) => ({ fileId, bytes: Number(manifest.bytesEstimate) || 0 }), () => ({ fileId, bytes: 0 }))));
+        estimates.push(...batch);
+      }
+      const rows = await deviceStore.allDownloads();
+      if (live) setPlan(planDownloads(estimates, { capBytes: cap, rows }));
+    })().catch((failure) => { if (live) setError(failure.message || "Could not size the download"); });
+    return () => { live = false; };
+  }, [chosen, cap]);
+  const counts = [...new Set([1, 3, 5, 10, 20].filter((n) => n < unread.length).concat(unread.length))].filter(Boolean);
+  const going = plan ? (plan.fits ? chosen.length : plan.fitting) : 0;
+  async function start() {
+    setBusy(true);
+    const { started, error: failure } = await downloads.downloadMany(chosen.slice(0, going), { groupKey: `${group.kind}:${group.id}` });
+    onStarted(failure && !started ? failure
+      : `Downloading ${started} ${started === 1 ? "issue" : "issues"} from ${group.title}${failure ? `. ${failure}` : ""}`, failure && !started ? "error" : undefined);
+  }
+  return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}>
+    <section className="modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="download-sheet-title" onMouseDown={(event) => event.stopPropagation()}>
+      <DialogCloseButton onClose={onClose} label="Close" />
+      <span className="eyebrow">{group.kind === "run" ? "Run" : group.kind === "arc" ? "Story arc" : "Collection"}</span>
+      <h2 id="download-sheet-title">Download {group.title}</h2>
+      {error ? <p className="workbench-error" role="alert">{error}</p>
+        : files === null ? <LoadingIndicator size="md" />
+        : !unread.length ? <p className="settings-card-note">Every unread issue is on this device already.</p>
+        : <>
+          <p className="settings-card-note">The next unread issues, in reading order. They keep downloading while the iPad is locked.</p>
+          <GlassSelect label="How many" value={count} onChange={(next) => setCount(Number(next))}
+            options={counts.map((n) => ({ value: n, label: n === unread.length && n > 1 ? `All ${n} unread` : `Next ${n} unread` }))} />
+          <p className="settings-card-note" role="status">{!plan ? "Working out the size\u2026"
+            : plan.fits ? `${formatBytes(plan.total)}${plan.evict.length ? `. Makes room by removing ${plan.evict.length} finished ${plan.evict.length === 1 ? "comic" : "comics"}, read longest ago.` : "."}`
+            : plan.fitting ? `Only ${plan.fitting} of ${chosen.length} fit under this device's ${formatBytes(cap)} limit. Raise it in Downloads to take them all.`
+            : `Needs ${formatBytes(plan.shortfall)} more than this device's ${formatBytes(cap)} limit allows. Raise it in Downloads.`}</p>
+        </>}
+      <div className="metadata-edit-actions">
+        <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+        <button type="button" className="primary-button" disabled={busy || !going} aria-busy={busy || undefined} onClick={start}>
+          {busy ? <LoadingIndicator size="sm" /> : <DownloadSimple size={18} />} {going ? `Download ${going}` : "Download"}
+        </button>
+      </div>
+    </section>
+  </div>;
+}
+
 function DownloadsPage({ downloads, onRead, notice = null }) {
   const rows = useDownloadRows(downloads);
   const [cap, setCap] = useState(null);
   useEffect(() => { deviceStore.capBytes().then(setCap); }, []);
   const used = usageBytes(rows);
+  const finished = rows.filter((row) => row.state === "ready" && row.finished);
   return <>
     <PageHeader title="Downloads" />
     <div className="settings-pane">
@@ -850,6 +985,11 @@ function DownloadsPage({ downloads, onRead, notice = null }) {
         <p className="settings-card-lead">{formatBytes(used)} of {cap ? formatBytes(cap) : "…"} used. When a download would go over the limit, the comics you finished longest ago make way; one you are still reading never does.</p>
         {cap ? <GlassSelect label="Keep up to" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
           options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
+        {/* A limit changed here applies from the next download on. */}
+        {finished.length ? <button type="button" className="secondary-button" onClick={async () => {
+          if (!window.confirm(`Remove ${finished.length} finished ${finished.length === 1 ? "comic" : "comics"} from this device? Comics still being read stay.`)) return;
+          await downloads.removeFinished();
+        }}><Trash size={16} /> Remove finished downloads ({finished.length})</button> : null}
       </SettingsCard>
       <SettingsCard title="Downloaded comics">
         {rows.length ? <div className="profile-rows">

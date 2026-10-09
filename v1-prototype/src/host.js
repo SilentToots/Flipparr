@@ -14,6 +14,12 @@
 //   optional: the host's own items in an issue's menu, its badge where
 //   nothing else is said, and its mark beside the number (Flipparr View's
 //   downloads). The web app gives none.
+// - `groupDownload(group)` and `issueDownload(issue)`, optional: Download
+//   for a whole run, story arc or collection beside its bookmark, and a
+//   download control on every issue, seen without a menu (Flipparr View,
+//   Phase 6). Each answers `{label, busy, done, progress, onPress}` or null.
+//   `group` is `{kind: "run" | "arc" | "collection", id, title, runIds?}`.
+//   The web app gives none.
 // - `notice`, optional: the host's word on the Comics page, under its header
 //   (Flipparr View's "You're offline"). The web app gives none.
 // - `shelves()`, optional: the host's own Recommended shelves (Flipparr

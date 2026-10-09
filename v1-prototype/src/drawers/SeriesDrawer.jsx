@@ -15,7 +15,7 @@ import { READING_STATES } from "../reading-target.js";
 import { collectionsFor } from "../run-collections.js";
 import { orderedCreators, relatedRuns } from "../run-details.js";
 
-import { ComicDrawerCreators, ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTopBar, ReadRunButton, ReadingListToggle, RunSynopsis, StarRating, toneProps, useArtTone } from "./frame.jsx";
+import { ComicDrawerCreators, ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTopBar, GroupDownloadButton, ReadRunButton, ReadingListToggle, RunSynopsis, StarRating, toneProps, useArtTone } from "./frame.jsx";
 import { CollectionCoverage, CollectionManagement, EDIT_SECTIONS, FileInventory, GroupedIssueInventory, IssueCatalogCard, SeriesEditPanel, VolumeInventory } from "./inventory.jsx";
 import { ArrowCounterClockwise, ArrowLeft, ArrowsClockwise, Books, Check, Hourglass, ImageSquare, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
 import { useManages, useImageSrc } from "../host.js";
@@ -202,6 +202,7 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
       onBack={edit !== null ? () => setEdit(edit ? "" : null) : parentCollection ? onBack : undefined}
       stacked={edit !== null}
       closeLabel="Close series details">
+      {edit === null ? <GroupDownloadButton group={{ kind: "run", id: String(series.id), title: series.title }} /> : null}
       {edit === null && onToggleReadingList ? <ReadingListToggle on={isOnReadingList(readingList, "run", series.id)} title={series.title}
         onChange={(on) => onToggleReadingList("run", series.id, on)} /> : null}
       {edit === null && admin ? <>

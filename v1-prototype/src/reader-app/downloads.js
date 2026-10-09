@@ -113,6 +113,32 @@ export class Downloads extends EventTarget {
   }
 
   /**
+   * Several comics, in order, as one choice (a run's next unread, an arc):
+   * each planned as it is asked for, so each sees the room the last took.
+   * Stops at the first that cannot be had and says why. {started, error}.
+   */
+  async downloadMany(fileIds, { groupKey = null } = {}) {
+    let started = 0;
+    for (const fileId of fileIds) {
+      try {
+        await this.download(fileId, { groupKey });
+        started += 1;
+      } catch (error) {
+        return { started, error: error.message || "The download could not start" };
+      }
+    }
+    return { started, error: null };
+  }
+
+  /** Every finished comic off the device; resolves to how many went. */
+  async removeFinished() {
+    await this.ready;
+    const finished = this.rows.filter((row) => row.state === "ready" && row.finished).map((row) => row.fileId);
+    for (const fileId of finished) await this.remove(fileId, "removed");
+    return finished.length;
+  }
+
+  /**
    * Hand what is still missing to the background session: each page, and
    * each page's panels beside it, so the whole comic finishes while the
    * device is locked or in another app (the owner, 2026-10-09: the panels

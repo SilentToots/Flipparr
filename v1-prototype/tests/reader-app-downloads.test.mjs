@@ -126,3 +126,27 @@ test("reconnecting, a comic this profile may no longer read goes; a replaced one
   assert.equal(downloads.row("65").state, "stale");
   assert.equal(downloads.row("63").state, "ready");
 });
+
+test("several comics are downloaded as one choice, stopping at the first that cannot fit", async () => {
+  const { downloads } = setup();
+  await downloads.ready;
+  const asked = [];
+  downloads.download = async (fileId, { groupKey }) => {
+    asked.push([fileId, groupKey]);
+    if (fileId === "3") throw new Error("Needs 12 MB more than this device's download limit allows");
+  };
+  const result = await downloads.downloadMany(["1", "2", "3", "4"], { groupKey: "run:61" });
+  assert.deepEqual(result, { started: 2, error: "Needs 12 MB more than this device's download limit allows" });
+  assert.deepEqual(asked.map(([id]) => id), ["1", "2", "3"], "nothing after the one that did not fit");
+  assert.equal(asked[0][1], "run:61");
+});
+
+test("finished downloads can be cleared at once; one still being read stays", async () => {
+  const { downloadRow } = await import("../src/reader-app/offline.js");
+  const row = (fileId, extra) => ({ ...downloadRow({ ...manifest, fileId }), state: "ready", ...extra });
+  const { downloads } = setup({ rows: [row("63", { finished: true }), row("64", { finished: false }), row("65", { finished: true })],
+    onDisk: { pages: [0, 1], panels: [0, 1] } });
+  await downloads.ready;
+  assert.equal(await downloads.removeFinished(), 2);
+  assert.deepEqual(downloads.rows.map((item) => item.fileId), ["64"]);
+});

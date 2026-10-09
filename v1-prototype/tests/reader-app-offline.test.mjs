@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  downloadComplete, downloadRow, evictionOrder, formatBytes, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload, progressOf,
-  transferId, usageBytes,
+  downloadComplete, downloadRow, evictionOrder, formatBytes, nextUnread, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload,
+  planDownloads, progressOf, transferId, usageBytes,
 } from "../src/reader-app/offline.js";
 
 const MB = 1024 * 1024;
@@ -65,4 +65,26 @@ test("sizes read as a person reads them", () => {
   assert.equal(formatBytes(12.4 * MB), "12 MB");
   assert.equal(formatBytes(3.25 * MB), "3.3 MB");
   assert.equal(formatBytes(1.8 * 1024 * MB), "1.8 GB");
+});
+
+test("the next unread are taken in the drawer's order, past what is read, here or unreadable", () => {
+  const files = [
+    { fileId: "1", finishedAt: "x" }, { fileId: "2" }, { fileId: "3", readable: false },
+    { fileId: "4" }, { fileId: "5" }, { fileId: "2" }, { fileId: null }, { fileId: "6" },
+  ];
+  assert.deepEqual(nextUnread(files, 5), ["2", "4", "5", "6"]);
+  assert.deepEqual(nextUnread(files, 2), ["2", "4"]);
+  assert.deepEqual(nextUnread(files, 5, { onDevice: new Set(["4"]) }), ["2", "5", "6"], "already here is not asked for again");
+});
+
+test("a batch is planned whole: finished comics make way, and when it cannot all fit, how many can", () => {
+  const rows = [
+    ready("old", 10 * MB, { finished: true, lastReadAt: "2026-10-01T00:00:00Z" }),
+    ready("open", 10 * MB, { finished: false }),
+  ];
+  const batch = [{ fileId: "a", bytes: 8 * MB }, { fileId: "b", bytes: 8 * MB }];
+  const plan = planDownloads(batch, { capBytes: 30 * MB, rows });
+  assert.deepEqual([plan.fits, plan.total, plan.evict], [true, 16 * MB, ["old"]], "the finished one goes, never the open one");
+  const tight = planDownloads([...batch, { fileId: "c", bytes: 8 * MB }], { capBytes: 30 * MB, rows });
+  assert.deepEqual([tight.fits, tight.fitting, tight.shortfall], [false, 2, 4 * MB]);
 });
