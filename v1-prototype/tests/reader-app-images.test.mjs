@@ -65,3 +65,16 @@ test("a downloaded comic's page is read from the device, never fetched", async (
   await source("/api/v1/files/64/pages/0");
   assert.equal(native.calls.length, 1, "another comic still comes from the server");
 });
+
+test("unreachable, an image fetched before is shown from the cache", async () => {
+  const native = fakeNative();
+  native.fetchToFile = async () => { throw Object.assign(new Error("offline"), { network: true }); };
+  const cached = new Set();
+  const source = createImageSource(client, 3, {
+    native, toSrc: (path) => `src:${path}`, localUri: async (path) => `/lib/${path}`, exists: async (path) => cached.has(path),
+  });
+  const url = "/api/v1/series/61/cover?v=1";
+  await assert.rejects(source(url), "never fetched: nothing to show");
+  cached.add(`online/u3/${imageName(new URL(url, client.origin).href)}`);
+  assert.equal(await source(url), `src:/lib/online/u3/${imageName(new URL(url, client.origin).href)}`);
+});

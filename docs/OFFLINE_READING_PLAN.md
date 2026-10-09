@@ -754,9 +754,29 @@ How:
       server held the place timed when it was made offline. The banner
       went, and Keep Reading showed it.
     - Offline, a comic that isn't downloaded gives the message above.
-  - Not yet: airplane mode, lock and unlock, and rotation on a real iPad
-    (Developer Program). Kept answers are the last seen, so a run's drawer
-    offline can show its state from before (correct once back online).
+  - Found in review and fixed:
+    - A comic's place is kept from every progress answer and successful
+      save, so offline it opens where the server last had it. Before
+      this, it opened at page 1 once its queue had been sent.
+    - Removals made offline wait in `u<id>/removals.json` and go to the
+      server's record on reconnecting or launching.
+    - The sidebar's Sign out says it needs the server, as the header's
+      menu does.
+  - Also proven in the simulator:
+    - Panel view offline from `panels.json`: the comic opened at page 2,
+      panel 2.
+    - Locking and unlocking mid-read; the next step was still queued.
+    - A removal made offline closed the server's record (`removed`) within
+      one probe of the server returning.
+  - Not yet: airplane mode and rotation on a real iPad (Developer
+    Program).
+  - Known limits:
+    - Kept answers are the last seen, so a run's drawer offline can show
+      its state from before, while Keep Reading is current.
+    - The 15 s request timeout is a tunable: on a slow link a large
+      catalog answer could flip the app offline until the next probe.
+    - "An older offline save does not undo a newer web save" is proven by
+      the server's tests and the transport's merge test, not live.
 
 ### Phase 5 — profiles offline and the rating re-check (1 session)
 - `profiles.json` is refreshed from `GET /api/v1/profiles` whenever the

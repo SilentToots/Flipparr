@@ -42,6 +42,8 @@ const KEPT = [
   /^\/api\/v1\/reading-lists\/\d+$/,
   /^\/api\/v1\/me\/reading-list$/,
   /^\/api\/v1\/series\/\d+\/reading$/,
+  // A comic's place as the server last had it, so offline it opens there.
+  /^\/api\/v1\/files\/\d+\/progress$/,
 ];
 export function keepsAnswer(path) {
   return KEPT.some((pattern) => pattern.test(String(path)));

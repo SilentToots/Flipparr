@@ -90,9 +90,12 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       return row ? panelsFor(await store.panels(profileId, route.fileId), route.fileId, route.page) : undefined;
     }
     if (route?.kind === "progress") {
+      // A save still waiting, else the place the server last answered.
       const waiting = await waitingFor(route.fileId);
+      const kept = profileId !== null ? await store.answer(profileId, path) : null;
       const row = readyRow(route.fileId);
-      return waiting ? progressFromBody(waiting.fileId, waiting.body, waiting.at, { pageCount: row?.pageCount }) : undefined;
+      if (waiting) return progressFromBody(waiting.fileId, waiting.body, waiting.at, { pageCount: kept?.pageCount || row?.pageCount });
+      return kept ?? undefined;
     }
     if (profileId !== null && keepsAnswer(path)) {
       const kept = await store.answer(profileId, path);
@@ -113,6 +116,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       const answer = await send(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       setOnline(true);
       await withQueue((queue) => queueDrop(queue, fileId, at));
+      store.saveAnswer(profileId, path, answer).catch(() => {});
       return answer;
     } catch (error) {
       if (error.network) {
@@ -167,10 +171,14 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       for (const row of replayOrder(await store.progressQueue(forProfile))) {
         if (profileId !== forProfile || !online) return;
         try {
-          await send(`/api/v1/files/${row.fileId}/progress`, {
+          const path = `/api/v1/files/${row.fileId}/progress`;
+          const answer = await send(path, {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...row.body, at: row.at }),
           });
           await withQueue((queue) => queueDrop(queue, row.fileId, row.at));
+          // What the server now holds -- a newer place from the web, if it
+          // had one -- is where the comic opens next, online or not.
+          if (answer && typeof answer === "object") store.saveAnswer(forProfile, path, answer).catch(() => {});
         } catch (error) {
           if (error.network) { setOnline(false); return; }
           if (error.status === 401) { onLost(); return; }

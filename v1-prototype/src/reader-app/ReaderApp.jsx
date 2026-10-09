@@ -229,7 +229,12 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     transport?.useDownloads(made);
     return made;
   }, [client, viewer.id, transport]);
-  useEffect(() => () => downloads.stop(), [downloads]);
+  useEffect(() => {
+    // Removals that waited for the server, from the last time it was away.
+    if (online) downloads.flushRemovals().catch(() => {});
+    return () => downloads.stop();
+  // Once per profile's engine; reconnecting flushes below.
+  }, [downloads]);
   const downloadVersion = useDownloadVersion(downloads);
   const pageSource = useMemo(() => createImageSource(client, viewer.id, {
     local: (url) => downloads.localPage(url),
@@ -279,9 +284,9 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // Back online: the library as it is now, and every place re-read.
   const wasOnline = useRef(online);
   useEffect(() => {
-    if (online && !wasOnline.current) { loadCatalog(); noteReadingChanged(); }
+    if (online && !wasOnline.current) { loadCatalog(); noteReadingChanged(); downloads.flushRemovals().catch(() => {}); }
     wasOnline.current = online;
-  }, [online, loadCatalog, noteReadingChanged]);
+  }, [online, loadCatalog, noteReadingChanged, downloads]);
   const readyRows = downloads.rows.filter((row) => row.state === "ready");
   // Offline, said under each page's header (the web's backend-banner).
   const offlineNotice = online ? null : <div className="backend-banner" role="status"><WifiSlash size={19} weight="fill" aria-hidden="true" />
@@ -400,7 +405,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   return <Host.Provider value={host}><ViewerContext.Provider value={viewer}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}>
     <div className="app-shell">
       <Nav items={NAV} active={page} onNavigate={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} catalog={catalog} backendStatus={backendStatus}
-        logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={onSignOut} scanning={false} />
+        logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={needsServer(onSignOut)} scanning={false} />
       <main className="main-content"><div className="page-view" key={page}>
         {page === "library" ? <LibraryView readingList={actions.readingList} onToggleReadingList={actions.toggleReadingList}
           onOpenRunCollection={(card) => { setSelectedSeries(null); setSelectedList(null); setRunCollectionId(String(card.id)); }}

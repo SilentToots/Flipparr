@@ -113,3 +113,12 @@ test("replay stops when the server goes again, and drops what it refuses", async
   assert.deepEqual(files.q2, [], "the 404 is dropped, the other sent");
   assert.deepEqual(removed, [["99", "hidden"]], "and its download, if any, goes as hidden");
 });
+
+test("offline, a comic opens where the server last had it", async () => {
+  const { transport, server } = setup();
+  await transport.transport("/api/v1/files/63/progress");
+  await new Promise((resolve) => setImmediate(resolve));
+  server.reachable = false;
+  const place = await transport.transport("/api/v1/files/63/progress");
+  assert.equal(place.page, 5, "the server's place, kept from the last answer");
+});

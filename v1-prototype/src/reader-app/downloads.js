@@ -200,10 +200,43 @@ export class Downloads extends EventTarget {
     await this.store.removeComic(this.profileId, fileId);
     this.rows = this.rows.filter((row) => row.fileId !== String(fileId));
     await this.save();
-    this.client.api("/api/v1/offline/downloads/remove", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device: this.device, fileId: String(fileId), reason }),
-    }).catch(() => {});
+    await this.tellRemoved({ fileId: String(fileId), reason });
+  }
+
+  /**
+   * The server's record of what this device keeps (schema 68), told of a
+   * removal. Unreachable, the removal waits and is sent when the server is
+   * back (flushRemovals), so the record does not keep a comic that left.
+   */
+  async tellRemoved(removal) {
+    try {
+      await this.client.api("/api/v1/offline/downloads/remove", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device: this.device, ...removal }),
+      });
+    } catch (error) {
+      if (!error.network) return;
+      const waiting = await this.store.pendingRemovals(this.profileId);
+      await this.store.savePendingRemovals(this.profileId, [...waiting.filter((item) => item.fileId !== removal.fileId), removal]);
+    }
+  }
+
+  /** Send the removals that waited for the server. */
+  async flushRemovals() {
+    await this.ready;
+    for (const removal of await this.store.pendingRemovals(this.profileId)) {
+      try {
+        await this.client.api("/api/v1/offline/downloads/remove", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ device: this.device, ...removal }),
+        });
+      } catch (error) {
+        if (error.network) return;
+        // Refused: it will not be accepted later either.
+      }
+      const waiting = await this.store.pendingRemovals(this.profileId);
+      await this.store.savePendingRemovals(this.profileId, waiting.filter((item) => item.fileId !== removal.fileId));
+    }
   }
 
   /** Try a failed download again from where it stopped. */

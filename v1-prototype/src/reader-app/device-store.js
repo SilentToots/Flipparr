@@ -72,6 +72,8 @@ export const deviceStore = {
   saveProgressQueue: (profileId, queue) => writeJson(`u${profileId}/progress-queue.json`, queue),
   answer: (profileId, path) => readJson(`u${profileId}/answers/${answerName(path)}`, null),
   saveAnswer: (profileId, path, value) => writeJson(`u${profileId}/answers/${answerName(path)}`, value),
+  pendingRemovals: (profileId) => readJson(`u${profileId}/removals.json`, []),
+  savePendingRemovals: (profileId, removals) => writeJson(`u${profileId}/removals.json`, removals),
   session: () => readJson("session.json", null),
   saveSession: (status) => writeJson("session.json", status),
   async forgetSession() {
