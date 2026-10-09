@@ -313,6 +313,14 @@ export function ReaderApp() {
     setPhase("connect");
   }
 
+  // "Who's reading?" sits outside the library's host, so its avatars need
+  // their own way in: fetched with this device's tokens, as every image here
+  // is, and kept so they still show offline.
+  const pickerImages = useMemo(() => (client ? createImageSource(client, "shared", {
+    localUri: (path) => deviceStore.uri(path), exists: (path) => deviceStore.exists(path),
+  }) : null), [client]);
+  const pickerHost = useMemo(() => ({ api: apiRequest, pageSource: pickerImages }), [pickerImages]);
+
   if (phase === "starting") return <div className="login-shell"><LoadingIndicator size="lg" label="Starting" /></div>;
   if (phase === "connect") {
     return <ConnectScreen error={error} onConnected={async (origin) => {
@@ -322,14 +330,14 @@ export function ReaderApp() {
     }} />;
   }
   if (phase === "picker") {
-    return <PickerScreen client={client} current={status?.viewer?.id ?? null} ask={asking} online={online}
+    return <Host.Provider value={pickerHost}><PickerScreen client={client} current={status?.viewer?.id ?? null} ask={asking} online={online}
       onClose={status?.viewer ? () => { setAsking(null); setPhase("ready"); } : null}
       onSwitched={async () => settle(client, await client.api("/api/v1/auth/status"))}
       onSwitchedOffline={async (answer) => {
         await deviceStore.saveSession(answer);
         setAsking(null);
         await settle(client, answer, { kept: true });
-      }} onForget={forgetServer} />;
+      }} onForget={forgetServer} /></Host.Provider>;
   }
   if (phase === "signin") {
     return <SignInScreen client={client} onSignedIn={async () => {
