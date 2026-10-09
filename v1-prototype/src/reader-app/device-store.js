@@ -89,6 +89,14 @@ export const deviceStore = {
   // as its profile with no connection (no token: those stay in the Keychain).
   progressQueue: (profileId) => readJson(`u${profileId}/progress-queue.json`, []),
   saveProgressQueue: (profileId, queue) => writeJson(`u${profileId}/progress-queue.json`, queue),
+  // This device's own choices (Phase 7 Settings): downloading what is opened,
+  // and the next issue with it. Not the profile's: they are about this iPad.
+  async appSettings() {
+    return { downloadOpened: true, downloadNext: false, ...(await readJson("settings.json", {})) };
+  },
+  async saveAppSettings(next) {
+    await writeJson("settings.json", { ...(await this.appSettings()), ...next });
+  },
   // "Who's reading?" offline (Phase 5, offline-profiles.js): the profiles
   // as the server last listed them, and each one's last word on who it is.
   profiles: () => readJson("profiles.json", []),

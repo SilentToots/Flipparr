@@ -20,6 +20,14 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 const Native = registerPlugin("FlipparrNative");
 
 export const ONLINE_MAX_BYTES = 200 * 1024 * 1024;
+
+/**
+ * The online page cache trimmed to `maxBytes` (0 clears it); resolves to
+ * `{bytes}` left. A limit above its size removes nothing, so it measures.
+ */
+export function trimNative({ path, maxBytes }, native = Native) {
+  return native.trimFolder({ path, maxBytes });
+}
 const TRIM_EVERY = 40;
 
 /** A stable file name for an address: FNV-1a, so the same page is one file. */

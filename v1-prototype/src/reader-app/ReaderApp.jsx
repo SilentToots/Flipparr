@@ -6,12 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowClockwise, BookOpen, DownloadSimple, ShieldCheck, Trash, WifiSlash, X } from "@phosphor-icons/react";
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
-import { SettingsCard } from "../components/SettingsControls.jsx";
+import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
 import { PasswordInput } from "../components/PasswordInput.jsx";
 import { GlassSelect } from "../components/glass.jsx";
 import { useToast } from "../components/Toast.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "../components/ProfileTiles.jsx";
-import { ComicsIcon, DownloadsNavIcon } from "../design-icons.jsx";
+import { ComicsIcon, DownloadsNavIcon, SettingsNavIcon } from "../design-icons.jsx";
+import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
 import { FinishDrawer } from "../drawers/FinishDrawer.jsx";
 import { ReadingListDrawer } from "../drawers/ReadingListDrawer.jsx";
 import { RunCollectionDrawer } from "../drawers/RunCollectionDrawer.jsx";
@@ -31,7 +32,7 @@ import { collectionCards } from "../run-collections.js";
 import { ViewerContext } from "../viewer.js";
 import { createClient, findServer } from "./server.js";
 import { secureStore, tokenKeys } from "./secure-store.js";
-import { createImageSource } from "./images.js";
+import { ONLINE_MAX_BYTES, createImageSource, trimNative } from "./images.js";
 import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
@@ -364,6 +365,8 @@ export function ReaderApp() {
 const NAV = [
   { id: "library", label: "Comics", icon: ComicsIcon },
   { id: "downloads", label: "Downloads", icon: DownloadsNavIcon },
+  // Its own id: the web's "settings" carries the admin's Library health count.
+  { id: "app-settings", label: "Settings", icon: SettingsNavIcon },
 ];
 
 function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSignOut }) {
@@ -429,6 +432,13 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   const [readFrom, setReadFrom] = useState(null);
   const [readingList, setReadingList] = useState(null);
   const [finishedFileId, setFinishedFileId] = useState("");
+  // This iPad's choices (Settings -> Reading), read once and saved as changed.
+  const [appSettings, setAppSettings] = useState({ downloadOpened: true, downloadNext: false });
+  useEffect(() => { deviceStore.appSettings().then(setAppSettings).catch(() => {}); }, []);
+  const changeAppSettings = useCallback((change) => {
+    setAppSettings((current) => ({ ...current, ...change }));
+    deviceStore.saveAppSettings(change).catch(() => {});
+  }, []);
 
   const actions = useReadingActions({
     notify: showToast, viewerId: viewer.id,
@@ -486,11 +496,14 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       // is there to finish offline. It counts against the limit like any
       // download; one that cannot fit is still read online, and says so.
       const row = downloads.row(fileId);
-      if (online && (!row || row.state === "failed")) {
+      if (online && appSettings.downloadOpened && (!row || row.state === "failed")) {
         downloads.reading = String(fileId);
         (row ? downloads.retry(fileId) : downloads.download(fileId, { groupKey: "opened" }))
           .catch((error) => showToast(`Reading online: not kept on this device. ${error.message || ""}`.trim()));
       }
+      // And the issue after it, when this iPad is set to (off unless chosen).
+      const next = online && appSettings.downloadNext ? readingContext(catalog, fileId).next : null;
+      if (next?.fileId && !downloads.row(next.fileId)) downloads.download(next.fileId, { groupKey: "opened" }).catch(() => {});
     };
     // Offline, only what is on the device can be opened.
     const openable = (fileId) => {
@@ -632,7 +645,10 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
           tab={libraryTab} onTab={(next) => { setLibraryTab(next); window.scrollTo({ top: 0 }); }} onNavigate={setPage}
           onOpenSeries={openSeries} onOpenCollection={() => {}} onOpenList={openList} onRead={readComic}
           readingVersion={readingVersion} listsVersion={listsVersion} catalog={catalog} backendStatus={backendStatus} /> : null}
-        {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} notice={offlineNotice} /> : null}
+        {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} notice={offlineNotice}
+          onOpenSettings={() => { setPage("app-settings"); window.scrollTo({ top: 0 }); }} /> : null}
+        {page === "app-settings" ? <AppSettingsPage client={client} status={status} viewer={viewer} downloads={downloads} online={online}
+          settings={appSettings} onSettings={changeAppSettings} onSwitch={onSwitch} onSignOut={onSignOut} notice={offlineNotice} /> : null}
       </div></main>
       {readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection}
         startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || finished}
@@ -981,7 +997,85 @@ function DownloadSheet({ group, downloads, onClose, onStarted }) {
   </div>;
 }
 
-function DownloadsPage({ downloads, onRead, notice = null }) {
+/**
+ * Settings, Flipparr View's own section (Phase 7; the owner, 2026-10-09):
+ * Reading, Storage, Account and About, from the web's Settings pieces
+ * (SettingsCard, Toggle, GlassSelect, the shared About).
+ */
+/* global __VIEW_BUILD__ */
+function AppSettingsPage({ client, status, viewer, downloads, online, settings, onSettings, onSwitch, onSignOut, notice = null }) {
+  const [server, setServer] = useState(null);
+  useEffect(() => {
+    let live = true;
+    apiRequest("/api/v1/app").then((answer) => { if (live) setServer(answer); }, () => {});
+    return () => { live = false; };
+  }, []);
+  return <>
+    <PageHeader title="Settings" />
+    <div className="settings-pane">
+      {notice}
+      <SettingsCard title="Reading">
+        <Toggle checked={settings.downloadOpened} onChange={(on) => onSettings({ downloadOpened: on })} title="Download comics you open"
+          description="A comic you start reading is kept on this iPad as you read, so you can finish it offline. It counts against the download limit below." />
+        <Toggle checked={settings.downloadNext} onChange={(on) => onSettings({ downloadNext: on })} title="Download the next issue too"
+          description="Opening a comic also keeps the issue after it, ready when you finish." />
+        <p className="settings-card-note">Panel view, the dimming around a panel and the rest are in the reader&rsquo;s own settings, while you read. They follow your profile to every device.</p>
+      </SettingsCard>
+      <StorageSettings downloads={downloads} viewer={viewer} />
+      <SettingsCard title="Account">
+        <p className="settings-card-lead">Reading as <strong>{viewer.name}</strong> from <strong>{client.origin.replace(/^https?:\/\//, "")}</strong>{online ? "." : ", which can\u2019t be reached right now."}</p>
+        <div className="settings-card-actions">
+          {status.household ? <button type="button" className="secondary-button" onClick={onSwitch}>Switch profile</button> : null}
+          <button type="button" className="secondary-button" onClick={onSignOut}>Sign out</button>
+        </div>
+      </SettingsCard>
+      <AboutSettings base={client.origin} privacy={APP_PRIVACY}>
+        <SettingsCard title="Flipparr View">
+          <p className="settings-card-lead">The reader app for Flipparr, build {typeof __VIEW_BUILD__ === "undefined" ? "dev" : __VIEW_BUILD__}.{server ? ` Connected to Flipparr ${server.version}, build ${server.build}.` : ""}</p>
+        </SettingsCard>
+      </AboutSettings>
+    </div>
+  </>;
+}
+
+// What Flipparr View keeps: the server's own account, with the browser's
+// section swapped for this device's (docs/PRIVACY.md, "On the device").
+const APP_PRIVACY = [
+  ...PRIVACY_SECTIONS.filter((section) => section.title !== "In your browser"),
+  { title: "On this iPad", points: [
+    "Comics you download, at reading size, with their panels, your places and changes waiting to be sent. Kept out of iCloud backups.",
+    "The profiles you have used here, and a check of each PIN made on this iPad, so a profile can be opened offline. Never a password.",
+    "Sign-ins in the iOS Keychain. Signing out, or using another server, removes what this iPad kept for that server.",
+    "No analytics and no tracking. Flipparr View talks only to the Flipparr you connect it to.",
+  ] },
+];
+
+/** The download limit, what it holds, and the page cache (Settings -> Storage). */
+function StorageSettings({ downloads, viewer }) {
+  const rows = useDownloadRows(downloads);
+  const [cap, setCap] = useState(null);
+  const [cache, setCache] = useState(null);
+  const folder = `online/u${viewer.id}`;
+  useEffect(() => {
+    deviceStore.capBytes().then(setCap);
+    // A limit this large removes nothing: it only measures.
+    trimNative({ path: folder, maxBytes: Number.MAX_SAFE_INTEGER }).then(({ bytes }) => setCache(bytes), () => setCache(0));
+  }, [folder]);
+  const used = usageBytes(rows);
+  return <SettingsCard title="Storage">
+    <p className="settings-card-lead">Downloads use {formatBytes(used)} of {cap ? formatBytes(cap) : "\u2026"}. When a download would go over the limit, the comics you finished longest ago make way; one you are still reading never does. A new limit applies from the next download.</p>
+    {cap ? <GlassSelect label="Keep up to" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
+      options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
+    <p className="settings-card-note">Pages seen while reading online are kept too, up to {formatBytes(ONLINE_MAX_BYTES)}, so a page opens at once the second time: {cache === null ? "\u2026" : formatBytes(cache)} now.</p>
+    <div className="settings-card-actions">
+      <button type="button" className="secondary-button" disabled={!cache} onClick={() => trimNative({ path: folder, maxBytes: 0 }).then(() => setCache(0), () => {})}>
+        <Trash size={16} /> Clear pages seen online
+      </button>
+    </div>
+  </SettingsCard>;
+}
+
+function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
   const rows = useDownloadRows(downloads);
   const [cap, setCap] = useState(null);
   useEffect(() => { deviceStore.capBytes().then(setCap); }, []);
@@ -993,9 +1087,9 @@ function DownloadsPage({ downloads, onRead, notice = null }) {
       {notice}
       <SettingsCard title="On this device">
         <p className="settings-card-lead">{formatBytes(used)} of {cap ? formatBytes(cap) : "…"} used. When a download would go over the limit, the comics you finished longest ago make way; one you are still reading never does.</p>
-        {cap ? <GlassSelect label="Keep up to" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
-          options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
-        {/* A limit changed here applies from the next download on. */}
+        <div className="settings-card-actions">
+          <button type="button" className="secondary-button" onClick={onOpenSettings}>Change the limit in Settings</button>
+        </div>
         {finished.length ? <button type="button" className="secondary-button" onClick={async () => {
           if (!window.confirm(`Remove ${finished.length} finished ${finished.length === 1 ? "comic" : "comics"} from this device? Comics still being read stay.`)) return;
           await downloads.removeFinished();

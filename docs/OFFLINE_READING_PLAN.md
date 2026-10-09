@@ -921,6 +921,22 @@ How:
     Use another server.
   - About: app version and build, the server's version, open-source
     licences and the privacy notice (the App Store needs these anyway).
+  Built 2026-10-09 (iPad QA pending): `AppSettingsPage` in ReaderApp.jsx,
+  a third nav item (id `app-settings`, so the web's Library health count
+  never rides on it):
+  - Reading: "Download comics you open" (on) and "Download the next issue
+    too" (off), kept per device in `settings.json`; a line pointing to the
+    reader's own settings for panel view.
+  - Storage: the limit (moved from Downloads, which now points here and
+    keeps "Remove finished downloads"), usage, and the online page cache
+    measured and cleared through `trimFolder`.
+  - Account: who is reading from which server, Switch profile, Sign out.
+  - About: the web's own, moved to `src/settings/about.jsx` and shared,
+    with a Flipparr View card (its build, `__VIEW_BUILD__`, and the
+    server's version from `/api/v1/app`). Its local links point at the
+    server, since in the app they would replace the app's page. "In your
+    browser" becomes "On this iPad". The reader app's build now ships
+    `public/` (licences).
 - **The owner, testing on his iPad (2026-10-09):** there is no way to
   refresh the library in Flipparr View:
   - pull to refresh, the web's own, moved out of `App.jsx` into a shared
