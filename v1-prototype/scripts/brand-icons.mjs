@@ -4,7 +4,9 @@
 // device asks for comes out of it here, so they cannot drift from each other
 // or from the mark. Black and white only: the mark is white on a black tile,
 // which reads on a light tab strip, a dark one, and a home screen of any
-// wallpaper. Run with `npm run brand:icons`; the outputs are committed, so a
+// wallpaper. Flipparr View's icon alone is violet (--violet, #7e22ce) so
+// it is told apart from the web app saved to the same home screen (the
+// owner, 2026-10-09); its launch screen stays black, as the app opens. Run with `npm run brand:icons`; the outputs are committed, so a
 // build never needs a browser.
 //
 // What each one is for:
@@ -22,8 +24,9 @@
 //   favicon.ico            the same 32px tile in the container old browsers
 //                          and some crawlers still ask for at /favicon.ico.
 //   Flipparr View (ios/App/App/Assets.xcassets):
-//   AppIcon-512@2x.png     the app's one 1024px icon. Opaque and square: iOS
-//                          masks it, and App Store Connect refuses alpha.
+//   AppIcon-512@2x.png     the app's one 1024px icon, violet. Opaque and
+//                          square: iOS masks it, and App Store Connect
+//                          refuses alpha.
 //   splash-2732x2732*.png  the launch screen: the mark small on black, drawn
 //                          aspect-fill, so it sits centred on every screen.
 
@@ -34,14 +37,15 @@ const here = new URL(".", import.meta.url);
 const brand = new URL("../public/brand/", here);
 const mark = await readFile(new URL("flipparr-mark-monochrome.svg", brand), "utf8");
 
-// The tile: a black square, rounded by `radius` (a fraction of the size, 0
-// for none), with the white mark scaled to `inset` of the tile's width.
-function tile(size, { radius, inset }) {
+// The tile: a square of `background` (black unless given), rounded by
+// `radius` (a fraction of the size, 0 for none), with the white mark scaled
+// to `inset` of the tile's width.
+function tile(size, { radius, inset, background = "#000" }) {
   const r = Math.round(size * radius);
   const w = Math.round(size * inset);
   return `<!doctype html><html><head><style>
     html, body { margin: 0; background: transparent; }
-    .tile { width: ${size}px; height: ${size}px; background: #000; border-radius: ${r}px;
+    .tile { width: ${size}px; height: ${size}px; background: ${background}; border-radius: ${r}px;
             display: grid; place-items: center; color: #fff; }
     svg { width: ${w}px; height: ${w}px; display: block; }
   </style></head><body><div class="tile">${mark}</div></body></html>`;
@@ -60,7 +64,8 @@ const ICONS = [
 
 const assets = new URL("../ios/App/App/Assets.xcassets/", here);
 const APP = [
-  ["AppIcon.appiconset/AppIcon-512@2x.png", 1024, { radius: 0, inset: 0.72 }],
+  // --violet in src/design-tokens.css.
+  ["AppIcon.appiconset/AppIcon-512@2x.png", 1024, { radius: 0, inset: 0.72, background: "#7e22ce" }],
   ["Splash.imageset/splash-2732x2732.png", 2732, { radius: 0, inset: 0.16 }],
   ["Splash.imageset/splash-2732x2732-1.png", 2732, { radius: 0, inset: 0.16 }],
   ["Splash.imageset/splash-2732x2732-2.png", 2732, { radius: 0, inset: 0.16 }],
