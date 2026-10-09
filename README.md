@@ -37,7 +37,9 @@ is tested, and what is still open is in
   deleted until a replacement has passed.
 - **Reading.** A full-screen reader with a page view and a panel view,
   per-profile progress, reading lists, story arcs and collections across
-  runs, a weekly pull list, and a Discover shelf of what is out.
+  runs, a weekly pull list, and a Discover shelf of what is out. Flipparr
+  View, an iPad and iPhone app in development, reads the same library and
+  keeps downloaded comics to read offline (`docs/OPERATING.md`).
 - **Household.** Plex-Home-style profiles with their own history, ratings
   and age limits; readers ask for comics and the admin approves. One sign-in,
   optionally bypassed on the home network; notifications in the app.

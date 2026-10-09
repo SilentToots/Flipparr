@@ -73,3 +73,27 @@ Recorded per run in `install-drill.json` and the containers' logs under
   not run as root, where a folder's mode would not stop a write.
 - Permissions on `/comics` (an unreadable library) are not checked at start:
   the setup's folder check and the System page report them.
+
+## Flipparr View on an iPad (checklist, not yet run on TestFlight)
+
+Recorded per build, on a real iPad against a Flipparr over https. Parts
+already seen on the owner's iPad from Xcode builds are marked.
+
+1. Install from TestFlight; the first launch needs the internet.
+2. Connect by address without `https://`; sign in; "Who's reading?" asks on
+   a shared iPad.
+3. Download a five-issue run from the button beside Read; lock the iPad;
+   come back: all five finished (seen 2026-10-09 with one 40-page comic under
+   Network Link Conditioner).
+4. Airplane mode: read a downloaded comic, in panel view, rotating (seen
+   2026-10-09); a page without kept panels reads whole.
+5. Airplane mode: rate, mark a run read, add to the reading list; switch to
+   a profile with a PIN. Reconnect: each change on the web, none undoing a
+   later web change (saved places seen 2026-10-09).
+6. Lower a reader's age limit on the web; reconnect as that reader: the
+   download above it is removed, with a message.
+7. Leave the app eight days, then reopen offline: downloads still there
+   (sessions last 30 days, `_SESSION_TTL_SECONDS`); reconnect: places on the
+   server.
+8. Sign out with the server down: back at sign-in, Use another server
+   offered.

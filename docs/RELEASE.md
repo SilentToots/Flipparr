@@ -259,7 +259,7 @@ scan on a NAS volume took ten minutes for want of a kept database connection
 (now under twenty seconds); a newer catalog opened by an older build came up
 "healthy" with every page a 500 (now refused before a byte is touched).
 
-**Known limitations** are listed in [OPERATING.md](OPERATING.md#6-known-limitations).
+**Known limitations** are listed in [OPERATING.md](OPERATING.md#7-known-limitations).
 The ones worth reading before you start: GCD's anonymous tier allows roughly
 25 series an hour, so a large library wants a Metron token; the whole
 catalog is one answer to the browser, fine to about 10,000 files; collected

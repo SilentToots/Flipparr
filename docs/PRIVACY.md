@@ -43,6 +43,28 @@ its own terms and privacy policy.
   a metadata source. Every page is served with `Referrer-Policy: no-referrer`,
   so those requests and any link out carry no address of the instance.
 
+## On an iPad or iPhone with Flipparr View
+
+Flipparr View talks only to the Flipparr it is connected to: no analytics, no
+tracking, nothing sent to Flipparr's authors. On the device it keeps:
+
+- Comics downloaded to read offline, at reading size, with their panels as
+  the server kept them, and pages seen while reading online (up to 200 MB,
+  **Settings → Storage → Clear pages seen online**). All of it is under the
+  app's Library folder, excluded from iCloud and iTunes backups.
+- Places, ratings, read marks and reading-list changes made offline, until
+  the server has them; then they are dropped.
+- The profiles used on the device, with a PBKDF2 hash of each PIN entered
+  there, so a profile can be opened offline. Never a password. The hash is
+  weaker than the server's own check: it is local and unthrottled.
+- Sign-in tokens, the server's address and the PIN salt in the iOS Keychain.
+
+**Sign out** with no connection forgets the session on the device;
+**Use another server** removes everything the app kept for the old one.
+The server records which comics each device has downloaded (by an
+install-specific id), so a comic a profile may no longer read is removed
+from the device when it next connects.
+
 ## In the server log
 
 Each request's method, path (never its query string), result, duration and

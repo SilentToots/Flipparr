@@ -350,6 +350,24 @@ public: smoke import ok, SQLite 3.53.4, install drill 5 of 5 against it
 (evidence `~/flipparr-intake/install-drill-0.1.0/`), and production now runs
 that exact image (`/healthz`: `0.1.0`, build d3067de3, catalog ok).
 
+## Flipparr View (iPad and iPhone), in progress
+
+Not part of the initial supported release's gates; tracked here so its
+evidence has a home. The plan, phases and decisions are
+`docs/OFFLINE_READING_PLAN.md`; operating notes are `docs/OPERATING.md` §6;
+what it keeps on a device is `docs/PRIVACY.md`.
+
+- **Built (Phases 0–7, 2026-10-08/09):** reading online with panel view,
+  downloads in the iOS background session (proven on the owner's iPad with
+  the screen locked), reading offline, offline places, ratings, marks and
+  reading-list changes with `at`, offline profile switching, the
+  reconnect check, run, arc and collection downloads, and Settings. The
+  server side is in production since `b602510` (schema 68).
+- **Evidence still owed:** the iPad checklist in `docs/INSTALL_PROOFS.md`
+  on a TestFlight build; App Review's demo server (a Flipparr with comics
+  whose licences permit it, not the owner's instance); the release script
+  `tools/reader_app_release.sh`.
+
 ## Carried-forward findings
 
 Learned on the abandoned rewrite, and true of this image:

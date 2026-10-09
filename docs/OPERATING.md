@@ -734,7 +734,50 @@ and visitor addresses in the log (*Settings → Security → Record visitor
 addresses*). The full account of what leaves the server is
 [`docs/PRIVACY.md`](PRIVACY.md).
 
-## 6. Known limitations
+## 6. Flipparr View (iPad and iPhone)
+
+Flipparr View is a reader-only app for the same library: browse, read with
+panel view, download to read offline, and keep places and ratings in step
+with the server. Search, requests and administration stay in the web app.
+It is in development and installed from Xcode for now; TestFlight comes
+next.
+
+**Connecting.** Enter the address you use in a browser. Typed without
+`https://`, the app tries https first and plain http only when nothing
+answers over https, which is how a server on the home network is usually
+reached. iOS allows plain http only for local addresses (an IP address, a
+`.local` or single-word name); anything else needs https (see
+[HTTPS](#https)). The app signs in as the web app does; a shared iPad asks
+"Who's reading?".
+
+**Downloads.** A comic opened while online is kept on the device as you
+read it (Settings → Reading). Runs, story arcs and collections download
+their next unread issues from the button beside Read. Every issue shows its
+own download control. Downloads carry on while the iPad is locked. They take
+only the panels the server already keeps (a person's fix, the vision
+model's reading); a page with none is read whole offline. Nothing is worked
+out for a download, and no vision model is asked.
+
+**The limit.** Settings → Storage sets how much the device keeps (2 GB by
+default). When a download would go over it, finished comics read longest
+ago make way; one still being read never does.
+
+**Offline.** Downloaded comics read as online. Places, ratings, read marks
+and reading-list changes are kept and sent when the server is back, each
+with the time it was made, so a later change made on the web is never
+undone. Profiles used on the iPad can be switched to offline; a PIN is
+checked on the device, and a password-locked profile waits for the server.
+
+**When the server is back**, it checks every downloaded comic: one the
+profile may no longer read (an age limit lowered, a file removed) is taken
+off the device, with a message; one replaced on the server stays readable
+and offers Download again.
+
+**Sessions** last 30 days, as in the browser. **Forget other shared devices**
+(Settings → Security) ends an iPad's profile sessions; its downloads stay
+and are checked when each profile next signs in.
+
+## 7. Known limitations
 
 - **Filename parsing is heuristic.** It reports ambiguity rather than silently
   guessing. Anything uncertain appears under **Library health** with a
