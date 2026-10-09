@@ -838,6 +838,17 @@ How:
   cannot fit says so.
 
 ### Phase 7 — release path and docs (1 session)
+- **The owner, testing on his iPad (2026-10-09):** Settings is a top-level
+  section in Flipparr View, beside Comics and Downloads, built from the
+  web's own Settings pieces:
+  - Reader: the web's Settings › Reader controls (panel view and the
+    rest), which follow the profile.
+  - Storage: the download limit and usage, with a line on the Downloads
+    page pointing to it, and the online page cache (≤ 200 MB) with Clear.
+  - Account: the server and profile in use, switch profile, sign out, and
+    Use another server.
+  - About: app version and build, the server's version, open-source
+    licences and the privacy notice (the App Store needs these anyway).
 - `tools/reader_app_release.sh`: `npm run ios:sync`, `xcodebuild archive`,
   upload to TestFlight with an App Store Connect API key read from the
   owner's environment (never the repo). One command per release.
