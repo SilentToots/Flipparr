@@ -2345,6 +2345,13 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* 16px: a smaller font makes iOS zoom the page when the field takes focus. */
 .login-card input { min-height: 48px; padding: 0 var(--space-14); font-size: var(--text-input); border: 1px solid var(--line-strong); border-radius: var(--radius-4); background: var(--bg); color: var(--text); }
 .login-card input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* A password field and its show/hide button, inside the field's right edge
+   (components/PasswordInput.jsx); the input keeps its own field's look. */
+.password-field { position: relative; display: block; width: 100%; }
+.password-field > input { width: 100%; padding-right: calc(var(--control-height-sm) + var(--space-8)); }
+.password-reveal { position: absolute; top: 50%; right: var(--space-4); translate: 0 -50%; display: grid; place-items: center; width: var(--control-height-sm); height: var(--control-height-sm); padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); cursor: pointer; }
+.password-reveal:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (hover: hover) { .password-reveal:hover { color: var(--text); background: var(--wash-hover); } }
 .login-submit { min-height: 48px; justify-content: center; margin-top: var(--space-4); }
 .login-help { color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
 .login-help > summary { width: fit-content; margin-inline: auto; padding: var(--space-12) var(--space-4); color: var(--violet-text); cursor: pointer; list-style: none; }

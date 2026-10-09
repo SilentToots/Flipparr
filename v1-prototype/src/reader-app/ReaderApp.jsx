@@ -7,6 +7,7 @@ import { ArrowClockwise, BookOpen, DownloadSimple, ShieldCheck, Trash, WifiSlash
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import { SettingsCard } from "../components/SettingsControls.jsx";
+import { PasswordInput } from "../components/PasswordInput.jsx";
 import { GlassSelect } from "../components/glass.jsx";
 import { useToast } from "../components/Toast.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "../components/ProfileTiles.jsx";
@@ -222,6 +223,12 @@ export function ReaderApp() {
   if (phase === "signin") {
     return <SignInScreen client={client} onSignedIn={async () => {
       await settle(client, await client.api("/api/v1/auth/status"));
+      // The password sets the device up; who is reading is asked next, as on
+      // the web and as Plex asks "Who's watching?" (owner, 2026-10-09).
+      try {
+        const { profiles = [] } = await client.api("/api/v1/profiles");
+        if (profiles.length > 1) { setAsking(null); setPhase("picker"); }
+      } catch { /* asked from the menu instead */ }
     }} onForget={forgetServer} />;
   }
   return <Library key={status.viewer.id} client={client} status={status} online={online} transport={transportRef.current}
@@ -531,7 +538,7 @@ function SignInScreen({ client, onSignedIn, onForget }) {
     </label>
     <label>
       <span>Password</span>
-      <input name="password" type="password" value={password} autoComplete="current-password"
+      <PasswordInput name="password" value={password} autoComplete="current-password"
         onChange={(event) => setPassword(event.target.value)} />
     </label>
     {error ? <p className="login-error" role="alert">{error}</p> : null}
@@ -586,7 +593,7 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForg
       </div> : asking ? <form className="profile-picker-secret" onSubmit={(event) => { event.preventDefault(); enter(asking, { password: secret }); }}>
         <ProfileAvatar profile={asking} size="lg" />
         <label className="form-field"><span>Password</span>
-          <input type="password" autoFocus value={secret} name="password" autoComplete="current-password" onChange={(event) => setSecret(event.target.value)} />
+          <PasswordInput autoFocus value={secret} name="password" autoComplete="current-password" onChange={(event) => setSecret(event.target.value)} />
         </label>
         {error ? <p className="login-error" role="alert">{error}</p> : null}
         <div className="profile-picker-actions">

@@ -55,6 +55,7 @@ import { ReaderView } from "./reader/ReaderView.jsx";
 import { historyStep } from "./history-step.js";
 import { Host } from "./host.js";
 import { useToast } from "./components/Toast.jsx";
+import { PasswordInput } from "./components/PasswordInput.jsx";
 import { readableFile, readingContext, useReadingActions } from "./library/actions.js";
 import { apiRequest, forgetAnswers, lastAnswer, rememberAnswer } from "./api.js";
 import { listCard, communityListLine, arcMatches, arcYears, groupOwnerLine, groupsToAddTo, issuesInRange } from "./reading-list.js";
@@ -172,6 +173,9 @@ async function syncReaderPrefs() {
 // from before profiles to the admin, and start the page afresh. A reload is
 // the one sure way that nothing -- a cached answer, an open drawer, a
 // component's state -- carries one profile's library into another's.
+// Set across the reload a sign-in makes: ask who is reading when it is back.
+const ASK_WHO_AFTER_SIGN_IN = "flipparr.askWhoAfterSignIn";
+
 function enterProfile(viewerId) {
   forgetAnswers();
   try {
@@ -3169,7 +3173,7 @@ function WhoIsReadingView({ signInAvailable, overlay = false, current = null, as
       }}>
         <ProfileAvatar profile={asking} size="lg" />
         <label className="form-field"><span>{asking.lock === "pin" ? "PIN" : "Password"}</span>
-          <input type="password" autoFocus value={secret} name={asking.lock === "pin" ? "pin" : "password"}
+          <PasswordInput autoFocus value={secret} name={asking.lock === "pin" ? "pin" : "password"}
             inputMode={asking.lock === "pin" ? "numeric" : undefined}
             autoComplete={asking.lock === "pin" ? "off" : "current-password"}
             onChange={(event) => setSecret(asking.lock === "pin" ? event.target.value.replace(/\D/g, "").slice(0, 6) : event.target.value)} />
@@ -3268,7 +3272,7 @@ function SwitchLockFields({ profile, self = false, adminPassword, lock, onLock, 
         placeholder={profile?.hasPin ? "Leave blank to keep it" : "Four to six digits"} />
     </label> : null}
     {lock === "password" && !owner && !profile?.hasPassword ? <label className="form-field"><span>Password</span>
-      <input type="password" autoComplete="new-password" value={password} onChange={(event) => onPassword(event.target.value)}
+      <PasswordInput autoComplete="new-password" value={password} onChange={(event) => onPassword(event.target.value)}
         placeholder="At least 8 characters" />
     </label> : null}
   </div>;
@@ -3525,7 +3529,7 @@ function ProfileEditorDrawer({ user, catalog, adminPassword, onClose, onSaved, o
             </label>
             {lockAsksPassword ? <p className="settings-card-note">They sign in with the password set under When switching.</p>
               : <label className="form-field"><span>{user.hasPassword ? "New password" : "Password"}</span>
-                <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)}
+                <PasswordInput autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)}
                   placeholder={user.hasPassword ? "Leave blank to keep it" : "At least 8 characters"} />
               </label>}
           </div>}
@@ -3673,10 +3677,10 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
             onChange={(event) => setLoginName(event.target.value.trim())} />
         </label>
         <label className="form-field"><span>{profile?.hasPassword ? "New password" : "Password"}</span>
-          <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" />
+          <PasswordInput autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" />
         </label>
         {profile?.hasPassword && password ? <label className="form-field"><span>Current password</span>
-          <input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+          <PasswordInput autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
         </label> : null}
         {error.card === "signin" ? <p className="workbench-error" role="alert">{error.text}</p> : null}
         <div className="settings-card-actions">
@@ -4247,7 +4251,7 @@ function SecuritySettings({ onChanged, onSignOut }) {
       action={on && onSignOut ? <button type="button" className="secondary-button" onClick={onSignOut}><SignOut size={17} /> Sign out</button> : null}>
     <p className="settings-card-lead">This app stores your metadata and download-client API keys and can start downloads, so require a sign-in if anything other than you can reach it.</p>
     {config.configured ? <label className="form-field"><span>Your current password</span>
-      <input type="password" value={currentPassword} autoComplete="current-password" placeholder="Needed to change anything here" onChange={(event) => setCurrentPassword(event.target.value)} />
+      <PasswordInput value={currentPassword} autoComplete="current-password" placeholder="Needed to change anything here" onChange={(event) => setCurrentPassword(event.target.value)} />
     </label> : null}
     <Toggle
       checked={on}
@@ -4273,7 +4277,7 @@ function SecuritySettings({ onChanged, onSignOut }) {
         <input value={username} autoComplete="username" onChange={(event) => setUsername(event.target.value)} />
       </label>
       <label className="form-field"><span>{config.configured ? "New password" : "Password"}</span>
-        <input type="password" value={password} autoComplete="new-password" placeholder={config.configured ? "Leave blank to keep it" : "At least 8 characters"} onChange={(event) => setPassword(event.target.value)} />
+        <PasswordInput value={password} autoComplete="new-password" placeholder={config.configured ? "Leave blank to keep it" : "At least 8 characters"} onChange={(event) => setPassword(event.target.value)} />
       </label>
       </div>
       <button className="secondary-button" disabled={busy || !username || (!config.configured && !password) || (config.configured && !currentPassword)}
@@ -4891,7 +4895,7 @@ function LoginView({ onSignedIn }) {
     </label>
     <label>
       <span>Password</span>
-      <input name="password" type="password" value={password} autoComplete="current-password"
+      <PasswordInput name="password" value={password} autoComplete="current-password"
         onChange={(event) => setPassword(event.target.value)} />
     </label>
     {error ? <p className="login-error" role="alert">{error}</p> : null}
@@ -5149,6 +5153,16 @@ export function App() {
   });
   // The picker, opened over the app (Switch profile), and the Add sheet.
   const [picker, setPicker] = useState(null);
+  // Just signed in with a password, on a household of more than one
+  // profile: "Who's reading?" before anything else. Choosing yourself, or
+  // closing it, stays the one who signed in.
+  useEffect(() => {
+    if (!authStatus?.authenticated || !authStatus?.viewer) return;
+    let asked = false;
+    try { asked = window.sessionStorage.getItem(ASK_WHO_AFTER_SIGN_IN) === "1"; window.sessionStorage.removeItem(ASK_WHO_AFTER_SIGN_IN); } catch { asked = false; }
+    if (!asked) return;
+    apiRequest("/api/v1/profiles").then((data) => { if ((data.profiles || []).length > 1) setPicker({}); }, () => {});
+  }, [authStatus?.authenticated, authStatus?.viewer?.id]);
   const [addingProfile, setAddingProfile] = useState(false);
   const [profilesVersion, setProfilesVersion] = useState(0);
   const [settingsSection, setSettingsSection] = useState(BOOT_ROUTE.settingsSection);
@@ -6762,7 +6776,12 @@ export function App() {
     return <WhoIsReadingView signInAvailable={authStatus.method === "forms"} />;
   }
   if (authStatus && authStatus.method === "forms" && !authStatus.authenticated) {
-    return <LoginView onSignedIn={(result) => enterProfile(result?.viewer?.id ?? null)} />;
+    return <LoginView onSignedIn={(result) => {
+      // The password sets the device up; who is reading is asked next, as
+      // Plex asks "Who's watching?" (owner, 2026-10-09).
+      try { window.sessionStorage.setItem(ASK_WHO_AFTER_SIGN_IN, "1"); } catch { /* asked from the menu instead */ }
+      enterProfile(result?.viewer?.id ?? null);
+    }} />;
   }
   // Setup takes the whole screen: there is nothing useful in the nav until a
   // library folder exists. "Set up later" defers for this session only rather
