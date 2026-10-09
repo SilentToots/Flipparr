@@ -871,6 +871,12 @@ How:
   `panels.json` when the comic is complete; a page whose panels fail is
   read whole and does not fail the download
   (`tests/reader-app-downloads.test.mjs`).
+  Proven on the owner's iPad the same day: a 40-page comic (335 MB at
+  source) started at 14:25:21 under Network Link Conditioner, the iPad
+  locked after six pages; iOS carried on one transfer at a time, a page
+  then its panels, and the last panels landed at 14:31:44 still locked.
+  Opening the app at 14:44 showed it downloaded and sent the server's note
+  within the second.
 - `tools/reader_app_release.sh`: `npm run ios:sync`, `xcodebuild archive`,
   upload to TestFlight with an App Store Connect API key read from the
   owner's environment (never the repo). One command per release.
