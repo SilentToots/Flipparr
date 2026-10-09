@@ -104,8 +104,50 @@
   cursor: pointer;
 }
 .app-issue:first-child { border-top: 0; }
-.app-issue strong { flex: 1; font-weight: var(--weight-medium); }
+.app-issue strong { font-weight: var(--weight-medium); }
 .app-issue small { color: var(--muted); font-size: var(--text-xs); }
+/* The part of a row that opens the issue: everything but its download control. */
+.app-issue-open {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.app-download {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  min-width: var(--control-height-md);
+  min-height: var(--control-height-md);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.app-download--ready { color: var(--green); cursor: default; }
+.app-cap { display: flex; flex-direction: column; gap: var(--space-8); font-size: var(--text-sm); margin-bottom: var(--space-12); }
+.app-cap select {
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-12);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-8);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
 
 .app-empty { color: var(--muted); font-size: var(--text-sm); margin: 0; }
 
@@ -136,5 +178,5 @@
   .app-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-24) var(--space-16); }
   .app-card strong { font-size: var(--text-md); }
   .app-card small { font-size: var(--text-sm); }
-  .app-issues { max-width: 720px; }
+  .app-issues, .app-cap { max-width: 720px; }
 }

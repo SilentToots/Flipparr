@@ -52,3 +52,16 @@ test("the folder is trimmed now and then, not on every page", async () => {
   assert.equal(trims.length, 1);
   assert.equal(trims[0][1].path, "online/u1");
 });
+
+test("a downloaded comic's page is read from the device, never fetched", async () => {
+  const native = fakeNative();
+  const source = createImageSource(client, 7, {
+    native, toSrc: (path) => `capacitor://localhost/_capacitor_file_${path}`,
+    local: (url) => (url.includes("/files/63/") ? "u7/files/63/0.jpg" : null),
+    localUri: async (path) => `/lib/flipparr/${path}`,
+  });
+  assert.equal(await source("/api/v1/files/63/pages/0?v=s&size=read"), "capacitor://localhost/_capacitor_file_/lib/flipparr/u7/files/63/0.jpg");
+  assert.equal(native.calls.length, 0, "no request at all");
+  await source("/api/v1/files/64/pages/0");
+  assert.equal(native.calls.length, 1, "another comic still comes from the server");
+});

@@ -540,6 +540,36 @@ from the list below:
   XCTest for the plugin; on the iPad: download five issues, switch apps
   and lock the iPad mid-download (it carries on), relaunch (rows match the
   files), Remove empties the folder.
+- **Built 2026-10-08** (iPad simulator against the scratch stack):
+  - Native side: the background session lives in `FlipparrNative.swift`
+    (`FlipparrDownloads`). It moves each finished page into place itself,
+    so pages that land while the app is suspended are on disk at relaunch.
+  - Engine: `src/reader-app/downloads.js`, with the rules in `offline.js`
+    and the files in `device-store.js`. Downloads are re-checked at launch
+    and on return to the foreground, and each comic is finished once only.
+  - Pages are read from disk when downloaded (`images.js`), with no page
+    request to the server.
+  - Panels are fetched with `?vision=no` into `panels.json`. While online,
+    the reader still asks the server for panels, since they may have been
+    corrected since the download. The local copy is read offline (Phase 4).
+  - The server keeps one row per download in `offline_downloads` (schema 68).
+    Remove closes it with a reason; a 403/404 mid-download closes it as
+    `hidden`.
+  - Proven in the simulator: download, then Remove (the folder is emptied
+    and the server row is closed as `removed`), then download again (a new
+    row). Leaving and returning to the app mid-download works.
+  - Differences from the list above:
+    - Download is a button on each issue in the run screen, not in the
+      issue's menu or the reader's settings.
+    - Remove also cancels a download in progress, so there is no separate
+      Cancel.
+    - A failed download offers Try again. Re-downloading a comic whose file
+      changed on the server (`/offline/check`) is not built yet.
+    - The cap control and usage line are on the Downloads screen. "Remove
+      all downloads" and a usage bar are not built yet.
+  - Still to prove: XCTest for the plugin, and the five-issue download with
+    the iPad locked mid-download, on a real iPad. Both wait for the Developer
+    Program enrolment.
 
 ### Phase 4 — reading offline and progress replay (1–2 sessions)
 - Offline identity: with no connection the app has no `/auth/status`. The

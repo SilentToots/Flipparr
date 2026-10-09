@@ -5,6 +5,9 @@
 // and shown from there (Capacitor.convertFileSrc). The token goes only to the
 // household's own server; a provider's cover is fetched without it.
 //
+// A page of a comic downloaded for offline reading (downloads.js) is shown
+// from its file and never fetched.
+//
 // Online reading keeps what it fetched in Library/flipparr/online/u<profile>,
 // one folder per profile so a page fetched for one profile is never served
 // from the cache to another (the rating gate is the server's; this keeps the
@@ -38,13 +41,18 @@ export function imageName(address) {
  * `source(url)` -> Promise of an address the web view can show. `client`
  * is the server's (src/reader-app/server.js); `profileId` names the cache.
  */
-export function createImageSource(client, profileId, { native = Native, toSrc = (path) => Capacitor.convertFileSrc(path) } = {}) {
+export function createImageSource(client, profileId, {
+  native = Native, toSrc = (path) => Capacitor.convertFileSrc(path), local = () => null, localUri = null,
+} = {}) {
   const folder = `online/u${profileId}`;
   const known = new Map();
   let fetched = 0;
   return function source(url) {
     if (!url) return Promise.resolve("");
     if (url.startsWith("data:")) return Promise.resolve(url);
+    // A downloaded comic's page is read from the device, network or none.
+    const downloaded = local(url);
+    if (downloaded && localUri) return localUri(downloaded).then(toSrc);
     if (known.has(url)) return known.get(url);
     const absolute = new URL(url, client.origin);
     const own = absolute.origin === client.origin;

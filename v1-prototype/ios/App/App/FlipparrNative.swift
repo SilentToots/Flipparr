@@ -17,6 +17,29 @@ import Capacitor
 import Foundation
 import Security
 
+/// Library/flipparr, made on first use and kept out of backups. Apple notes
+/// the flag can be lost when files are moved or replaced, so it is set again
+/// every time the folder is asked for.
+func flipparrRoot() throws -> URL {
+    let library = try FileManager.default.url(for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    var folder = library.appendingPathComponent("flipparr", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    try folder.setResourceValues(values)
+    return folder
+}
+
+/// A path inside Library/flipparr, refusing one that climbs out of it.
+func flipparrPath(_ relative: String) throws -> URL {
+    let base = try flipparrRoot().standardizedFileURL
+    let target = base.appendingPathComponent(relative).standardizedFileURL
+    guard target.path.hasPrefix(base.path + "/") else {
+        throw NSError(domain: "FlipparrNative", code: 1, userInfo: [NSLocalizedDescriptionKey: "That path is outside the app's folder"])
+    }
+    return target
+}
+
 @objc(FlipparrNativePlugin)
 public class FlipparrNativePlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "FlipparrNativePlugin"
@@ -27,29 +50,18 @@ public class FlipparrNativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "keychainRemove", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "fetchToFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "trimFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "enqueue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "transfers", returnType: CAPPluginReturnPromise),
     ]
 
-    /// Library/flipparr, made on first use and kept out of backups. Apple
-    /// notes the flag can be lost when files are moved or replaced, so it is
-    /// set again every time the folder is asked for.
-    private func root() throws -> URL {
-        let library = try FileManager.default.url(for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        var folder = library.appendingPathComponent("flipparr", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try folder.setResourceValues(values)
-        return folder
-    }
+    private func inside(_ relative: String) throws -> URL { try flipparrPath(relative) }
 
-    /// A path inside Library/flipparr, refusing one that climbs out of it.
-    private func inside(_ relative: String) throws -> URL {
-        let base = try root().standardizedFileURL
-        let target = base.appendingPathComponent(relative).standardizedFileURL
-        guard target.path.hasPrefix(base.path + "/") else {
-            throw NSError(domain: "FlipparrNative", code: 1, userInfo: [NSLocalizedDescriptionKey: "That path is outside the app's folder"])
-        }
-        return target
+    override public func load() {
+        // The downloader tells this plugin what finished; events that came
+        // while no page was listening (a relaunch in the background) are
+        // kept until one is.
+        FlipparrDownloads.shared.plugin = self
     }
 
     private let service = Bundle.main.bundleIdentifier ?? "com.silenttoots.flipparr.view"
@@ -199,6 +211,152 @@ extension FlipparrNativePlugin {
             call.resolve(["bytes": total, "removed": removed])
         } catch {
             call.reject(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Downloads that carry on in the background
+
+extension FlipparrNativePlugin {
+    /// Download `url` to `path` (relative to Library/flipparr) in the
+    /// background session: it carries on while the app is suspended, and iOS
+    /// relaunches the app to finish it. `id` names it in the events
+    /// (`transferDone`, `transferFailed`). Resolves at once.
+    @objc func enqueue(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let address = call.getString("url"), let url = URL(string: address),
+              let relative = call.getString("path") else {
+            call.reject("An id, a url and a path are needed")
+            return
+        }
+        do { _ = try inside(relative) } catch { call.reject(error.localizedDescription); return }
+        var headers: [String: String] = [:]
+        for (name, value) in call.getObject("headers") ?? [:] {
+            if let text = value as? String { headers[name] = text }
+        }
+        FlipparrDownloads.shared.enqueue(id: id, url: url, relative: relative, headers: headers)
+        call.resolve()
+    }
+
+    @objc func cancel(_ call: CAPPluginCall) {
+        let prefix = call.getString("prefix") ?? ""
+        FlipparrDownloads.shared.cancel(prefix: prefix) { cancelled in call.resolve(["cancelled": cancelled]) }
+    }
+
+    /// What the background session is still working on: [{id, path}].
+    @objc func transfers(_ call: CAPPluginCall) {
+        FlipparrDownloads.shared.transfers { list in call.resolve(["transfers": list]) }
+    }
+}
+
+/// The one background URLSession. A singleton, not the plugin's: iOS may
+/// relaunch the app in the background to deliver finished downloads before
+/// any web page exists, and the files are moved into place here either way.
+final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
+    static let shared = FlipparrDownloads()
+    static let identifier = (Bundle.main.bundleIdentifier ?? "com.silenttoots.flipparr.view") + ".downloads"
+
+    weak var plugin: FlipparrNativePlugin? { didSet { flush() } }
+    /// Set by the AppDelegate when iOS relaunches the app for this session.
+    var backgroundCompletion: (() -> Void)?
+    private var waiting: [(String, [String: Any])] = []
+
+    lazy var session: URLSession = {
+        let configuration = URLSessionConfiguration.background(withIdentifier: FlipparrDownloads.identifier)
+        configuration.sessionSendsLaunchEvents = true
+        // Downloaded because someone asked: not left for when iOS thinks best.
+        configuration.isDiscretionary = false
+        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }()
+
+    private struct Job: Codable { let id: String; let path: String; let host: String }
+
+    func enqueue(id: String, url: URL, relative: String, headers: [String: String]) {
+        var request = URLRequest(url: url)
+        headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        let task = session.downloadTask(with: request)
+        let job = Job(id: id, path: relative, host: url.host ?? "")
+        task.taskDescription = String(data: (try? JSONEncoder().encode(job)) ?? Data(), encoding: .utf8)
+        task.resume()
+    }
+
+    private func job(_ task: URLSessionTask) -> Job? {
+        guard let text = task.taskDescription, let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Job.self, from: data)
+    }
+
+    func cancel(prefix: String, done: @escaping (Int) -> Void) {
+        session.getAllTasks { tasks in
+            let matching = tasks.filter { self.job($0)?.id.hasPrefix(prefix) == true }
+            matching.forEach { $0.cancel() }
+            done(matching.count)
+        }
+    }
+
+    func transfers(done: @escaping ([[String: Any]]) -> Void) {
+        session.getAllTasks { tasks in
+            done(tasks.compactMap { task in self.job(task).map { ["id": $0.id, "path": $0.path] } })
+        }
+    }
+
+    private func emit(_ name: String, _ data: [String: Any]) {
+        DispatchQueue.main.async {
+            if let plugin = self.plugin { plugin.notifyListeners(name, data: data, retainUntilConsumed: true) }
+            else { self.waiting.append((name, data)) }
+        }
+    }
+
+    private func flush() {
+        DispatchQueue.main.async {
+            guard let plugin = self.plugin else { return }
+            let pending = self.waiting
+            self.waiting.removeAll()
+            pending.forEach { plugin.notifyListeners($0.0, data: $0.1, retainUntilConsumed: true) }
+        }
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard let job = job(downloadTask) else { return }
+        let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            emit("transferFailed", ["id": job.id, "status": status, "error": "The server answered \(status)"])
+            return
+        }
+        do {
+            let destination = try flipparrPath(job.path)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
+            // Moved now, inside this callback: the temporary file is gone
+            // the moment it returns.
+            try FileManager.default.moveItem(at: location, to: destination)
+            let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            emit("transferDone", ["id": job.id, "path": destination.path, "bytes": size, "status": status])
+        } catch {
+            emit("transferFailed", ["id": job.id, "status": status, "error": error.localizedDescription])
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let error = error, let job = job(task) else { return }
+        let cancelled = (error as NSError).code == NSURLErrorCancelled
+        emit("transferFailed", ["id": job.id, "status": 0, "error": error.localizedDescription, "network": !cancelled, "cancelled": cancelled])
+    }
+
+    /// The token goes only to the household's server: a redirect to any
+    /// other host is followed without it.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        var next = request
+        if let job = job(task), request.url?.host != job.host {
+            next.setValue(nil, forHTTPHeaderField: "Authorization")
+            next.setValue(nil, forHTTPHeaderField: "Flipparr-Device")
+        }
+        completionHandler(next)
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        DispatchQueue.main.async {
+            self.backgroundCompletion?()
+            self.backgroundCompletion = nil
         }
     }
 }

@@ -11,6 +11,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return true
     }
 
+    /// iOS relaunched the app to deliver finished background downloads:
+    /// touching the session reconnects it, and the handler is called once
+    /// every event has been handled (FlipparrDownloads).
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == FlipparrDownloads.identifier else { completionHandler(); return }
+        FlipparrDownloads.shared.backgroundCompletion = completionHandler
+        _ = FlipparrDownloads.shared.session
+    }
+
     func applicationWillResignActive(_ application: UIApplication) {
         // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
         // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
