@@ -79,6 +79,14 @@ export const deviceStore = {
   async forgetSession() {
     try { await Filesystem.deleteFile(at("session.json")); } catch { /* none kept */ }
   },
+  /**
+   * Everything this install keeps for its server -- downloads, saved places,
+   * kept answers, the last session -- gone, as connecting to another server
+   * requires: the next server's profiles have their own numbers.
+   */
+  async forgetEverything() {
+    try { await Filesystem.rmdir({ ...at(""), recursive: true }); } catch { /* nothing kept */ }
+  },
   /** Whether a file is here: an image fetched before, shown offline. */
   async exists(path) {
     try { await Filesystem.stat(at(path)); return true; } catch { return false; }

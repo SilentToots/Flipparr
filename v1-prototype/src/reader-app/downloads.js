@@ -12,6 +12,11 @@ import { downloadRow, pagePath, parseTransferId, planDownload, transferId } from
 
 const Native = registerPlugin("FlipparrNative");
 
+/** Every transfer this install has under way, for any profile, cancelled. */
+export function cancelAllTransfers(native = Native) {
+  return native.cancel({ prefix: "" }).catch(() => {});
+}
+
 export class Downloads extends EventTarget {
   constructor({ client, profileId, store = deviceStore, native = Native }) {
     super();

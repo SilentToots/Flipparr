@@ -30,7 +30,7 @@ import { ViewerContext } from "../viewer.js";
 import { checkServer, createClient, serverOrigin } from "./server.js";
 import { secureStore, tokenKeys } from "./secure-store.js";
 import { createImageSource } from "./images.js";
-import { Downloads } from "./downloads.js";
+import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
 import { CAP_CHOICES, formatBytes, progressOf, usageBytes } from "./offline.js";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
@@ -183,6 +183,29 @@ export function ReaderApp() {
     return () => { document.removeEventListener("visibilitychange", onVisible); window.clearInterval(timer); };
   }, [phase, client]);
 
+  // Another server: what this install kept for this one goes (its profiles'
+  // downloads and places would otherwise sit under the next server's
+  // profile numbers), after saying so when there is anything to lose.
+  async function forgetServer() {
+    const kept = (await deviceStore.allDownloads()).length;
+    if (kept && !window.confirm(`Connecting to another server removes ${kept} downloaded ${kept === 1 ? "comic" : "comics"} and every saved place still waiting to be sent from this device.`)) return;
+    try { await client?.api("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch { /* ended or unreachable */ }
+    if (client) {
+      const keys = tokenKeys(client.origin);
+      await secureStore.remove(keys.session);
+      await secureStore.remove(keys.device);
+    }
+    await secureStore.remove("server");
+    await cancelAllTransfers();
+    await deviceStore.forgetEverything();
+    forgetAnswers();
+    settledViewer.current = null;
+    transportRef.current?.attach(null);
+    setStatus(null);
+    setAsking(null);
+    setPhase("connect");
+  }
+
   if (phase === "starting") return <div className="login-shell"><LoadingIndicator size="lg" label="Starting" /></div>;
   if (phase === "connect") {
     return <ConnectScreen error={error} onConnected={async (origin) => {
@@ -194,15 +217,12 @@ export function ReaderApp() {
   if (phase === "picker") {
     return <PickerScreen client={client} current={status?.viewer?.id ?? null} ask={asking}
       onClose={status?.viewer ? () => { setAsking(null); setPhase("ready"); } : null}
-      onSwitched={async () => settle(client, await client.api("/api/v1/auth/status"))} />;
+      onSwitched={async () => settle(client, await client.api("/api/v1/auth/status"))} onForget={forgetServer} />;
   }
   if (phase === "signin") {
     return <SignInScreen client={client} onSignedIn={async () => {
       await settle(client, await client.api("/api/v1/auth/status"));
-    }} onForget={async () => {
-      await secureStore.remove("server");
-      setPhase("connect");
-    }} />;
+    }} onForget={forgetServer} />;
   }
   return <Library key={status.viewer.id} client={client} status={status} online={online} transport={transportRef.current}
     onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} />;
@@ -525,7 +545,7 @@ function SignInScreen({ client, onSignedIn, onForget }) {
 // "Who's reading?" on a shared iPad: the web app's tiles and PIN pad
 // (components/ProfileTiles.jsx). A switch is answered with the new profile's
 // session in the Flipparr-Session header, which the client keeps.
-function PickerScreen({ client, current, ask = null, onClose, onSwitched }) {
+function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForget }) {
   const [profiles, setProfiles] = useState(null);
   const [asking, setAsking] = useState(ask);
   const [secret, setSecret] = useState("");
@@ -577,6 +597,7 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched }) {
         {profiles === null && !error ? <LoadingIndicator size="md" /> : null}
         <ProfileTiles profiles={profiles || []} current={current} onChoose={choose} busy={busy} />
         {error ? <p className="login-error" role="alert">{error}</p> : null}
+        {onForget ? <button type="button" className="ghost-button" onClick={onForget}>Use another server</button> : null}
       </>}
     </div>
   </div>;
