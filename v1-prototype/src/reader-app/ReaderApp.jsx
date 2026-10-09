@@ -481,6 +481,16 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       setSelectedList(null);
       setRunCollectionId(null);
       setFinishedFileId("");
+      // A comic opened is kept on the device too, downloading behind the
+      // reader as Kindle and Apple Books do (the owner, 2026-10-09), so it
+      // is there to finish offline. It counts against the limit like any
+      // download; one that cannot fit is still read online, and says so.
+      const row = downloads.row(fileId);
+      if (online && (!row || row.state === "failed")) {
+        downloads.reading = String(fileId);
+        (row ? downloads.retry(fileId) : downloads.download(fileId, { groupKey: "opened" }))
+          .catch((error) => showToast(`Reading online: not kept on this device. ${error.message || ""}`.trim()));
+      }
     };
     // Offline, only what is on the device can be opened.
     const openable = (fileId) => {
