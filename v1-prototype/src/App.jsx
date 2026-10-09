@@ -55,7 +55,7 @@ import { ReaderView } from "./reader/ReaderView.jsx";
 import { historyStep } from "./history-step.js";
 import { Host } from "./host.js";
 import { useToast } from "./components/Toast.jsx";
-import { readableFile, useReadingActions } from "./library/actions.js";
+import { readableFile, readingContext, useReadingActions } from "./library/actions.js";
 import { apiRequest, forgetAnswers, lastAnswer, rememberAnswer } from "./api.js";
 import { listCard, communityListLine, arcMatches, arcYears, groupOwnerLine, groupsToAddTo, issuesInRange } from "./reading-list.js";
 import { jobHasFailed } from "./nav-counts.js";
@@ -5141,7 +5141,7 @@ export function App() {
   // This profile's own reading (library/actions.js, shared with Flipparr View).
   const {
     readingVersion, noteReadingChanged, readingList: readingListEntries,
-    toggleReadingList, markIssueRead, markRunRead, markRunsRead, rateSeries, rateIssue,
+    toggleReadingList, markIssueRead, markRunRead, markRunsRead, markListRead, rateSeries, rateIssue,
   } = useReadingActions({
     notify: showToast, viewerId: authStatus?.viewer?.id ?? null, ready: Boolean(authStatus),
     // A rating changes the catalog's run; the open drawer is shown it.
@@ -5579,15 +5579,6 @@ export function App() {
     setSelectedList(null);
     setListsVersion((version) => version + 1);
     showToast(message);
-  }
-  async function markListRead(list, read) {
-    try {
-      await apiRequest(`/api/v1/reading-lists/${list.id}/reading`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ read }) });
-      noteReadingChanged();
-      showToast(read ? `${list.name} marked as read` : `${list.name} marked as unread`);
-    } catch (error) {
-      showToast(error.message, "error");
-    }
   }
   function openCollection(collection) { if (!catalog?.collectedEditionsEnabled) return; setSelectedSeries(null); setSeriesParentCollection(null); setCollectionTab("overview"); setSelectedCollection(collection); }
   function openCollectionRun(series) { setSeriesParentCollection(selectedCollection); setSelectedCollection(null); setSelectedSeries(series); }
@@ -6761,22 +6752,8 @@ export function App() {
       onAdd: () => setAddingProfile(true), onSignOut: () => signOut({ forgetDevice: true }),
     },
   };
-  // What is being read, named: the run it belongs to and the file's own name.
-  const readingSeries = readFileId
-    ? (catalog?.series || []).find((item) => (item.fileDetails || []).some((file) => String(file.id) === String(readFileId)))
-    : null;
-  const readingTitle = readFileId
-    ? (readingSeries?.fileDetails || []).find((file) => String(file.id) === String(readFileId))?.filename || readingSeries?.title || "Reading"
-    : "";
-  // What the reader needs when a comic ends: the issue it was, so it can be
-  // rated, and the one after it, so finishing is not a dead end.
-  const readingIssues = readingSeries?.issues || [];
-  const readingIssue = readFileId
-    ? readingIssues.find((issue) => String(issue.fileId) === String(readFileId)) || null
-    : null;
-  const readingNext = readingIssue
-    ? readingIssues.slice(readingIssues.indexOf(readingIssue) + 1).find((issue) => issue.fileId) || null
-    : null;
+  // What is being read, and what comes after it (library/actions.js).
+  const { series: readingSeries, title: readingTitle, issue: readingIssue, next: readingNext } = readingContext(catalog, readFileId);
   const finished = Boolean(readFileId) && finishedFileId === readFileId;
   const navActive = active === "import" ? "settings" : active;
   useEffect(() => { loadAuthStatus(); }, []);

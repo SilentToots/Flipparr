@@ -10,6 +10,9 @@
 // - `canManage`, optional: false where the library is not managed from here
 //   (Flipparr View: an admin reading on an iPad sees the reader's drawer, not
 //   Files, Advanced, Edit or Pull). The web app leaves it out.
+// - `issueExtras(issue)` and `issueBadge(issue)`, optional: the host's own
+//   items in an issue's menu, and its badge where nothing else is said
+//   (Flipparr View's downloads). The web app gives neither.
 // - `pageSource(url)`, optional: a Promise of what an <img> should load for a
 //   page, thumbnail or cover address. The web app gives none, and every image
 //   uses the address itself, exactly as before; Flipparr View gives one,

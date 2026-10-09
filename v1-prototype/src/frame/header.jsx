@@ -17,7 +17,8 @@ export const HeaderContext = createContext(null);
 
 export function HeaderBell() {
   const header = useContext(HeaderContext);
-  if (!header) return null;
+  // Where the host has notifications: Flipparr View has none yet.
+  if (!header?.bell) return null;
   return <NotificationsBell bell={header.bell} />;
 }
 
@@ -437,7 +438,7 @@ export function ProfileMenu({ onClose }) {
   const rows = <>
     <ProfileTiles profiles={[viewer, ...(others || [])]} current={viewer.id}
       onChoose={(profile) => go(profile.id === viewer.id ? actions.onOpenProfile : () => actions.onSwitchTo(profile))()}
-      onAdd={isAdmin(viewer) && others !== null ? go(actions.onAdd) : null} />
+      onAdd={isAdmin(viewer) && others !== null && actions.onAdd ? go(actions.onAdd) : null} />
     {others === null ? <p className="profile-menu-loading"><LoadingSpinner size={16} /></p> : null}
     {actions.method === "forms" ? <div className="profile-menu-actions">
       <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onSignOut)}>

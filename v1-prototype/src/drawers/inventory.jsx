@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CoverArt } from "../components/CoverArt.jsx";
 import { GlassSegmented, GlassSelect, LoadingSpinner } from "../components/glass.jsx";
@@ -12,6 +12,7 @@ import { READING_DIRECTIONS } from "../reader.js";
 import { StarRating } from "./frame.jsx";
 import { BackdropPicker, CoverPicker } from "./groups.jsx";
 import { ArrowCounterClockwise, ArrowLeft, ArrowRight, ArrowsClockwise, BookOpen, Books, CaretRight, Check, CheckCircle, CloudArrowDown, DotsThree, Eye, HardDrive, ListBullets, ListNumbers, MagnifyingGlass, PencilSimple, Plus, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { Host } from "../host.js";
 
 export function CollectionCoverage({ series, editionsOn }) {
   const directOwned = series.issues?.filter((issue) => issue.directOwned).length ?? 0;
@@ -107,6 +108,7 @@ export function ActionMenu({ anchor, label, items, onClose }) {
 // continue it, mark it read or unread for this profile, and, for the admin,
 // edit its metadata.
 export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, onAddToArc, className, longPress = false }) {
+  const host = useContext(Host);
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
   const close = useCallback(() => setOpen(false), []);
@@ -149,6 +151,8 @@ export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, on
   if (read && onMark && (read.finished || read.fraction)) items.push({ key: "mark-unread", label: "Mark as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMark(issue, false) });
   // Owned or missing alike: an arc holds the issue either way, and pulls it.
   if (onAddToArc && /^\d+$/.test(String(issue.id))) items.push({ key: "arc", label: "Add to story arc\u2026", icon: <ListNumbers size={16} />, onSelect: () => onAddToArc(issue) });
+  // The host's own, as Flipparr View's Download and Remove download.
+  items.push(...(host?.issueExtras?.(issue) || []));
   if (onEditIssue) items.push({ key: "edit", label: "Edit issue metadata", icon: <PencilSimple size={16} />, onSelect: () => onEditIssue(issue) });
   if (!items.length) return null;
   return <>
@@ -189,6 +193,9 @@ export function RunMenu({ runRead, runStarted, onMarkRun }) {
 }
 
 export function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, onAddIssuesToArc, empty = null, runRead = false, runStarted = false, readingFiles, medium }) {
+  // The host's badge for an issue with nothing else to say: Flipparr View's
+  // download state. The web gives none.
+  const hostBadge = useContext(Host)?.issueBadge || (() => null);
   // Covers are why the tab exists, so posters lead. A long run is also less
   // scrolling this way than as tall rows: four across beats one down.
   const [view, setView] = useState("grid");
@@ -263,7 +270,8 @@ export function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onM
             <span className="issue-tile-art">
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
               {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
-                : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}
+                : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span>
+                : hostBadge(issue) ? <span className={`ownership-source ${hostBadge(issue).tone}`}>{hostBadge(issue).label}</span> : null}
               {/* Inside the cover's box, not the tile's: anchored to the tile
                   it would sit under the issue title. */}
               {read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}

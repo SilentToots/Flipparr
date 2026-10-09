@@ -16,7 +16,7 @@
 // variant is chosen by the design's prefix and the box by its measurement,
 // which is what `size` sets here.
 import {
-  BellIcon, Cog6ToothIcon, DocumentPlusIcon, WalletIcon,
+  ArrowDownTrayIcon, BellIcon, Cog6ToothIcon, DocumentPlusIcon, WalletIcon,
   ClipboardDocumentListIcon, CheckCircleIcon, AdjustmentsHorizontalIcon,
 } from "@heroicons/react/24/outline";
 import {
@@ -65,6 +65,8 @@ export const PullListIcon = sized(WalletIcon, 20);              // heroicons-out
 export const LibraryHealthIcon = sized(ClipboardDocumentListIcon, 20); // heroicons-outline/clipboard-document-list
 // The bar's cog at the rail's 20px, so the four rail icons share one size.
 export const SettingsNavIcon = sized(Cog6ToothIcon, 20);         // heroicons-outline/cog-6-tooth
+// Flipparr View's Downloads, beside Comics in its bar.
+export const DownloadsNavIcon = sized(ArrowDownTrayIcon, 20);    // heroicons-outline/arrow-down-tray
 
 // Page header and toolbar
 export const SyncIcon = sized(ArrowPathRoundedSquareIcon, 20);  // heroicons-solid/arrow-path-rounded-square

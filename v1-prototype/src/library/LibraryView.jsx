@@ -9,7 +9,7 @@ import { FollowSwitch, useRunReading } from "../drawers/frame.jsx";
 import { identityKey } from "../editions.js";
 import { PageHeader, SegmentedTabs } from "../frame/header.jsx";
 import { LIBRARY_DEFAULTS, SORT_OPTIONS, inProgress, loadLibraryPrefs, saveLibraryPrefs, sortLibrary } from "../library.js";
-import { can, isAdmin } from "../profiles.js";
+import { can } from "../profiles.js";
 import { EMPTY_ENTRIES, readingListItems, sortReadingList } from "../reading-list-tab.js";
 import { foldArcRuns, listCard } from "../reading-list.js";
 import { collectionCards, collectionMatches, collectionPlaces, libraryGridOrder } from "../run-collections.js";
@@ -519,8 +519,9 @@ export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onTo
 }
 
 export function CatalogEmpty({ onAdd }) {
-  // Adding folders is the admin's; a reader is told what to expect instead.
-  if (!isAdmin(useViewer())) {
+  // Adding folders is the admin's, where the library is managed; a reader is
+  // told what to expect instead.
+  if (!useManages()) {
     return <div className="empty-state"><Books size={35} weight="duotone" /><strong>No comics yet</strong><span>Comics appear here once the library&rsquo;s admin adds them.</span></div>;
   }
   return <div className="empty-state"><Books size={35} weight="duotone" /><strong>Your library is ready for its first comics</strong><span>Choose a folder to scan without changing your files.</span><button className="primary-button" onClick={onAdd}><FolderOpen size={18} /> Import library</button></div>;

@@ -26,6 +26,21 @@ export async function readableFile(target) {
 }
 
 /**
+ * What is being read, named: the run it belongs to and the file's own name;
+ * and what the reader needs when the comic ends -- the issue it was, so it
+ * can be rated, and the one after it, so finishing is not a dead end.
+ */
+export function readingContext(catalog, fileId) {
+  if (!fileId) return { series: null, title: "", issue: null, next: null };
+  const series = (catalog?.series || []).find((item) => (item.fileDetails || []).some((file) => String(file.id) === String(fileId))) || null;
+  const title = (series?.fileDetails || []).find((file) => String(file.id) === String(fileId))?.filename || series?.title || "Reading";
+  const issues = series?.issues || [];
+  const issue = issues.find((item) => String(item.fileId) === String(fileId)) || null;
+  const next = issue ? issues.slice(issues.indexOf(issue) + 1).find((item) => item.fileId) || null : null;
+  return { series, title, issue, next };
+}
+
+/**
  * `notify(message, tone)` says what happened (the toast). `viewerId` and
  * `ready` load this profile's reading list once it is known. `afterRating`
  * runs after a rating is saved: the web reloads its catalog there.
@@ -86,6 +101,17 @@ export function useReadingActions({ notify, viewerId = null, ready = true, after
     }
   }
 
+  // A story arc's every issue read or unread.
+  async function markListRead(list, read) {
+    try {
+      await apiRequest(`/api/v1/reading-lists/${list.id}/reading`, json({ read }));
+      noteReadingChanged();
+      notify(read ? `${list.name} marked as read` : `${list.name} marked as unread`);
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }
+
   /** Your rating for a run or one of its issues; null takes it back. */
   async function saveRating(path, rating, subject) {
     try {
@@ -101,6 +127,6 @@ export function useReadingActions({ notify, viewerId = null, ready = true, after
   return {
     // `readingList` is null until it has loaded: a tab can say it is loading.
     readingVersion, noteReadingChanged, readingList,
-    toggleReadingList, markIssueRead, markRunRead, markRunsRead, rateSeries, rateIssue,
+    toggleReadingList, markIssueRead, markRunRead, markRunsRead, markListRead, rateSeries, rateIssue,
   };
 }

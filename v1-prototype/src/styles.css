@@ -32,7 +32,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
    bar, which has no Search: a phone searches from Discover. */
 @media (max-width: 640px) { .sidebar nav .nav-item--desktop { display: none; } }
 .sidebar {
-  position: fixed; top: var(--sidebar-inset); bottom: var(--sidebar-inset); left: var(--sidebar-inset); z-index: 20;
+  /* Clear of the status bar and home indicator where the page runs to the
+     screen's edges (Flipparr View, viewport-fit=cover); 0 in a browser. */
+  position: fixed; top: calc(var(--sidebar-inset) + env(safe-area-inset-top)); bottom: calc(var(--sidebar-inset) + env(safe-area-inset-bottom)); left: var(--sidebar-inset); z-index: 20;
   width: var(--sidebar-width); box-sizing: border-box;
   padding: var(--space-12) var(--sidebar-pad);
   display: flex; flex-direction: column; gap: var(--space-8);
@@ -2610,7 +2612,9 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* The pinned top bar (DrawerTopBar): it overlays the art rather than pushing
    it down. Clear at the top of the drawer; frosted, with the title, once the
    title has scrolled under it. */
-.comic-drawer-bar { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: var(--control-height-md) minmax(0, 1fr) auto; align-items: center; gap: var(--space-8); height: var(--drawer-bar-height); margin-bottom: calc(var(--drawer-bar-height) * -1); padding: 0 var(--drawer-inset); pointer-events: none; }
+/* Below the status bar where the page runs to the screen's edges (Flipparr
+   View, viewport-fit=cover); the inset is 0 in a browser. */
+.comic-drawer-bar { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: var(--control-height-md) minmax(0, 1fr) auto; align-items: center; gap: var(--space-8); height: calc(var(--drawer-bar-height) + env(safe-area-inset-top)); margin-bottom: calc((var(--drawer-bar-height) + env(safe-area-inset-top)) * -1); padding: env(safe-area-inset-top) var(--drawer-inset) 0; pointer-events: none; }
 .comic-drawer-bar > button, .comic-drawer-bar-end > * { pointer-events: auto; }
 .comic-drawer-bar::before { content: ""; position: absolute; inset: 0; z-index: -1; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); opacity: 0; transition: opacity var(--motion-duration-standard) ease; }
 .comic-drawer-bar.pinned::before { opacity: 1; }
