@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest, lastAnswer } from "../api.js";
 import { SeriesCover } from "../components/CoverArt.jsx";
 import { GlassSegmented, LoadingSpinner } from "../components/glass.jsx";
@@ -19,7 +19,7 @@ import { AlphaRail } from "./AlphaRail.jsx";
 import { RecommendedView } from "./RecommendedView.jsx";
 import { ArcGrid, CollectionCard, Ownership, SeriesList, publicationState } from "./cards.jsx";
 import { ArrowRight, BookOpen, Books, Check, CheckCircle, FolderOpen, ListBullets, ListNumbers, MagnifyingGlass, Plus, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
-import { useManages } from "../host.js";
+import { Host, useManages } from "../host.js";
 
 // Shown only when the server cannot be reached ("Showing sample comics"):
 // invented titles and publishers, and no cover art -- Flipparr ships no
@@ -363,6 +363,7 @@ export const COMICS_TABS = [
 export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleReadingList, onNavigate, onOpenSeries, onOpenCollection, onOpenRunCollection, onNewRunCollection, onOpenList, onImportList, onNewArc, onSearch, onRead, readingVersion, listsVersion = 0, catalog, backendStatus }) {
   const libraryViewer = useViewer();
   const libraryAdmin = useManages();
+  const hostNotice = useContext(Host)?.notice ?? null;
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
   // The page's own search: it narrows what you already have, as you type.
   const [query, setQuery] = useState("");
@@ -487,6 +488,9 @@ export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onTo
         onClose={() => setViewSheetOpen(false)}
       /> : null}
       <div className="dashboard-body">
+      {/* The host's word on the page, under its header (Flipparr View's
+          "You're offline"). The web has none. */}
+      {hostNotice}
       {/* Sorted as the Story arcs tab is: the library's sort, "recently read" by a collection's latest run. */}
       {!showLibrary && tab === "collections" ? <AlphaScroller items={sortedCollections} enabled={alphaOn(sortedCollections)}>
         <CollectionsTab cards={sortedCollections}

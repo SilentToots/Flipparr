@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { apiRequest, lastAnswer } from "../api.js";
 import { ShelfBackIcon, ShelfNextIcon } from "../design-icons.jsx";
 import { keepReading, localDay, recentlyAddedIssues, recentlyAddedRuns, recentlyReleased } from "../recommended.js";
 import { CatalogEmpty } from "./LibraryView.jsx";
 import { LibraryShelf } from "./shelves.jsx";
+import { Host } from "../host.js";
 
 /**
  * Comics' home: what to pick up, as shelves (Komga's, and Plex's
@@ -20,12 +21,16 @@ export function RecommendedView({ series, catalog, backendStatus, readingVersion
       .catch(() => { if (live) setCarryOn([]); });
     return () => { live = false; };
   }, [readingVersion]);
-  const shelves = useMemo(() => [
+  const own = useMemo(() => [
     { id: "keep", title: "Keep Reading", items: keepReading(carryOn || [], series), onSeeAll: onSeeInProgress },
     { id: "released", title: "Recently Released", items: recentlyReleased(series, localDay()) },
     { id: "issues", title: "Recently Added Issues", items: recentlyAddedIssues(series) },
     { id: "runs", title: "Recently Added Runs", items: recentlyAddedRuns(series), onSeeAll: onSeeAdded },
   ], [carryOn, series, onSeeInProgress, onSeeAdded]);
+  // The host's own shelves (Flipparr View's Downloaded): first where the
+  // host says so, else after Keep Reading. The web has none.
+  const hosted = useContext(Host)?.shelves?.() || [];
+  const shelves = [...hosted.filter((shelf) => shelf.first), own[0], ...hosted.filter((shelf) => !shelf.first), ...own.slice(1)];
   // Shelves while it loads, as it will be -- the Library's grid skeleton
   // it showed was another tab's shape (owner, 2026-10-03).
   if ((backendStatus === "loading" && !catalog) || carryOn === null) return <RecommendedSkeleton />;

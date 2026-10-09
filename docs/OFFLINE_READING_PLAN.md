@@ -704,6 +704,59 @@ How:
   place; an offline save older than a newer online one does not regress it.
 - **Panel hold:** as in Phase 3, no proof against production before the
   owner's panel review is done.
+- **Built 2026-10-08** (iPad simulator; stopping the scratch server stood
+  in for losing the connection):
+  - The shared reader is unchanged. Offline lives in the app's transport
+    (`src/reader-app/transport.js`, rules in `offline-reading.js`; node
+    tests for both). That replaced the `progressSink` / `pageSource` hooks
+    planned above.
+    - When a request fails to connect or times out (15 s), the app marks
+      itself offline once and answers from the device. It asks
+      `/api/v1/app` again on return to the foreground and every 30 s.
+    - A downloaded comic's page list and panels come from its row and
+      `panels.json`. A page without panels is read whole.
+    - The library's reading answers (catalog, shelves, reading list, arcs,
+      a run's reading) are kept per profile in `u<id>/answers/`, so the
+      Comics page and drawers draw offline, as they last were.
+    - Saves go into `u<id>/progress-queue.json`: one row per comic, the
+      latest wins. A live save carries no `at`; the row is dropped once the
+      server has it. On reconnecting, launching and foregrounding, the
+      queue is replayed oldest first, with `at`.
+    - Replay handling: a 404 drops the row and the download (as hidden); a
+      401 stops and keeps it.
+    - A waiting save and the server's place: the later one wins.
+    - Covers fetched before show from the device's cache.
+  - Opening offline: the last signed-in status (`session.json`, no token)
+    opens the app as that profile instead of at the connect screen. When
+    the server answers again, the app asks `/auth/status` again.
+  - UI, from the web's patterns:
+    - the `backend-banner` under each page's header ("You're offline — N
+      downloaded issues are ready"), through a host `notice` slot;
+    - a Downloaded shelf on Recommended (first while offline, after Keep
+      Reading otherwise), through a host `shelves()` slot;
+    - "Downloaded" as a green mark beside an issue's number, where a locked
+      correction's shield sits (host `issueMark`), so it shows whatever
+      reading's badge says;
+    - offline, a comic that isn't downloaded says "This issue isn't
+      downloaded. Connect to read it.";
+    - switching profiles and signing out say they need the server.
+  - An error boundary shows what went wrong, with Start again, instead of
+    a blank window. It found the one bug of the session: two kept answers
+    (`/reading/lists` and `/reading-lists`) shared a file name.
+  - Proven:
+    - Downloaded as a reader profile; stopped the server and relaunched
+      cold. The app opened as that profile with the banner and the
+      Downloaded shelf first, and the library and covers came from the
+      device.
+    - Read the downloaded comic and turned a page: the save waited in the
+      queue with its time.
+    - Started the server: within one probe the queue emptied, and the
+      server held the place timed when it was made offline. The banner
+      went, and Keep Reading showed it.
+    - Offline, a comic that isn't downloaded gives the message above.
+  - Not yet: airplane mode, lock and unlock, and rotation on a real iPad
+    (Developer Program). Kept answers are the last seen, so a run's drawer
+    offline can show its state from before (correct once back online).
 
 ### Phase 5 — profiles offline and the rating re-check (1 session)
 - `profiles.json` is refreshed from `GET /api/v1/profiles` whenever the

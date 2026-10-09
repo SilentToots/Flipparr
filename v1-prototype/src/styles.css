@@ -1787,7 +1787,9 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .issue-run-group article > div { display: grid; gap: var(--space-4); }
 .issue-run-group article > div strong { font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-4); }
 .issue-run-group article > div small { color: var(--muted-weak); font-size: var(--text-xs); }
-.issue-local-lock { flex: 0 0 auto; color: var(--green); }
+/* Beside an issue's number: a locked correction's shield, and the host's
+   mark (Flipparr View's "downloaded"). */
+.issue-local-lock, .issue-host-mark { flex: 0 0 auto; color: var(--green); }
 .issue-row-actions { display: flex !important; grid-auto-flow: column; align-items: center; justify-content: end; gap: var(--space-6) !important; }
 .issue-row-actions button { width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-8); background: transparent; color: var(--muted-weak); display: grid; place-items: center; cursor: pointer; }
 /* Read is violet and filled; the pencil stays quiet. Reading a comic and

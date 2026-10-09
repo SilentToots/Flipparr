@@ -3,7 +3,7 @@
 // see what to read, read it, keep some on the device. Search, requests and
 // everything an admin manages stay in the web app.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, BookOpen, DownloadSimple, ShieldCheck, Trash, X } from "@phosphor-icons/react";
+import { ArrowClockwise, BookOpen, DownloadSimple, ShieldCheck, Trash, WifiSlash, X } from "@phosphor-icons/react";
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import { SettingsCard } from "../components/SettingsControls.jsx";
@@ -33,6 +33,7 @@ import { createImageSource } from "./images.js";
 import { Downloads } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
 import { CAP_CHOICES, formatBytes, progressOf, usageBytes } from "./offline.js";
+import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
 async function openClient(origin) {
   const keys = tokenKeys(origin);
@@ -62,14 +63,36 @@ export function ReaderApp() {
   // sign-in).
   const lostRef = useRef(() => {});
   const settledViewer = useRef(null);
+  // Every shared screen's requests, with reading offline built in
+  // (transport.js). `online` is its word on whether the server answers.
+  const transportRef = useRef(null);
+  const [online, setOnline] = useState(true);
   async function enter(origin) {
     const next = await openClient(origin);
-    setApiTransport((path, options) => next.api(path, options).catch((error) => {
-      if (error.status === 401) lostRef.current();
-      throw error;
-    }));
+    const transport = createAppTransport({ client: next, store: deviceStore, onLost: () => lostRef.current() });
+    transportRef.current = transport;
+    transport.subscribe((now) => {
+      setOnline(now);
+      // Back: where this device stands may have changed while it was away
+      // (a new PIN, devices forgotten), so the server is asked again.
+      if (now) next.api("/api/v1/auth/status").then((answer) => settle(next, answer), () => {});
+    });
+    setApiTransport(transport.transport);
     setClient(next);
-    await settle(next, await next.api("/api/v1/auth/status"));
+    let answer;
+    try {
+      answer = await transport.transport("/api/v1/auth/status");
+    } catch (error) {
+      // No connection: open as the profile last signed in here, from what
+      // the device kept, rather than at the connect screen. (Resuming is not
+      // switching: a PIN guards switching, as on the web.)
+      const saved = error.network ? await deviceStore.session() : null;
+      if (!saved?.viewer) throw error;
+      transport.setOffline();
+      await settle(next, saved, { offline: true });
+      return;
+    }
+    await settle(next, answer);
   }
 
   // Signed in or not, from /auth/status. Signed in, the profile's own
@@ -77,7 +100,7 @@ export function ReaderApp() {
   // reader settings are taken from the server, where they follow the person
   // between devices -- without this the reader fell back to a phone's
   // default, panel view on.
-  async function settle(next, answer) {
+  async function settle(next, answer, { offline = false } = {}) {
     // Another profile, or none, sees nothing answered for the last one: the
     // shared screens draw from api.js's last answers while they ask again,
     // and a reader must never glimpse a library above their rating limit (as
@@ -87,8 +110,16 @@ export function ReaderApp() {
     setStatus(answer);
     // A shared device (the admin signed in on it) that has not been told
     // who is reading asks, as the web app's picker does.
-    if (!(answer.authenticated && answer.viewer)) { setPhase(answer.household && answer.profileRequired ? "picker" : "signin"); return; }
+    if (!(answer.authenticated && answer.viewer)) {
+      transportRef.current?.attach(null);
+      deviceStore.forgetSession().catch(() => {});
+      setPhase(answer.household && answer.profileRequired ? "picker" : "signin");
+      return;
+    }
     setStorageProfile(answer.viewer.id);
+    transportRef.current?.attach(answer.viewer.id);
+    if (offline) { setPhase("ready"); return; }
+    deviceStore.saveSession(answer).catch(() => {});
     try {
       const me = await next.api("/api/v1/me");
       const prefs = me?.prefs || {};
@@ -139,6 +170,19 @@ export function ReaderApp() {
     await lostRef.current();
   }, [client]);
 
+  // Coming back to the foreground: send what waited, or ask whether the
+  // server is back; and while offline, ask every half minute.
+  useEffect(() => {
+    const transport = transportRef.current;
+    if (!transport || phase !== "ready") return undefined;
+    const check = () => (transport.online ? transport.replay() : transport.probe());
+    const onVisible = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(() => { if (!transport.online) transport.probe(); }, PROBE_EVERY_MS);
+    check();
+    return () => { document.removeEventListener("visibilitychange", onVisible); window.clearInterval(timer); };
+  }, [phase, client]);
+
   if (phase === "starting") return <div className="login-shell"><LoadingIndicator size="lg" label="Starting" /></div>;
   if (phase === "connect") {
     return <ConnectScreen error={error} onConnected={async (origin) => {
@@ -160,7 +204,8 @@ export function ReaderApp() {
       setPhase("connect");
     }} />;
   }
-  return <Library key={status.viewer.id} client={client} status={status} onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} />;
+  return <Library key={status.viewer.id} client={client} status={status} online={online} transport={transportRef.current}
+    onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} />;
 }
 
 // Signed in: the web app's own Comics page, drawers and reader (Phase 3b,
@@ -174,15 +219,22 @@ const NAV = [
   { id: "downloads", label: "Downloads", icon: DownloadsNavIcon },
 ];
 
-function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
+function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSignOut }) {
   const viewer = status.viewer;
   const [toastElement, showToast] = useToast();
-  const downloads = useMemo(() => new Downloads({ client, profileId: viewer.id }), [client, viewer.id]);
+  // Made here, and handed to the transport before any screen asks for a
+  // page, so a downloaded comic is answered from the device offline.
+  const downloads = useMemo(() => {
+    const made = new Downloads({ client, profileId: viewer.id });
+    transport?.useDownloads(made);
+    return made;
+  }, [client, viewer.id, transport]);
   useEffect(() => () => downloads.stop(), [downloads]);
   const downloadVersion = useDownloadVersion(downloads);
   const pageSource = useMemo(() => createImageSource(client, viewer.id, {
     local: (url) => downloads.localPage(url),
     localUri: (path) => deviceStore.uri(path),
+    exists: (path) => deviceStore.exists(path),
   }), [client, viewer.id, downloads]);
 
   const [catalog, setCatalog] = useState(() => lastAnswer("/api/v1/catalog"));
@@ -194,8 +246,9 @@ function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
       setBackendStatus("live");
       return data;
     } catch (error) {
-      // A 401 is the shell's to answer (sign in again, or "Who's reading?").
-      if (error.status !== 401) showToast(error.message || "Flipparr could not be reached", "error");
+      // A 401 is the shell's to answer (sign in again, or "Who's reading?");
+      // unreachable is the offline banner's to say.
+      if (error.status !== 401 && !error.network) showToast(error.message || "Flipparr could not be reached", "error");
       return null;
     }
   }, [showToast]);
@@ -223,6 +276,16 @@ function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
   const { readingVersion, noteReadingChanged } = actions;
   useEffect(() => { downloads.reading = readFileId || null; }, [downloads, readFileId]);
   useEffect(() => { if (!readFileId) noteReadingChanged(); }, [readFileId, noteReadingChanged]);
+  // Back online: the library as it is now, and every place re-read.
+  const wasOnline = useRef(online);
+  useEffect(() => {
+    if (online && !wasOnline.current) { loadCatalog(); noteReadingChanged(); }
+    wasOnline.current = online;
+  }, [online, loadCatalog, noteReadingChanged]);
+  const readyRows = downloads.rows.filter((row) => row.state === "ready");
+  // Offline, said under each page's header (the web's backend-banner).
+  const offlineNotice = online ? null : <div className="backend-banner" role="status"><WifiSlash size={19} weight="fill" aria-hidden="true" />
+    {`You’re offline — ${readyRows.length ? `${readyRows.length} downloaded ${readyRows.length === 1 ? "issue is" : "issues are"} ready.` : "nothing is downloaded on this device."}`}</div>;
 
   // As the web app's readComic: opening a comic puts the drawers away.
   async function readComic(target) {
@@ -235,14 +298,21 @@ function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
       setRunCollectionId(null);
       setFinishedFileId("");
     };
+    // Offline, only what is on the device can be opened.
+    const openable = (fileId) => {
+      if (online || downloads.row(fileId)?.state === "ready") { open(fileId); return; }
+      showToast("This issue isn't downloaded. Connect to read it.", "error");
+    };
     const known = typeof target === "string" ? target : target?.id;
-    if (known) { open(known); return; }
+    if (known) { openable(known); return; }
     if (!target?.runId && !target?.listId) return;
     try {
       const fileId = await readableFile(target);
-      if (fileId) open(fileId);
+      if (fileId) openable(fileId);
       else showToast("There is nothing here that can be read yet.", "error");
-    } catch (error) { showToast(error.message, "error"); }
+    } catch (error) {
+      showToast(error.network ? "This issue isn't downloaded. Connect to read it." : error.message, "error");
+    }
   }
   function openSeries(series) {
     setSeriesParentCollection(null);
@@ -278,22 +348,43 @@ function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
       return [{ key: "offline", label: "Download", icon: <DownloadSimple size={16} />,
         onSelect: () => downloads.download(issue.fileId).then(() => showToast(`Downloading ${label}`), (error) => showToast(error.message || "Could not download", "error")) }];
     },
+    notice: offlineNotice,
     issueBadge: (issue) => {
       const row = issue.fileId ? downloads.row(issue.fileId) : null;
-      if (row?.state === "ready") return { label: "Downloaded", tone: "reading-read" };
       if (row?.state === "downloading") return { label: `Downloading ${Math.round(progressOf(row) * 100)}%`, tone: "reading-progress" };
       return null;
     },
+    // Downloaded: a mark beside the number, as a locked issue's shield is,
+    // so it shows whatever the badge says about reading.
+    issueMark: (issue) => (issue.fileId && downloads.row(issue.fileId)?.state === "ready"
+      ? <DownloadSimple className="issue-host-mark" size={12} weight="bold" aria-label="Downloaded" /> : null),
+    // Downloaded, on Recommended: first while offline, when it is what can
+    // be read; after Keep Reading otherwise.
+    shelves: () => (readyRows.length ? [{
+      id: "downloaded", title: "Downloaded", first: !online,
+      items: readyRows.map((row) => ({
+        key: `downloaded-${row.fileId}`, fileId: row.fileId, resume: true,
+        title: `${row.seriesTitle}${row.issueNumber ? ` #${row.issueNumber}` : ""}`,
+        note: row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread",
+        cover: row.pageUrls?.[0],
+      })),
+    }] : []),
   // downloadVersion: the menu and badge follow the downloads as they change.
-  }), [pageSource, downloads, downloadVersion, showToast]);
+  }), [pageSource, downloads, downloadVersion, showToast, online]);
 
+  // Switching profiles and signing out need the server: offline they say so
+  // (an offline PIN is Phase 5's).
+  const needsServer = useCallback((action) => (...args) => {
+    if (!online) { showToast("Connect to Flipparr to switch profiles or sign out.", "error"); return undefined; }
+    return action(...args);
+  }, [online, showToast]);
   const header = useMemo(() => ({
     profile: {
       household: Boolean(status.household), method: status.method, version: 0,
       // Your own page is the web app's; here your tile just closes the menu.
-      onOpenProfile: () => {}, onSwitchTo, onPicker: onSwitch, onSignOut,
+      onOpenProfile: () => {}, onSwitchTo: needsServer(onSwitchTo), onPicker: needsServer(onSwitch), onSignOut: needsServer(onSignOut),
     },
-  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut]);
+  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut, needsServer]);
 
   const series = catalog?.series || [];
   const runCollections = useMemo(() => collectionCards(catalog?.runCollections, catalog?.series || []), [catalog?.runCollections, catalog?.series]);
@@ -316,7 +407,7 @@ function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
           tab={libraryTab} onTab={(next) => { setLibraryTab(next); window.scrollTo({ top: 0 }); }} onNavigate={setPage}
           onOpenSeries={openSeries} onOpenCollection={() => {}} onOpenList={openList} onRead={readComic}
           readingVersion={readingVersion} listsVersion={0} catalog={catalog} backendStatus={backendStatus} /> : null}
-        {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} /> : null}
+        {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} notice={offlineNotice} /> : null}
       </div></main>
       {readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection}
         startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || finished}
@@ -501,7 +592,7 @@ function useDownloadRows(downloads) {
 // pattern: a page header over cards. Storage first (how much is used, and
 // the limit -- the comics finished longest ago make way), then each download,
 // which opens to read, with a way to take it off the device.
-function DownloadsPage({ downloads, onRead }) {
+function DownloadsPage({ downloads, onRead, notice = null }) {
   const rows = useDownloadRows(downloads);
   const [cap, setCap] = useState(null);
   useEffect(() => { deviceStore.capBytes().then(setCap); }, []);
@@ -509,6 +600,7 @@ function DownloadsPage({ downloads, onRead }) {
   return <>
     <PageHeader title="Downloads" />
     <div className="settings-pane">
+      {notice}
       <SettingsCard title="On this device">
         <p className="settings-card-lead">{formatBytes(used)} of {cap ? formatBytes(cap) : "…"} used. When a download would go over the limit, the comics you finished longest ago make way; one you are still reading never does.</p>
         {cap ? <GlassSelect label="Keep up to" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
