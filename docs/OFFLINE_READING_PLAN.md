@@ -807,6 +807,16 @@ How:
   disappears.
 
 ### Phase 6 — run and arc downloads, eviction (1–2 sessions)
+- **The owner, testing on his iPad (2026-10-09):** Download is buried
+  under an issue's "…" menu, and even knowing it was there he could
+  hardly find it. Download must be visible at the top level of every
+  drawer:
+  - "Download" for the whole run, collection or story arc, in the drawer's
+    own actions (beside Read, or with the bookmark in its top bar);
+  - a download control on each issue that can be seen without opening a
+    menu.
+  The design follows the drawer pattern shared with the web. Its slots
+  are what the app adds; the web shows none of them.
 - Run view: "Download" beside Read → a sheet "Download the next N unread"
   (stepper 1–20, default 5) from `/series/{id}/reading` + `nextUnread
   (issues, n)`; shows Σ `bytesEstimate`, what fits and what would be
