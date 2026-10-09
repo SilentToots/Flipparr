@@ -263,9 +263,18 @@ export function ReaderApp() {
   async function forgetServer() {
     const kept = (await deviceStore.allDownloads()).length;
     if (kept && !window.confirm(`Connecting to another server removes ${kept} downloaded ${kept === 1 ? "comic" : "comics"} and every saved place still waiting to be sent from this device.`)) return;
-    try { await client?.api("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch { /* ended or unreachable */ }
+    // Ends the session on the server when it answers quickly; unreachable,
+    // the device forgets it all the same (the token lapses on its own).
+    const transport = transportRef.current;
+    if (transport && transport.online !== false) {
+      try {
+        await transport.transport("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 5000 });
+      } catch { /* ended or unreachable */ }
+    }
     if (client) {
       const keys = tokenKeys(client.origin);
+      for (const profile of await deviceStore.profiles()) await secureStore.remove(keys.profileSession(profile.id));
+      await secureStore.remove(keys.pinSalt);
       await secureStore.remove(keys.session);
       await secureStore.remove(keys.device);
     }
@@ -310,7 +319,7 @@ export function ReaderApp() {
     }} onForget={forgetServer} />;
   }
   return <Library key={status.viewer.id} client={client} status={status} online={online} transport={transportRef.current}
-    onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} />;
+    onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} onForgetServer={forgetServer} />;
 }
 
 // Signed in: the web app's own Comics page, drawers and reader (Phase 3b,
@@ -324,7 +333,7 @@ const NAV = [
   { id: "downloads", label: "Downloads", icon: DownloadsNavIcon },
 ];
 
-function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSignOut }) {
+function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSignOut, onForgetServer }) {
   const viewer = status.viewer;
   const [toastElement, showToast] = useToast();
   // Made here, and handed to the transport before any screen asks for a
@@ -517,7 +526,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // Signing out needs the server: offline it says so. Switching profiles
   // works offline, for profiles used on this iPad before (PickerScreen).
   const needsServer = useCallback((action) => (...args) => {
-    if (!online) { showToast("Connect to Flipparr to sign out.", "error"); return undefined; }
+    if (!online) { showToast("Connect to Flipparr to sign out, or choose Use another server.", "error"); return undefined; }
     return action(...args);
   }, [online, showToast]);
   const header = useMemo(() => ({
@@ -525,8 +534,10 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       household: Boolean(status.household), method: status.method, version: 0,
       // Your own page is the web app's; here your tile just closes the menu.
       onOpenProfile: () => {}, onSwitchTo, onPicker: onSwitch, onSignOut: needsServer(onSignOut),
+      // Works with no connection, and on a server with sign-in off.
+      onUseAnotherServer: onForgetServer,
     },
-  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut, needsServer]);
+  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut, needsServer, onForgetServer]);
 
   const series = catalog?.series || [];
   const runCollections = useMemo(() => collectionCards(catalog?.runCollections, catalog?.series || []), [catalog?.runCollections, catalog?.series]);

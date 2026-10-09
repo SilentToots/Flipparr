@@ -8,7 +8,7 @@ import { SheetGrabber, slideSheetAway, useDialog, usePhoneWidth } from "../dialo
 import { bellCount, timeAgo } from "../notifications.js";
 import { isAdmin } from "../profiles.js";
 import { useViewer } from "../viewer.js";
-import { ArrowCounterClockwise, CheckCircle, SignOut, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowsLeftRight, CheckCircle, SignOut, WarningCircle, X } from "@phosphor-icons/react";
 
 // What every page header needs from the app and no page owns: the bell's
 // notifications, and the app's search -- the current query and where a
@@ -440,10 +440,15 @@ export function ProfileMenu({ onClose }) {
       onChoose={(profile) => go(profile.id === viewer.id ? actions.onOpenProfile : () => actions.onSwitchTo(profile))()}
       onAdd={isAdmin(viewer) && others !== null && actions.onAdd ? go(actions.onAdd) : null} />
     {others === null ? <p className="profile-menu-loading"><LoadingSpinner size={16} /></p> : null}
-    {actions.method === "forms" ? <div className="profile-menu-actions">
-      <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onSignOut)}>
+    {actions.method === "forms" || actions.onUseAnotherServer ? <div className="profile-menu-actions">
+      {actions.method === "forms" ? <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onSignOut)}>
         <SignOut size={18} /><span>Sign out</span>
-      </button>
+      </button> : null}
+      {/* Flipparr View's: leave this server for another, which works with
+          no connection and with sign-in off. The web gives none. */}
+      {actions.onUseAnotherServer ? <button type="button" className="profile-menu-item profile-menu-quiet" onClick={go(actions.onUseAnotherServer)}>
+        <ArrowsLeftRight size={18} /><span>Use another server</span>
+      </button> : null}
     </div> : null}
   </>;
   if (phone) {
