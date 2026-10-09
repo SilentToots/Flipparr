@@ -647,8 +647,6 @@ How:
     - The Downloads page, and reading a downloaded comic with no page
       requests.
 - **Not yet, and open:**
-  - The phone layout in the app. The simulator was turned to landscape,
-    and the web's phone layout is already captured at 375 px.
   - Drawer history: in the app, Back does not close a drawer. The web
     ties drawers to the address (`historyStep`). The app's drawers close
     with their X and the swipe.
@@ -670,6 +668,9 @@ How:
     Switching profiles forgets the last profile's cached answers.
   - Provider covers are fetched without the household's token (`images.js`
     sends it only to the server's own origin).
+  - The phone (iPhone 18 Pro simulator, portrait): the web's phone layout,
+    with a tab bar that hugs Comics and Downloads, centred; the drawer as a
+    full page clear of the Dynamic Island.
 
 ### Phase 4 — reading offline and progress replay (1–2 sessions)
 - Offline identity: with no connection the app has no `/auth/status`. The

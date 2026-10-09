@@ -2511,6 +2511,11 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
     .sidebar nav { background: var(--mobile-nav-bg); -webkit-backdrop-filter: blur(var(--mobile-nav-blur)); backdrop-filter: blur(var(--mobile-nav-blur)); }
   }
   .sidebar .nav-item { flex: 1 1 0; width: auto; min-width: 64px; height: auto; max-height: none; padding: var(--space-6) var(--space-8); border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); color: var(--color-neutral-0); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; }
+  /* A bar with only a couple of destinations (Flipparr View: Comics and
+     Downloads) hugs them, centred, as iOS's floating tab bar does, rather
+     than pushing them to its two ends. The web's always has more. */
+  .sidebar nav:not(:has(.nav-item ~ .nav-item ~ .nav-item)) { width: fit-content; justify-content: center; }
+  .sidebar nav:not(:has(.nav-item ~ .nav-item ~ .nav-item)) .nav-item { flex: 0 0 auto; width: 120px; }
   /* The file's 24px icons with 12px labels on a 16px line: a 56px-tall tab,
      about 83px wide, which is also the size of the glass that marks the open
      one. (28px icons in a 64px tab, tried on 2026-09-16, read as too big.) */
