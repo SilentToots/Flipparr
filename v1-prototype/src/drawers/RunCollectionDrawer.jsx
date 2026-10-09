@@ -38,7 +38,9 @@ export function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_
     setError("");
     try { await work(); return true; } catch (failure) { setError(failure.message); return false; } finally { setBusy(""); }
   }
-  const canEdit = Boolean(card.editable);
+  // Its maker's to change -- where the host saves: Flipparr View passes no
+  // onSave, so it reads a collection and changes nothing.
+  const canEdit = Boolean(card.editable) && Boolean(onSave);
   const runs = card.runs || [];
   const runIds = runs.map((run) => String(run.id));
   const runsById = useMemo(() => Object.fromEntries(runs.map((run) => [String(run.id), run])), [runs]);
@@ -102,17 +104,17 @@ export function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_
     {/* Arrange is a card here that steps into its own screen, as Edit's
         pickers do, rather than a long list over the rest (2026-10-02). */}
     {canEdit && runs.length ? <GroupArrangeCard noun="run" count={runs.length} sortMode={card.sortMode || "custom"} sortOptions={COLLECTION_SORTS} onOpen={() => setEdit("arrange")} /> : null}
-    <GroupShareCard group={card} noun="collection" busy={busy}
+    {onSave ? <GroupShareCard group={card} noun="collection" busy={busy}
       onShare={(on) => act("share", () => onSave(card.id, { shared: on }))}
-      onStopSharing={() => act("share", () => onSave(card.id, { shared: false }))} />
+      onStopSharing={() => act("share", () => onSave(card.id, { shared: false }))} /> : null}
     <GroupReadingCards noun="collection" firstLabel="the first run’s first issue"
       onRestart={firstFile && onRead ? () => onRead({ id: firstFile.id, fromStart: true }) : null}
       allRead={allRead} anyRead={anyRead} busy={busy}
       onMark={runs.length && onMarkRuns ? (read) => act("mark", () => onMarkRuns(runs, read)) : null} />
-    {card.manageable ? <GroupDeleteCard group={card} noun="collection" name={card.name} onDelete={() => act("delete", () => onDelete(card.id))} /> : null}
+    {card.manageable && onDelete ? <GroupDeleteCard group={card} noun="collection" name={card.name} onDelete={() => act("delete", () => onDelete(card.id))} /> : null}
   </div>;
   const emptyRuns = <div className="drawer-empty"><CollectionIcon size={26} /><strong>Nothing in it yet</strong><span>{canEdit ? "Add runs from your library to start it." : "Runs added to it show up here."}</span>
-    {canEdit ? <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button> : null}</div>;
+    {canEdit && onAddRuns ? <button type="button" className="ghost-button" onClick={onAddRuns}><Plus size={17} /> Add runs</button> : null}</div>;
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
     <aside className={`series-drawer comic-drawer${toned.className}${edit !== null ? " comic-drawer--editing" : ""} ${closing ? "closing" : ""}`} style={toned.style} ref={dialogRef}
       role="dialog" aria-modal="true" aria-labelledby="run-collection-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -173,7 +175,7 @@ export function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_
             {card.summary ? <RunSynopsis text={card.summary} heading="About" /> : null}
             {runs.length ? <div className="comic-drawer-shelf-group">
               <ComicDrawerRow title="Runs" count={runs.length}>{runs.map((run) => <ComicDrawerRunCard run={run} onOpen={(item) => onOpenSeries(item)} key={run.id} />)}</ComicDrawerRow>
-              {canEdit ? <button type="button" className="glass-button comic-drawer-add" onClick={onAddRuns}><Plus size={18} /> Add runs</button> : null}
+              {canEdit && onAddRuns ? <button type="button" className="glass-button comic-drawer-add" onClick={onAddRuns}><Plus size={18} /> Add runs</button> : null}
             </div> : emptyRuns}
           </> : null}
           {tab === "runs" ? (runs.length ? <SeriesList series={runs} view="grid" reading={reading || {}} onOpen={onOpenSeries} onRead={onRead} /> : emptyRuns) : null}

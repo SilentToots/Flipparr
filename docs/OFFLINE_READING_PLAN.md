@@ -486,7 +486,9 @@ from the list below:
 - Not yet: the finish drawer (`onFinish` does nothing in the app; the last
   page marks the comic read); the reader settings drawer is reachable but
   untested in the app; `reader-app.css` is not read by
-  the design-system test (its exceptions are noted in the file). Phase 3's
+  the design-system test (its exceptions are noted in the file; the file
+  went in Phase 3b, when the app took the web's own screens and styles).
+  Phase 3's
   background-download delegate must drop `Authorization` on a redirect to
   another host, so the token reaching only the household's server holds by
   construction (fetchToFile today relies on Flipparr never redirecting).
@@ -654,6 +656,20 @@ How:
   - Making arcs and collections in the app.
   - A downloaded issue that is in progress still shows "In progress", not
     "Downloaded". Reading state wins the badge.
+  - The reader API contract test (`READER_API_VERSION`) pins the fields of
+    the Phase 2 screens. The shared cards and drawers now read the full
+    catalog and series shape, so a server field change could break the app
+    without bumping the version. Widen the pinned fields, or pin the
+    catalog shape the shared screens read.
+- **Also checked, after review:**
+  - The collection and story-arc drawers in the app: Restart and Reading
+    state only. Edit, Arrange, Add, Share, Export and Delete are web tools:
+    a collection's need onSave, and an arc's need `groupTools`.
+  - As a reader profile (switched from the header's menu): only that
+    profile's place is shown, and there is no Request follow or Edit.
+    Switching profiles forgets the last profile's cached answers.
+  - Provider covers are fetched without the household's token (`images.js`
+    sends it only to the server's own origin).
 
 ### Phase 4 — reading offline and progress replay (1–2 sessions)
 - Offline identity: with no connection the app has no `/auth/status`. The

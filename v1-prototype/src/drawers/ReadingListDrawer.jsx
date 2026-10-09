@@ -27,7 +27,7 @@ import { useManages, useImageSrc } from "../host.js";
 // delete it.
 export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, readingList = EMPTY_ENTRIES, onToggleReadingList, onClose, onRead, onOpenSeries, onMarkIssue, onRateIssue, onEditIssue,
   onPullMissing, onRequestMissing, onRefresh, onDelete, onMark, onChanged, onAddToArc, onGone, onAddIssues,
-  onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace }) {
+  onOpenWorkbench, onOpenCover, onOpenContents, onChangeRun, onReplace, groupTools = true }) {
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   useSwipeToDismiss(dialogRef, requestClose);
@@ -52,8 +52,11 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
   // Whose the arc is decides who changes it: the household's are the
   // admin's, a hand-made one its maker's. The admin may also take a shared
   // one back out of the household's view, or delete it.
-  const canEdit = Boolean(data?.editable);
-  const canManage = Boolean(data?.manageable);
+  // `groupTools`: the arc's own tools -- Edit, Arrange, Share, Export and
+  // Delete -- where the host offers them. Flipparr View reads arcs and
+  // changes nothing, as with collections (it passes groupTools={false}).
+  const canEdit = Boolean(data?.editable) && groupTools;
+  const canManage = Boolean(data?.manageable) && groupTools && Boolean(onDelete);
   const ownerLine = arcOwnerLine(data || list);
   const context = { listId: list.id, listName: name };
   // Until the detail is in, the card the drawer opened from already knows
@@ -188,15 +191,15 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
     <div className="drawer-facts"><span><strong>{items.length}</strong>Issues</span><span><strong>{data?.owned ?? 0}</strong>In library</span><span><strong>{missingCount}</strong>Missing</span><span><strong>{seriesNames.length}</strong>Series</span></div>
     {canEdit && items.length ? <GroupArrangeCard noun="issue" count={items.length} sortMode={data?.sortMode || "custom"} sortOptions={ARC_SORTS} onOpen={() => setEdit("arrange")} /> : null}
     {origin ? <p className="settings-card-note drawer-provenance">{origin}</p> : null}
-    <GroupShareCard group={data} noun="story arc" busy={busy}
+    {groupTools ? <GroupShareCard group={data} noun="story arc" busy={busy}
       onShare={(on) => run("share", () => patch({ shared: on }))}
       onStopSharing={async () => {
         // Unshared, it is no longer the admin's to see: the drawer closes
         // rather than reloading into "not in the library".
         setBusy("share");
         try { await patch({ shared: false }); onGone?.(`${name} is no longer shared with the household`); } catch (failure) { setBusy(""); window.alert(failure.message); }
-      }} />
-    <GroupReadingCards noun="story arc" firstLabel="the arc\u2019s first comic"
+      }} /> : null}
+    <GroupReadingCards noun="story arc" firstLabel="the arc’s first comic"
       onRestart={restartFile && onRead ? () => onRead({ id: restartFile.fileId, fromStart: true, ...context }) : null}
       allRead={allRead} anyRead={started} busy={busy}
       onMark={readableFiles.length && onMark ? (read) => run("mark", () => onMark(list, read)) : null} />
@@ -204,11 +207,11 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
       <div><strong>{pullLabel}</strong><p>{admin ? "Asks for every issue of the arc that is not here and not on its way, one pull per series." : "Asks the admin for the issues of this arc that are not here yet."}</p></div>
       <button type="button" onClick={pullMissing} disabled={busy === "pull"}><CloudArrowDown size={16} /> {admin ? "Pull" : "Request"}</button>
     </section> : null}
-    {admin && (data?.providerArcId || data?.sourceUrl) ? <section className="advanced-card">
+    {admin && onRefresh && (data?.providerArcId || data?.sourceUrl) ? <section className="advanced-card">
       <div><strong>{data.providerArcId ? "Refresh from Metron" : "Refresh from its link"}</strong><p>Takes new details and any new issues, slotted in after their neighbours. Your order is kept, and nothing you took out comes back.</p></div>
       <button type="button" onClick={() => run("refresh", () => onRefresh(data))} disabled={busy === "refresh"}>{busy === "refresh" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} Refresh</button>
     </section> : null}
-    {items.length ? <section className="advanced-card">
+    {items.length && groupTools ? <section className="advanced-card">
       <div><strong>Export as a reading list</strong><p>A CBL file in this order, with each issue&rsquo;s catalog ids, that Kavita, Komga and Mylar import. JSON is the Comic Reading List standard.</p></div>
       <div className="advanced-card-actions">
         <button type="button" onClick={() => downloadFrom(`/api/v1/reading-lists/${list.id}/export?format=cbl`)}><DownloadSimple size={16} /> CBL</button>

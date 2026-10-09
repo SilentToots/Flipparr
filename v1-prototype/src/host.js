@@ -63,5 +63,6 @@ export function useImageSrc() {
  */
 export function useManages() {
   const viewer = useViewer();
-  return isAdmin(viewer) && useContext(Host)?.canManage !== false;
+  const host = useContext(Host);
+  return isAdmin(viewer) && host?.canManage !== false;
 }

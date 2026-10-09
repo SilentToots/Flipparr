@@ -19,7 +19,7 @@ import { CollectedEditionsContext } from "../editions.js";
 import { Nav } from "../frame/Nav.jsx";
 import { HeaderContext, PageHeader } from "../frame/header.jsx";
 import { Host } from "../host.js";
-import { apiRequest, lastAnswer, setApiTransport } from "../api.js";
+import { apiRequest, forgetAnswers, lastAnswer, setApiTransport } from "../api.js";
 import { readableFile, readingContext, useReadingActions } from "../library/actions.js";
 import { LibraryView, logicalCatalogSeries } from "../library/LibraryView.jsx";
 import { isLocked, profileStorage, setStorageProfile } from "../profiles.js";
@@ -61,6 +61,7 @@ export function ReaderApp() {
   // device back to where it now stands (the picker on a shared one, else
   // sign-in).
   const lostRef = useRef(() => {});
+  const settledViewer = useRef(null);
   async function enter(origin) {
     const next = await openClient(origin);
     setApiTransport((path, options) => next.api(path, options).catch((error) => {
@@ -77,6 +78,12 @@ export function ReaderApp() {
   // between devices -- without this the reader fell back to a phone's
   // default, panel view on.
   async function settle(next, answer) {
+    // Another profile, or none, sees nothing answered for the last one: the
+    // shared screens draw from api.js's last answers while they ask again,
+    // and a reader must never glimpse a library above their rating limit (as
+    // the web app's enterProfile forgets them).
+    const viewerId = answer.viewer?.id ?? null;
+    if (viewerId !== settledViewer.current) { forgetAnswers(); settledViewer.current = viewerId; }
     setStatus(answer);
     // A shared device (the admin signed in on it) that has not been told
     // who is reading asks, as the web app's picker does.
@@ -327,7 +334,7 @@ function Library({ client, status, onSwitch, onSwitchTo, onSignOut }) {
         parentCollection={seriesParentCollection} onBack={() => setSelectedSeries(null)}
         onClose={() => { setSelectedSeries(null); setSeriesParentCollection(null); }}
         onMarkIssue={actions.markIssueRead} onMarkRun={actions.markRunRead} onRate={actions.rateSeries} onRateIssue={actions.rateIssue} /> : null}
-      {selectedList ? <ReadingListDrawer key={selectedList.id} list={selectedList} allSeries={series} {...reading}
+      {selectedList ? <ReadingListDrawer key={selectedList.id} list={selectedList} allSeries={series} {...reading} groupTools={false}
         onClose={() => setSelectedList(null)} onMarkIssue={actions.markIssueRead} onRateIssue={actions.rateIssue}
         onMark={actions.markListRead} onGone={(message) => { setSelectedList(null); if (message) showToast(message); }} /> : null}
       {toastElement}
