@@ -19,6 +19,7 @@ import { AlphaRail } from "./AlphaRail.jsx";
 import { RecommendedView } from "./RecommendedView.jsx";
 import { ArcGrid, CollectionCard, Ownership, SeriesList, publicationState } from "./cards.jsx";
 import { ArrowRight, BookOpen, Books, Check, CheckCircle, FolderOpen, ListBullets, ListNumbers, MagnifyingGlass, Plus, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
+import { useManages } from "../host.js";
 
 // Shown only when the server cannot be reached ("Showing sample comics"):
 // invented titles and publishers, and no cover art -- Flipparr ships no
@@ -154,15 +155,16 @@ export function CollectionsTab({ cards, reading, onOpen, onRead, onNew, tools = 
   // Collections come with the catalog: until it is in, the grid is loading,
   // not empty -- a refresh showed "No collections yet" for seconds.
   if (loading) return <LibraryLoadingSkeleton view="grid" />;
-  // Any profile makes its own (schema 63), as with story arcs.
+  // Any profile makes its own (schema 63), as with story arcs -- where the
+  // host makes them: Flipparr View passes no onNew.
   return <>
-    {tools && cards.length ? <div className="arc-tools arc-tools--single">
+    {tools && onNew && cards.length ? <div className="arc-tools arc-tools--single">
       <button type="button" className="glass-button" onClick={onNew}><Plus size={17} /> New collection</button>
     </div> : null}
     {cards.length ? <div className="series-grid">{cards.map((card, index) => <CollectionCard card={card} index={index} reading={reading} onOpen={onOpen} onRead={onRead} key={card.key} />)}</div>
       : <div className="empty-state"><CollectionIcon size={35} /><strong>No collections yet</strong>
-        <span>A collection is runs that belong together, read in your order: a character&rsquo;s essentials, a creator&rsquo;s work. Make one, then add runs.</span>
-        <button className="ghost-button" onClick={onNew}><Plus size={17} /> New collection</button></div>}
+        <span>A collection is runs that belong together, read in your order: a character&rsquo;s essentials, a creator&rsquo;s work.{onNew ? " Make one, then add runs." : ""}</span>
+        {onNew ? <button className="ghost-button" onClick={onNew}><Plus size={17} /> New collection</button> : null}</div>}
   </>;
 }
 
@@ -174,15 +176,17 @@ export function ArcsTab({ lists, reading, loading, admin, onOpen, onRead, onNew,
   if (loading) return <LibraryLoadingSkeleton view="grid" />;
   // A phone fits each button to a column of the grid below it, in words
   // short enough for a 320px screen's column; the tab already says "story".
-  const tools = <>
-    <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onNew}><Plus size={17} /> <span className="label-wide">New story arc</span><span className="label-narrow">New arc</span></button>
-    {admin ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> <span className="label-wide">Import a story arc</span><span className="label-narrow">Import arc</span></button> : null}
-  </>;
+  // Where the host makes them: Flipparr View passes no onNew or onImport.
+  const importing = admin && Boolean(onImport);
+  const tools = onNew || importing ? <>
+    {onNew ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onNew}><Plus size={17} /> <span className="label-wide">New story arc</span><span className="label-narrow">New arc</span></button> : null}
+    {importing ? <button type="button" className={lists.length ? "glass-button" : "ghost-button"} onClick={onImport}><UploadSimple size={17} /> <span className="label-wide">Import a story arc</span><span className="label-narrow">Import arc</span></button> : null}
+  </> : null;
   return lists.length ? <>
-    {showTools ? <div className={`arc-tools ${admin ? "arc-tools--pair" : "arc-tools--single"}`}>{tools}</div> : null}
+    {showTools && tools ? <div className={`arc-tools ${onNew && importing ? "arc-tools--pair" : "arc-tools--single"}`}>{tools}</div> : null}
     <ArcGrid lists={lists} reading={reading} onOpen={onOpen} onRead={onRead} />
   </> : <div className="empty-state"><ListNumbers size={35} weight="duotone" /><strong>No story arcs yet</strong>
-    <span>A story arc is a reading order across runs: a crossover, or your own path through a character. Make one, then add issues from any run.</span>
+    <span>A story arc is a reading order across runs: a crossover, or your own path through a character.{onNew ? " Make one, then add issues from any run." : ""}</span>
     {tools}</div>;
 }
 
@@ -358,7 +362,7 @@ export const COMICS_TABS = [
 
 export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onToggleReadingList, onNavigate, onOpenSeries, onOpenCollection, onOpenRunCollection, onNewRunCollection, onOpenList, onImportList, onNewArc, onSearch, onRead, readingVersion, listsVersion = 0, catalog, backendStatus }) {
   const libraryViewer = useViewer();
-  const libraryAdmin = isAdmin(libraryViewer);
+  const libraryAdmin = useManages();
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
   // The page's own search: it narrows what you already have, as you type.
   const [query, setQuery] = useState("");
@@ -453,10 +457,10 @@ export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onTo
   ><ViewOptionsIcon />{viewCustomized ? <span className="library-view-dot" aria-hidden="true" /> : null}</button> : null;
   const tabActions = phone ? null
     : showLibrary ? viewButton
-    : tab === "collections" && collectionItems.length ? <TabAction icon={<Plus size={17} />} label="New collection" onClick={onNewRunCollection} />
+    : tab === "collections" && collectionItems.length && onNewRunCollection ? <TabAction icon={<Plus size={17} />} label="New collection" onClick={onNewRunCollection} />
     : tab === "arcs" && (readingLists?.length || 0) > 0 ? <>
-      <TabAction icon={<Plus size={17} />} label="New story arc" onClick={onNewArc} />
-      {libraryAdmin ? <TabAction icon={<UploadSimple size={17} />} label="Import a story arc" onClick={onImportList} /> : null}
+      {onNewArc ? <TabAction icon={<Plus size={17} />} label="New story arc" onClick={onNewArc} /> : null}
+      {libraryAdmin && onImportList ? <TabAction icon={<UploadSimple size={17} />} label="Import a story arc" onClick={onImportList} /> : null}
     </> : null;
   return (
     <>
@@ -466,7 +470,7 @@ export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onTo
         title="Comics"
         tools={<><SegmentedTabs label="Comics" items={COMICS_TABS} value={tab || "recommended"}
           onChange={(next) => onTab?.(next === "recommended" ? "" : next)} />
-          {tabActions ? <div className="page-header-tab-actions" data-count={tab === "arcs" && libraryAdmin ? 2 : 1}>{tabActions}</div> : null}</>}
+          {tabActions ? <div className="page-header-tab-actions" data-count={tab === "arcs" && onNewArc && libraryAdmin && onImportList ? 2 : 1}>{tabActions}</div> : null}</>}
         actions={phone ? viewButton : null}
       />
       {/* One button on every width (owner, 2026-09-29): view, sort and the

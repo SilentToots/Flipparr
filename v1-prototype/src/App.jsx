@@ -54,6 +54,8 @@ import {
 import { ReaderView } from "./reader/ReaderView.jsx";
 import { historyStep } from "./history-step.js";
 import { Host } from "./host.js";
+import { useToast } from "./components/Toast.jsx";
+import { readableFile, useReadingActions } from "./library/actions.js";
 import { apiRequest, forgetAnswers, lastAnswer, rememberAnswer } from "./api.js";
 import { listCard, communityListLine, arcMatches, arcYears, groupOwnerLine, groupsToAddTo, issuesInRange } from "./reading-list.js";
 import { jobHasFailed } from "./nav-counts.js";
@@ -73,7 +75,7 @@ import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, c
 import { ratingRows, limitedProfiles, filterRatingRows, publisherChoices, ratingNote, ratingOutcome } from "./rating-review.js";
 
 import { collectionCards, collectionMatches } from "./run-collections.js";
-import { EMPTY_ENTRIES, withEntry } from "./reading-list-tab.js";
+import { EMPTY_ENTRIES } from "./reading-list-tab.js";
 
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, READER_PULL_LABELS, shelfState, splitSearchResults,
@@ -5043,35 +5045,6 @@ export function App() {
   // falsifies this in the same render that swaps the reader's file, so there
   // is no clean-up effect to get wrong.
   const [finishedFileId, setFinishedFileId] = useState("");
-  const [readingVersion, setReadingVersion] = useState(0);
-  const noteReadingChanged = useCallback(() => setReadingVersion((version) => version + 1), []);
-  // Marking read or unread: this profile's own place, so it needs no
-  // confirmation; the drawer and the grid re-read their state after.
-  async function markIssueRead(issue, read) {
-    try {
-      await apiRequest(`/api/v1/files/${issue.fileId}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ read }) });
-      noteReadingChanged();
-    } catch (error) {
-      showToast(error.message, "error");
-    }
-  }
-  // Every run of a collection read or unread, then one word about it.
-  async function markRunsRead(runs, read) {
-    for (const run of runs) {
-      await apiRequest(`/api/v1/series/${run.id}/reading`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ read }) });
-    }
-    noteReadingChanged();
-    showToast(`${runs.length} run${runs.length === 1 ? "" : "s"} marked as ${read ? "read" : "unread"}`);
-  }
-  async function markRunRead(series, read) {
-    try {
-      await apiRequest(`/api/v1/series/${series.id}/reading`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ read }) });
-      noteReadingChanged();
-      showToast(read ? `${series.title} marked as read` : `${series.title} marked as unread`);
-    } catch (error) {
-      showToast(error.message, "error");
-    }
-  }
   /**
    * Open a comic. Callers know different things: the Continue shelf and the
    * issue rows know a file, a card in the grid may only know a run that has
@@ -5097,21 +5070,18 @@ export function App() {
       // drawer would otherwise be left standing over page one.
       setFinishedFileId("");
     };
-    const fileId = typeof target === "string" ? target : target?.id;
-    if (fileId) { open(fileId); return; }
-    // A run, or a story arc, resolves to the comic its Read button means.
-    const path = target?.runId ? `/api/v1/series/${target.runId}/reading`
-      : target?.listId ? `/api/v1/reading-lists/${target.listId}` : null;
-    if (!path) return;
+    const known = typeof target === "string" ? target : target?.id;
+    if (known) { open(known); return; }
+    if (!target?.runId && !target?.listId) return;
     try {
-      const data = await apiRequest(path);
-      if (data?.resume?.fileId) open(data.resume.fileId);
+      const fileId = await readableFile(target);
+      if (fileId) open(fileId);
       else showToast("There is nothing here that can be read yet.", "error");
     } catch (error) { showToast(error.message, "error"); }
   }, []);
   useEffect(() => {
     if (readFileId) return;
-    setReadingVersion((version) => version + 1);
+    noteReadingChanged();
   }, [readFileId]);
   // Bumped when the address no longer names an open drawer, so the drawer can
   // play its exit animation rather than being removed from the tree outright.
@@ -5137,7 +5107,6 @@ export function App() {
   const [collectionAdd, setCollectionAdd] = useState(null);
   const [collectionPickerId, setCollectionPickerId] = useState(null);
   // This profile's reading list: what it added to come back to.
-  const [readingListEntries, setReadingListEntries] = useState(null);
   // The saved story arc whose drawer is open, and a counter the Comics grid
   // reloads its arcs on when one is saved, refreshed or deleted.
   const [selectedList, setSelectedList] = useState(null);
@@ -5156,10 +5125,7 @@ export function App() {
   const [collectionTab, setCollectionTab] = useState("overview");
   const [scanState, setScanState] = useState("idle");
   const [scanProgress, setScanProgress] = useState(null);
-  const [toast, setToast] = useState("");
-  const [toastTone, setToastTone] = useState("success");
-  const [toastLeaving, setToastLeaving] = useState(false);
-  const toastTimers = useRef([]);
+  const [toastElement, showToast] = useToast();
   const [reviewFocus, setReviewFocus] = useState(null);
   const [requestFocus, setRequestFocus] = useState(null);
   // The bell's news, kept per profile on the server, with what the profile
@@ -5172,6 +5138,15 @@ export function App() {
   const catalogEtag = useRef(null);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
+  // This profile's own reading (library/actions.js, shared with Flipparr View).
+  const {
+    readingVersion, noteReadingChanged, readingList: readingListEntries,
+    toggleReadingList, markIssueRead, markRunRead, markRunsRead, rateSeries, rateIssue,
+  } = useReadingActions({
+    notify: showToast, viewerId: authStatus?.viewer?.id ?? null, ready: Boolean(authStatus),
+    // A rating changes the catalog's run; the open drawer is shown it.
+    afterRating: async () => refreshOpenSeries((await loadCatalog())?.series?.find((item) => item.id === selectedSeries?.id)),
+  });
   // The picker, opened over the app (Switch profile), and the Add sheet.
   const [picker, setPicker] = useState(null);
   const [addingProfile, setAddingProfile] = useState(false);
@@ -5457,29 +5432,6 @@ export function App() {
     loadCatalog();
   }
   // Fetched per profile: switching profiles is switching lists.
-  useEffect(() => {
-    if (!authStatus) return undefined;
-    let live = true;
-    setReadingListEntries(null);
-    apiRequest("/api/v1/me/reading-list")
-      .then((data) => { if (live) setReadingListEntries(data); })
-      .catch(() => { if (live) setReadingListEntries(EMPTY_ENTRIES); });
-    return () => { live = false; };
-  }, [authStatus?.viewer?.id, Boolean(authStatus)]);
-  async function toggleReadingList(kind, id, on) {
-    const before = readingListEntries;
-    setReadingListEntries((current) => withEntry(current, kind, id, on));
-    try {
-      const saved = await apiRequest(`/api/v1/me/reading-list/${kind}/${id}`, on
-        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
-        : { method: "DELETE" });
-      setReadingListEntries(saved);
-      showToast(on ? "Added to your reading list" : "Taken off your reading list");
-    } catch (error) {
-      setReadingListEntries(before);
-      showToast(error.message, "error");
-    }
-  }
   // An imported reading list opens as its story arc, the count of what is
   // here said once (not for one imported before).
   function listImported(result) {
@@ -5645,20 +5597,6 @@ export function App() {
     setSelectedSeries(null);
     setSeriesParentCollection(null);
     setSelectedCollection(refreshed);
-  }
-  // A new message replaces the one showing, and restarts its time; the last
-  // 300ms play its exit rather than cutting it off.
-  // `tone` is "success" (a green check) or "error" (a red warning): a failed
-  // action said with a check read as though it had worked.
-  function showToast(message, tone = "success") {
-    toastTimers.current.forEach((timer) => window.clearTimeout(timer));
-    setToast(message);
-    setToastTone(tone);
-    setToastLeaving(false);
-    toastTimers.current = [
-      window.setTimeout(() => setToastLeaving(true), 2900),
-      window.setTimeout(() => { setToast(""); setToastLeaving(false); }, 3200),
-    ];
   }
   async function loadAuthStatus() {
     try {
@@ -6379,26 +6317,6 @@ export function App() {
    * because the route sets both, and sending the run's current one leaves it
    * where it is.
    */
-  /** Your rating for a run or one of its issues; null takes it back. */
-  async function rateSeries(series, rating) {
-    await saveRating(`/api/v1/series/${series.id}/rating`, rating, series.title);
-  }
-  async function rateIssue(issue, rating) {
-    await saveRating(`/api/v1/issues/${issue.id}/rating`, rating,
-      `${issue.contextLabel || "Issue"} #${issue.number}`);
-  }
-  async function saveRating(path, rating, subject) {
-    try {
-      await apiRequest(path, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating }),
-      });
-      const data = await loadCatalog();
-      const refreshed = data?.series?.find((item) => item.id === selectedSeries?.id);
-      refreshOpenSeries(refreshed);
-      showToast(rating ? `${subject} rated ${rating} star${rating === 1 ? "" : "s"}` : `Rating removed from ${subject}`);
-    } catch (error) { showToast(error.message, "error"); }
-  }
   async function setSeriesAgeRating(series, rating) {
     try {
       await apiRequest(`/api/v1/series/${series.id}/age-rating`, {
@@ -6899,5 +6817,5 @@ export function App() {
   }} /> : null}{newArcOpen ? <NewGroupModal kind="arc" onClose={() => setNewArcOpen(false)} onCreate={createStoryArc} /> : null}{issuePickerList ? <ArcIssuePickerModal list={issuePickerList} series={visibleSeries} onClose={() => setIssuePickerList(null)}
     onAdded={() => setListsVersion((version) => version + 1)} /> : null}{selectedList ? <ReadingListDrawer onAddToArc={addIssueToArc} onGone={arcGone} onAddIssues={(list) => setIssuePickerList({ id: list.id, name: list.name })} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={selectedList.id} list={selectedList} allSeries={visibleSeries} readingVersion={readingVersion + listsVersion} onClose={() => setSelectedList(null)} onRead={readComic} onOpenSeries={openSeries} onMarkIssue={markIssueRead} onRateIssue={rateIssue} onEditIssue={openIssueWorkbench} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRefresh={refreshReadingList} onDelete={deleteReadingList} onMark={markListRead} onChanged={() => setListsVersion((version) => version + 1)} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onReplace={openReplacementRequest} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{profileSheet ? <ProfileSheet onClose={() => setProfileSheet(false)} onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
       onClose={() => setPicker(null)} canAdd={isAdmin(authStatus?.viewer)} onAdd={() => setAddingProfile(true)} /> : null}{addingProfile ? <AddProfileSheet onClose={() => setAddingProfile(false)}
-      onAdded={() => { setAddingProfile(false); setProfilesVersion((value) => value + 1); showToast("Profile added"); }} /> : null}{toast ? <div className={`toast toast--${toastTone}${toastLeaving ? " leaving" : ""}`} role={toastTone === "error" ? "alert" : "status"} key={toast}>{toastTone === "error" ? <WarningCircle size={20} weight="fill" /> : <CheckCircle size={20} weight="fill" />} {toast}</div> : null}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider></Host.Provider>;
+      onAdded={() => { setAddingProfile(false); setProfilesVersion((value) => value + 1); showToast("Profile added"); }} /> : null}{toastElement}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider></Host.Provider>;
 }
