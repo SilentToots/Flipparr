@@ -74,7 +74,7 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # Sign-in itself.
     (frozenset({"GET"}), r"/healthz", PUBLIC),
     (frozenset({"GET"}), r"/api/v1/auth/status", PUBLIC),
-    # Flipparr Reader asks this before signing in, to know it found a
+    # Flipparr View asks this before signing in, to know it found a
     # Flipparr and which reader API it speaks.
     (frozenset({"GET"}), r"/api/v1/app", PUBLIC),
     (frozenset({"POST"}), r"/api/v1/auth/login", PUBLIC),
@@ -136,7 +136,7 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"GET"}), r"/api/v1/reading/lists", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/files/(\d+)/progress", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/pages", READER),
-    # Flipparr Reader: what to download for a comic, and whether the
+    # Flipparr View: what to download for a comic, and whether the
     # downloads on a device are still good.
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/offline", READER),
     (frozenset({"POST"}), r"/api/v1/offline/check", READER),

@@ -1497,7 +1497,7 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS page_vision_answers_page
                     ON page_vision_answers(file_id, page_member, id);
-                -- What Flipparr Reader downloaded for offline reading
+                -- What Flipparr View downloaded for offline reading
                 -- (schema 68): which profile, on which device (a random id
                 -- the app keeps in the Keychain), which comic, when, and when
                 -- and why it left the device. The device knows its own; this
@@ -4019,7 +4019,7 @@ class CatalogStore:
         disagree about the way a counter would be.
 
         `at` is when the reader was on that page, for a save that arrives late:
-        Flipparr Reader replays what was read offline when it reconnects. Such
+        Flipparr View replays what was read offline when it reconnects. Such
         a save is kept only if nothing newer is stored, and is stored as of
         `at`; a save without `at` is now and always wins, as before. Times are
         compared as instants, not strings (`_utc_now` omits a zero fraction).
@@ -5126,7 +5126,7 @@ class CatalogStore:
         return "rtl" if row["format"] == "manga" else "ltr"
 
     def file_offline_context(self, file_id: int) -> dict[str, Any]:
-        """What Flipparr Reader keeps beside a downloaded comic's pages, so it
+        """What Flipparr View keeps beside a downloaded comic's pages, so it
         can be listed and opened with no connection: its filename and its run.
         A file with no run still downloads; `run` is None."""
         with self._connect() as connection:

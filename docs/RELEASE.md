@@ -159,14 +159,14 @@ You lose manual corrections, aliases and request history — not files.
 replaced is kept, so corrections can be measured; a page fingerprint on
 every panel row, so a hand-made fix follows its page;
 `page_vision_answers`, what a page-reading connector said about each page;
-and `offline_downloads`, what Flipparr Reader keeps on each device, kept
+and `offline_downloads`, what Flipparr View keeps on each device, kept
 after it leaves with when and why).
 Upgrading from 0.1.0
 keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
 0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer
 catalog.
 
-- The server side of Flipparr Reader, the coming iPad and iPhone app
+- The server side of Flipparr View, the coming iPad and iPhone app
   (`docs/OFFLINE_READING_PLAN.md`, Phase 0). The app sends
   `Flipparr-Client: app` and carries its session and device tokens in
   headers, not cookies. `GET /api/v1/app` names the server and its reader

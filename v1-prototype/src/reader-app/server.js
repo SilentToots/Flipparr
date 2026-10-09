@@ -1,4 +1,4 @@
-// Flipparr Reader's way to the household's server.
+// Flipparr View's way to the household's server.
 //
 // The app runs from its own origin (capacitor://localhost), where the web
 // app's cookie session cannot work, so it carries the server's signed tokens
@@ -106,10 +106,10 @@ export async function checkServer(origin, fetchImpl = globalThis.fetch) {
     answer = null;
   }
   if (!response.ok || !answer || answer.name !== "Flipparr") {
-    throw requestError("That address is not a Flipparr server, or it is older than Flipparr Reader needs");
+    throw requestError("That address is not a Flipparr server, or it is older than Flipparr View needs");
   }
   if (Number(answer.apiVersion) > READER_API_VERSION) {
-    throw requestError("This server is newer than this app. Update Flipparr Reader to read from it.");
+    throw requestError("This server is newer than this app. Update Flipparr View to read from it.");
   }
   return answer;
 }

@@ -1,4 +1,4 @@
-// Flipparr Reader's own native plugin (MIT, like the rest of Flipparr), so the
+// Flipparr View's own native plugin (MIT, like the rest of Flipparr), so the
 // app needs no third-party plugin for what only the platform can do:
 //
 // - the Keychain, for the server's address and its sign-in tokens

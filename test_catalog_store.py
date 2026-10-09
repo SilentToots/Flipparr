@@ -4221,7 +4221,7 @@ class ReadingProgressTests(LibraryFixture):
             self.assertIsNone(store.reading_progress(first, user_id=ADMIN_USER_ID))
 
     def test_a_late_save_is_kept_only_when_nothing_newer_is_stored(self):
-        """Flipparr Reader replays what was read offline when it reconnects:
+        """Flipparr View replays what was read offline when it reconnects:
         a page reached on the flight must not undo the page reached since on
         the web, and the late save is stored as of when it was made."""
         with tempfile.TemporaryDirectory() as folder:
@@ -4251,7 +4251,7 @@ class ReadingProgressTests(LibraryFixture):
             self.assertEqual(store.set_reading_progress(third, 2, 24, "sig-a", user_id=ADMIN_USER_ID, at=older)["page"], 2)
 
     def test_a_download_is_kept_until_it_leaves_the_device_and_then_kept_as_gone(self):
-        """Flipparr Reader's downloads (schema 68): one row while the comic is
+        """Flipparr View's downloads (schema 68): one row while the comic is
         on a device; leaving keeps the row, with when and why."""
         with tempfile.TemporaryDirectory() as folder:
             store = self._three_files(Path(folder))

@@ -1,5 +1,5 @@
 // The reader: a comic, full screen, its settings drawer and the panel editor.
-// A module of its own so the web app and Flipparr Reader (the iPad and iPhone
+// A module of its own so the web app and Flipparr View (the iPad and iPhone
 // app, docs/OFFLINE_READING_PLAN.md) draw the same reader from one source. It
 // reaches the server and learns what the viewer may do through its host
 // (../host.js), never through the web app's own state.

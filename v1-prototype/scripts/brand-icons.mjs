@@ -21,7 +21,7 @@
 //                          rounded tile so it reads on either theme.
 //   favicon.ico            the same 32px tile in the container old browsers
 //                          and some crawlers still ask for at /favicon.ico.
-//   Flipparr Reader (ios/App/App/Assets.xcassets):
+//   Flipparr View (ios/App/App/Assets.xcassets):
 //   AppIcon-512@2x.png     the app's one 1024px icon. Opaque and square: iOS
 //                          masks it, and App Store Connect refuses alpha.
 //   splash-2732x2732*.png  the launch screen: the mark small on black, drawn

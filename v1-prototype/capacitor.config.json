@@ -1,6 +1,6 @@
 {
   "appId": "com.silenttoots.flipparr.view",
-  "appName": "Flipparr Reader",
+  "appName": "Flipparr View",
   "webDir": "dist/reader-app",
   "ios": {
     "contentInset": "never"

@@ -610,11 +610,11 @@ _SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 # A reader signing in on their own phone never gets one.
 _DEVICE_COOKIE = "flipparr_device"
 _DEVICE_TTL_SECONDS = 365 * 24 * 60 * 60
-# Flipparr Reader (the iPad and iPhone app) sends `Flipparr-Client: app` and
+# Flipparr View (the iPad and iPhone app) sends `Flipparr-Client: app` and
 # its session as `Authorization: Bearer <token>`; a shared device's token
 # travels in `Flipparr-Device` both ways, and a session issued or ended on a
 # request comes back in `Flipparr-Session`. See `_resolve_identity`.
-# The reader API Flipparr Reader relies on (the fields pinned by
+# The reader API Flipparr View relies on (the fields pinned by
 # `ReaderAppContractTests`). Raised only for a change an older app cannot
 # read; additions keep it.
 READER_API_VERSION = 1
@@ -14027,7 +14027,7 @@ OFFLINE_PAGE_BYTES_GUESS = 380_000
 
 
 def file_offline_manifest(file_id: int) -> dict[str, Any]:
-    """Everything Flipparr Reader needs to download a comic and read it with
+    """Everything Flipparr View needs to download a comic and read it with
     no connection: its pages at reading size, their signature (a replaced
     file is a new download), a size estimate, and its run."""
     store = catalog_store()
@@ -14089,7 +14089,7 @@ OFFLINE_CHECK_MAX = 500
 
 
 def offline_device(value: Any) -> str:
-    """A Flipparr Reader install's id: the random string it keeps in the
+    """A Flipparr View install's id: the random string it keeps in the
     Keychain. Letters, digits and dashes, 8 to 64 of them."""
     device = str(value or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", device):
@@ -18053,7 +18053,7 @@ class Handler(BaseHTTPRequestHandler):
         config = load_auth_config()
         store = _profiles_store()
         viewer = None
-        # Flipparr Reader, the iPad and iPhone app, runs from its own origin
+        # Flipparr View, the iPad and iPhone app, runs from its own origin
         # (`capacitor://localhost`), where the browser neither sends this
         # site's cookies nor lets a cookie be set. It carries the same signed
         # tokens in headers instead, and is answered in headers
@@ -18328,7 +18328,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_json({"error": "Your profile can't do that", "reason": "admin_only"}, 403)
                 return
-            # Flipparr Reader's requests come from its own origin by design.
+            # Flipparr View's requests come from its own origin by design.
             # The check guards cookies, and an app request reads none: what it
             # carries are tokens a page cannot attach on its own, and its
             # `Flipparr-Client` header makes a browser ask first (a CORS
@@ -18399,7 +18399,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/app":
             # Reachable unauthenticated, like /healthz (which already shows the
-            # build): Flipparr Reader's connect screen checks that the address
+            # build): Flipparr View's connect screen checks that the address
             # is a Flipparr and that it speaks a reader API the app knows.
             self.send_json({"name": "Flipparr", "apiVersion": READER_API_VERSION, "version": APP_VERSION,
                             "build": APP_BUILD, "authMethod": load_auth_config()["method"]})
@@ -19004,7 +19004,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             return
         if parsed_url.path in ("/api/v1/offline/downloads", "/api/v1/offline/downloads/remove"):
-            # Flipparr Reader telling the server what it keeps (schema 68). The
+            # Flipparr View telling the server what it keeps (schema 68). The
             # file comes in the body, so a new download is put to the rating
             # gate here; a removal is always accepted, since leaving a device
             # is never something to refuse.
@@ -19833,7 +19833,7 @@ class Handler(BaseHTTPRequestHandler):
             file_id = int(file_progress_post.group(1))
             page = payload.get("page")
             try:
-                # Flipparr Reader's saves carry when they were made, so one
+                # Flipparr View's saves carry when they were made, so one
                 # replayed after a flight cannot undo a later one.
                 at = reading_time(payload.get("at"))
                 if "read" in payload:

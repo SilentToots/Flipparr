@@ -62,6 +62,6 @@ test("only a Flipparr this build can read from is accepted", async () => {
   assert.equal(ok.authMethod, "forms");
   await assert.rejects(checkServer("https://f.example", async () => answer(200, { name: "Something else" })), /not a Flipparr/);
   await assert.rejects(checkServer("https://f.example", async () => answer(404, {})), /not a Flipparr/);
-  await assert.rejects(checkServer("https://f.example", async () => answer(200, { name: "Flipparr", apiVersion: READER_API_VERSION + 1 })), /Update Flipparr Reader/);
+  await assert.rejects(checkServer("https://f.example", async () => answer(200, { name: "Flipparr", apiVersion: READER_API_VERSION + 1 })), /Update Flipparr View/);
   await assert.rejects(checkServer("https://f.example", async () => { throw new TypeError("x"); }), /Nothing answered/);
 });

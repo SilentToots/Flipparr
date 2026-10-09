@@ -1324,7 +1324,7 @@ class HttpContractTests(unittest.TestCase):
             self.assertFalse(cleared.json()["stale"], "cleared on purpose is not stale")
 
     def test_a_late_save_never_undoes_a_newer_one(self):
-        """Flipparr Reader sends `at` with every save and replays the ones
+        """Flipparr View sends `at` with every save and replays the ones
         made offline when it reconnects."""
         with tempfile.TemporaryDirectory() as folder:
             comic = Path(folder) / "late.cbz"
@@ -2204,7 +2204,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         self.assertEqual((by_admin.status, by_admin.json()["lock"]), (200, "pin"))
 
     def app_call(self, method, path, payload=None, token=None, device=None, headers=None):
-        """A request as Flipparr Reader makes it: its own origin, tokens in headers."""
+        """A request as Flipparr View makes it: its own origin, tokens in headers."""
         body = json.dumps(payload).encode() if payload is not None else (b"{}" if method != "GET" else None)
         sent = {"Flipparr-Client": "app", "Origin": "capacitor://localhost", **(headers or {})}
         if token:
@@ -2286,7 +2286,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
             manifest = self.call("GET", f"/api/v1/files/{file_id}/offline", cookies=admin)
         self.assertEqual(manifest.status, 200, manifest.body)
         body = manifest.json()
-        # The fields Flipparr Reader reads (reader API 1): add to these, never take away.
+        # The fields Flipparr View reads (reader API 1): add to these, never take away.
         self.assertEqual(set(body), {"fileId", "fileSignature", "pageCount", "bytesEstimate", "filename", "run", "kind",
                                      "issueNumber", "volumeNumber", "readingDirection", "pages"})
         self.assertEqual((body["pageCount"], body["filename"], body["run"]["title"], body["issueNumber"]),
