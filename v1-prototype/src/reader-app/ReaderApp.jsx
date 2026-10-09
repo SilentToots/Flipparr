@@ -32,6 +32,8 @@ import { ViewerContext } from "../viewer.js";
 import { checkServer, createClient, serverOrigin } from "./server.js";
 import { secureStore, tokenKeys } from "./secure-store.js";
 import { createImageSource } from "./images.js";
+import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
+import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
 import { CAP_CHOICES, formatBytes, progressOf, usageBytes } from "./offline.js";
@@ -39,6 +41,37 @@ import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
 /** How long a launch's background check of the session waits for the server. */
 const LAUNCH_CHECK_MS = 5000;
+
+/** This install's salt for PINs kept on the device, made the first time. */
+async function pinSalt(origin) {
+  const key = tokenKeys(origin).pinSalt;
+  let salt = await secureStore.get(key);
+  if (!salt) { salt = newPinSalt(); await secureStore.set(key, salt); }
+  return salt;
+}
+
+/**
+ * A profile the server has just signed in here, kept so it can be switched
+ * back to offline (offline-profiles.js): its session token and who it is.
+ */
+async function rememberProfile(origin, answer) {
+  const keys = tokenKeys(origin);
+  const token = await secureStore.get(keys.session);
+  if (token) await secureStore.set(keys.profileSession(answer.viewer.id), token);
+  await deviceStore.saveProfileStatus(answer.viewer.id, answer);
+}
+
+/**
+ * A shared iPad the admin has forgotten ("forget shared devices"): the
+ * sessions kept for switching offline, and the profiles list, go, so no
+ * profile can be opened here without Flipparr again. Downloads stay, each
+ * profile's own, and are checked against the server when it next signs in.
+ */
+async function forgetProfiles(origin) {
+  const keys = tokenKeys(origin);
+  for (const profile of await deviceStore.profiles()) await secureStore.remove(keys.profileSession(profile.id));
+  await deviceStore.saveProfiles([]);
+}
 
 async function openClient(origin) {
   const keys = tokenKeys(origin);
@@ -68,6 +101,9 @@ export function ReaderApp() {
   // sign-in).
   const lostRef = useRef(() => {});
   const settledViewer = useRef(null);
+  // Whether this device was shared when last told: one that stops being
+  // shared was forgotten by the admin (forgetProfiles).
+  const wasShared = useRef(false);
   // Every shared screen's requests, with reading offline built in
   // (transport.js). `online` is its word on whether the server answers.
   const transportRef = useRef(null);
@@ -132,17 +168,21 @@ export function ReaderApp() {
     // A shared device (the admin signed in on it) that has not been told
     // who is reading asks, as the web app's picker does.
     if (!(answer.authenticated && answer.viewer)) {
+      if (wasShared.current && !answer.household) forgetProfiles(next.origin).catch(() => {});
+      wasShared.current = Boolean(answer.household);
       transportRef.current?.attach(null);
       deviceStore.forgetSession().catch(() => {});
       setPhase(answer.household && answer.profileRequired ? "picker" : "signin");
       return;
     }
+    wasShared.current = Boolean(answer.household);
     setStorageProfile(answer.viewer.id);
     transportRef.current?.attach(answer.viewer.id);
     // From the session the device kept: open now; the server's answer, when
     // it comes, saves the session and brings the reader settings.
     if (kept) { setPhase("ready"); return; }
     deviceStore.saveSession(answer).catch(() => {});
+    rememberProfile(next.origin, answer).catch(() => {});
     try {
       const me = await next.api("/api/v1/me");
       const prefs = me?.prefs || {};
@@ -181,7 +221,8 @@ export function ReaderApp() {
   // From the header's profile menu: a profile that asks for its PIN or
   // password asks on the picker; one that does not opens at once.
   const switchTo = useCallback(async (profile) => {
-    if (isLocked(profile)) { setAsking(profile); setPhase("picker"); return; }
+    // Offline, the picker knows what this iPad can switch to without Flipparr.
+    if (isLocked(profile) || transportRef.current?.online === false) { setAsking(profile); setPhase("picker"); return; }
     try {
       await client.api("/api/v1/profiles/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: profile.id }) });
       await settle(client, await client.api("/api/v1/auth/status"));
@@ -250,7 +291,12 @@ export function ReaderApp() {
   if (phase === "picker") {
     return <PickerScreen client={client} current={status?.viewer?.id ?? null} ask={asking}
       onClose={status?.viewer ? () => { setAsking(null); setPhase("ready"); } : null}
-      onSwitched={async () => settle(client, await client.api("/api/v1/auth/status"))} onForget={forgetServer} />;
+      onSwitched={async () => settle(client, await client.api("/api/v1/auth/status"))}
+      onSwitchedOffline={async (answer) => {
+        await deviceStore.saveSession(answer);
+        setAsking(null);
+        await settle(client, answer, { kept: true });
+      }} onForget={forgetServer} />;
   }
   if (phase === "signin") {
     return <SignInScreen client={client} onSignedIn={async () => {
@@ -288,9 +334,21 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     transport?.useDownloads(made);
     return made;
   }, [client, viewer.id, transport]);
+  // Every kept comic put to the server (Phase 5): one this profile may no
+  // longer read goes from the device, and says so.
+  function checkDownloads() {
+    downloads.check().then((removed) => {
+      if (removed) showToast(`${removed} download${removed === 1 ? " was" : "s were"} removed: ${removed === 1 ? "it is" : "they are"} no longer available to this profile.`);
+    }, () => {});
+  }
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible" && transport?.online) checkDownloads(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  });
   useEffect(() => {
     // Removals that waited for the server, from the last time it was away.
-    if (online) downloads.flushRemovals().catch(() => {});
+    if (online) { downloads.flushRemovals().catch(() => {}); checkDownloads(); }
     return () => downloads.stop();
   // Once per profile's engine; reconnecting flushes below.
   }, [downloads]);
@@ -343,7 +401,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // Back online: the library as it is now, and every place re-read.
   const wasOnline = useRef(online);
   useEffect(() => {
-    if (online && !wasOnline.current) { loadCatalog(); noteReadingChanged(); downloads.flushRemovals().catch(() => {}); }
+    if (online && !wasOnline.current) { loadCatalog(); noteReadingChanged(); downloads.flushRemovals().catch(() => {}); checkDownloads(); }
     wasOnline.current = online;
   }, [online, loadCatalog, noteReadingChanged, downloads]);
   const readyRows = downloads.rows.filter((row) => row.state === "ready");
@@ -383,7 +441,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     };
     // Offline, only what is on the device can be opened.
     const openable = (fileId) => {
-      if (online || downloads.row(fileId)?.state === "ready") { open(fileId); return; }
+      if (online || ["ready", "stale"].includes(downloads.row(fileId)?.state)) { open(fileId); return; }
       showToast("This issue isn't downloaded. Connect to read it.", "error");
     };
     const known = typeof target === "string" ? target : target?.id;
@@ -421,8 +479,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       if (!issue.fileId) return [];
       const row = downloads.row(issue.fileId);
       const label = `${issue.contextLabel || "Issue"} #${issue.number}`;
-      if (row?.state === "ready" || row?.state === "downloading") {
-        return [{ key: "offline-remove", label: row.state === "ready" ? "Remove download" : "Cancel download", icon: <Trash size={16} />,
+      if (row?.state === "ready" || row?.state === "stale" || row?.state === "downloading") {
+        return [{ key: "offline-remove", label: row.state === "downloading" ? "Cancel download" : "Remove download", icon: <Trash size={16} />,
           onSelect: () => downloads.remove(issue.fileId).then(() => showToast(`${label} removed from this device`)) }];
       }
       if (row?.state === "failed") {
@@ -455,17 +513,17 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // downloadVersion: the menu and badge follow the downloads as they change.
   }), [pageSource, downloads, downloadVersion, showToast, online]);
 
-  // Switching profiles and signing out need the server: offline they say so
-  // (an offline PIN is Phase 5's).
+  // Signing out needs the server: offline it says so. Switching profiles
+  // works offline, for profiles used on this iPad before (PickerScreen).
   const needsServer = useCallback((action) => (...args) => {
-    if (!online) { showToast("Connect to Flipparr to switch profiles or sign out.", "error"); return undefined; }
+    if (!online) { showToast("Connect to Flipparr to sign out.", "error"); return undefined; }
     return action(...args);
   }, [online, showToast]);
   const header = useMemo(() => ({
     profile: {
       household: Boolean(status.household), method: status.method, version: 0,
       // Your own page is the web app's; here your tile just closes the menu.
-      onOpenProfile: () => {}, onSwitchTo: needsServer(onSwitchTo), onPicker: needsServer(onSwitch), onSignOut: needsServer(onSignOut),
+      onOpenProfile: () => {}, onSwitchTo, onPicker: onSwitch, onSignOut: needsServer(onSignOut),
     },
   }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut, needsServer]);
 
@@ -604,16 +662,45 @@ function SignInScreen({ client, onSignedIn, onForget }) {
 
 // "Who's reading?" on a shared iPad: the web app's tiles and PIN pad
 // (components/ProfileTiles.jsx). A switch is answered with the new profile's
-// session in the Flipparr-Session header, which the client keeps.
-function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForget }) {
+// session in the Flipparr-Session header, which the client keeps. With no
+// connection (Phase 5), the profiles are the ones kept on the device, and a
+// profile used on this iPad before opens with its own kept session -- its
+// PIN checked against the hash kept after the server last accepted it
+// (offline-pin.js); a password-locked profile waits for Flipparr.
+function PickerScreen({ client, current, ask = null, onClose, onSwitched, onSwitchedOffline, onForget }) {
   const [profiles, setProfiles] = useState(null);
-  const [asking, setAsking] = useState(ask);
+  const [offline, setOffline] = useState(false);
+  const [asking, setAsking] = useState(null);
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const keys = tokenKeys(client.origin);
   useEffect(() => {
-    client.api("/api/v1/profiles").then((data) => setProfiles(data.profiles || []), (err) => setError(err.message));
+    let live = true;
+    (async () => {
+      const kept = await deviceStore.profiles();
+      try {
+        const data = await client.api("/api/v1/profiles");
+        const merged = mergeProfiles(kept, data.profiles || []);
+        deviceStore.saveProfiles(merged).catch(() => {});
+        if (live) setProfiles(merged);
+      } catch (err) {
+        if (!live) return;
+        if (!err.network || !kept.length) { setError(err.message); return; }
+        setOffline(true);
+        setProfiles(kept);
+      }
+    })();
+    return () => { live = false; };
   }, [client]);
+  // A profile asked for from the header's menu, once the list says how.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!ask || asked.current || profiles === null) return;
+    asked.current = true;
+    choose(profiles.find((profile) => String(profile.id) === String(ask.id)) || ask);
+  // Once, when the list has loaded.
+  }, [profiles]);
   async function enter(profile, proof = {}) {
     setBusy(true);
     setError("");
@@ -621,6 +708,13 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForg
       await client.api("/api/v1/profiles/switch", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: profile.id, ...proof }),
       });
+      // The server took the PIN: kept hashed, so it can be checked offline.
+      if (proof.pin) {
+        try {
+          const pinHash = await hashPin(proof.pin, await pinSalt(client.origin));
+          await deviceStore.saveProfiles(withPinHash(await deviceStore.profiles(), profile.id, pinHash));
+        } catch { /* offline switching to it waits for another PIN switch */ }
+      }
       await onSwitched();
       return true;
     } catch (err) {
@@ -629,9 +723,32 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForg
       return false;
     }
   }
-  function choose(profile) {
-    if (profile.id === current) { onClose?.(); return; }
-    if (isLocked(profile)) { setAsking(profile); setSecret(""); setError(""); } else enter(profile);
+  async function enterOffline(profile, pin = null) {
+    setBusy(true);
+    setError("");
+    const token = await secureStore.get(keys.profileSession(profile.id));
+    const answer = await deviceStore.profileStatus(profile.id);
+    if (pin !== null && !(await verifyPin(pin, await pinSalt(client.origin), profile.pinHash))) {
+      setError("That PIN isn\u2019t right");
+      setBusy(false);
+      return false;
+    }
+    await client.useSession(token);
+    await onSwitchedOffline(answer);
+    return true;
+  }
+  async function choose(profile) {
+    if (String(profile.id) === String(current)) { onClose?.(); return; }
+    setError("");
+    if (offline) {
+      const signedIn = Boolean(await secureStore.get(keys.profileSession(profile.id))) && Boolean((await deviceStore.profileStatus(profile.id))?.viewer);
+      const choice = offlineChoice(profile, { signedIn });
+      if (choice.refused) { setAsking(null); setError(choice.refused); return; }
+      if (choice.ask) { setAsking(profile); return; }
+      enterOffline(profile);
+      return;
+    }
+    if (isLocked(profile)) { setAsking(profile); setSecret(""); } else enter(profile);
   }
   const back = () => { setAsking(null); setError(""); };
   return <div className="login-shell profile-picker">
@@ -642,7 +759,7 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForg
       {asking?.lock === "pin" ? <div className="profile-picker-secret">
         <ProfileAvatar profile={asking} size="lg" />
         <PinPad length={asking.pinLength} busy={busy} error={error} onCancel={back} onInput={() => setError("")}
-          onSubmit={(pin) => enter(asking, { pin })} />
+          onSubmit={(pin) => (offline ? enterOffline(asking, pin) : enter(asking, { pin }))} />
       </div> : asking ? <form className="profile-picker-secret" onSubmit={(event) => { event.preventDefault(); enter(asking, { password: secret }); }}>
         <ProfileAvatar profile={asking} size="lg" />
         <label className="form-field"><span>Password</span>
@@ -654,6 +771,7 @@ function PickerScreen({ client, current, ask = null, onClose, onSwitched, onForg
           <button className="primary-button" disabled={busy || !secret} aria-busy={busy}>{busy ? <LoadingIndicator size="sm" /> : null} Continue</button>
         </div>
       </form> : <>
+        {offline ? <p className="settings-card-lead" role="status">Offline: profiles used on this iPad before can be opened.</p> : null}
         {profiles === null && !error ? <LoadingIndicator size="md" /> : null}
         <ProfileTiles profiles={profiles || []} current={current} onChoose={choose} busy={busy} />
         {error ? <p className="login-error" role="alert">{error}</p> : null}
@@ -699,10 +817,12 @@ function DownloadsPage({ downloads, onRead, notice = null }) {
             return <div className="profile-row" key={row.fileId}>
               <span><strong>{name}</strong><small role={row.state === "failed" ? "alert" : undefined}>
                 {row.state === "ready" ? formatBytes(row.bytes)
+                  : row.state === "stale" ? "Replaced on the server since it was downloaded"
                   : row.state === "failed" ? row.error
                   : `Downloading ${row.pagesDone.length} of ${row.pageCount} pages`}
               </small></span>
-              {row.state === "ready" ? <button type="button" className="secondary-button" onClick={() => onRead(row.fileId)}><BookOpen size={16} /> Read</button> : null}
+              {row.state === "ready" || row.state === "stale" ? <button type="button" className="secondary-button" onClick={() => onRead(row.fileId)}><BookOpen size={16} /> Read</button> : null}
+              {row.state === "stale" ? <button type="button" className="secondary-button" onClick={() => downloads.redownload(row.fileId).catch(() => {})}><ArrowClockwise size={16} /> Download again</button> : null}
               {row.state === "failed" ? <button type="button" className="secondary-button" onClick={() => downloads.retry(row.fileId)}><ArrowClockwise size={16} /> Try again</button> : null}
               <button type="button" className="glass-button glass-button--icon" aria-label={`Remove ${name} from this device`} onClick={() => downloads.remove(row.fileId)}><Trash size={18} /></button>
             </div>;

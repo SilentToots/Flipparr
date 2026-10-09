@@ -21,4 +21,11 @@ export const secureStore = {
 };
 
 /** The Keychain names for one server's tokens. */
-export const tokenKeys = (origin) => ({ session: `session@${origin}`, device: `device@${origin}` });
+export const tokenKeys = (origin) => ({
+  session: `session@${origin}`,
+  device: `device@${origin}`,
+  // Each profile's own session, kept so it can be switched to offline.
+  profileSession: (profileId) => `session@${origin}#${profileId}`,
+  // The salt for PINs kept on this device (offline-pin.js).
+  pinSalt: `pinsalt@${origin}`,
+});

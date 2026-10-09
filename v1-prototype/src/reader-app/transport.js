@@ -124,9 +124,11 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
     }
   }
 
+  // A comic replaced on the server since (`stale`) is still read from the
+  // copy kept, offline, until it is downloaded again.
   function readyRow(fileId) {
     const row = downloads?.row(fileId);
-    return row && row.state === "ready" ? row : null;
+    return row && (row.state === "ready" || row.state === "stale") ? row : null;
   }
 
   async function waitingFor(fileId) {

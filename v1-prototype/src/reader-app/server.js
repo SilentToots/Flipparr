@@ -85,7 +85,16 @@ export function createClient({ origin, tokens, fetchImpl = globalThis.fetch }) {
     }
     return payload;
   }
-  return { origin, api, headers };
+  /**
+   * Carry another session from now on: a profile chosen offline, whose own
+   * token the app kept (offline-profiles.js). The server checks it when it
+   * is back.
+   */
+  async function useSession(session) {
+    tokens.session = session || "";
+    await tokens.save({ session: tokens.session, device: tokens.device });
+  }
+  return { origin, api, headers, useSession };
 }
 
 /**

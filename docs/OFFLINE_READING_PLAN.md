@@ -827,6 +827,24 @@ How:
   iPad: two profiles switched offline each see only their own downloads; the
   admin lowers a reader's rating → the reader reconnects → the download
   disappears.
+- Built 2026-10-09 (iPad QA pending):
+  - `offline-pin.js` and `offline-profiles.js` as above; the salt is a
+    Keychain item per server (`pinsalt@<origin>`), not `servers.json`.
+  - Each profile's session is kept as `session@<origin>#<id>` in the
+    Keychain with its `u<id>/status.json`; switching offline swaps the
+    token the client carries (`client.useSession`) and opens from the kept
+    status. Signing out still needs the server.
+  - Forgotten device (it stops being shared): the kept sessions and
+    `profiles.json` go. Downloads are not wiped, a change from the plan:
+    a reader's own phone also reads as "not shared", and wiping there would
+    lose their downloads on a plain session expiry; each profile's
+    downloads are put to `/offline/check` when it next signs in.
+  - `/offline/check` on launch, reconnect and foreground (`Downloads.check`):
+    `hidden`/`gone` removed with a toast, `changed` → `stale` (still read
+    offline from the copy kept, Download again in Downloads).
+  - Open: a profile's waiting changes and places are sent only when that
+    profile is next active online; sending every profile's with its kept
+    session on reconnect is a follow-up.
 
 ### Phase 6 — run and arc downloads, eviction (1–2 sessions)
 - **The owner, testing on his iPad (2026-10-09):** Download is buried

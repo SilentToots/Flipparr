@@ -10,7 +10,7 @@ const manifest = {
   pages: [0, 1].map((index) => ({ index, readUrl: `/api/v1/files/63/pages/${index}?v=sig&size=read` })),
 };
 
-function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [] } = {}) {
+function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], checkAnswers = {} } = {}) {
   const enqueued = [];
   const posted = [];
   const listeners = {};
@@ -33,12 +33,19 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [] } 
       return { 0: { segmented: true, panels: [{ x: 0 }] } };
     },
     async savePanels(profileId, fileId, panels) { saved.panels = panels; },
+    async removeComic(profileId, fileId) { saved.removed = [...(saved.removed || []), fileId]; },
+    async pendingRemovals() { return []; },
+    async savePendingRemovals() {},
   };
   const client = {
     origin: "http://server:8803",
     headers: () => ({ Authorization: "Bearer t" }),
     async api(path, options = {}) {
       if (path === "/api/v1/files/63/offline") return manifest;
+      if (path === "/api/v1/offline/check") {
+        posted.push({ path, body: JSON.parse(options.body) });
+        return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok" })) };
+      }
       posted.push({ path, method: options.method });
       return {};
     },
@@ -100,4 +107,22 @@ test("a page's failure still stops the download; a panel's 401 does too", async 
   await emit("transferFailed", { id: "3:63:p0", status: 401 });
   assert.equal(downloads.row("63").state, "failed");
   assert.match(downloads.row("63").error, /Sign in again/);
+});
+
+test("reconnecting, a comic this profile may no longer read goes; a replaced one is kept as stale", async () => {
+  const { downloadRow } = await import("../src/reader-app/offline.js");
+  const ready = (fileId) => ({ ...downloadRow({ ...manifest, fileId }), state: "ready" });
+  const { downloads, posted, saved } = setup({
+    rows: [ready("63"), ready("64"), ready("65"), { ...downloadRow({ ...manifest, fileId: "66" }) }],
+    checkAnswers: { 64: "hidden", 65: "changed" },
+  });
+  await downloads.ready;
+  assert.equal(await downloads.check(), 1);
+  const asked = posted.find((item) => item.path === "/api/v1/offline/check");
+  assert.deepEqual(asked.body.files.map((file) => file.fileId), ["63", "64", "65"], "only what is kept, not what is still coming");
+  assert.equal(downloads.row("64"), null);
+  assert.deepEqual(saved.removed, ["64"]);
+  assert.ok(posted.some((item) => item.path === "/api/v1/offline/downloads/remove"), "the server's record told why");
+  assert.equal(downloads.row("65").state, "stale");
+  assert.equal(downloads.row("63").state, "ready");
 });

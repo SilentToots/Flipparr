@@ -76,7 +76,7 @@ export class Downloads extends EventTarget {
   /** Where a page address is on this device, if its comic is downloaded. */
   localPage(url) {
     for (const row of this.rows) {
-      if (row.state !== "ready") continue;
+      if (row.state !== "ready" && row.state !== "stale") continue;
       const index = row.pageUrls.indexOf(url);
       if (index !== -1) return pagePath(this.profileId, row.fileId, index);
     }
@@ -268,6 +268,56 @@ export class Downloads extends EventTarget {
       const waiting = await this.store.pendingRemovals(this.profileId);
       await this.store.savePendingRemovals(this.profileId, waiting.filter((item) => item.fileId !== removal.fileId));
     }
+  }
+
+  /**
+   * On launching, reconnecting and coming back to the foreground (Phase 5):
+   * whether every kept comic is still this profile's to read. One the admin
+   * has put above its rating limit, or the library no longer has, goes from
+   * the device; one replaced on the server is kept, readable, as `stale`
+   * with Download again. Resolves to how many went; unreachable, to 0.
+   */
+  async check() {
+    await this.ready;
+    const kept = this.rows.filter((row) => row.state === "ready" || row.state === "stale");
+    let removed = 0;
+    let changed = false;
+    // The server takes 500 at a time.
+    for (let start = 0; start < kept.length; start += 500) {
+      let answer;
+      try {
+        answer = await this.client.api("/api/v1/offline/check", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: kept.slice(start, start + 500).map((row) => ({ fileId: row.fileId, fileSignature: row.fileSignature })) }),
+        });
+      } catch {
+        break;
+      }
+      for (const { fileId, status } of answer?.files || []) {
+        const row = this.row(fileId);
+        if (!row) continue;
+        if (status === "hidden" || status === "gone") {
+          await this.remove(fileId, status);
+          removed += 1;
+        } else if (status === "changed" && row.state === "ready") {
+          row.state = "stale";
+          changed = true;
+        } else if (status === "ok" && row.state === "stale") {
+          row.state = "ready";
+          changed = true;
+        }
+      }
+    }
+    if (changed) await this.save();
+    return removed;
+  }
+
+  /** A comic replaced on the server, downloaded again as it now is. */
+  async redownload(fileId) {
+    const row = this.row(fileId);
+    const groupKey = row?.groupKey || null;
+    await this.remove(fileId, "changed");
+    return this.download(fileId, { groupKey });
   }
 
   /** Try a failed download again from where it stopped. */

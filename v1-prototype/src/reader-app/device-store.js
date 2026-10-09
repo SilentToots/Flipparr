@@ -89,6 +89,12 @@ export const deviceStore = {
   // as its profile with no connection (no token: those stay in the Keychain).
   progressQueue: (profileId) => readJson(`u${profileId}/progress-queue.json`, []),
   saveProgressQueue: (profileId, queue) => writeJson(`u${profileId}/progress-queue.json`, queue),
+  // "Who's reading?" offline (Phase 5, offline-profiles.js): the profiles
+  // as the server last listed them, and each one's last word on who it is.
+  profiles: () => readJson("profiles.json", []),
+  saveProfiles: (profiles) => writeJson("profiles.json", profiles),
+  profileStatus: (profileId) => readJson(`u${profileId}/status.json`, null),
+  saveProfileStatus: (profileId, status) => writeJson(`u${profileId}/status.json`, status),
   // Ratings, run and arc marks, reading-list entries made offline (Phase 5,
   // offline-changes.js), waiting to be sent.
   changeQueue: (profileId) => readJson(`u${profileId}/change-queue.json`, []),
