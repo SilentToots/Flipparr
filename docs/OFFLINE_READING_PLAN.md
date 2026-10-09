@@ -968,6 +968,10 @@ How:
 - `tools/reader_app_release.sh`: `npm run ios:sync`, `xcodebuild archive`,
   upload to TestFlight with an App Store Connect API key read from the
   owner's environment (never the repo). One command per release.
+  Written 2026-10-09, not yet run. It needs an App Store Connect record for
+  `com.silenttoots.flipparr.view` and an API key (`ASC_KEY_ID`,
+  `ASC_ISSUER_ID`, `ASC_KEY_PATH`). It refuses a dirty tree, numbers the
+  build by UTC time, and writes its logs outside the repo.
 - App Review needs a server: a demo Flipparr with public-domain comics
   (e.g. Digital Comic Museum titles whose licence permits it — verify each)
   and a review account, described in the App Review notes; it is not the
