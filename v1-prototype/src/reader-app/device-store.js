@@ -5,6 +5,7 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import { secureStore } from "./secure-store.js";
 import { DEFAULT_CAP_BYTES, comicFolder } from "./offline.js";
+import { answerName } from "./offline-reading.js";
 
 const ROOT = "flipparr";
 const at = (path) => ({ path: `${ROOT}/${path}`, directory: Directory.Library });
@@ -62,6 +63,23 @@ export const deviceStore = {
   },
   async removeComic(profileId, fileId) {
     try { await Filesystem.rmdir({ ...at(comicFolder(profileId, fileId)), recursive: true }); } catch { /* already gone */ }
+  },
+  // Reading offline (Phase 4). Places saved while the server could not be
+  // reached, waiting to be sent; the reading answers last given, so the
+  // library can be browsed; and the last signed-in status, so the app opens
+  // as its profile with no connection (no token: those stay in the Keychain).
+  progressQueue: (profileId) => readJson(`u${profileId}/progress-queue.json`, []),
+  saveProgressQueue: (profileId, queue) => writeJson(`u${profileId}/progress-queue.json`, queue),
+  answer: (profileId, path) => readJson(`u${profileId}/answers/${answerName(path)}`, null),
+  saveAnswer: (profileId, path, value) => writeJson(`u${profileId}/answers/${answerName(path)}`, value),
+  session: () => readJson("session.json", null),
+  saveSession: (status) => writeJson("session.json", status),
+  async forgetSession() {
+    try { await Filesystem.deleteFile(at("session.json")); } catch { /* none kept */ }
+  },
+  /** Whether a file is here: an image fetched before, shown offline. */
+  async exists(path) {
+    try { await Filesystem.stat(at(path)); return true; } catch { return false; }
   },
   /** The absolute path of a file here, for Capacitor.convertFileSrc. */
   async uri(path) {

@@ -181,6 +181,19 @@ export class Downloads extends EventTarget {
     }).catch(() => {});
   }
 
+  /**
+   * A place saved in a downloaded comic: when it was last read, and whether
+   * it is finished, so the cap makes way for finished comics read longest ago.
+   */
+  async noteRead(fileId, { finished = false, at = new Date().toISOString() } = {}) {
+    await this.ready;
+    const row = this.row(fileId);
+    if (!row || row.state !== "ready") return;
+    row.lastReadAt = at;
+    row.finished = finished;
+    await this.save();
+  }
+
   /** Take a comic off the device, and tell the server why. */
   async remove(fileId, reason = "removed") {
     await this.native.cancel({ prefix: `${this.profileId}:${fileId}:` });

@@ -6,7 +6,8 @@
 // household's own server; a provider's cover is fetched without it.
 //
 // A page of a comic downloaded for offline reading (downloads.js) is shown
-// from its file and never fetched.
+// from its file and never fetched. With no connection, an image fetched
+// before is shown from the cache rather than not at all (Phase 4).
 //
 // Online reading keeps what it fetched in Library/flipparr/online/u<profile>,
 // one folder per profile so a page fetched for one profile is never served
@@ -43,6 +44,7 @@ export function imageName(address) {
  */
 export function createImageSource(client, profileId, {
   native = Native, toSrc = (path) => Capacitor.convertFileSrc(path), local = () => null, localUri = null,
+  exists = null,
 } = {}) {
   const folder = `online/u${profileId}`;
   const known = new Map();
@@ -56,11 +58,16 @@ export function createImageSource(client, profileId, {
     if (known.has(url)) return known.get(url);
     const absolute = new URL(url, client.origin);
     const own = absolute.origin === client.origin;
+    const cached = `${folder}/${imageName(absolute.href)}`;
     const job = native.fetchToFile({
       url: absolute.href,
-      path: `${folder}/${imageName(absolute.href)}`,
+      path: cached,
       headers: own ? client.headers() : {},
-    }).then(({ path }) => toSrc(path));
+    }).then(({ path }) => toSrc(path), async (error) => {
+      // Unreachable: the copy fetched last time, if there is one.
+      if (exists && localUri && await exists(cached)) return toSrc(await localUri(cached));
+      throw error;
+    });
     known.set(url, job);
     // A failure is not remembered: the next ask tries again.
     job.catch(() => known.delete(url));
