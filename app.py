@@ -14485,6 +14485,34 @@ def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> 
                 _PANELS_INFLIGHT.pop((int(file_id), int(index)), None)
 
 
+def stored_page_panels(file_id: int, index: int) -> dict[str, Any]:
+    """A page's panels as already kept -- a person's fix, the vision model's
+    reading, an earlier automatic one -- and nothing worked out now
+    (`?stored=only`, Flipparr View's downloads; the owner, 2026-10-09). A page
+    with none kept, or with an automatic reading of a file since changed,
+    answers `whole`: read offline as the whole page, not in quadrants."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    pages = cached_page_members(path)
+    if not 0 <= index < len(pages):
+        raise LookupError("That page is not in this comic")
+    record = store.page_panels(file_id, pages[index])
+    direction = store.file_reading_direction(file_id)
+    stale = record is not None and record["source"] in ("auto", "model", "vlm") \
+        and record["fileSignature"] != _file_signature(path)
+    if record is None or stale:
+        return {"fileId": str(file_id), "page": index, "source": None, "segmented": False, "whole": True,
+                "readingDirection": direction, "panels": []}
+    ordered = panel_finder.order_panels(record["panels"], direction) if record["segmented"] else []
+    return {
+        "fileId": str(file_id), "page": index, "source": record["source"],
+        "segmented": bool(record["segmented"]), "readingDirection": direction,
+        "panels": [{"id": f"{index}-{position}", **panel} for position, panel in enumerate(ordered)],
+    }
+
+
 # How many pages a day a reader's profile may have read by a paid vision
 # model when the admin has allowed readers that at all (`visionForReaders`,
 # off by default). A reader scripting every page of the library would
@@ -18696,6 +18724,11 @@ class Handler(BaseHTTPRequestHandler):
         if file_page_panels_match:
             try:
                 viewer = self._viewer()
+                if str(self.query(parsed_url).get("stored") or "") == "only":
+                    # A download's panels: only what is kept, nothing worked out.
+                    self.send_json(stored_page_panels(
+                        int(file_page_panels_match.group(1)), int(file_page_panels_match.group(2))))
+                    return
                 # `vision=no`: a download's panels, from the local tiers only.
                 # Asked before the budget, so a download spends none of it; the
                 # row it stores is upgraded to the model's answer when the page

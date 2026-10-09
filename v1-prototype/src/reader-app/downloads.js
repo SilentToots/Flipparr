@@ -3,8 +3,8 @@
 // room under the device's cap, hands every page to the background session
 // and each page's panels (FlipparrNative.enqueue -- it carries on while the
 // app is suspended or the device locked, and moves each file into place
-// itself; panels from the local finder only, ?vision=no: the owner's choice,
-// 2026-10-08), gathers the panels into panels.json, and records the download
+// itself; panels only as the server already keeps them, ?stored=only: the
+// owner's choice, 2026-10-09), gathers the panels into panels.json, and records the download
 // on the server (schema 68). Rows live in downloads.json; the rules
 // are offline.js's.
 import { registerPlugin } from "@capacitor/core";
@@ -198,8 +198,8 @@ export class Downloads extends EventTarget {
   }
 
   async finishOnce(row) {
-    // Each page's panels came with it (the local finder only: a download
-    // spends no vision budget); gathered into one file, the parts go.
+    // Each page's panels came with it, as the server kept them (a page with
+    // none is read whole offline); gathered into one file, the parts go.
     const panels = await this.store.gatherPanelParts(this.profileId, row.fileId, row.pageCount);
     await this.store.savePanels(this.profileId, row.fileId, panels);
     row.state = "ready";

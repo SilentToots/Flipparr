@@ -195,6 +195,7 @@ test("a page with no answer yet counts as one panel", () => {
 test("a page whose panels are still being found reads whole, then by its panels", () => {
   const found = [{ x: 0, y: 0, w: 1, h: 0.3 }, { x: 0, y: 0.3, w: 1, h: 0.7 }];
   assert.deepEqual(readablePanels(undefined, "ltr"), WHOLE_PAGE, "no answer yet: the whole page, one step");
+  assert.deepEqual(readablePanels({ segmented: false, whole: true, panels: [] }, "ltr"), WHOLE_PAGE, "none kept, offline: the whole page, not quadrants");
   assert.equal(stepCount(readablePanels(undefined, "ltr").length, { start: true, end: true }), 1, "no whole-page steps around it");
   const viewport = { width: 390, height: 844 };
   const page = { width: 390, height: 600 };

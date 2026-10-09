@@ -61,7 +61,7 @@ test("a download hands each page and each page's panels to the background sessio
   await downloads.download("63");
   assert.deepEqual(enqueued.map((job) => job.id), ["3:63:0", "3:63:p0", "3:63:1", "3:63:p1"]);
   const panels = enqueued.find((job) => job.id === "3:63:p1");
-  assert.equal(panels.url, "http://server:8803/api/v1/files/63/pages/1/panels?vision=no", "the local finder only");
+  assert.equal(panels.url, "http://server:8803/api/v1/files/63/pages/1/panels?stored=only", "only what the server keeps");
   assert.equal(panels.path, "u3/files/63/panels-1.json");
   assert.deepEqual(panels.headers, { Authorization: "Bearer t" });
 });

@@ -25,9 +25,13 @@ export function panelsPath(profileId, fileId) {
 export function panelPartPath(profileId, fileId, index) {
   return `${comicFolder(profileId, fileId)}/panels-${index}.json`;
 }
-/** The address of one page's panels: the local finder only, no vision spend. */
+/**
+ * The address of one page's panels for a download: only what the server
+ * already keeps -- a person's fix, the vision model's reading -- with nothing
+ * worked out for it (the owner, 2026-10-09). A page with none is read whole.
+ */
 export function panelsUrl(fileId, index) {
-  return `/api/v1/files/${fileId}/pages/${index}/panels?vision=no`;
+  return `/api/v1/files/${fileId}/pages/${index}/panels?stored=only`;
 }
 
 /**

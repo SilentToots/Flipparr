@@ -355,7 +355,8 @@ export const WHOLE_PAGE = Object.freeze([Object.freeze({ x: 0, y: 0, w: 1, h: 1 
  * without panels gets the quadrants, Kindle's fallback, so no page is dead.
  */
 export function readablePanels(entry, direction) {
-  if (!entry) return WHOLE_PAGE;
+  // `whole`: a page with no panels kept, read offline in Flipparr View.
+  if (!entry || entry.whole) return WHOLE_PAGE;
   return entry.segmented && entry.panels?.length ? entry.panels : quadrantPanels(direction);
 }
 

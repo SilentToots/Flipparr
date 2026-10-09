@@ -16,7 +16,7 @@ test("a downloaded comic's page list is its stored addresses, exactly", () => {
 test("panels come from panels.json; a page without any is read whole", () => {
   const saved = { 0: { segmented: true, panels: [{ x: 0 }] } };
   assert.equal(panelsFor(saved, "63", 0).segmented, true);
-  assert.deepEqual(panelsFor(saved, "63", 2), { fileId: "63", page: 2, segmented: false, panels: [] });
+  assert.deepEqual(panelsFor(saved, "63", 2), { fileId: "63", page: 2, segmented: false, whole: true, panels: [] });
   assert.deepEqual(panelsFor(null, "63", 1).panels, []);
 });
 

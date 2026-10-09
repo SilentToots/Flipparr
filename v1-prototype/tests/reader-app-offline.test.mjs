@@ -36,7 +36,7 @@ test("files and transfers are named by profile, comic and page", () => {
   assert.deepEqual(parseTransferId("7:63:p2"), { profileId: "7", fileId: "63", index: 2, kind: "panels" });
   assert.ok(transferId(7, "63", 2, "panels").startsWith("7:63:"), "cancelled with the comic's pages");
   assert.equal(panelPartPath(7, "63", 2), "u7/files/63/panels-2.json");
-  assert.equal(panelsUrl("63", 2), "/api/v1/files/63/pages/2/panels?vision=no", "the local finder only");
+  assert.equal(panelsUrl("63", 2), "/api/v1/files/63/pages/2/panels?stored=only", "only what the server keeps");
 });
 
 const ready = (fileId, bytes, extra = {}) => ({ fileId, bytes, state: "ready", finished: false, downloadedAt: "2026-10-01T00:00:00Z", ...extra });

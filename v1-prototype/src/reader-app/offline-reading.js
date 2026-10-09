@@ -12,10 +12,14 @@ export function pageListFromRow(row) {
   return { fileId: row.fileId, pageCount: pages.length, pages };
 }
 
-/** A page's panels from the comic's panels.json; none is read whole. */
+/**
+ * A page's panels from the comic's panels.json. A page with none kept is
+ * read whole offline (`whole`), not in the quadrants the reader falls back
+ * to online, where the server could still find its panels.
+ */
 export function panelsFor(saved, fileId, page) {
   const found = saved?.[page] ?? saved?.[String(page)];
-  return found || { fileId: String(fileId), page: Number(page), segmented: false, panels: [] };
+  return found || { fileId: String(fileId), page: Number(page), segmented: false, whole: true, panels: [] };
 }
 
 /** The requests the reader makes, by their path. */

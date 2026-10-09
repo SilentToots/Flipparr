@@ -1362,6 +1362,27 @@ class HttpContractTests(unittest.TestCase):
             self.assertEqual(self.get("/api/v1/files/12/pages/0/panels").status, 200)
         self.assertEqual(asked, [False, True], "the admin reads with the model, and downloads without")
 
+    def test_a_download_takes_only_the_panels_already_kept(self):
+        """`stored=only` (Flipparr View's downloads) works nothing out: a page
+        with no reading kept is read whole offline; a kept one comes as kept."""
+        import app as app_module
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "kept.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                for index in range(2):
+                    archive.writestr(f"{index}.jpg", _png_bytes())
+            store = app_module.catalog_store()
+            file_id = self._library_file(comic, run=self._series_run(store, "Kept Panels"), issue="1")
+            with patch("app.file_page_panels", side_effect=AssertionError("panels were worked out")):
+                none_kept = self.get(f"/api/v1/files/{file_id}/pages/0/panels?stored=only")
+                self.assertEqual(none_kept.status, 200)
+                self.assertEqual((none_kept.json()["whole"], none_kept.json()["panels"]), (True, []))
+                member = app_module.cached_page_members(comic)[1]
+                store.set_page_panels(file_id, member, app_module._file_signature(comic), "manual",
+                                      [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}], True)
+                kept = self.get(f"/api/v1/files/{file_id}/pages/1/panels?stored=only").json()
+            self.assertEqual((kept["source"], len(kept["panels"]), kept.get("whole")), ("manual", 2, None))
+
     def test_no_other_site_may_send_an_app_request(self):
         """App requests skip the cross-site check because a page cannot send
         `Flipparr-Client` without a CORS preflight, and this server never

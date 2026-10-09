@@ -850,6 +850,16 @@ How:
     (`/reading/runs`) catch up only on reconnecting; a whole run marked
     does update the card.
 
+- **Panels for downloads, changed 2026-10-09 (the owner):** a download takes
+  only the panels the server already keeps (`?stored=only`,
+  `stored_page_panels`): a person's fix, the vision model's reading, an
+  earlier automatic one. Nothing is worked out for it, so downloads add no
+  rows to the panel data. Offline, a page with none kept reads whole
+  (`whole: true`), not in quadrants; online, the reader asks the server as
+  before, vision and all. `?vision=no` stays for older builds. With this,
+  the reader is built against the owner's production library, and the panel
+  scanner work is paused until the reader is solid.
+
 ### Phase 6 — run and arc downloads, eviction (1–2 sessions)
 - **The owner, testing on his iPad (2026-10-09):** Download is buried
   under an issue's "…" menu, and even knowing it was there he could
