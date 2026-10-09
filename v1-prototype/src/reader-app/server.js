@@ -35,6 +35,29 @@ export function serverOrigin(input) {
   return url.origin;
 }
 
+/**
+ * The Flipparr at an address as typed: `{origin, answer}`. Typed without a
+ * scheme, https is tried first and http only when nothing answers over
+ * https -- a server on the home network usually has no certificate (the
+ * owner, 2026-10-09, had to type http:// for the NAS). A server that
+ * answers over https is never dropped to http. A scheme typed is used as is.
+ */
+export async function findServer(input, fetchImpl = globalThis.fetch) {
+  const typed = /^[a-z][a-z0-9+.-]*:\/\//i.test(String(input || "").trim());
+  const origin = serverOrigin(input);
+  try {
+    return { origin, answer: await checkServer(origin, fetchImpl) };
+  } catch (error) {
+    if (typed || !error.network) throw error;
+    const plain = origin.replace(/^https:/, "http:");
+    try {
+      return { origin: plain, answer: await checkServer(plain, fetchImpl) };
+    } catch (second) {
+      throw second.network ? error : second;
+    }
+  }
+}
+
 /** A request error that says why, the way the web app's apiRequest does. */
 function requestError(message, extra = {}) {
   return Object.assign(new Error(message), extra);

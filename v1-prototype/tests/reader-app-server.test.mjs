@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { serverOrigin, createClient, checkServer, READER_API_VERSION } from "../src/reader-app/server.js";
+import { serverOrigin, createClient, checkServer, findServer, READER_API_VERSION } from "../src/reader-app/server.js";
 
 function answer(status, body, headers = {}) {
   const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
@@ -64,4 +64,26 @@ test("only a Flipparr this build can read from is accepted", async () => {
   await assert.rejects(checkServer("https://f.example", async () => answer(404, {})), /not a Flipparr/);
   await assert.rejects(checkServer("https://f.example", async () => answer(200, { name: "Flipparr", apiVersion: READER_API_VERSION + 1 })), /Update Flipparr View/);
   await assert.rejects(checkServer("https://f.example", async () => { throw new TypeError("x"); }), /Nothing answered/);
+});
+
+test("an address typed without a scheme tries https, then http only when https does not answer", async () => {
+  const flipparr = { ok: true, json: async () => ({ name: "Flipparr", apiVersion: 1 }) };
+  const asked = [];
+  const homeOnly = async (url) => {
+    asked.push(url);
+    if (url.startsWith("https:")) throw new TypeError("TLS handshake failed");
+    return flipparr;
+  };
+  assert.equal((await findServer("192.168.1.20:8787", homeOnly)).origin, "http://192.168.1.20:8787");
+  assert.deepEqual(asked, ["https://192.168.1.20:8787/api/v1/app", "http://192.168.1.20:8787/api/v1/app"]);
+
+  const both = async () => flipparr;
+  assert.equal((await findServer("flipparr.example.com", both)).origin, "https://flipparr.example.com", "https first");
+
+  const notFlipparr = async (url) => (url.startsWith("https:") ? { ok: true, json: async () => ({}) } : flipparr);
+  await assert.rejects(findServer("example.com", notFlipparr), /not a Flipparr/, "an https answer is never dropped to http");
+
+  await assert.rejects(findServer("https://nas.local:8787", homeOnly), (error) => error.network, "a typed scheme is used as is");
+  const nothing = async () => { throw new TypeError("offline"); };
+  await assert.rejects(findServer("nas.local", nothing), /Nothing answered/);
 });

@@ -29,7 +29,7 @@ import { EMPTY_ENTRIES } from "../reading-list-tab.js";
 import { ReaderView } from "../reader/ReaderView.jsx";
 import { collectionCards } from "../run-collections.js";
 import { ViewerContext } from "../viewer.js";
-import { checkServer, createClient, serverOrigin } from "./server.js";
+import { createClient, findServer } from "./server.js";
 import { secureStore, tokenKeys } from "./secure-store.js";
 import { createImageSource } from "./images.js";
 import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
@@ -128,7 +128,7 @@ export function ReaderApp() {
     // "Who's reading?" or sign-in.
     const kept = await deviceStore.session();
     if (kept?.viewer) {
-      if (navigator.onLine === false) transport.setOffline();
+      if (navigator.onLine === false) transport.setOffline("navigator.onLine is false at launch");
       await settle(next, kept, { kept: true });
       if (navigator.onLine !== false) {
         transport.transport("/api/v1/auth/status", { timeoutMs: LAUNCH_CHECK_MS })
@@ -145,7 +145,7 @@ export function ReaderApp() {
       // switching: a PIN guards switching, as on the web.)
       const saved = error.network ? await deviceStore.session() : null;
       if (!saved?.viewer) throw error;
-      transport.setOffline();
+      transport.setOffline("no connection at launch");
       await settle(next, saved, { kept: true });
       return;
     }
@@ -265,7 +265,7 @@ export function ReaderApp() {
     const onVisible = () => { if (document.visibilityState === "visible") check(); };
     document.addEventListener("visibilitychange", onVisible);
     // iOS's own word on the connection, as soon as it changes.
-    const onOffline = () => transport.setOffline();
+    const onOffline = () => transport.setOffline("iOS sent the offline event");
     const onOnline = () => transport.probe();
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
@@ -625,8 +625,7 @@ function ConnectScreen({ error: startError, onConnected }) {
     setBusy(true);
     setError("");
     try {
-      const origin = serverOrigin(address);
-      await checkServer(origin);
+      const { origin } = await findServer(address);
       await onConnected(origin);
     } catch (err) {
       setError(err.message || "Could not connect");

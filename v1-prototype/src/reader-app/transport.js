@@ -63,8 +63,16 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
   /** A request to the server, given up on after `timeoutMs` (or the request's own). */
   function send(path, { timeoutMs: wait = timeoutMs, ...options } = {}) {
     let timer;
-    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error("timed out"))), wait); });
-    return Promise.race([client.api(path, options), late]).finally(() => clearTimer(timer));
+    const started = Date.now();
+    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error(`timed out after ${wait} ms`))), wait); });
+    return Promise.race([client.api(path, options), late])
+      .catch((error) => {
+        // Why the app thinks it is offline, in the device's console: the
+        // path only, never a token or a body.
+        if (error.network) console.warn(`[Flipparr] unreachable: ${String(path).split("?")[0]} after ${Date.now() - started} ms (${error.cause?.message || error.message})`);
+        throw error;
+      })
+      .finally(() => clearTimer(timer));
   }
 
   /** The profile's queue, changed one at a time. */
@@ -287,7 +295,10 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
     replay,
     probe,
     get online() { return online; },
-    setOffline() { setOnline(false); },
+    setOffline(reason = "") {
+      if (online) console.warn(`[Flipparr] offline: ${reason || "told so"}`);
+      setOnline(false);
+    },
     /** The profile now reading, and its downloads: its queue, its kept answers. */
     attach(nextProfileId, nextDownloads = null) {
       profileId = nextProfileId === null ? null : String(nextProfileId);
