@@ -228,11 +228,33 @@ export function ReaderApp() {
       await settle(client, await client.api("/api/v1/auth/status"));
     } catch (err) { setError(err.message); }
   }, [client]);
+  // Sign out works whatever the server is doing (owner, 2026-10-09: with it
+  // down there was no way out to another server):
+  // - sign-in off: there is no account to leave, so it leaves the server;
+  // - the server answers: it ends the session there, and the device goes
+  //   where the server says (the picker on a shared iPad, else sign-in);
+  // - it does not: a shared iPad goes to "Who's reading?", which works
+  //   offline; any other forgets the session here and goes to sign-in. The
+  //   token is gone from the device, and the server's copy lapses on its own.
+  // Both screens offer "Use another server".
   const signOut = useCallback(async () => {
-    try { await client.api("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch { /* signed out either way */ }
-    // On a shared iPad the device stays shared: back to "Who's reading?".
-    await lostRef.current();
-  }, [client]);
+    if (status?.method !== "forms") { await forgetServerRef.current(); return; }
+    const transport = transportRef.current;
+    if (transport && transport.online !== false) {
+      try {
+        await transport.transport("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 5000 });
+      } catch { /* refused or unreachable: the transport knows which */ }
+      if (transport.online !== false) { await lostRef.current(); return; }
+    }
+    setAsking(null);
+    if (status?.household) { setPhase("picker"); return; }
+    const keys = tokenKeys(client.origin);
+    await secureStore.remove(keys.session);
+    if (status?.viewer) await secureStore.remove(keys.profileSession(status.viewer.id));
+    await deviceStore.forgetSession();
+    transport?.attach(null);
+    setPhase("signin");
+  }, [client, status]);
 
   // Coming back to the foreground: send what waited, or ask whether the
   // server is back; and while offline, ask every half minute.
@@ -260,6 +282,8 @@ export function ReaderApp() {
   // Another server: what this install kept for this one goes (its profiles'
   // downloads and places would otherwise sit under the next server's
   // profile numbers), after saying so when there is anything to lose.
+  const forgetServerRef = useRef(() => {});
+  forgetServerRef.current = () => forgetServer();
   async function forgetServer() {
     const kept = (await deviceStore.allDownloads()).length;
     if (kept && !window.confirm(`Connecting to another server removes ${kept} downloaded ${kept === 1 ? "comic" : "comics"} and every saved place still waiting to be sent from this device.`)) return;
@@ -319,7 +343,7 @@ export function ReaderApp() {
     }} onForget={forgetServer} />;
   }
   return <Library key={status.viewer.id} client={client} status={status} online={online} transport={transportRef.current}
-    onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} onForgetServer={forgetServer} />;
+    onSwitch={openPicker} onSwitchTo={switchTo} onSignOut={signOut} />;
 }
 
 // Signed in: the web app's own Comics page, drawers and reader (Phase 3b,
@@ -333,7 +357,7 @@ const NAV = [
   { id: "downloads", label: "Downloads", icon: DownloadsNavIcon },
 ];
 
-function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSignOut, onForgetServer }) {
+function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSignOut }) {
   const viewer = status.viewer;
   const [toastElement, showToast] = useToast();
   // Made here, and handed to the transport before any screen asks for a
@@ -523,21 +547,14 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // downloadVersion: the menu and badge follow the downloads as they change.
   }), [pageSource, downloads, downloadVersion, showToast, online]);
 
-  // Signing out needs the server: offline it says so. Switching profiles
-  // works offline, for profiles used on this iPad before (PickerScreen).
-  const needsServer = useCallback((action) => (...args) => {
-    if (!online) { showToast("Connect to Flipparr to sign out, or choose Use another server.", "error"); return undefined; }
-    return action(...args);
-  }, [online, showToast]);
   const header = useMemo(() => ({
     profile: {
       household: Boolean(status.household), method: status.method, version: 0,
       // Your own page is the web app's; here your tile just closes the menu.
-      onOpenProfile: () => {}, onSwitchTo, onPicker: onSwitch, onSignOut: needsServer(onSignOut),
-      // Works with no connection, and on a server with sign-in off.
-      onUseAnotherServer: onForgetServer,
+      // Sign out always works, and always shows (see ReaderApp's signOut).
+      onOpenProfile: () => {}, onSwitchTo, onPicker: onSwitch, onSignOut, signOutAlways: true,
     },
-  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut, needsServer, onForgetServer]);
+  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut]);
 
   const series = catalog?.series || [];
   const runCollections = useMemo(() => collectionCards(catalog?.runCollections, catalog?.series || []), [catalog?.runCollections, catalog?.series]);
@@ -553,7 +570,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   return <Host.Provider value={host}><ViewerContext.Provider value={viewer}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}>
     <div className="app-shell">
       <Nav items={NAV} active={page} onNavigate={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} catalog={catalog} backendStatus={backendStatus}
-        logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={needsServer(onSignOut)} scanning={false}
+        logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={onSignOut} scanning={false}
         onRefresh={refreshLibrary} refreshing={refreshing} />
       <main className="main-content"><div className="page-view" key={page}>
         {page === "library" ? <LibraryView readingList={actions.readingList} onToggleReadingList={actions.toggleReadingList}
