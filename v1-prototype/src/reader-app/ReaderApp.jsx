@@ -36,6 +36,9 @@ import { deviceStore } from "./device-store.js";
 import { CAP_CHOICES, formatBytes, progressOf, usageBytes } from "./offline.js";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
+/** How long a launch's background check of the session waits for the server. */
+const LAUNCH_CHECK_MS = 5000;
+
 async function openClient(origin) {
   const keys = tokenKeys(origin);
   const tokens = {
@@ -80,6 +83,22 @@ export function ReaderApp() {
     });
     setApiTransport(transport.transport);
     setClient(next);
+    // Signed in here before: open at once as that profile, from what the
+    // device kept, and ask the server in the background -- a launch never
+    // waits on the network (owner, 2026-10-09: airplane mode showed nothing
+    // for seconds). iOS saying there is no connection is believed straight
+    // away. If the server says the session ended, settle() moves on to
+    // "Who's reading?" or sign-in.
+    const kept = await deviceStore.session();
+    if (kept?.viewer) {
+      if (navigator.onLine === false) transport.setOffline();
+      await settle(next, kept, { kept: true });
+      if (navigator.onLine !== false) {
+        transport.transport("/api/v1/auth/status", { timeoutMs: LAUNCH_CHECK_MS })
+          .then((answer) => settle(next, answer), () => { /* unreachable: the transport says offline */ });
+      }
+      return;
+    }
     let answer;
     try {
       answer = await transport.transport("/api/v1/auth/status");
@@ -90,7 +109,7 @@ export function ReaderApp() {
       const saved = error.network ? await deviceStore.session() : null;
       if (!saved?.viewer) throw error;
       transport.setOffline();
-      await settle(next, saved, { offline: true });
+      await settle(next, saved, { kept: true });
       return;
     }
     await settle(next, answer);
@@ -101,7 +120,7 @@ export function ReaderApp() {
   // reader settings are taken from the server, where they follow the person
   // between devices -- without this the reader fell back to a phone's
   // default, panel view on.
-  async function settle(next, answer, { offline = false } = {}) {
+  async function settle(next, answer, { kept = false } = {}) {
     // Another profile, or none, sees nothing answered for the last one: the
     // shared screens draw from api.js's last answers while they ask again,
     // and a reader must never glimpse a library above their rating limit (as
@@ -119,7 +138,9 @@ export function ReaderApp() {
     }
     setStorageProfile(answer.viewer.id);
     transportRef.current?.attach(answer.viewer.id);
-    if (offline) { setPhase("ready"); return; }
+    // From the session the device kept: open now; the server's answer, when
+    // it comes, saves the session and brings the reader settings.
+    if (kept) { setPhase("ready"); return; }
     deviceStore.saveSession(answer).catch(() => {});
     try {
       const me = await next.api("/api/v1/me");
@@ -179,9 +200,19 @@ export function ReaderApp() {
     const check = () => (transport.online ? transport.replay() : transport.probe());
     const onVisible = () => { if (document.visibilityState === "visible") check(); };
     document.addEventListener("visibilitychange", onVisible);
+    // iOS's own word on the connection, as soon as it changes.
+    const onOffline = () => transport.setOffline();
+    const onOnline = () => transport.probe();
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
     const timer = window.setInterval(() => { if (!transport.online) transport.probe(); }, PROBE_EVERY_MS);
     check();
-    return () => { document.removeEventListener("visibilitychange", onVisible); window.clearInterval(timer); };
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+      window.clearInterval(timer);
+    };
   }, [phase, client]);
 
   // Another server: what this install kept for this one goes (its profiles'

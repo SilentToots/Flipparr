@@ -122,3 +122,15 @@ test("offline, a comic opens where the server last had it", async () => {
   const place = await transport.transport("/api/v1/files/63/progress");
   assert.equal(place.page, 5, "the server's place, kept from the last answer");
 });
+
+test("a request can wait less than the usual time, as a launch's check does", async () => {
+  const waits = [];
+  const transport = createAppTransport({
+    client: { api: () => new Promise(() => {}) }, store: { progressQueue: async () => [] },
+    setTimer: (fire, ms) => { waits.push(ms); fire(); return 0; }, clearTimer: () => {},
+  });
+  await assert.rejects(transport.transport("/api/v1/auth/status", { timeoutMs: 5000 }), (error) => error.network === true);
+  assert.deepEqual(waits, [5000]);
+  assert.equal(transport.online, false, "and the server counts as unreachable");
+});
+

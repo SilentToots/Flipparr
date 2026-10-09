@@ -50,10 +50,10 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
     if (online) replay();
   }
 
-  /** A request to the server, given up on after `timeoutMs`. */
-  function send(path, options) {
+  /** A request to the server, given up on after `timeoutMs` (or the request's own). */
+  function send(path, { timeoutMs: wait = timeoutMs, ...options } = {}) {
     let timer;
-    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error("timed out"))), timeoutMs); });
+    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error("timed out"))), wait); });
     return Promise.race([client.api(path, options), late]).finally(() => clearTimer(timer));
   }
 

@@ -779,6 +779,13 @@ How:
       the server's tests and the transport's merge test, not live.
 
 ### Phase 5 — profiles offline and the rating re-check (1 session)
+- **The owner, testing on his iPad (2026-10-09):** offline, rating an issue
+  or run fails with "could not be reached", though the app asks for it.
+  Instead, ratings should wait on the device, like saved places, and be
+  sent on reconnecting. Marking read or unread and the reading-list
+  bookmark should work the same way. They go in the transport's queue,
+  each with its `at`; the screen shows the change at once, and the server
+  keeps the latest.
 - `profiles.json` is refreshed from `GET /api/v1/profiles` whenever the
   picker loads online; a profile whose `lock` is no longer `pin` loses its
   `pinHash`.
