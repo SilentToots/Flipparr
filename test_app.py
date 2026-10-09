@@ -2607,6 +2607,29 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(birthright.title, "Birthright")
         self.assertEqual(head_games.title, "locke and key head games")
 
+    def test_a_paused_catalog_leaves_the_files_own_cover_and_health(self):
+        """GCD pausing the server must not cost a file what it says of itself:
+        a fresh install's scan once stored 2,780 of 2,831 files as "analysis
+        failed", with no cover, while GCD had paused the NAS."""
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "Night Harbor 001 (2021).cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("001.jpg", b"\xff\xd8\xff\xe0" + b"0" * 64)
+            parsed = parse_filename(comic)
+            with patch("app.search_gcd", side_effect=MetadataRateLimited("gcd", 3600, "Grand Comics Database asked Flipparr to pause.")):
+                result = enrich(parsed)
+            self.assertEqual(result["file_cover"]["member"], "001.jpg")
+            self.assertNotEqual(result["file_health"].get("code"), "analysis_failed")
+            self.assertIn("pause", result["errors"]["gcd"])
+
+            # Turned off in Settings, it is not asked at all.
+            config = {**app.load_provider_config(), "gcd": {"enabled": False, "priority": 10}}
+            with patch("app.load_provider_config", return_value=config), \
+                    patch("app.search_gcd", side_effect=AssertionError("GCD was asked")):
+                result = enrich(parsed)
+            self.assertEqual(result["source_status"]["gcd"], "turned off in Settings")
+            self.assertEqual(result["file_cover"]["member"], "001.jpg")
+
     def test_batch_enrichment_uses_bounded_parallel_workers_and_preserves_order(self):
         files = [parse_filename(Path(f"Book Vol {number}.cbz")) for number in range(1, 5)]
         barrier = threading.Barrier(4)

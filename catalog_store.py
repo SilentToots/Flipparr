@@ -4061,6 +4061,11 @@ class CatalogStore:
             )
 
     @staticmethod
+    def _analysis_failed(result_json: Any) -> bool:
+        """Whether a file's stored analysis is the scan's "analysis failed" stand-in."""
+        return ((_load_json(result_json, {}) or {}).get("file_health") or {}).get("code") == "analysis_failed"
+
+    @staticmethod
     def _newer_progress_stored(connection: sqlite3.Connection, file_id: int, user_id: int, at: str) -> bool:
         row = connection.execute(
             "SELECT updated_at FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
@@ -10784,7 +10789,10 @@ class CatalogStore:
                 fingerprint = f"{LOCAL_ANALYSIS_VERSION}:{stat.st_size}:{stat.st_mtime_ns}"
                 seen_paths.add(str(path))
                 prior = existing.get(str(path))
-                if prior and prior["fingerprint"] == fingerprint:
+                # Unchanged on disk is reused -- unless its last analysis failed
+                # (a provider pausing the server once cost thousands of files
+                # their covers): a scan is how that heals.
+                if prior and prior["fingerprint"] == fingerprint and not self._analysis_failed(prior["result_json"]):
                     reused += 1
                     continue
                 changed.append((parsed, stat.st_size, stat.st_mtime_ns, fingerprint))

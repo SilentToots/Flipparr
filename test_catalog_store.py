@@ -99,6 +99,34 @@ class CatalogStoreTests(unittest.TestCase):
             self.assertTrue(comic.exists())
             self.assertEqual([Path(root["path"]) for root in store.catalog()["roots"]], [second.resolve()])
 
+    def test_a_rescan_analyses_again_a_file_whose_analysis_failed(self):
+        """Unchanged files are reused, but not a failed analysis: that is how
+        a fresh install heals once a provider stops pausing it."""
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            comic = base / "Example 001.cbz"
+            comic.write_bytes(b"comic")
+            store = CatalogStore(base / "catalog.db")
+            parsed = [ParsedFile(str(comic), comic.name, ".cbz", "Example", issue="1")]
+            calls = []
+
+            def analysis(fails):
+                def enrich(item):
+                    calls.append(item.path)
+                    if fails:
+                        raise RuntimeError("Grand Comics Database asked Flipparr to pause.")
+                    return {"parsed": item.__dict__, "lookup_identity": item.__dict__, "embedded_metadata": {},
+                            "file_health": {"status": "ok"}, "recommendation": None,
+                            "file_cover": {"url": "/api/file-cover?path=x", "member": "001.jpg"}}
+                return enrich
+
+            store.perform_scan(store.begin_scan(str(base), True), lambda *_: parsed, analysis(True))
+            store.perform_scan(store.begin_scan(str(base), True), lambda *_: parsed, analysis(False))
+            self.assertEqual(len(calls), 2, "the failed file was analysed again")
+            store.perform_scan(store.begin_scan(str(base), True), lambda *_: parsed, analysis(False))
+            self.assertEqual(len(calls), 2, "and, analysed, it is reused")
+            self.assertEqual(store.catalog()["files"][0]["cover"], "/api/file-cover?path=x")
+
     def test_names_are_compared_without_accents_case_or_punctuation(self):
         from catalog_store import normalized_person
         self.assertEqual(normalized_person("Brian K. Vaughan"), "brian k vaughan")

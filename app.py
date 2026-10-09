@@ -17220,17 +17220,31 @@ def enrich(parsed: ParsedFile) -> dict[str, Any]:
         sources["google_books"] = []
         if not GOOGLE_BOOKS_API_KEY:
             source_status["google_books"] = "disabled; set GOOGLE_BOOKS_API_KEY to enable it"
-    try:
-        sources["gcd"] = search_gcd(lookup)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            errors["gcd"] = "GCD anonymous API rate limit reached; cached results remain available."
-        else:
+    # GCD is asked only while it is turned on (Settings, metadata-providers),
+    # and a provider that cannot answer -- paused, refusing, down -- leaves
+    # the file's own evidence standing: its cover, health and embedded
+    # metadata were read above and must not be lost with the lookup. Before
+    # this, a pause (MetadataRateLimited) escaped and the whole file was
+    # stored as "analysis failed" with no cover (2026-10-09: 2,780 of 2,831
+    # files on a fresh install, while GCD paused the NAS).
+    if not (load_provider_config().get("gcd") or {}).get("enabled", True):
+        sources["gcd"] = []
+        source_status["gcd"] = "turned off in Settings"
+    else:
+        try:
+            sources["gcd"] = search_gcd(lookup)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                errors["gcd"] = "GCD anonymous API rate limit reached; cached results remain available."
+            else:
+                errors["gcd"] = str(exc)
+            sources["gcd"] = []
+        except MetadataRateLimited as exc:
             errors["gcd"] = str(exc)
-        sources["gcd"] = []
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-        errors["gcd"] = str(exc)
-        sources["gcd"] = []
+            sources["gcd"] = []
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            errors["gcd"] = str(exc)
+            sources["gcd"] = []
     for candidate in sources["gcd"]:
         confidence = assess_identity_confidence(parsed, embedded, candidate)
         if confidence:
