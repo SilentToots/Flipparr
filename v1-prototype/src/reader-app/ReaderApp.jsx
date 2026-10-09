@@ -6,7 +6,7 @@ import { ArrowClockwise, ArrowLeft, CheckCircle, DownloadSimple, ShieldCheck, Si
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import { ReaderView } from "../reader/ReaderView.jsx";
-import { ReaderHost, usePageSrc } from "../reader/host.js";
+import { Host, useImageSrc } from "../host.js";
 import { checkServer, createClient, serverOrigin } from "./server.js";
 import { secureStore, tokenKeys } from "./secure-store.js";
 import { createImageSource } from "./images.js";
@@ -136,7 +136,7 @@ function Library({ client, viewer, household, onSwitch, onSignOut, onLost }) {
   const [reading, setReading] = useState(null);
   const [version, setVersion] = useState(0);
   useEffect(() => { downloads.reading = reading?.fileId ?? null; }, [downloads, reading]);
-  return <ReaderHost.Provider value={host}>
+  return <Host.Provider value={host}>
     {showDownloads ? <DownloadsScreen downloads={downloads} onBack={() => setShowDownloads(false)} />
       : run ? <RunScreen client={client} run={run} version={version} downloads={downloads} onLost={onLost} onBack={() => setRun(null)}
       onRead={(issue, detail) => setReading({ fileId: issue.id, title: `${run.title} #${issue.issueNumber || "?"}`, medium: detail.medium, direction: detail.readingDirection, run })} />
@@ -148,11 +148,11 @@ function Library({ client, viewer, household, onSwitch, onSignOut, onLost }) {
       onFinish={() => {}} onProgressSaved={() => setVersion((current) => current + 1)}
       onOpenRun={reading.run ? () => { setReading(null); setRun(reading.run); } : undefined}
       onClose={() => { setReading(null); setVersion((current) => current + 1); }} /> : null}
-  </ReaderHost.Provider>;
+  </Host.Provider>;
 }
 
 function Cover({ url, alt = "" }) {
-  const src = usePageSrc();
+  const src = useImageSrc();
   const shown = src(url);
   return shown ? <img className="app-card-cover" src={shown} alt={alt} loading="lazy" decoding="async" />
     : <span className="app-card-cover" aria-hidden="true" />;

@@ -571,6 +571,41 @@ from the list below:
     the iPad locked mid-download, on a real iPad. Both wait for the Developer
     Program enrolment.
 
+### Phase 3b — one UI: the app built from the web's components (2–3 sessions)
+The owner's decisions, 2026-10-08:
+- **Parity.** The app uses the web app's cards, shelves, drawers, page
+  header and tab bar, not patterns of its own. The Phase 2 screens were
+  stand-ins and are removed.
+- **Screens.** Recommended (the web's shelves) and the Library tabs
+  (Library, Collections, Story arcs, Reading list), with the run,
+  collection, story-arc and reading-list drawers, plus Downloads. There is
+  no Discover, Search, Requests or Settings.
+- **Timing.** This happens now, before Phase 4, so the offline states are
+  built once.
+- **Name.** The app is **Flipparr View**. The App ID
+  (`com.silenttoots.flipparr.view`) and the code paths (`reader-app/`,
+  `ReaderApp.jsx`) are unchanged.
+
+How:
+- Same move as Phase 1: the components leave `App.jsx` for shared
+  modules. Shared modules import nothing from `App.jsx`, and the web shows
+  no change (visual compare 0 px at 1440 and 375, `layout:check`).
+- Images go through the host. `CoverArt` uses the reader's `pageSource`
+  mechanism, because the app has no cookie for a plain `<img src>`.
+- The host gets a `canManage` flag. Library management (edits, merges,
+  covers, requests) is shown only where it is true. Reading actions a
+  profile has on the web (rate, mark read, reading list, follow) work in
+  the app too.
+- Drawers keep the web's history behaviour (`historyStep`): Back closes,
+  and swipe dismisses.
+- Downloads become a slot on the issue card, which the web leaves empty.
+  The Downloads screen uses the web's list rows and `SettingsControls`.
+- Three commits, each 0 px on the web:
+  1. Covers, cards, shelves and the A–Z rail.
+  2. The drawers and their hooks.
+  3. The Library tabs, page header and tab bar, with nav items from the
+     host.
+
 ### Phase 4 — reading offline and progress replay (1–2 sessions)
 - Offline identity: with no connection the app has no `/auth/status`. The
   active profile is the last one used (`servers.json`), its name and role

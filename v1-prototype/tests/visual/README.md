@@ -76,6 +76,10 @@ every state has:
   /api/v1/series/<id>/monitoring` with `{}` to follow it and `POST
   /api/v1/files/<fileId>/progress` with `{"page": 1}` to be part-way through
   its first issue (pages count from 0; the page must exist in the file).
+- **One story arc and one run collection** for `library-arcs`,
+  `drawer-arc` and `drawer-collection`: `POST /api/v1/reading-lists/manual`
+  with a name and a few `issueIds`, and `POST /api/v1/run-collections` with
+  a name and a few `seriesIds`.
 - **No reader's request waiting.** A pending `member_requests` row opens the
   Pull List on its Requests tab — a queue row on desktop, a swipe card on a
   phone — which is a different page from the Wanted tab the baseline holds,

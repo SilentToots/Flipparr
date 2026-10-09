@@ -2,7 +2,7 @@
 // A module of its own so the web app and Flipparr Reader (the iPad and iPhone
 // app, docs/OFFLINE_READING_PLAN.md) draw the same reader from one source. It
 // reaches the server and learns what the viewer may do through its host
-// (./host.js), never through the web app's own state.
+// (../host.js), never through the web app's own state.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowCounterClockwise, ArrowLeft, ArrowRight, ArrowsClockwise, DotsThree, Gear, ImageSquare, ListBullets,
@@ -18,7 +18,7 @@ import {
 import {
   HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
 } from "../panel-editor.js";
-import { usePageSrc, useReaderHost } from "./host.js";
+import { useHost, useImageSrc } from "../host.js";
 
 // --- The reader ---------------------------------------------------------------
 //
@@ -42,7 +42,7 @@ function ReaderSettingsDrawer({
   const { closing, requestClose } = useDrawerExit(onClose);
   const dialogRef = useDialog(requestClose);
   // Correcting and re-scanning a page's panels changes them for everyone.
-  const admin = useReaderHost().canEditPanels;
+  const admin = useHost().canEditPanels;
   return <div className={`drawer-backdrop ${closing ? "closing" : ""}`} onMouseDown={requestClose}>
     <aside className={`series-drawer reader-settings-drawer ${closing ? "closing" : ""}`} ref={dialogRef} role="dialog" aria-modal="true"
       aria-labelledby="reader-settings-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -103,7 +103,7 @@ const EDITOR_TOUCH_PX = 40;
 const EDITOR_NUDGE = 0.005;
 
 function PanelEditor({ fileId, count, pages, startPage, readings, direction, onSaved, onClose }) {
-  const { api: apiRequest } = useReaderHost();
+  const { api: apiRequest } = useHost();
   const [page, setPage] = useState(startPage);
   const [panels, setPanels] = useState([]);
   const [reading, setReading] = useState(null);
@@ -437,8 +437,8 @@ export function ReaderView({
   fileId, title, medium, directionOverride, startPage = null, behind = false,
   onFinish, onOpenRun, onProgressSaved, onClose,
 }) {
-  const { api: apiRequest } = useReaderHost();
-  const src = usePageSrc();
+  const { api: apiRequest } = useHost();
+  const src = useImageSrc();
   // Escape closes the page grid first: it is a layer over the comic, and
   // leaving the comic entirely is not what someone looking at its pages
   // meant by pressing it.

@@ -27,6 +27,17 @@ async function drawerTab(page, label) {
   await settle(page);
 }
 
+// The first card's drawer on a Library tab: a collection's, a story arc's.
+// Every drawer is the comic drawer's frame, so `.series-drawer` proves it.
+function cardDrawer(selector) {
+  return async (page) => {
+    await page.waitForSelector(selector, { timeout: 15000 });
+    await page.locator(selector).first().click();
+    await page.waitForSelector(".series-drawer", { timeout: 15000 });
+    await settle(page);
+  };
+}
+
 function readerState(name, prefs, proof = []) {
   return {
     name,
@@ -273,6 +284,12 @@ export const states = [
   { name: "library-recommended", path: "/library", waitForCatalog: true, require: [".library-shelf, .empty-state"] },
   { name: "library-collections", path: "/library/collections", waitForCatalog: true, require: [".collection-card, .empty-state"] },
   { name: "library-reading", path: "/library/reading", waitForCatalog: true, require: [".series-card, .empty-state"] },
+  // Flipparr View shares these (Phase 3b, 2026-10-08), so each Library tab
+  // and each kind of drawer is photographed: the library needs one story arc
+  // and one run collection (README.md).
+  { name: "library-arcs", path: "/library/arcs", waitForCatalog: true, require: [".series-card"] },
+  { name: "drawer-collection", path: "/library/collections", waitForCatalog: true, require: [".series-drawer"], setup: cardDrawer(".collection-card .series-card-open") },
+  { name: "drawer-arc", path: "/library/arcs", waitForCatalog: true, require: [".series-drawer"], setup: cardDrawer(".series-card .series-card-open") },
   { name: "library-health", path: "/settings/health", require: [".metadata-layout, .empty-state"] },
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },
