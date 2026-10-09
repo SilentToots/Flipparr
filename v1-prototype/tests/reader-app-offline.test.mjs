@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { downloadRow, evictionOrder, formatBytes, pagePath, parseTransferId, planDownload, progressOf, transferId, usageBytes } from "../src/reader-app/offline.js";
+import {
+  downloadComplete, downloadRow, evictionOrder, formatBytes, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload, progressOf,
+  transferId, usageBytes,
+} from "../src/reader-app/offline.js";
 
 const MB = 1024 * 1024;
 const manifest = {
@@ -14,12 +17,26 @@ test("a row is made from the manifest, ready to download", () => {
   assert.equal(row.state, "downloading");
   assert.deepEqual([row.fileId, row.seriesTitle, row.pageCount, row.groupKey], ["63", "Night Harbor", 3, "run:61"]);
   assert.equal(row.pageUrls.length, 3);
-  assert.equal(progressOf({ ...row, pagesDone: [0, 1] }), 2 / 3);
+  assert.deepEqual(row.panelsDone, []);
+  assert.equal(progressOf({ ...row, pagesDone: [0, 1] }), 2 / 6, "pages and their panels both count");
+  assert.equal(progressOf({ ...row, pagesDone: [0, 1, 2], panelsDone: [0, 1, 2] }), 1);
+});
+
+test("a download is complete only once every page and every page's panels are in", () => {
+  const row = downloadRow(manifest);
+  assert.equal(downloadComplete({ ...row, pagesDone: [0, 1, 2] }), false, "panels still coming");
+  assert.equal(downloadComplete({ ...row, pagesDone: [0, 1, 2], panelsDone: [0, 1, 2] }), true);
+  assert.equal(downloadComplete({ ...row, pagesDone: [0, 1, 2], panelsDone: undefined }), false, "a row from before panels came this way");
 });
 
 test("files and transfers are named by profile, comic and page", () => {
   assert.equal(pagePath(7, "63", 2), "u7/files/63/2.jpg");
-  assert.deepEqual(parseTransferId(transferId(7, "63", 2)), { profileId: "7", fileId: "63", index: 2 });
+  assert.deepEqual(parseTransferId(transferId(7, "63", 2)), { profileId: "7", fileId: "63", index: 2, kind: "page" });
+  assert.equal(transferId(7, "63", 2, "panels"), "7:63:p2");
+  assert.deepEqual(parseTransferId("7:63:p2"), { profileId: "7", fileId: "63", index: 2, kind: "panels" });
+  assert.ok(transferId(7, "63", 2, "panels").startsWith("7:63:"), "cancelled with the comic's pages");
+  assert.equal(panelPartPath(7, "63", 2), "u7/files/63/panels-2.json");
+  assert.equal(panelsUrl("63", 2), "/api/v1/files/63/pages/2/panels?vision=no", "the local finder only");
 });
 
 const ready = (fileId, bytes, extra = {}) => ({ fileId, bytes, state: "ready", finished: false, downloadedAt: "2026-10-01T00:00:00Z", ...extra });

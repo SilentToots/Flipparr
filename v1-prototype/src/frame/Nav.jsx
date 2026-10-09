@@ -138,7 +138,10 @@ export function SidebarSearch() {
 
 // `items`, when given, are the host's own destinations (Flipparr View has
 // Comics and Downloads); left out, they are the web app's, by permission.
-export function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary, items: hostItems = null }) {
+// `onRefresh`, when given and Scan is not shown, puts a refresh in Scan's
+// place: Flipparr View fetches the library again there (`refreshing` while
+// it does). The web gives none.
+export function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary, items: hostItems = null, onRefresh = null, refreshing = false }) {
   const viewer = useViewer();
   const admin = useManages();
   // A reader's Pull List is what they have asked for.
@@ -216,6 +219,10 @@ export function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesC
             title={scanning ? "Scanning your library…"
               : catalog?.lastScan?.iso ? `Scan library · last scanned ${catalog.lastScan.date}, ${catalog.lastScan.time}`
               : "Scan library"}>
+            <ArrowsClockwise size={16} />
+          </button> : onRefresh ? <button type="button" className={`sidebar-scan${refreshing ? " scanning" : ""}`}
+            onClick={onRefresh} disabled={refreshing} aria-busy={refreshing}
+            aria-label={refreshing ? "Refreshing your library" : "Refresh library"} title={refreshing ? "Refreshing…" : "Refresh library"}>
             <ArrowsClockwise size={16} />
           </button> : null}
         </span>

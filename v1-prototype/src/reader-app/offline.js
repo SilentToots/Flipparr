@@ -17,14 +17,35 @@ export function pagePath(profileId, fileId, index) {
 export function panelsPath(profileId, fileId) {
   return `${comicFolder(profileId, fileId)}/panels.json`;
 }
+/**
+ * One page's panels, fetched by the background session beside its page
+ * (so a comic finishes while the device is locked) and gathered into
+ * panels.json when the comic is complete.
+ */
+export function panelPartPath(profileId, fileId, index) {
+  return `${comicFolder(profileId, fileId)}/panels-${index}.json`;
+}
+/** The address of one page's panels: the local finder only, no vision spend. */
+export function panelsUrl(fileId, index) {
+  return `/api/v1/files/${fileId}/pages/${index}/panels?vision=no`;
+}
 
-/** A transfer's id: profile, comic and page, so one comic's can be cancelled together. */
-export function transferId(profileId, fileId, index) {
-  return `${profileId}:${fileId}:${index}`;
+/**
+ * A transfer's id: profile, comic and page -- "p" before a page's panels --
+ * so one comic's can be cancelled together.
+ */
+export function transferId(profileId, fileId, index, kind = "page") {
+  return `${profileId}:${fileId}:${kind === "panels" ? "p" : ""}${index}`;
 }
 export function parseTransferId(id) {
-  const [profileId, fileId, index] = String(id).split(":");
-  return { profileId, fileId, index: Number(index) };
+  const [profileId, fileId, part = ""] = String(id).split(":");
+  const panels = part.startsWith("p");
+  return { profileId, fileId, index: Number(panels ? part.slice(1) : part), kind: panels ? "panels" : "page" };
+}
+
+/** A download is complete once every page and every page's panels are in. */
+export function downloadComplete(row) {
+  return (row.pagesDone?.length || 0) >= row.pageCount && (row.panelsDone?.length || 0) >= row.pageCount;
 }
 
 /** A new row for a comic about to download, from its /offline manifest. */
@@ -42,6 +63,7 @@ export function downloadRow(manifest, { groupKey = null } = {}) {
     fileSignature: manifest.fileSignature,
     pageUrls: (manifest.pages || []).map((page) => page.readUrl),
     pagesDone: [],
+    panelsDone: [],
     bytes: 0,
     estimate: Number(manifest.bytesEstimate) || 0,
     state: "downloading",
@@ -53,9 +75,11 @@ export function downloadRow(manifest, { groupKey = null } = {}) {
   };
 }
 
-/** What a download has done so far, as a fraction for a progress bar. */
+/** What a download has done so far, as a fraction for a progress bar: pages, then their panels. */
 export function progressOf(row) {
-  return row.pageCount ? Math.min(1, (row.pagesDone?.length || 0) / row.pageCount) : 0;
+  if (!row.pageCount) return 0;
+  const done = (row.pagesDone?.length || 0) + (row.panelsDone?.length || 0);
+  return Math.min(1, done / (2 * row.pageCount));
 }
 
 /** Room taken: what is on the device, and what a download under way will take. */

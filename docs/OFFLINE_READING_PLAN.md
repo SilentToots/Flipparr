@@ -849,6 +849,28 @@ How:
     Use another server.
   - About: app version and build, the server's version, open-source
     licences and the privacy notice (the App Store needs these anyway).
+- **The owner, testing on his iPad (2026-10-09):** there is no way to
+  refresh the library in Flipparr View:
+  - pull to refresh, the web's own, moved out of `App.jsx` into a shared
+    piece;
+  - a refresh in the sidebar's footer, where an admin's Scan sits on the
+    web.
+  Built 2026-10-09; the app's pull refetches the library, the reading
+  answers and the lists, and sends what was waiting.
+- **From the owner's iPad (2026-10-09), locked mid-download:** a 40-page
+  comic's pages all arrived in 2.3 s over home Wi-Fi, before the lock. But
+  the step after them, one `/pages/{n}/panels?vision=no` request per page,
+  runs in the app's JavaScript, which iOS pauses when the iPad locks. The
+  server log shows the gap. The fix: the panels go through the background
+  session too, as files beside the pages, so a whole comic finishes while
+  locked or in another app. Only the server's "downloaded" note waits for
+  the app to open. Retest with Settings › Developer › Network Link
+  Conditioner on a slow profile, so pages are still arriving at the lock.
+  Built 2026-10-09: each page's panels are a transfer of their own
+  (`<profile>:<file>:p<n>`, `panels-<n>.json`), gathered into
+  `panels.json` when the comic is complete; a page whose panels fail is
+  read whole and does not fail the download
+  (`tests/reader-app-downloads.test.mjs`).
 - `tools/reader_app_release.sh`: `npm run ios:sync`, `xcodebuild archive`,
   upload to TestFlight with an App Store Connect API key read from the
   owner's environment (never the repo). One command per release.

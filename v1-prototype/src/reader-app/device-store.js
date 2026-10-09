@@ -49,6 +49,25 @@ export const deviceStore = {
   },
   savePanels: (profileId, fileId, panels) => writeJson(`${comicFolder(profileId, fileId)}/panels.json`, panels),
   panels: (profileId, fileId) => readJson(`${comicFolder(profileId, fileId)}/panels.json`, null),
+  /** Indexes of the per-page panel files a comic already has. */
+  async panelPartsOnDisk(profileId, fileId) {
+    try {
+      const { files } = await Filesystem.readdir(at(comicFolder(profileId, fileId)));
+      return files.map((entry) => entry.name.match(/^panels-(\d+)\.json$/)).filter(Boolean).map((match) => Number(match[1]));
+    } catch {
+      return [];
+    }
+  },
+  /** Every page's panels as one object, {index: answer}; the parts removed. */
+  async gatherPanelParts(profileId, fileId, pageCount) {
+    const panels = {};
+    for (let index = 0; index < pageCount; index += 1) {
+      const part = await readJson(`${comicFolder(profileId, fileId)}/panels-${index}.json`, null);
+      if (part) panels[index] = part;
+      try { await Filesystem.deleteFile(at(`${comicFolder(profileId, fileId)}/panels-${index}.json`)); } catch { /* none */ }
+    }
+    return panels;
+  },
   /** Page files a comic already has: [{index, size}]. */
   async pagesOnDisk(profileId, fileId) {
     try {

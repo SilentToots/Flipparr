@@ -55,6 +55,7 @@ import { ReaderView } from "./reader/ReaderView.jsx";
 import { historyStep } from "./history-step.js";
 import { Host } from "./host.js";
 import { useToast } from "./components/Toast.jsx";
+import { usePullToRefresh } from "./frame/pullRefresh.jsx";
 import { PasswordInput } from "./components/PasswordInput.jsx";
 import { readableFile, readingContext, useReadingActions } from "./library/actions.js";
 import { apiRequest, forgetAnswers, lastAnswer, rememberAnswer } from "./api.js";
@@ -66,7 +67,7 @@ import { arrivalAt, canDeleteJob, canDeletePull, classifyRequest, groupPullList,
 import {
   needsAttention, staleDismissals, readLegacyDismissed, forgetLegacyState, timeAgo } from "./notifications.js";
 
-import { isEdgeTouch, isStolenBack, PULL_REFRESH_PX } from "./reader.js";
+import { isEdgeTouch, isStolenBack } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
   FollowingIcon,
@@ -6673,45 +6674,11 @@ export function App() {
   // to the short list, which then sat under the header.
   useEffect(() => { window.scrollTo(0, 0); }, [settingsSection]);
   // Pull to refresh, for the app on a Home Screen: installed, it has no
-  // browser chrome and so none of Safari's reload -- the pull was never the
-  // page's. This one rides the phone's own rubber band: while a finger is
-  // down at the top, the stretch it reports is the pull's depth, past a
-  // threshold the pill says so, and letting go there reloads. Nothing is
-  // moved by hand, so nothing repaints per frame. A Safari tab keeps its
-  // own, and a page a dialog holds is left alone.
-  const [pull, setPull] = useState("idle");
-  useEffect(() => {
-    const installed = window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true;
-    if (!installed) return undefined;
-    let pulling = false;
-    let armed = false;
-    const onStart = () => {
-      pulling = window.scrollY <= 0 && !document.documentElement.classList.contains("page-scroll-locked");
-      armed = false;
-    };
-    const onScroll = () => {
-      if (!pulling) return;
-      const past = -window.scrollY >= PULL_REFRESH_PX;
-      if (past !== armed) { armed = past; setPull(past ? "armed" : "idle"); }
-    };
-    const onEnd = () => {
-      if (!pulling) return;
-      pulling = false;
-      if (!armed) { setPull("idle"); return; }
-      setPull("refreshing");
-      window.location.reload();
-    };
-    window.addEventListener("touchstart", onStart, { passive: true });
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("touchend", onEnd, { passive: true });
-    window.addEventListener("touchcancel", onEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onStart);
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("touchend", onEnd);
-      window.removeEventListener("touchcancel", onEnd);
-    };
-  }, []);
+  // browser chrome and so none of Safari's reload. A Safari tab keeps its own.
+  const pullPill = usePullToRefresh({
+    enabled: window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true,
+    onRefresh: () => { window.location.reload(); return new Promise(() => {}); },
+  });
   // Resolve a ?series= link once the catalog is in. An id that no longer exists
   // simply clears, and the effect above then tidies it out of the URL.
   useEffect(() => {
@@ -6811,7 +6778,7 @@ export function App() {
     setArcPicker(null); setListsVersion((version) => version + 1);
     showToast(`${made.name} started with ${arcPicker.name}`);
   }} /> : null}{newArcOpen ? <NewGroupModal kind="arc" onClose={() => setNewArcOpen(false)} onCreate={createStoryArc} /> : null}{issuePickerList ? <ArcIssuePickerModal list={issuePickerList} series={visibleSeries} onClose={() => setIssuePickerList(null)}
-    onAdded={() => setListsVersion((version) => version + 1)} /> : null}{selectedList ? <ReadingListDrawer onAddToArc={addIssueToArc} onGone={arcGone} onAddIssues={(list) => setIssuePickerList({ id: list.id, name: list.name })} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={selectedList.id} list={selectedList} allSeries={visibleSeries} readingVersion={readingVersion + listsVersion} onClose={() => setSelectedList(null)} onRead={readComic} onOpenSeries={openSeries} onMarkIssue={markIssueRead} onRateIssue={rateIssue} onEditIssue={openIssueWorkbench} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRefresh={refreshReadingList} onDelete={deleteReadingList} onMark={markListRead} onChanged={() => setListsVersion((version) => version + 1)} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onReplace={openReplacementRequest} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pull !== "idle" ? <div className="pull-refresh" role="status" aria-live="polite">{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</div> : null}{profileSheet ? <ProfileSheet onClose={() => setProfileSheet(false)} onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
+    onAdded={() => setListsVersion((version) => version + 1)} /> : null}{selectedList ? <ReadingListDrawer onAddToArc={addIssueToArc} onGone={arcGone} onAddIssues={(list) => setIssuePickerList({ id: list.id, name: list.name })} readingList={readingListEntries || EMPTY_ENTRIES} onToggleReadingList={toggleReadingList} key={selectedList.id} list={selectedList} allSeries={visibleSeries} readingVersion={readingVersion + listsVersion} onClose={() => setSelectedList(null)} onRead={readComic} onOpenSeries={openSeries} onMarkIssue={markIssueRead} onRateIssue={rateIssue} onEditIssue={openIssueWorkbench} onPullMissing={pullReadingList} onRequestMissing={requestReadingListMissing} onRefresh={refreshReadingList} onDelete={deleteReadingList} onMark={markListRead} onChanged={() => setListsVersion((version) => version + 1)} onOpenWorkbench={openFileWorkbench} onOpenCover={openCoverWorkbench} onOpenContents={openContentsWorkbench} onChangeRun={openFileRunWorkbench} onReplace={openReplacementRequest} /> : null}{workbench ? <MetadataWorkbench data={workbench.data} mode={workbench.mode} busy={workbenchBusy} error={workbenchError} onClose={() => setWorkbench(null)} onSave={saveFileMetadata} onMatch={applyFileMatch} onSearch={searchFileMatches} onReset={resetFileMetadata} /> : null}{issueWorkbench ? <IssueMetadataWorkbench issue={issueWorkbench} busy={issueBusy} error={issueError} onClose={() => setIssueWorkbench(null)} onSave={saveIssueMetadata} onReset={resetIssueMetadata} /> : null}{coverWorkbench ? <CoverWorkbench data={coverWorkbench} busy={coverBusy} error={coverError} onClose={() => setCoverWorkbench(null)} onSelect={selectFileCover} onUpload={uploadFileCover} /> : null}{matchWorkbench ? <SeriesMatchWorkbench data={matchWorkbench} loading={matchLoading} busy={matchBusy} error={matchError} onClose={() => setMatchWorkbench(null)} onSearch={searchSeriesMatches} onConfirm={confirmSeriesMatch} /> : null}{seriesCoverWorkbench ? <CoverWorkbench data={seriesCoverWorkbench} title={seriesCoverWorkbench.series.title} busy={coverBusy} error={coverError} onClose={() => setSeriesCoverWorkbench(null)} onSelect={selectSeriesCover} onUpload={uploadSeriesCover} /> : null}{backdropWorkbench ? <BackdropWorkbench series={backdropWorkbench.series} current={backdropWorkbench.current} busy={backdropBusy} error={backdropError} onClose={() => setBackdropWorkbench(null)} onChoose={(fileId, page) => saveSeriesBackdrop({ fileId, page }, "Header background updated")} onAutomatic={() => saveSeriesBackdrop({ source: "auto" }, "Automatic background restored")} /> : null}{contentsWorkbench ? <VolumeContentsWorkbench data={contentsWorkbench} busy={contentsBusy} error={contentsError} onClose={() => setContentsWorkbench(null)} onChange={changeCollectionContents} onReset={resetCollectionContents} /> : null}{runWorkbench ? <SeriesRunWorkbench data={runWorkbench} loading={runLoading} busy={runBusy} error={runError} onClose={() => setRunWorkbench(null)} onConfirm={confirmSeriesRun} onBuildCollection={buildSeriesCollection} /> : null}{fileRunWorkbench ? <FileRunWorkbench data={fileRunWorkbench} busy={fileRunBusy} error={fileRunError} onClose={() => setFileRunWorkbench(null)} onMove={moveFileToRun} /> : null}{structureWorkbench ? <StoryStructureWorkbench data={structureWorkbench} busy={structureBusy} error={structureError} onClose={() => setStructureWorkbench(null)} onSave={saveStoryStructure} /> : null}{mergeWorkbench ? <SeriesMergeWorkbench data={mergeWorkbench} busy={mergeBusy} error={mergeError} onClose={() => setMergeWorkbench(null)} onTargetChange={(targetId) => targetId ? previewSeriesMerge(mergeWorkbench.source, targetId, mergeWorkbench.candidates) : setMergeWorkbench((current) => ({ ...current, targetId: "", preview: null }))} onConfirm={confirmSeriesMerge} /> : null}{replacementFile ? <ReplacementModal file={replacementFile} busy={replacementBusy} error={replacementError} onClose={() => setReplacementFile(null)} onSubmit={createFileReplacement} /> : null}{pullPill}{profileSheet ? <ProfileSheet onClose={() => setProfileSheet(false)} onRead={readComic} onNavigate={navigate} authStatus={authStatus} onSwitch={() => setPicker({})} /> : null}{picker ? <WhoIsReadingView key={profilesVersion} overlay current={authStatus?.viewer?.id ?? null} ask={picker.ask || null}
       onClose={() => setPicker(null)} canAdd={isAdmin(authStatus?.viewer)} onAdd={() => setAddingProfile(true)} /> : null}{addingProfile ? <AddProfileSheet onClose={() => setAddingProfile(false)}
       onAdded={() => { setAddingProfile(false); setProfilesVersion((value) => value + 1); showToast("Profile added"); }} /> : null}{toastElement}</div></HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider></Host.Provider>;
 }

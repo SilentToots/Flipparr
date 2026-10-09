@@ -19,6 +19,7 @@ import { SeriesDrawer } from "../drawers/SeriesDrawer.jsx";
 import { CollectedEditionsContext } from "../editions.js";
 import { Nav } from "../frame/Nav.jsx";
 import { HeaderContext, PageHeader } from "../frame/header.jsx";
+import { usePullToRefresh } from "../frame/pullRefresh.jsx";
 import { Host } from "../host.js";
 import { apiRequest, forgetAnswers, lastAnswer, setApiTransport } from "../api.js";
 import { readableFile, readingContext, useReadingActions } from "../library/actions.js";
@@ -346,6 +347,25 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     wasOnline.current = online;
   }, [online, loadCatalog, noteReadingChanged, downloads]);
   const readyRows = downloads.rows.filter((row) => row.state === "ready");
+  // Refresh: pull down at the top (the web's own gesture), or the button
+  // where an admin's Scan sits on the web. Offline it first asks whether the
+  // server is back; then the library, every place and the story arcs are
+  // fetched again, and anything waiting is sent.
+  const [refreshing, setRefreshing] = useState(false);
+  const [listsVersion, setListsVersion] = useState(0);
+  const refreshLibrary = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (transport && !transport.online) await transport.probe();
+      await loadCatalog();
+      noteReadingChanged();
+      setListsVersion((version) => version + 1);
+      await transport?.replay();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [transport, loadCatalog, noteReadingChanged]);
+  const pullPill = usePullToRefresh({ enabled: true, onRefresh: refreshLibrary });
   // Offline, said under each page's header (the web's backend-banner).
   const offlineNotice = online ? null : <div className="backend-banner" role="status"><WifiSlash size={19} weight="fill" aria-hidden="true" />
     {`You’re offline — ${readyRows.length ? `${readyRows.length} downloaded ${readyRows.length === 1 ? "issue is" : "issues are"} ready.` : "nothing is downloaded on this device."}`}</div>;
@@ -463,13 +483,14 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   return <Host.Provider value={host}><ViewerContext.Provider value={viewer}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}>
     <div className="app-shell">
       <Nav items={NAV} active={page} onNavigate={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} catalog={catalog} backendStatus={backendStatus}
-        logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={needsServer(onSignOut)} scanning={false} />
+        logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={needsServer(onSignOut)} scanning={false}
+        onRefresh={refreshLibrary} refreshing={refreshing} />
       <main className="main-content"><div className="page-view" key={page}>
         {page === "library" ? <LibraryView readingList={actions.readingList} onToggleReadingList={actions.toggleReadingList}
           onOpenRunCollection={(card) => { setSelectedSeries(null); setSelectedList(null); setRunCollectionId(String(card.id)); }}
           tab={libraryTab} onTab={(next) => { setLibraryTab(next); window.scrollTo({ top: 0 }); }} onNavigate={setPage}
           onOpenSeries={openSeries} onOpenCollection={() => {}} onOpenList={openList} onRead={readComic}
-          readingVersion={readingVersion} listsVersion={0} catalog={catalog} backendStatus={backendStatus} /> : null}
+          readingVersion={readingVersion} listsVersion={listsVersion} catalog={catalog} backendStatus={backendStatus} /> : null}
         {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} notice={offlineNotice} /> : null}
       </div></main>
       {readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection}
@@ -491,6 +512,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       {selectedList ? <ReadingListDrawer key={selectedList.id} list={selectedList} allSeries={series} {...reading} groupTools={false}
         onClose={() => setSelectedList(null)} onMarkIssue={actions.markIssueRead} onRateIssue={actions.rateIssue}
         onMark={actions.markListRead} onGone={(message) => { setSelectedList(null); if (message) showToast(message); }} /> : null}
+      {pullPill}
       {toastElement}
     </div>
   </HeaderContext.Provider></CollectedEditionsContext.Provider></ViewerContext.Provider></Host.Provider>;
