@@ -394,6 +394,12 @@ Progress indicators, Gauges):
   (`useLongPress`, `CardMenu`, `IssueMenu`): at most three groups,
   destructive last. The menu's "…" anchor shows only to keyboard focus.
   List rows keep their visible controls.
+- **The comic to pick up floats over the page** (`ContinueBar`; Kindle's
+  bar, Music's mini player): the first of the carry-on list, with its
+  cover, page and percentage, in a glass pill at the foot of the page's
+  column (above the tab bar on a phone). A tap opens it where it was
+  left. Not on Settings or over the reader; offline, only a comic on the
+  device. The page keeps room under its last row for it.
 - **The app's own screens** (`.reader-app`) use 44 px targets at every
   width, one 12 px rhythm inside a card, and 16 px body copy.
 - **Storage** is a gauge (`StorageGauge`): the limit as the track, the

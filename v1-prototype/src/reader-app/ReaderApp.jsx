@@ -20,6 +20,7 @@ import { CoverStatus } from "../components/CoverStatus.jsx";
 import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
 import { CardMenu } from "../library/cards.jsx";
+import { ContinueBar } from "./ContinueBar.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "../search/library-search.jsx";
 import { libraryMatchState } from "../discover.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "../recent-searches.js";
@@ -757,6 +758,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
         {page === "app-settings" ? <AppSettingsPage client={client} status={status} viewer={viewer} downloads={downloads} online={online}
           settings={appSettings} onSettings={changeAppSettings} onSwitch={onSwitch} onSignOut={onSignOut} notice={offlineNotice} /> : null}
       </div></main>
+      {page !== "app-settings" && !readFileId ? <ContinueBar series={series} readingVersion={readingVersion} onRead={readComic} /> : null}
       {readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection}
         startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || finished}
         onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged}

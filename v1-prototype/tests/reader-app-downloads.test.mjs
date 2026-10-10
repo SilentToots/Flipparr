@@ -173,3 +173,13 @@ test("a download finished while the server could not be told is told when the ap
   await downloads.flushRemovals();
   assert.ok(!told.includes("/api/v1/offline/downloads"), "told once");
 });
+
+test("reading a comic while it downloads is kept with it", async () => {
+  const { downloads } = setup();
+  await downloads.ready;
+  await downloads.download("63");
+  assert.equal(downloads.row("63").state, "downloading");
+  await downloads.noteRead("63", { at: "2026-10-10T15:00:00.000Z" });
+  assert.equal(downloads.row("63").lastReadAt, "2026-10-10T15:00:00.000Z", "not Unread once it arrives");
+  assert.equal(downloads.row("63").finished, false);
+});

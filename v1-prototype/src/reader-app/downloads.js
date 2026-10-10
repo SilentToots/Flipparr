@@ -256,11 +256,13 @@ export class Downloads extends EventTarget {
   /**
    * A place saved in a downloaded comic: when it was last read, and whether
    * it is finished, so the cap makes way for finished comics read longest ago.
+   * A comic still on its way counts too -- opening one starts its download,
+   * and the pages read meanwhile are reading (it said "Unread" otherwise).
    */
   async noteRead(fileId, { finished = false, at = new Date().toISOString() } = {}) {
     await this.ready;
     const row = this.row(fileId);
-    if (!row || row.state !== "ready") return;
+    if (!row || row.state === "failed") return;
     row.lastReadAt = at;
     row.finished = finished;
     await this.save();
