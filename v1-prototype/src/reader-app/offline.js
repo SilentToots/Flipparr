@@ -159,6 +159,37 @@ export function planDownloads(estimates, { capBytes = DEFAULT_CAP_BYTES, rows = 
   return { fits: false, total, evict: [], shortfall: whole.shortfall, fitting };
 }
 
+/**
+ * The library as Flipparr View shows it (the owner, 2026-10-10): a reader,
+ * so only issues there are to read -- never Missing or Upcoming -- and,
+ * offline (`onDevice`, the downloaded file ids), only what is on this
+ * device. Runs, collections and families with nothing left go too. Pure;
+ * the catalog itself is not changed.
+ */
+export function readerCatalog(catalog, { onDevice = null } = {}) {
+  if (!catalog || !Array.isArray(catalog.series)) return catalog;
+  const here = onDevice ? new Set([...onDevice].map(String)) : null;
+  const readable = (fileId) => fileId != null && fileId !== "" && (!here || here.has(String(fileId)));
+  const series = [];
+  for (const run of catalog.series) {
+    const issues = (run.issues || []).filter((issue) => readable(issue.fileId));
+    const files = (run.fileDetails || []).filter((file) => readable(file.id));
+    if (!files.length && !issues.length) continue;
+    series.push({ ...run, issues, fileDetails: files, ...(here ? { owned: issues.length || files.length } : {}) });
+  }
+  const kept = new Map(series.map((run) => [String(run.id), run]));
+  const runCollections = (catalog.runCollections || [])
+    .map((collection) => ({ ...collection, runIds: (collection.runIds || []).filter((id) => kept.has(String(id))) }))
+    .filter((collection) => collection.runIds.length);
+  const families = (catalog.families || [])
+    .map((family) => {
+      const runs = (family.runs || []).filter((run) => kept.has(String(run.id))).map((run) => kept.get(String(run.id)));
+      return { ...family, runs, runIds: runs.map((run) => run.id), runCount: runs.length };
+    })
+    .filter((family) => family.runs.length);
+  return { ...catalog, series, runCollections, families };
+}
+
 /** Bytes as a person reads them: 950 KB, 12.4 MB, 1.8 GB. */
 export function formatBytes(bytes) {
   const value = Math.max(0, Number(bytes) || 0);

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   downloadComplete, downloadRow, evictionOrder, formatBytes, nextUnread, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload,
-  planDownloads, progressOf, transferId, usageBytes,
+  planDownloads, progressOf, readerCatalog, transferId, usageBytes,
 } from "../src/reader-app/offline.js";
 
 const MB = 1024 * 1024;
@@ -87,4 +87,31 @@ test("a batch is planned whole: finished comics make way, and when it cannot all
   assert.deepEqual([plan.fits, plan.total, plan.evict], [true, 16 * MB, ["old"]], "the finished one goes, never the open one");
   const tight = planDownloads([...batch, { fileId: "c", bytes: 8 * MB }], { capBytes: 30 * MB, rows });
   assert.deepEqual([tight.fits, tight.fitting, tight.shortfall], [false, 2, 4 * MB]);
+});
+
+const catalogFixture = {
+  series: [
+    { id: "61", owned: 2, issues: [{ id: "1", fileId: "63" }, { id: "2", fileId: "64" }, { id: "3", fileId: null, ownership: "unowned" }],
+      fileDetails: [{ id: "63" }, { id: "64" }] },
+    { id: "62", owned: 0, issues: [{ id: "4", fileId: null }], fileDetails: [] },
+    { id: "70", owned: 1, issues: [{ id: "5", fileId: "80" }], fileDetails: [{ id: "80" }] },
+  ],
+  runCollections: [{ id: "c1", runIds: ["61", "62"] }, { id: "c2", runIds: ["62"] }],
+  families: [{ id: "f1", runs: [{ id: "61" }, { id: "70" }], runIds: ["61", "70"], runCount: 2 }],
+};
+
+test("the reader's library holds only what there is to read: no missing issues, no empty runs", () => {
+  const shown = readerCatalog(catalogFixture);
+  assert.deepEqual(shown.series.map((run) => run.id), ["61", "70"]);
+  assert.deepEqual(shown.series[0].issues.map((issue) => issue.id), ["1", "2"]);
+  assert.deepEqual(shown.runCollections.map((collection) => [collection.id, collection.runIds]), [["c1", ["61"]]]);
+  assert.equal(catalogFixture.series[0].issues.length, 3, "the catalog itself is untouched");
+});
+
+test("offline, only what is on this device: runs, collections and families narrow to it", () => {
+  const shown = readerCatalog(catalogFixture, { onDevice: new Set(["64"]) });
+  assert.deepEqual(shown.series.map((run) => [run.id, run.issues.map((issue) => issue.fileId), run.owned]), [["61", ["64"], 1]]);
+  assert.deepEqual(shown.runCollections.map((collection) => collection.id), ["c1"]);
+  assert.deepEqual(shown.families.map((family) => [family.id, family.runIds, family.runCount]), [["f1", ["61"], 1]]);
+  assert.deepEqual(readerCatalog(catalogFixture, { onDevice: new Set() }).series, []);
 });

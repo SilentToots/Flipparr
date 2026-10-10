@@ -19,7 +19,7 @@ import { AlphaRail } from "./AlphaRail.jsx";
 import { RecommendedView } from "./RecommendedView.jsx";
 import { ArcGrid, CollectionCard, Ownership, SeriesList, publicationState } from "./cards.jsx";
 import { ArrowRight, BookOpen, Books, Check, CheckCircle, FolderOpen, ListBullets, ListNumbers, MagnifyingGlass, Plus, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
-import { Host, useManages } from "../host.js";
+import { Host, useManages, useReadable } from "../host.js";
 
 // Shown only when the server cannot be reached ("Showing sample comics"):
 // invented titles and publishers, and no cover art -- Flipparr ships no
@@ -347,11 +347,15 @@ export function useReadingLists(version, series = null) {
       .catch(() => { if (live) setLists((current) => current || []); });
     return () => { live = false; };
   }, [version]);
+  // Only arcs there is something to read in, where the host says so
+  // (Flipparr View offline).
+  const readable = useReadable();
   return useMemo(() => {
-    if (!lists || !series) return lists;
+    const shown = lists ? lists.filter((list) => readable({ kind: "arc", id: String(list.id), issueIds: list.issueIds || [] })) : lists;
+    if (!shown || !series) return shown;
     const byId = new Map(series.map((run) => [String(run.id), run]));
-    return lists.map((list) => ({ ...list, publisher: arcPublisher(list, byId) }));
-  }, [lists, series]);
+    return shown.map((list) => ({ ...list, publisher: arcPublisher(list, byId) }));
+  }, [lists, series, readable]);
 }
 
 // Comics' tabs, as Plex and Komga have them. Recommended is the page's home.

@@ -20,6 +20,13 @@
 //   Phase 6). Each answers `{label, busy, done, progress, onPress}` or null.
 //   `group` is `{kind: "run" | "arc" | "collection", id, title, runIds?}`.
 //   The web app gives none.
+// - `readerOnly`, optional: a reader, not an acquisition tool (Flipparr
+//   View; the owner, 2026-10-10). No owned counts or bars, and only the
+//   issues there are to read: no Missing or Upcoming. The web gives none.
+// - `readable({kind, id, fileId})`, optional: whether something can be read
+//   here and now -- offline, only what is on the device (Flipparr View).
+//   Shared screens ask it of what does not come from the catalog: story
+//   arcs, reading-list entries, Keep Reading. Absent, everything is.
 // - `notice`, optional: the host's word on the Comics page, under its header
 //   (Flipparr View's "You're offline"). The web app gives none.
 // - `shelves()`, optional: the host's own Recommended shelves (Flipparr
@@ -65,6 +72,16 @@ export function useImageSrc() {
     }
     return undefined;
   }, [pageSource, ready]);
+}
+
+/** The host's `readable` check, or one that lets everything through. */
+export function useReadable() {
+  return useContext(Host)?.readable || (() => true);
+}
+
+/** Whether the host is a reader only (`readerOnly`): ownership is not shown. */
+export function useReaderOnly() {
+  return Boolean(useContext(Host)?.readerOnly);
 }
 
 /**

@@ -15,7 +15,7 @@ import { ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTabs, D
 import { BackdropPicker, GroupArrange, GroupArrangeCard, GroupCoverPicker, GroupDeleteCard, GroupEditScreen, GroupReadingCards, GroupShareCard, useGroupBackdrop } from "./groups.jsx";
 import { FileInventory, GroupedIssueInventory, downloadFrom } from "./inventory.jsx";
 import { ArrowsClockwise, CloudArrowDown, DownloadSimple, ImageSquare, ListNumbers, PencilSimple, Plus, WarningCircle } from "@phosphor-icons/react";
-import { useManages, useImageSrc } from "../host.js";
+import { useImageSrc, useManages, useReadable, useReaderOnly } from "../host.js";
 
 // A saved story arc, drawn as a run is: the same top bar, hero, Read button,
 // tabs, issue tiles and menus, files and Advanced tools -- so knowing one
@@ -86,6 +86,8 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
   // the library (so its title, date and rating are the real ones), else a
   // stand-in that says what is missing. Across several series the tile's
   // small line names the series, since "#16" alone would not.
+  const readerOnly = useReaderOnly();
+  const readable = useReadable();
   const issues = useMemo(() => items.map((item) => {
     const run = item.runId ? runsById[String(item.runId)] : null;
     const known = run?.issues?.find((issue) => String(issue.id) === String(item.issueId)) || null;
@@ -101,7 +103,10 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
       arcItemId: item.id, seriesTitle: item.seriesTitle, runId: item.runId, queued: item.queued,
       contextRunId: `arc-${list.id}`, contextLabel: name, contextGroupName: name, contextType: "arc",
     };
-  }), [items, runsById, multiSeries, list.id, name]);
+  }).filter((issue) => !readerOnly || (issue.fileId && readable({ kind: "issue", fileId: String(issue.fileId) }))),
+  // A reader host lists only what can be read (no Missing), offline only
+  // what is on the device.
+  [items, runsById, multiSeries, list.id, name, readerOnly, readable]);
   const runsInArc = useMemo(() => [...new Set(items.map((item) => item.runId).filter(Boolean))].map((id) => runsById[String(id)]).filter(Boolean), [items, runsById]);
   const files = useMemo(() => {
     const wanted = new Set(items.map((item) => item.fileId).filter(Boolean).map(String));

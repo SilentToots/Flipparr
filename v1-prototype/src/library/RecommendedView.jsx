@@ -4,7 +4,7 @@ import { ShelfBackIcon, ShelfNextIcon } from "../design-icons.jsx";
 import { keepReading, localDay, recentlyAddedIssues, recentlyAddedRuns, recentlyReleased } from "../recommended.js";
 import { CatalogEmpty } from "./LibraryView.jsx";
 import { LibraryShelf } from "./shelves.jsx";
-import { Host } from "../host.js";
+import { Host, useReadable } from "../host.js";
 
 /**
  * Comics' home: what to pick up, as shelves (Komga's, and Plex's
@@ -21,12 +21,14 @@ export function RecommendedView({ series, catalog, backendStatus, readingVersion
       .catch(() => { if (live) setCarryOn([]); });
     return () => { live = false; };
   }, [readingVersion]);
+  // Offline in Flipparr View, only comics on the device can be picked up.
+  const readable = useReadable();
   const own = useMemo(() => [
-    { id: "keep", title: "Keep Reading", items: keepReading(carryOn || [], series), onSeeAll: onSeeInProgress },
+    { id: "keep", title: "Keep Reading", items: keepReading((carryOn || []).filter((item) => !item.fileId || readable({ kind: "issue", fileId: String(item.fileId) })), series), onSeeAll: onSeeInProgress },
     { id: "released", title: "Recently Released", items: recentlyReleased(series, localDay()) },
     { id: "issues", title: "Recently Added Issues", items: recentlyAddedIssues(series) },
     { id: "runs", title: "Recently Added Runs", items: recentlyAddedRuns(series), onSeeAll: onSeeAdded },
-  ], [carryOn, series, onSeeInProgress, onSeeAdded]);
+  ], [carryOn, series, onSeeInProgress, onSeeAdded, readable]);
   // The host's own shelves (Flipparr View's Downloaded): first where the
   // host says so, else after Keep Reading. The web has none.
   const hosted = useContext(Host)?.shelves?.() || [];

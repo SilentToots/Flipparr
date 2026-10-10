@@ -37,7 +37,7 @@ import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
-import { CAP_CHOICES, formatBytes, nextUnread, planDownloads, progressOf, usageBytes } from "./offline.js";
+import { CAP_CHOICES, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
@@ -411,7 +411,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     exists: (path) => deviceStore.exists(path),
   }), [client, viewer.id, downloads]);
 
-  const [catalog, setCatalog] = useState(() => lastAnswer("/api/v1/catalog"));
+  // The server's catalog; what is shown is `catalog`, below (readerCatalog).
+  const [rawCatalog, setCatalog] = useState(() => lastAnswer("/api/v1/catalog"));
   const [backendStatus, setBackendStatus] = useState(() => (lastAnswer("/api/v1/catalog") ? "live" : "loading"));
   const loadCatalog = useCallback(async () => {
     try {
@@ -450,7 +451,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     notify: showToast, viewerId: viewer.id,
     afterRating: async () => {
       const data = await loadCatalog();
-      const refreshed = data?.series?.find((item) => item.id === selectedSeries?.id);
+      const refreshed = readerCatalog(data)?.series?.find((item) => item.id === selectedSeries?.id);
       if (refreshed) setSelectedSeries(refreshed);
     },
   });
@@ -464,6 +465,15 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     wasOnline.current = online;
   }, [online, loadCatalog, noteReadingChanged, downloads]);
   const readyRows = downloads.rows.filter((row) => row.state === "ready");
+  // A reader's library: only issues there are to read, and offline only
+  // those on this device (the owner, 2026-10-10; readerCatalog).
+  const onDeviceKey = downloads.rows.filter((row) => row.state === "ready" || row.state === "stale").map((row) => row.fileId).join(",");
+  // Each issue's file, from the whole catalog: an arc lists issues, and
+  // offline is readable when one of their files is here.
+  const issueFiles = useMemo(() => new Map((rawCatalog?.series || []).flatMap((run) => (run.issues || [])
+    .filter((issue) => issue.fileId).map((issue) => [String(issue.id), String(issue.fileId)]))), [rawCatalog]);
+  const catalog = useMemo(() => readerCatalog(rawCatalog, { onDevice: online ? null : new Set(onDeviceKey ? onDeviceKey.split(",") : []) }),
+    [rawCatalog, online, onDeviceKey]);
   // Refresh: pull down at the top (the web's own gesture), or the button
   // where an admin's Scan sits on the web. Offline it first asks whether the
   // server is back; then the library, every place and the story arcs are
@@ -561,6 +571,20 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     // 2026-10-09; fixes made offline and sent later are a later step).
     canEditPanels: online && viewer.role === "admin",
     canManage: false,
+    // A reader, not an acquisition tool: no owned counts, no missing issues.
+    readerOnly: true,
+    readable: ({ kind, id, fileId, issueIds }) => {
+      if (online) return true;
+      if (fileId) return ["ready", "stale"].includes(downloads.row(fileId)?.state);
+      // A run, collection or arc offline: whether the shown catalog keeps it
+      // (runs, collections), or any of its comics is here (arcs: groupKey).
+      if (kind === "run") return catalog?.series?.some((run) => String(run.id) === String(id));
+      if (kind === "collection") return catalog?.runCollections?.some((item) => String(item.id) === String(id));
+      // An arc: any of its issues here, else anything downloaded for it.
+      const here = (fileId) => ["ready", "stale"].includes(downloads.row(fileId)?.state);
+      if (kind === "arc" && issueIds?.length) return issueIds.some((issueId) => issueFiles.get(String(issueId)) && here(issueFiles.get(String(issueId))));
+      return downloads.rows.some((row) => row.groupKey === `${kind}:${id}` && here(row.fileId));
+    },
     pageSource,
     issueExtras: (issue) => {
       if (!issue.fileId) return [];
@@ -618,7 +642,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       })),
     }] : []),
   // downloadVersion: the menu and badge follow the downloads as they change.
-  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role, downloadIssue]);
+  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role, downloadIssue, catalog, issueFiles]);
 
   const header = useMemo(() => ({
     profile: {

@@ -7,7 +7,7 @@ import { arcMaker, arcOwnerLine, arcYears } from "../reading-list.js";
 import { collectionReadTarget, countsLine } from "../run-collections.js";
 
 import { BookOpen, Check, CheckCircle, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
-import { useManages } from "../host.js";
+import { useManages, useReaderOnly } from "../host.js";
 
 export function publicationState(series) {
   const state = series?.publicationStatus || "unknown";
@@ -49,11 +49,18 @@ export function seriesAttentionDetail(series) {
 }
 
 export function Ownership({ series, compact = false }) {
-  const percent = Math.max(5, Math.round((series.owned / series.total) * 100));
+  // A reader host shows what there is to read, not what is owned of what
+  // exists: the count, without a total or a bar.
+  const readerOnly = useReaderOnly();
   // "Match needs attention" is the admin's to act on. A reader sees what is
   // owned -- as a count alone, since a run waiting on its match has no total
   // to trust yet.
   const admin = useManages();
+  if (readerOnly) {
+    const count = Number(series.owned) || 0;
+    return compact && count ? <span className="series-card-foot series-card-counts">{count} {count === 1 ? "issue" : "issues"}</span> : null;
+  }
+  const percent = Math.max(5, Math.round((series.owned / series.total) * 100));
   const reviewing = series.status === "warning" && admin;
   const catalogUnknown = series.catalogKnown === false || series.status === "unknown" || (series.status === "warning" && !admin);
   const volumeCount = series.inventory?.editionCount || 0;
@@ -153,10 +160,11 @@ export function SeriesList({ series, onOpen, onRead, reading, view, cardAction }
  * it when that is not the household (2026-10-02, after the owner's mock).
  */
 export function CardFoot({ runCount, issueCount, owned, maker = "" }) {
-  const missing = Math.max(0, issueCount - owned);
+  const readerOnly = useReaderOnly();
+  const missing = readerOnly ? 0 : Math.max(0, issueCount - owned);
   return <>
     <span className="series-card-rule" />
-    <span className="series-card-foot series-card-counts">{countsLine(runCount, issueCount)}</span>
+    <span className="series-card-foot series-card-counts">{countsLine(runCount, readerOnly ? owned : issueCount)}</span>
     {issueCount && missing ? <Ownership series={arcOwnership({ owned, issueCount, missing })} compact /> : null}
     {maker ? <span className="series-card-foot series-card-maker">Made by <strong>{maker}</strong></span> : null}
   </>;

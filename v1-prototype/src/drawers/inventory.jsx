@@ -192,7 +192,7 @@ export function RunMenu({ runRead, runStarted, onMarkRun }) {
   </>;
 }
 
-export function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, onAddIssuesToArc, empty = null, runRead = false, runStarted = false, readingFiles, medium }) {
+export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, onAddIssuesToArc, empty = null, runRead = false, runStarted = false, readingFiles, medium }) {
   // The host's badge for an issue with nothing else to say: Flipparr View's
   // download state. The web gives none.
   const hostBadge = useContext(Host)?.issueBadge || (() => null);
@@ -202,6 +202,11 @@ export function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onM
   // And its download control, seen without opening a menu (Flipparr View's
   // Phase 6: the menu's Download was too hard to find).
   const hostDownload = useContext(Host)?.issueDownload || (() => null);
+  // A reader host lists only what there is to read: no Missing, Upcoming or
+  // counts of what is owned (Flipparr View; the owner, 2026-10-10).
+  const readerOnly = Boolean(useContext(Host)?.readerOnly);
+  const readable = useContext(Host)?.readable || (() => true);
+  const issues = readerOnly ? (allIssues || []).filter((issue) => issue.fileId && readable({ kind: "issue", fileId: String(issue.fileId) })) : allIssues;
   const downloadButton = (issue, className) => {
     const state = issue.fileId ? hostDownload(issue) : null;
     if (!state) return null;
@@ -257,7 +262,7 @@ export function GroupedIssueInventory({ issues, onEditIssue, onRead, onRate, onM
     {groups.map((group, groupIndex) => {
     const owned = group.issues.filter((issue) => issue.ownership !== "unowned").length;
     return <section className="issue-run-group" key={group.key}>
-      <header><div><span>{group.type === "specials" ? "Special / one-shot" : group.type === "arc" ? "Story arc" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{owned} of {group.issues.length} owned</strong>{groupIndex === 0 && (selectable.length || (onMarkRun && readingFiles)) ? <span className="issue-run-group-tools">{selectable.length ? <button type="button" className="glass-button issue-select-button" aria-pressed={selecting} onClick={() => (selecting ? endSelecting() : setSelecting(true))}>{selecting ? "Cancel" : "Select"}</button> : null}{onMarkRun && readingFiles && !selecting ? <RunMenu runRead={runRead} runStarted={runStarted} onMarkRun={onMarkRun} /> : null}</span> : null}</div></header>
+      <header><div><span>{group.type === "specials" ? "Special / one-shot" : group.type === "arc" ? "Story arc" : "Series run"}</span><h3>{group.title}</h3>{group.runTitle !== group.title || group.year ? <small>{[group.runTitle !== group.title ? group.runTitle : null, group.year].filter(Boolean).join(" · ")}</small> : null}</div><div className="issue-run-group-aside">{groupIndex === 0 ? viewToggle : null}<strong>{readerOnly ? `${group.issues.length} ${group.issues.length === 1 ? "issue" : "issues"}` : `${owned} of ${group.issues.length} owned`}</strong>{groupIndex === 0 && (selectable.length || (onMarkRun && readingFiles)) ? <span className="issue-run-group-tools">{selectable.length ? <button type="button" className="glass-button issue-select-button" aria-pressed={selecting} onClick={() => (selecting ? endSelecting() : setSelecting(true))}>{selecting ? "Cancel" : "Select"}</button> : null}{onMarkRun && readingFiles && !selecting ? <RunMenu runRead={runRead} runStarted={runStarted} onMarkRun={onMarkRun} /> : null}</span> : null}</div></header>
       <div className={view === "grid" ? "issue-tile-grid" : ""}>{group.issues.map((issue) => {
         // "Volume 5" under "Vol. 5" says it twice.
         const genericTitle = !issue.title || identityKey(issue.title) === identityKey(`Issue ${issue.number}`)
