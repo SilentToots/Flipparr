@@ -371,11 +371,25 @@ Progress indicators, Gauges):
 - **No ownership.** `readerOnly`: no owned counts or bars, no Missing or
   Upcoming issues, no Following. A card says how many issues there are to
   read.
-- **Covers carry state, not buttons.** `CoverStatus` sits in the top-right
-  corner: a ring filling while a comic downloads, a download mark once it
-  is on the device (a run, collection or arc: once some of it is). The
-  reading mark (Read, In progress) and the progress hairline stay. A tap
-  on an issue's cover reads it.
+- **Covers carry state, not buttons** (the owner's Infuse, Apple Books and
+  Kindle examples, 2026-10-10). Two corners, so the marks never stack:
+  - *Bottom right, downloads* (`CoverStatus`): Kindle's check in a dark
+    circle once a comic is on the device (a run, collection or arc: once
+    some of it is). A comic on its way dims under `--scrim`, with a ring
+    and its percentage in the middle (Infuse); a run, collection or arc
+    on its way shows the ring small in the corner instead.
+  - *Top right, reading* (`ReadState`): a "Read" sash across the corner
+    once finished, a percentage tag while under way (a run's or arc's
+    share of its comics). These replace the web's centred mark and
+    progress hairline in the app.
+  - A collection's stack mark moves to the bottom left. A tap on an
+    issue's cover reads it.
+- **Download controls are Apple Books'.** One `ProgressRing` for every
+  download: an issue row shows a cloud, then the ring with a stop square
+  (a tap stops it), then nothing once the comic is here. A drawer's
+  Download beside Read is the same cloud, and the batch's ring with a
+  stop square while it comes; the batch's progress counts the comics that
+  finished, so the ring only goes forward (`batchProgress`).
 - **Actions are a long press.** Touch and hold any cover for its menu
   (`useLongPress`, `CardMenu`, `IssueMenu`): at most three groups,
   destructive last. The menu's "…" anchor shows only to keyboard focus.

@@ -17,6 +17,7 @@ import { SettingsFrame, SettingsIndex } from "../settings/shell.jsx";
 import { usePhoneWidth } from "../dialogs.jsx";
 import { CoverArt } from "../components/CoverArt.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
+import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
 import { CardMenu } from "../library/cards.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "../search/library-search.jsx";
@@ -46,7 +47,7 @@ import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
-import { CAP_CHOICES, coverStatusFor, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
+import { CAP_CHOICES, batchProgress, coverStatusFor, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
@@ -612,16 +613,17 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       }
       return [{ key: "offline", label: "Download", icon: <DownloadSimple size={16} />, onSelect: () => downloadIssue(issue) }];
     },
+    // An issue row's control, Apple Books' way: a cloud to download, a ring
+    // with a stop square while it comes (a tap stops it), and nothing once
+    // it is here -- no cloud says it already.
     issueDownload: (issue) => {
       const row = downloads.row(issue.fileId);
       const label = issueName(issue);
       if (row?.state === "downloading") {
-        return { busy: true, label: `Downloading ${label}, ${Math.round(progressOf(row) * 100)}%`, onPress: () => {} };
+        return { busy: true, progress: progressOf(row), label: `Stop downloading ${label}, ${Math.round(progressOf(row) * 100)}% done`,
+          onPress: () => downloads.remove(issue.fileId).then(() => showToast(`Stopped downloading ${label}`)) };
       }
-      if (row?.state === "ready" || row?.state === "stale") {
-        return { done: true, label: `${label} is on this device`,
-          onPress: () => showToast(`${label} is on this device. Remove it from its \u2026 menu or from Downloads.`) };
-      }
+      if (row?.state === "ready" || row?.state === "stale") return null;
       if (row?.state === "failed") return { label: `Try downloading ${label} again`, onPress: () => downloads.retry(issue.fileId) };
       return { label: `Download ${label}`, onPress: () => downloadIssue(issue) };
     },
@@ -658,13 +660,24 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       }
       return items;
     },
+    // The drawer's Download beside Read: the batch's ring with a stop
+    // square while it comes (a tap stops what has not arrived), else the
+    // cloud that opens the download sheet.
     groupDownload: (group) => {
       const mine = downloads.rows.filter((row) => row.groupKey === `${group.kind}:${group.id}`);
-      const busy = mine.some((row) => row.state === "downloading");
-      const done = !busy && mine.some((row) => row.state === "ready");
+      const progress = batchProgress(mine);
+      if (progress !== null) {
+        return {
+          busy: true, progress, label: `Stop downloading ${group.title}, ${Math.round(progress * 100)}% done`,
+          onPress: async () => {
+            const coming = mine.filter((row) => row.state === "downloading");
+            for (const row of coming) await downloads.remove(row.fileId);
+            showToast(`Stopped downloading ${group.title}`);
+          },
+        };
+      }
       return {
-        busy, done,
-        label: busy ? `Downloading from ${group.title}` : done ? `Issues of ${group.title} are on this device; download more` : `Download ${group.title}`,
+        label: `Download ${group.title}`,
         onPress: () => (online ? setDownloadGroup(group) : showToast("Connect to Flipparr to download.", "error")),
       };
     },
@@ -683,7 +696,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       items: readyRows.map((row) => ({
         key: `downloaded-${row.fileId}`, fileId: row.fileId, resume: true,
         title: `${row.seriesTitle}${row.issueNumber ? ` #${row.issueNumber}` : ""}`,
-        note: row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread",
+        note: row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread", finished: row.finished,
         cover: row.pageUrls?.[0],
       })),
     }] : []),
@@ -1268,6 +1281,7 @@ function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
     return <article className="series-card download-card" style={{ "--card-index": Math.min(index, 11) }} key={row.fileId}>
       <span className="series-card-art">
         <CoverArt id={`download-${row.fileId}`} title={name} cover={row.pageUrls?.[0]} />
+        <ReadState finished={row.finished} />
         <CoverStatus target={{ kind: "issue", fileId: row.fileId }} />
         <CardMenu target={{ kind: "issue", fileId: row.fileId, title: name }} title={name}
           read={readable ? { verb: row.finished ? "Read again" : row.lastReadAt ? "Continue" : "Read", target: row.fileId } : null}

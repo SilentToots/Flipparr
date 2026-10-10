@@ -1,6 +1,8 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { Host, useImageSrc } from "../host.js";
 import { CoverStatus } from "../components/CoverStatus.jsx";
+import { ReadState } from "../components/ReadState.jsx";
+import { ProgressRing, StopSquare } from "../components/ProgressRing.jsx";
 import { apiRequest, lastAnswer } from "../api.js";
 import { artTone } from "../art-tone.js";
 import { DiscoverCover, SeriesCover } from "../components/CoverArt.jsx";
@@ -15,7 +17,7 @@ import { RATING_SOURCES, filledStars, ratingForPress, ratingLabel } from "../rat
 import { readingAriaLabel, readingNoun, readingVerb } from "../reading-target.js";
 import { creatorRoleLabel } from "../run-details.js";
 import { issueReadState } from "./inventory.jsx";
-import { ArrowLeft, BookOpen, Check, CheckCircle, DownloadSimple, Star } from "@phosphor-icons/react";
+import { ArrowLeft, BookOpen, Check, CheckCircle, CloudArrowDown, Star } from "@phosphor-icons/react";
 
 // The skeleton occupies the loaded card's box exactly. A shelf that grows when
 // its comics arrive moves everything under it, which is the moment the reader
@@ -285,8 +287,8 @@ export function ReadWithDownload({ group, children }) {
   return <div className="comic-drawer-read-row">
     {children}
     <button type="button" className={`secondary-button comic-drawer-download${state.done ? " done" : ""}`}
-      aria-busy={state.busy || undefined} aria-label={state.label} title={state.label} onClick={state.onPress}>
-      {state.busy ? <LoadingSpinner size={20} /> : state.done ? <CheckCircle size={24} weight="fill" /> : <DownloadSimple size={24} />}
+      aria-label={state.label} title={state.label} onClick={state.onPress}>
+      {state.busy ? <ProgressRing progress={state.progress}><StopSquare /></ProgressRing> : state.done ? <CheckCircle size={24} weight="fill" /> : <CloudArrowDown size={24} />}
     </button>
   </div>;
 }
@@ -387,8 +389,9 @@ export function ComicDrawerIssueCard({ issue, medium, onOpen, onRead, readingFil
         <DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={30} />
         {state ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{state}</span> : null}
         {read && !readerOnly ? <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span> : null}
+        {readerOnly ? <ReadState finished={read?.finished} fraction={read?.fraction} /> : null}
         {readerOnly && issue.fileId ? <CoverStatus target={{ kind: "issue", fileId: String(issue.fileId) }} /> : null}
-        {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}{read?.finished ? <span className="issue-tile-mark done" aria-hidden="true"><Check size={13} weight="bold" /></span> : null}
+        {read?.fraction && !readerOnly ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}{read?.finished && !readerOnly ? <span className="issue-tile-mark done" aria-hidden="true"><Check size={13} weight="bold" /></span> : null}
       </span>
     </button>
     <div className="pull-card-body"><h3 title={label}>{label}</h3></div>

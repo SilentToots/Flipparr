@@ -53,7 +53,7 @@ export function downloadComplete(row) {
 }
 
 /** A new row for a comic about to download, from its /offline manifest. */
-export function downloadRow(manifest, { groupKey = null } = {}) {
+export function downloadRow(manifest, { groupKey = null, at = new Date().toISOString() } = {}) {
   const run = manifest.run || null;
   return {
     fileId: String(manifest.fileId),
@@ -71,6 +71,9 @@ export function downloadRow(manifest, { groupKey = null } = {}) {
     bytes: 0,
     estimate: Number(manifest.bytesEstimate) || 0,
     state: "downloading",
+    // When it was asked for: what one choice of several comics fetched
+    // together is, for its progress (batchProgress).
+    startedAt: at,
     downloadedAt: null,
     lastReadAt: null,
     finished: false,
@@ -209,6 +212,22 @@ export function rowsFor(rows, target, { issueFiles = new Map() } = {}) {
 }
 
 /**
+ * How far a batch of downloads has got, 0..1, or null when none is coming:
+ * the comics still coming and those asked for with them (since the first
+ * still coming was asked for) that are done -- here, or failed. Counting
+ * only those still coming, the ring would go back each time one finished.
+ * A row from before `startedAt` counts only while it is coming.
+ */
+export function batchProgress(rows) {
+  const coming = rows.filter((row) => row.state === "downloading");
+  if (!coming.length) return null;
+  const since = coming.map((row) => row.startedAt).filter(Boolean).sort()[0];
+  const finished = since ? rows.filter((row) => row.state !== "downloading" && row.startedAt && row.startedAt >= since) : [];
+  const done = finished.length + coming.reduce((sum, row) => sum + progressOf(row), 0);
+  return done / (finished.length + coming.length);
+}
+
+/**
  * What a cover's corner says (CoverStatus): `downloading` with the progress
  * of what is still coming, else `done` once something of it is here, else
  * nothing. A run with some issues here and none coming is `done`: "on this
@@ -216,10 +235,8 @@ export function rowsFor(rows, target, { issueFiles = new Map() } = {}) {
  */
 export function coverStatusFor(rows, target, options = {}) {
   const mine = rowsFor(rows, target, options);
-  const coming = mine.filter((row) => row.state === "downloading");
-  if (coming.length) {
-    return { state: "downloading", progress: coming.reduce((sum, row) => sum + progressOf(row), 0) / coming.length };
-  }
+  const progress = batchProgress(mine);
+  if (progress !== null) return { state: "downloading", progress };
   const here = mine.filter((row) => row.state === "ready" || row.state === "stale").length;
   if (!here) return null;
   return { state: "done", label: target.kind === "issue" ? "On this device" : `${here} on this device` };

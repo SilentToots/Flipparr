@@ -10,6 +10,7 @@ import { BookOpen, Check, CheckCircle, ClockCounterClockwise, DotsThree, Warning
 import { useCallback, useContext, useRef, useState } from "react";
 import { Host, useManages, useReaderOnly } from "../host.js";
 import { CoverStatus } from "../components/CoverStatus.jsx";
+import { ReadState, placeFraction } from "../components/ReadState.jsx";
 import { ActionMenu, useLongPress } from "../drawers/inventory.jsx";
 
 export function publicationState(series) {
@@ -225,10 +226,14 @@ export function collectionReadAction(card, reading) {
   const { run, allRead, anyRead } = collectionReadTarget(card, reading);
   if (!run) return null;
   const place = reading[String(run.id)];
+  // How far through the collection, each run counting alike: a reader host
+  // shows it on the cover.
+  const runs = card.runs || [];
+  const fraction = runs.length ? runs.reduce((sum, item) => sum + placeFraction(reading[String(item.id)]), 0) / runs.length : 0;
   const started = place?.state === "continue" && place.pageCount;
   const verb = started ? "Continue" : allRead ? "Restart" : place?.state === "next" || anyRead ? "Begin" : "Read";
   return { verb, label: `${verb} ${card.name}: ${run.title}`, target: started ? { id: place.fileId } : { runId: run.id },
-    place: allRead ? { state: "finished" } : anyRead ? { state: "continue" } : null };
+    place: allRead ? { state: "finished" } : anyRead ? { state: "continue", fraction } : null };
 }
 
 export function listReadAction(list, reading) {
@@ -264,12 +269,13 @@ export function CardMenu({ target, title, read, onRead }) {
 }
 
 /**
- * On a reader host, a card's cover carries its state, not buttons: the
- * reading mark, the download mark in its corner, and the long-press menu.
+ * On a reader host, a card's cover carries its state, not buttons: how far
+ * it is read and its download mark in two corners, and the long-press menu.
  */
 function ReaderCardOverlay({ target, title, read, onRead }) {
+  const place = read?.place;
   return <>
-    <ReadingMark place={read?.place} />
+    <ReadState finished={place?.state === "finished"} fraction={place?.fraction ?? placeFraction(place)} />
     <CoverStatus target={target} />
     <CardMenu target={target} title={title} read={read} onRead={onRead} />
   </>;

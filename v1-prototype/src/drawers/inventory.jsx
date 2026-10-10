@@ -14,6 +14,8 @@ import { BackdropPicker, CoverPicker } from "./groups.jsx";
 import { ArrowCounterClockwise, ArrowLeft, ArrowRight, ArrowsClockwise, BookOpen, Books, CaretRight, Check, CheckCircle, CloudArrowDown, DotsThree, Eye, HardDrive, ListBullets, ListNumbers, MagnifyingGlass, PencilSimple, Plus, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { Host } from "../host.js";
 import { CoverStatus } from "../components/CoverStatus.jsx";
+import { ReadState } from "../components/ReadState.jsx";
+import { ProgressRing, StopSquare } from "../components/ProgressRing.jsx";
 
 export function CollectionCoverage({ series, editionsOn }) {
   const directOwned = series.issues?.filter((issue) => issue.directOwned).length ?? 0;
@@ -224,8 +226,8 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
     const state = issue.fileId ? hostDownload(issue) : null;
     if (!state) return null;
     return <button type="button" className={`${className}${state.done ? " done" : ""}`} onClick={state.onPress}
-      aria-label={state.label} title={state.label} aria-busy={state.busy || undefined}>
-      {state.busy ? <LoadingSpinner size={14} /> : state.done ? <CheckCircle size={15} weight="fill" /> : <CloudArrowDown size={15} />}
+      aria-label={state.label} title={state.label}>
+      {state.busy ? <ProgressRing progress={state.progress}><StopSquare /></ProgressRing> : state.done ? <CheckCircle size={15} weight="fill" /> : <CloudArrowDown size={15} />}
     </button>;
   };
   // Covers are why the tab exists, so posters lead. A long run is also less
@@ -302,6 +304,7 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
             <span className="issue-tile-art">
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
               {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
+                : readerOnly ? null
                 : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span>
                 : !readerOnly && hostBadge(issue) ? <span className={`ownership-source ${hostBadge(issue).tone}`}>{hostBadge(issue).label}</span> : null}
               {/* A reader host: the cover itself reads, status sits in its
@@ -309,13 +312,14 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
                   2026-10-10; Apple HIG, Context menus). */}
               {readerOnly && read && onRead ? <button type="button" className="issue-tile-open" onClick={() => onRead({ id: issue.fileId })}
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} /> : null}
+              {readerOnly ? <ReadState finished={read?.finished} fraction={read?.fraction} /> : null}
               {readerOnly ? <CoverStatus target={{ kind: "issue", fileId: String(issue.fileId) }} /> : null}
               {/* Inside the cover's box, not the tile's: anchored to the tile
                   it would sit under the issue title. */}
               {!readerOnly && read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
                 title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
-              {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
+              {read?.fraction && !readerOnly ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
               <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className={`issue-tile-menu${readerOnly ? " quiet" : ""}`} longPress />
               {readerOnly ? null : downloadButton(issue, "issue-tile-download")}
             </span>

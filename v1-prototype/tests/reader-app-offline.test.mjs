@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   downloadComplete, downloadRow, evictionOrder, formatBytes, nextUnread, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload,
-  planDownloads, progressOf, readerCatalog, transferId, usageBytes, coverStatusFor,
+  planDownloads, progressOf, readerCatalog, transferId, usageBytes, coverStatusFor, batchProgress,
 } from "../src/reader-app/offline.js";
 
 const MB = 1024 * 1024;
@@ -133,4 +133,22 @@ test("a cover's corner: a ring while its comics download, a mark once some are h
   assert.equal(coverStatusFor(rows, { kind: "arc", id: "9", issueIds: ["5"] }, { issueFiles }).state, "done", "an arc by its issues");
   assert.equal(coverStatusFor(rows, { kind: "arc", id: "7", issueIds: [] }).state, "done", "or by what was downloaded for it");
   assert.equal(coverStatusFor(rows, { kind: "arc", id: "8", issueIds: ["6"] }, { issueFiles }), null);
+});
+
+test("a batch's progress only goes forward as its comics finish", () => {
+  const at = (minute) => `2026-10-10T15:0${minute}:00.000Z`;
+  const row = (fileId, minute, extra) => ({ ...downloadRow({ ...manifest, fileId }, { groupKey: "run:61", at: at(minute) }), ...extra });
+  const half = { pagesDone: [0, 1, 2], panelsDone: [] };
+  const whole = { state: "ready", pagesDone: [0, 1, 2], panelsDone: [0, 1, 2] };
+  const before = [row("1", 1, half), row("2", 1), row("3", 1)];
+  const after = [row("1", 1, whole), row("2", 1), row("3", 1)];
+  assert.equal(batchProgress(before), 0.5 / 3);
+  assert.equal(batchProgress(after), 1 / 3, "the finished comic still counts");
+  assert.ok(batchProgress(after) > batchProgress(before));
+  assert.equal(batchProgress([row("1", 1, whole), row("2", 1, whole)]), null, "nothing coming");
+  assert.equal(batchProgress([row("9", 0, whole), row("2", 1)]), 0, "a comic downloaded before the batch is not part of it");
+  assert.equal(batchProgress([row("1", 1, { state: "failed" }), row("2", 1)]), 0.5, "a failed one is done trying");
+  const old = { ...row("2", 1), startedAt: undefined };
+  assert.equal(batchProgress([row("1", 1, whole), old]), 0, "a row from an older build counts only while coming");
+  assert.equal(coverStatusFor(after, { kind: "run", id: "61" }).progress, 1 / 3);
 });

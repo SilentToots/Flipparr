@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { DiscoverCover } from "../components/CoverArt.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
+import { ReadState } from "../components/ReadState.jsx";
+import { useReaderOnly } from "../host.js";
 import { ShelfBackIcon, ShelfNextIcon } from "../design-icons.jsx";
 import { CaretRight } from "@phosphor-icons/react";
 
 export function LibraryShelf({ title, items, onSeeAll, onOpen }) {
   const { scroller, atStart, atEnd, measure, page } = useShelfPaging([items.length]);
+  const readerOnly = useReaderOnly();
   if (!items.length) return null;
   return <section className="release-shelf library-shelf" aria-label={title}>
     <header>
@@ -24,7 +27,8 @@ export function LibraryShelf({ title, items, onSeeAll, onOpen }) {
           <DiscoverCover src={card.cover} alt="" glyph={30} />
           {/* The host's download mark (Flipparr View); the web draws none. */}
           <CoverStatus target={card.kind === "run" ? { kind: "run", id: card.runId } : card.fileId ? { kind: "issue", fileId: card.fileId } : null} />
-          {card.progress ? <span className="profile-history-progress" style={{ "--progress": `${Math.round(card.progress * 100)}%` }} aria-hidden="true" /> : null}
+          <ReadState finished={card.finished} fraction={card.progress} />
+          {card.progress && !readerOnly ? <span className="profile-history-progress" style={{ "--progress": `${Math.round(card.progress * 100)}%` }} aria-hidden="true" /> : null}
         </button>
         <div className="pull-card-body">
           <h3 title={card.title}>{card.title}</h3>
