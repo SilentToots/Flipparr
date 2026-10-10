@@ -1029,9 +1029,11 @@ function AppSettingsPage({ client, status, viewer, downloads, online, settings, 
           <button type="button" className="secondary-button" onClick={onSignOut}>Sign out</button>
         </div>
       </SettingsCard>
-      <AboutSettings base={client.origin} privacy={APP_PRIVACY}>
+      <AboutSettings base={client.origin} privacy={APP_PRIVACY} buildLabel="Server build">
         <SettingsCard title="Flipparr View">
-          <p className="settings-card-lead">The reader app for Flipparr, build {typeof __VIEW_BUILD__ === "undefined" ? "dev" : __VIEW_BUILD__}.{server ? ` Connected to Flipparr ${server.version}, build ${server.build}.` : ""}</p>
+          {/* Two builds are in play, so each says whose it is: the app's
+              here, the server's in the Flipparr card below. */}
+          <p className="settings-card-lead">App build {typeof __VIEW_BUILD__ === "undefined" ? "dev" : __VIEW_BUILD__}.{server ? ` Server: Flipparr ${server.version}, build ${server.build}.` : ""}</p>
         </SettingsCard>
       </AboutSettings>
     </div>

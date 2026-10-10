@@ -61,7 +61,7 @@ export const PRIVACY_SECTIONS = [
     "Each request\u2019s page, result and profile. The address it came from only with \u201cRecord visitor addresses\u201d on, under Security.",
   ] },
 ];
-export function AboutSettings({ base = "", privacy = PRIVACY_SECTIONS, children = null }) {
+export function AboutSettings({ base = "", privacy = PRIVACY_SECTIONS, children = null, buildLabel = "Build" }) {
   // A local address (a licence file) is the server's: in Flipparr View it
   // would otherwise replace the app's own page.
   const href = (path) => (path.startsWith("/") ? base + path : path);
@@ -69,7 +69,7 @@ export function AboutSettings({ base = "", privacy = PRIVACY_SECTIONS, children 
   return <>
     {children}
     <SettingsCard title="Flipparr">
-      <p className="settings-card-lead">Free software under the <a href={href("/licenses/gpl-3.0.txt")} target="_blank" rel="noopener noreferrer">GNU General Public License, version 3</a>. It ships no comics, no catalogue data and no download sources: every service it uses is one whoever runs it sets up.{build ? ` Build ${build}.` : ""}</p>
+      <p className="settings-card-lead">Free software under the <a href={href("/licenses/gpl-3.0.txt")} target="_blank" rel="noopener noreferrer">GNU General Public License, version 3</a>. It ships no comics, no catalogue data and no download sources: every service it uses is one whoever runs it sets up.{build ? ` ${buildLabel} ${build}.` : ""}</p>
     </SettingsCard>
     <SettingsCard title="Where the information comes from">
       <ul className="about-list">
