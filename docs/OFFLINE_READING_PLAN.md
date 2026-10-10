@@ -1005,6 +1005,21 @@ only. Built (`4cf987c`..`835c36a`):
 Found in the simulator and fixed: the https try hung against an http-only
 server (4 s limit now). The web's capture is unchanged.
 
+Then (same day), from his follow-ups:
+- Settings in sections beside the one open, the web's layout shared
+  (`settings/shell.jsx`, `9957a70`).
+- His Infuse, Apple Books and Kindle examples (`baeb5ab`, `3471127`; he
+  chose these three of four, not the floating download bar):
+  - download marks: a comic on its way dims with a ring and percentage,
+    Kindle's check once here; issue rows and a drawer's Download go cloud,
+    ring with a stop square, nothing (`ProgressRing`, `batchProgress`);
+  - reading state on covers: a Read sash, a percentage tag;
+  - the continue-reading bar (`ContinueBar`).
+- Device checks still owed (simulator taps were unreliable): tapping a
+  ring to stop it (row and drawer), a batch's ring filling live, and the
+  phone layout of the bar (above the tab bar, under drawers, the toast in
+  the same spot).
+
 ### Phase 8 — live updates (only if the owner answers yes to open question 4)
 - `@capgo/capacitor-updater` (MPL-2.0; using it unmodified is compatible
   with an MIT app — record the check) in manual mode: `download`, `next`,

@@ -664,8 +664,11 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     // The drawer's Download beside Read: the batch's ring with a stop
     // square while it comes (a tap stops what has not arrived), else the
     // cloud that opens the download sheet.
+    // Everything of the run (collection, arc) that is coming counts, as its
+    // cover's ring does: a comic opened to read downloads too, without a
+    // batch of its own.
     groupDownload: (group) => {
-      const mine = downloads.rows.filter((row) => row.groupKey === `${group.kind}:${group.id}`);
+      const mine = rowsFor(downloads.rows, group, { issueFiles });
       const progress = batchProgress(mine);
       if (progress !== null) {
         return {

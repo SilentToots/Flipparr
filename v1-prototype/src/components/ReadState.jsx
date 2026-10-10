@@ -9,11 +9,12 @@ import { useReaderOnly } from "../host.js";
 export function ReadState({ finished = false, fraction = 0 }) {
   const readerOnly = useReaderOnly();
   if (!readerOnly) return null;
-  if (finished) return <span className="read-state sash" aria-hidden="true"><b>Read</b></span>;
+  if (finished) return <span className="read-state sash" role="img" aria-label="Read"><b aria-hidden="true">Read</b></span>;
   const share = Math.max(0, Math.min(1, Number(fraction) || 0));
   if (!share) return null;
   const percent = Math.max(1, Math.round(share * 100));
-  return <span className="read-state tag" aria-hidden="true">{Math.min(percent, 99)}%</span>;
+  const shown = Math.min(percent, 99);
+  return <span className="read-state tag" role="img" aria-label={`${shown}% read`}>{shown}%</span>;
 }
 
 /**

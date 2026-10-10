@@ -1819,7 +1819,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    the bottom-right corner, a run's ring or, once here, Kindle's check in a
    dark circle. How far it is read takes the top-right corner (ReadState). */
 .cover-status { pointer-events: none; z-index: 2; }
-.cover-status.downloading { position: absolute; inset: 0; display: grid; place-items: center; border-radius: inherit; background: var(--scrim); color: var(--color-neutral-0); }
+.cover-status.downloading { position: absolute; inset: 0; display: grid; place-items: center; border-radius: var(--radius-4); background: var(--scrim); color: var(--color-neutral-0); }
 .cover-status-ring { width: 56%; max-width: var(--space-64); height: auto; aspect-ratio: 1; }
 .cover-status-ring circle { stroke-width: 1.5; }
 .cover-status-ring .progress-ring-track { stroke: var(--color-neutral-0); stroke-opacity: .35; }
@@ -1847,11 +1847,11 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .continue-bar-text strong { overflow: hidden; font-size: var(--text-md); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .continue-bar-text small { color: var(--muted); font-size: var(--text-sm); }
 .continue-bar-icon { flex: none; color: var(--violet-text); }
-.reader-app .main-content { padding-bottom: calc(var(--space-32) + var(--space-80)); }
+.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-32) + var(--space-80)); }
 @media (min-width: 641px) and (max-width: 900px) { .continue-bar { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); } }
 @media (max-width: 640px) {
   .continue-bar { left: 0; bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
-  .reader-app .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-80)); }
+  .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-80)); }
 }
 /* The download check owns a cover's bottom-right corner in the app, so a
    collection's stack mark moves to the other one. */
