@@ -46,7 +46,7 @@ mkdir -p "$out"
 echo "Building the app's web bundle and copying it into iOS…"
 (cd "$app" && npm run --silent build:reader-app && npx cap copy ios >/dev/null)
 
-echo "Archiving build $stamp…"
+echo "Archiving build ${stamp}…"
 xcodebuild -project "$app/ios/App/App.xcodeproj" -scheme App -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$out/FlipparrView.xcarchive" \
   -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" \
