@@ -465,6 +465,9 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     wasOnline.current = online;
   }, [online, loadCatalog, noteReadingChanged, downloads]);
   const readyRows = downloads.rows.filter((row) => row.state === "ready");
+  // Downloads in the nav counts what is on its way (owner, 2026-10-10).
+  const downloadingCount = downloads.rows.filter((row) => row.state === "downloading").length;
+  const navItems = useMemo(() => NAV.map((item) => (item.id === "downloads" ? { ...item, count: downloadingCount } : item)), [downloadingCount]);
   // A reader's library: only issues there are to read, and offline only
   // those on this device (the owner, 2026-10-10; readerCatalog).
   const onDeviceKey = downloads.rows.filter((row) => row.state === "ready" || row.state === "stale").map((row) => row.fileId).join(",");
@@ -495,7 +498,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   const pullPill = usePullToRefresh({ enabled: true, onRefresh: refreshLibrary });
   // Offline, said under each page's header (the web's backend-banner).
   const offlineNotice = online ? null : <div className="backend-banner" role="status"><WifiSlash size={19} weight="fill" aria-hidden="true" />
-    {`You’re offline — ${readyRows.length ? `${readyRows.length} downloaded ${readyRows.length === 1 ? "issue is" : "issues are"} ready.` : "nothing is downloaded on this device."}`}</div>;
+    {readyRows.length ? "Offline. Showing downloaded comics." : "Offline. Nothing is downloaded yet."}</div>;
 
   // As the web app's readComic: opening a comic puts the drawers away.
   async function readComic(target) {
@@ -689,7 +692,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
 
   return <Host.Provider value={host}><ViewerContext.Provider value={viewer}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}>
     <div className="app-shell reader-app">
-      <Nav items={NAV} active={page} onNavigate={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} catalog={catalog} backendStatus={backendStatus}
+      <Nav items={navItems} status={online ? null : { icon: <WifiSlash size={18} weight="fill" aria-hidden="true" />, label: "Offline" }} active={page} onNavigate={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} catalog={catalog} backendStatus={backendStatus}
         logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={onSignOut} scanning={false}
         onRefresh={refreshLibrary} refreshing={refreshing} />
       <main className="main-content"><div className="page-view" key={page}>

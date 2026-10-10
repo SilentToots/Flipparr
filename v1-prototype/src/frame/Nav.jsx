@@ -30,6 +30,8 @@ export const NAV_COUNT_LABELS = {
   // Stopped downloads and readers' requests: both wait on the admin.
   requests: (n) => `${n} waiting for you on the Pull List`,
   settings: (n) => `${n} item${n === 1 ? "" : "s"} in Library health need${n === 1 ? "s" : ""} a decision`,
+  // Flipparr View's comics on their way to the device.
+  downloads: (n) => `${n} downloading`,
 };
 
 // A number that counts to its new value rather than jumping, for the counts
@@ -141,7 +143,7 @@ export function SidebarSearch() {
 // `onRefresh`, when given and Scan is not shown, puts a refresh in Scan's
 // place: Flipparr View fetches the library again there (`refreshing` while
 // it does). The web gives none.
-export function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary, items: hostItems = null, onRefresh = null, refreshing = false }) {
+export function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesCount, authStatus, onSignOut, scanning, onScanLibrary, items: hostItems = null, onRefresh = null, refreshing = false, status = null }) {
   const viewer = useViewer();
   const admin = useManages();
   // A reader's Pull List is what they have asked for.
@@ -180,6 +182,10 @@ export function Nav({ active, onNavigate, catalog, backendStatus, logicalSeriesC
   return (
     <aside className={`sidebar${collapsed ? " tab-bar-collapsed" : ""}`}>
       <SidebarSearch />
+      {/* The host's word on where things stand, above the items: Flipparr
+          View's "Offline". On the rail its icon alone; the phone's tab bar
+          leaves it to the page's own banner. The web gives none. */}
+      {status ? <div className="sidebar-status" role="status" title={status.label}>{status.icon}<span>{status.label}</span></div> : null}
       <nav aria-label="Primary navigation" ref={navRef} onClickCapture={expandInsteadOfNavigating}
         onFocusCapture={(event) => { if (event.target.matches?.(":focus-visible")) setCollapsed(false); }}>
         {/* Drawn only in the phone's tab bar; the desktop rail marks its item itself. */}

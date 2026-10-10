@@ -1814,6 +1814,12 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 @media (prefers-reduced-motion: reduce) { .cover-status-fill { transition: none; } }
 /* A hold opens the card's menu, not iOS's own image callout or a text selection. */
 .reader-app :is(.series-card, .issue-tile, .pull-card) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* The sidebar's status row (Flipparr View's "Offline"), above its items: a
+   label on the full sidebar, the icon alone on the tablet rail, and none in
+   the phone's tab bar, where the page's banner says it. */
+.sidebar-status { display: flex; align-items: center; gap: var(--space-8); margin: 0 var(--space-12) var(--space-8); padding: var(--space-8) var(--space-12); border: 1px solid var(--amber-border); border-radius: var(--radius-pill); background: var(--amber-soft); color: var(--amber-text); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+@media (max-width: 640px) { .sidebar-status { display: none; } }
+@media (min-width: 641px) and (max-width: 900px) { .sidebar-status { justify-content: center; margin-inline: var(--space-8); padding-inline: 0; } .sidebar-status span { display: none; } }
 .issue-tile-open { position: absolute; inset: 0; z-index: 1; padding: 0; border: 0; border-radius: var(--radius-4); background: transparent; cursor: pointer; }
 .issue-tile-menu.quiet, .series-card-menu { opacity: 0; pointer-events: none; }
 .issue-tile-menu.quiet:focus-visible, .series-card-menu:focus-visible { opacity: 1; pointer-events: auto; }
