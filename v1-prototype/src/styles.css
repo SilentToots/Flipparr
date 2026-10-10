@@ -1817,6 +1817,14 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* The sidebar's status row (Flipparr View's "Offline"), above its items: a
    label on the full sidebar, the icon alone on the tablet rail, and none in
    the phone's tab bar, where the page's banner says it. */
+/* How much of the device's download limit is used (Flipparr View's
+   StorageGauge): a label row, then the limit as a track and the downloads
+   as its fill. */
+.storage-gauge { display: grid; gap: var(--space-8); }
+.storage-gauge-labels { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-12); font-size: var(--text-sm); color: var(--muted); }
+.storage-gauge-labels strong { color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.storage-gauge-track { height: var(--space-8); border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+.storage-gauge-track i { display: block; height: 100%; border-radius: var(--radius-pill); background: var(--violet); }
 .sidebar-status { display: flex; align-items: center; gap: var(--space-8); margin: 0 var(--space-12) var(--space-8); padding: var(--space-8) var(--space-12); border: 1px solid var(--amber-border); border-radius: var(--radius-pill); background: var(--amber-soft); color: var(--amber-text); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
 @media (max-width: 640px) { .sidebar-status { display: none; } }
 @media (min-width: 641px) and (max-width: 900px) { .sidebar-status { justify-content: center; margin-inline: var(--space-8); padding-inline: 0; } .sidebar-status span { display: none; } }

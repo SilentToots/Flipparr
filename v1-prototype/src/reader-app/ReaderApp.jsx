@@ -3,7 +3,7 @@
 // see what to read, read it, keep some on the device. Search, requests and
 // everything an admin manages stay in the web app.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, BookOpen, DownloadSimple, ShieldCheck, Trash, WifiSlash, X } from "@phosphor-icons/react";
+import { ArrowClockwise, DownloadSimple, ShieldCheck, Trash, WifiSlash, X } from "@phosphor-icons/react";
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
@@ -13,6 +13,10 @@ import { useToast } from "../components/Toast.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "../components/ProfileTiles.jsx";
 import { ComicsIcon, DownloadsNavIcon, ReadingListIcon, SettingsNavIcon } from "../design-icons.jsx";
 import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
+import { CoverArt } from "../components/CoverArt.jsx";
+import { CoverStatus } from "../components/CoverStatus.jsx";
+import { StorageGauge } from "../components/StorageGauge.jsx";
+import { CardMenu } from "../library/cards.jsx";
 import { FinishDrawer } from "../drawers/FinishDrawer.jsx";
 import { ReadingListDrawer } from "../drawers/ReadingListDrawer.jsx";
 import { RunCollectionDrawer } from "../drawers/RunCollectionDrawer.jsx";
@@ -620,6 +624,16 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     // reading list, and -- destructive, last -- Remove downloads.
     cardMenu: (target) => {
       const items = [];
+      // A downloaded comic (the Downloads page): its own download's actions.
+      if (target.kind === "issue") {
+        const row = downloads.row(target.fileId);
+        if (!row) return items;
+        if (row.state === "stale" && online) items.push({ key: "again", label: "Download again", icon: <ArrowClockwise size={16} />, onSelect: () => downloads.redownload(row.fileId).catch(() => {}) });
+        if (row.state === "failed") items.push({ key: "retry", label: "Try again", icon: <ArrowClockwise size={16} />, onSelect: () => downloads.retry(row.fileId) });
+        items.push({ key: "remove", label: row.state === "downloading" ? "Cancel download" : "Remove download", icon: <Trash size={16} />,
+          onSelect: () => downloads.remove(row.fileId).then(() => showToast(`${target.title} removed from this iPad`)) });
+        return items;
+      }
       const listKind = target.kind === "run" ? "run" : target.kind === "arc" ? "arc" : "collection";
       const listed = isOnReadingList(actions.readingList, listKind, target.id);
       if (online) {
@@ -1121,56 +1135,81 @@ function StorageSettings({ downloads, viewer }) {
   }, [folder]);
   const used = usageBytes(rows);
   return <SettingsCard title="Storage">
-    <p className="settings-card-lead">Downloads use {formatBytes(used)} of {cap ? formatBytes(cap) : "\u2026"}. When a download would go over the limit, the comics you finished longest ago make way; one you are still reading never does. A new limit applies from the next download.</p>
-    {cap ? <GlassSelect label="Keep up to" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
+    <StorageGauge used={used} cap={cap} />
+    {cap ? <GlassSelect label="Download limit" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
       options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
-    <p className="settings-card-note">Pages seen while reading online are kept too, up to {formatBytes(ONLINE_MAX_BYTES)}, so a page opens at once the second time: {cache === null ? "\u2026" : formatBytes(cache)} now.</p>
+    <p className="settings-card-note">Finished comics make room when you need it. Comics you&rsquo;re reading always stay.</p>
     <div className="settings-card-actions">
+      <span className="settings-card-note">Pages kept for quick reopening: {cache === null ? "\u2026" : formatBytes(cache)} (up to {formatBytes(ONLINE_MAX_BYTES)})</span>
       <button type="button" className="secondary-button" disabled={!cache} onClick={() => trimNative({ path: folder, maxBytes: 0 }).then(() => setCache(0), () => {})}>
-        <Trash size={16} /> Clear pages seen online
+        <Trash size={16} /> Clear
       </button>
     </div>
   </SettingsCard>;
 }
 
+// What each downloaded cover says under it, in reading words.
+function downloadCaption(row) {
+  if (row.state === "downloading") return `Downloading ${Math.round(progressOf(row) * 100)}%`;
+  if (row.state === "failed") return "Didn\u2019t finish. Tap to try again";
+  if (row.state === "stale") return "Updated on the server";
+  return row.finished ? "Finished" : row.lastReadAt ? "In progress" : "Unread";
+}
+
+/**
+ * Downloads as a reader shelf, Kindle's way (the owner, 2026-10-10): covers,
+ * not rows. What is on its way first, then what is here, the one read most
+ * lately first. A tap reads (or retries what failed); touch and hold for
+ * the rest. The limit sits on top as a gauge.
+ */
 function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
   const rows = useDownloadRows(downloads);
   const [cap, setCap] = useState(null);
   useEffect(() => { deviceStore.capBytes().then(setCap); }, []);
   const used = usageBytes(rows);
   const finished = rows.filter((row) => row.state === "ready" && row.finished);
+  const coming = rows.filter((row) => row.state === "downloading" || row.state === "failed");
+  const at = (row) => Date.parse(row.lastReadAt || row.downloadedAt || 0) || 0;
+  const here = rows.filter((row) => row.state === "ready" || row.state === "stale").sort((a, b) => at(b) - at(a));
+  const card = (row, index) => {
+    const name = `${row.seriesTitle}${row.issueNumber ? ` #${row.issueNumber}` : ""}`;
+    const readable = row.state === "ready" || row.state === "stale";
+    const tap = readable ? () => onRead(row.fileId) : row.state === "failed" ? () => downloads.retry(row.fileId) : null;
+    return <article className="series-card download-card" style={{ "--card-index": Math.min(index, 11) }} key={row.fileId}>
+      <span className="series-card-art">
+        <CoverArt id={`download-${row.fileId}`} title={name} cover={row.pageUrls?.[0]} />
+        <CoverStatus target={{ kind: "issue", fileId: row.fileId }} />
+        <CardMenu target={{ kind: "issue", fileId: row.fileId, title: name }} title={name}
+          read={readable ? { verb: row.finished ? "Read again" : row.lastReadAt ? "Continue" : "Read", target: row.fileId } : null}
+          onRead={(fileId) => onRead(fileId)} />
+      </span>
+      <span className="series-card-identity"><strong>{row.seriesTitle}</strong>{row.issueNumber ? <span className="series-card-byline">#{row.issueNumber}</span> : null}</span>
+      <span className="series-card-foot" role={row.state === "failed" ? "alert" : undefined}>{downloadCaption(row)}</span>
+      <button type="button" className="discover-open series-card-open" onClick={tap || undefined} disabled={!tap}
+        aria-label={`${name}. ${downloadCaption(row)}`} />
+    </article>;
+  };
   return <>
     <PageHeader title="Downloads" />
     <div className="settings-pane">
       {notice}
       <SettingsCard title="On this device">
-        <p className="settings-card-lead">{formatBytes(used)} of {cap ? formatBytes(cap) : "…"} used. When a download would go over the limit, the comics you finished longest ago make way; one you are still reading never does.</p>
+        <StorageGauge used={used} cap={cap} />
+        <p className="settings-card-note">Finished comics make room when you need it.</p>
         <div className="settings-card-actions">
-          <button type="button" className="secondary-button" onClick={onOpenSettings}>Change the limit in Settings</button>
+          <button type="button" className="secondary-button" onClick={onOpenSettings}>Change limit</button>
+          {finished.length ? <button type="button" className="secondary-button" onClick={async () => {
+            if (!window.confirm(`Remove ${finished.length} finished ${finished.length === 1 ? "comic" : "comics"} from this iPad?`)) return;
+            await downloads.removeFinished();
+          }}><Trash size={16} /> Remove finished ({finished.length})</button> : null}
         </div>
-        {finished.length ? <button type="button" className="secondary-button" onClick={async () => {
-          if (!window.confirm(`Remove ${finished.length} finished ${finished.length === 1 ? "comic" : "comics"} from this device? Comics still being read stay.`)) return;
-          await downloads.removeFinished();
-        }}><Trash size={16} /> Remove finished downloads ({finished.length})</button> : null}
       </SettingsCard>
-      <SettingsCard title="Downloaded comics">
-        {rows.length ? <div className="profile-rows">
-          {rows.map((row) => {
-            const name = `${row.seriesTitle}${row.issueNumber ? ` #${row.issueNumber}` : ""}`;
-            return <div className="profile-row" key={row.fileId}>
-              <span><strong>{name}</strong><small role={row.state === "failed" ? "alert" : undefined}>
-                {row.state === "ready" ? formatBytes(row.bytes)
-                  : row.state === "stale" ? "Replaced on the server since it was downloaded"
-                  : row.state === "failed" ? row.error
-                  : `Downloading ${row.pagesDone.length} of ${row.pageCount} pages`}
-              </small></span>
-              {row.state === "ready" || row.state === "stale" ? <button type="button" className="secondary-button" onClick={() => onRead(row.fileId)}><BookOpen size={16} /> Read</button> : null}
-              {row.state === "stale" ? <button type="button" className="secondary-button" onClick={() => downloads.redownload(row.fileId).catch(() => {})}><ArrowClockwise size={16} /> Download again</button> : null}
-              {row.state === "failed" ? <button type="button" className="secondary-button" onClick={() => downloads.retry(row.fileId)}><ArrowClockwise size={16} /> Try again</button> : null}
-              <button type="button" className="glass-button glass-button--icon" aria-label={`Remove ${name} from this device`} onClick={() => downloads.remove(row.fileId)}><Trash size={18} /></button>
-            </div>;
-          })}
-        </div> : <p className="settings-card-lead">Nothing downloaded yet. In a run&rsquo;s Issues, open an issue&rsquo;s &hellip; menu and choose Download.</p>}
+      {coming.length ? <SettingsCard title="Downloading">
+        <div className="series-grid download-grid">{coming.map(card)}</div>
+      </SettingsCard> : null}
+      <SettingsCard title="Downloaded">
+        {here.length ? <div className="series-grid download-grid">{here.map(card)}</div>
+          : <p className="settings-card-lead">Nothing here yet. Comics you open are kept here, or tap Download beside Read on a run.</p>}
       </SettingsCard>
     </div>
   </>;
