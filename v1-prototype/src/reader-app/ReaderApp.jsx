@@ -17,6 +17,9 @@ import { CoverArt } from "../components/CoverArt.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
 import { CardMenu } from "../library/cards.jsx";
+import { LibraryMatches, RecentSearches, useLibraryMatches } from "../search/library-search.jsx";
+import { libraryMatchState } from "../discover.js";
+import { readRecent, recentEntry, rememberRecent, writeRecent } from "../recent-searches.js";
 import { FinishDrawer } from "../drawers/FinishDrawer.jsx";
 import { ReadingListDrawer } from "../drawers/ReadingListDrawer.jsx";
 import { RunCollectionDrawer } from "../drawers/RunCollectionDrawer.jsx";
@@ -684,14 +687,29 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // downloadVersion: the menu and badge follow the downloads as they change.
   }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role, downloadIssue, catalog, issueFiles, actions.readingList, actions.toggleReadingList]);
 
+  // Search, the library's only (the owner, 2026-10-10): the sidebar's field
+  // and the phone header's button, as on the web, open the Search page; it
+  // answers as you type, from what this host shows (offline, what is here).
+  const [searchDraft, setSearchDraft] = useState("");
+  const [beforeSearch, setBeforeSearch] = useState("library");
+  const openSearch = useCallback(() => setPage((current) => {
+    if (current !== "search") setBeforeSearch(current);
+    return "search";
+  }), []);
   const header = useMemo(() => ({
+    search: {
+      draft: searchDraft, catalogs: false,
+      onDraft: (value) => { setSearchDraft(value); openSearch(); },
+      onSubmit: openSearch, onOpen: openSearch,
+      onClear: () => { setSearchDraft(""); setPage(beforeSearch); },
+    },
     profile: {
       household: Boolean(status.household), method: status.method, version: 0,
       // Your own page is the web app's; here your tile just closes the menu.
       // Sign out always works, and always shows (see ReaderApp's signOut).
       onOpenProfile: () => {}, onSwitchTo, onPicker: onSwitch, onSignOut, signOutAlways: true,
     },
-  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut]);
+  }), [status.household, status.method, onSwitch, onSwitchTo, onSignOut, searchDraft, openSearch, beforeSearch]);
 
   const series = catalog?.series || [];
   const runCollections = useMemo(() => collectionCards(catalog?.runCollections, catalog?.series || []), [catalog?.runCollections, catalog?.series]);
@@ -715,6 +733,9 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
           tab={libraryTab} onTab={(next) => { setLibraryTab(next); window.scrollTo({ top: 0 }); }} onNavigate={setPage}
           onOpenSeries={openSeries} onOpenCollection={() => {}} onOpenList={openList} onRead={readComic}
           readingVersion={readingVersion} listsVersion={listsVersion} catalog={catalog} backendStatus={backendStatus} /> : null}
+        {page === "search" ? <AppSearchPage draft={searchDraft} onDraft={setSearchDraft} catalog={catalog} backendStatus={backendStatus}
+          runCollections={runCollections} onOpenSeries={openSeries} onOpenList={openList}
+          onOpenRunCollection={(card) => { setSelectedSeries(null); setSelectedList(null); setRunCollectionId(String(card.id)); }} /> : null}
         {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} notice={offlineNotice}
           onOpenSettings={() => { setPage("app-settings"); window.scrollTo({ top: 0 }); }} /> : null}
         {page === "app-settings" ? <AppSettingsPage client={client} status={status} viewer={viewer} downloads={downloads} online={online}
@@ -1146,6 +1167,54 @@ function StorageSettings({ downloads, viewer }) {
       </button>
     </div>
   </SettingsCard>;
+}
+
+/**
+ * Flipparr View's Search: the web's library half (search/library-search.jsx)
+ * and nothing that asks a catalog -- the app is for reading what is here.
+ * Recent searches first, as on the web; the field is not focused for you,
+ * so iPad's keyboard does not cover the page (Apple HIG, Search fields).
+ */
+function AppSearchPage({ draft, onDraft, catalog, backendStatus, runCollections, onOpenSeries, onOpenList, onOpenRunCollection }) {
+  const liveQuery = String(draft || "").trim();
+  const narrow = useMediaQuery("(max-width: 900px)");
+  const { allSeries, libraryMatches, collectionMatchCards, arcMatchCards } = useLibraryMatches({ catalog, backendStatus, runCollections, liveQuery });
+  const [recent, setRecent] = useState(() => readRecent(profileStorage()));
+  const remember = (item) => setRecent((current) => {
+    const next = rememberRecent(current, recentEntry("series", item));
+    writeRecent(profileStorage(), next);
+    return next;
+  });
+  const count = libraryMatches.length + collectionMatchCards.length + arcMatchCards.length;
+  return <>
+    <PageHeader title={liveQuery ? `Results for \u201c${liveQuery}\u201d` : "Search"} search={narrow ? "page" : "none"} searchButton={false}
+      field={{ value: draft, onChange: onDraft, onSubmit: () => {}, onClear: () => onDraft(""), onEscape: true,
+        label: "Search your library", placeholder: "Title, creator or publisher" }} />
+    {liveQuery ? <section className="discover-results" aria-label="In your library">
+      <LibraryMatches state={libraryMatchState(catalog, backendStatus, libraryMatches)} count={count} liveQuery={liveQuery}
+        libraryMatches={libraryMatches} collectionMatchCards={collectionMatchCards} arcMatchCards={arcMatchCards}
+        onOpenRunCollection={onOpenRunCollection} onOpenRun={(item) => { remember(item); onOpenSeries(item); }} onOpenList={onOpenList} />
+    </section> : <>
+      <p className="search-hint">Find a run, collection or story arc by its title, a creator or the publisher.</p>
+      <RecentSearches entries={recent.filter((entry) => entry.kind !== "run")} allSeries={allSeries}
+        onClear={() => { setRecent([]); writeRecent(profileStorage(), []); }} onSearch={onDraft}
+        onOpenSeries={(item) => { remember(item); onOpenSeries(item); }} onOpenRun={() => {}} />
+    </>}
+  </>;
+}
+
+/** Whether a media query matches, following it as the window changes. */
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => Boolean(window.matchMedia?.(query).matches));
+  useEffect(() => {
+    const list = window.matchMedia?.(query);
+    if (!list) return undefined;
+    const change = () => setMatches(list.matches);
+    change();
+    list.addEventListener("change", change);
+    return () => list.removeEventListener("change", change);
+  }, [query]);
+  return matches;
 }
 
 // What each downloaded cover says under it, in reading words.

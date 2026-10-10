@@ -369,8 +369,9 @@ export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onTo
   const libraryAdmin = useManages();
   const hostNotice = useContext(Host)?.notice ?? null;
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
-  // The page's own search: it narrows what you already have, as you type.
-  const [query, setQuery] = useState("");
+  // Searching lives on the Search page (one /search, 2026-10-01); the page
+  // keeps its query-shaped filtering for it, with nothing typed here.
+  const query = "";
   const queryParts = useMemo(() => searchQueryParts(query), [query]);
   const searching = query.trim().length > 0;
   // How the grid was left last time, in this browser. Recent and covers by

@@ -59,7 +59,7 @@ import { usePullToRefresh } from "./frame/pullRefresh.jsx";
 import { PasswordInput } from "./components/PasswordInput.jsx";
 import { readableFile, readingContext, useReadingActions } from "./library/actions.js";
 import { apiRequest, forgetAnswers, lastAnswer, rememberAnswer } from "./api.js";
-import { listCard, communityListLine, arcMatches, arcYears, groupOwnerLine, groupsToAddTo, issuesInRange } from "./reading-list.js";
+import { communityListLine, arcYears, groupOwnerLine, groupsToAddTo, issuesInRange } from "./reading-list.js";
 import { jobHasFailed } from "./nav-counts.js";
 import { agoPhrase, coolingProviders, formatBytes, problemTitle, scanBadge, waitingWork, workerAdvice, workerBadge } from "./system-status.js";
 
@@ -76,14 +76,14 @@ import {
 import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, nextProfileColour, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
 import { ratingRows, limitedProfiles, filterRatingRows, publisherChoices, ratingNote, ratingOutcome } from "./rating-review.js";
 
-import { collectionCards, collectionMatches } from "./run-collections.js";
+import { collectionCards } from "./run-collections.js";
 import { EMPTY_ENTRIES } from "./reading-list-tab.js";
 
 import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, READER_PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
-  runModes, completeRunToPull, issueLabel, libraryRunMatches } from "./discover.js";
+  runModes, completeRunToPull, issueLabel } from "./discover.js";
 import { requestKey, waitingKeys, runRequested, requestScope, adminQueue, isFollow, swipeDecision, ratingTone, UNDO_MS, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
 import { ViewerContext, useViewer } from "./viewer.js";
 import { CoverArt, DiscoverCover, SeriesCover } from "./components/CoverArt.jsx";
@@ -100,9 +100,10 @@ import { BackdropPicker, CoverPicker, DragOrderList } from "./drawers/groups.jsx
 import { ActionMenu, GroupedIssueInventory, downloadFrom } from "./drawers/inventory.jsx";
 import { CollectedEditionsContext, EDITION_KIND_LABELS, editionKindLabel, identityKey, volumeTerminology } from "./editions.js";
 import { Nav } from "./frame/Nav.jsx";
+import { LibraryMatches, RecentSearches, useLibraryMatches } from "./search/library-search.jsx";
 import { AboutSettings, useBuild } from "./settings/about.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
-import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries, searchQueryParts, useReadingLists } from "./library/LibraryView.jsx";
+import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
 
 const DEMO_META_ITEMS = [
   { file: "ironwood_vol1.cbz", issue: "Empty archive", detail: "The archive is only 22 bytes and contains no comic pages.", severity: "error", category: "file", code: "empty_archive" },
@@ -599,62 +600,6 @@ function ReleaseShelf({ title, date, subtitle, state, issues = [], error, pulled
   </section>;
 }
 
-function LibraryMatchCard({ series, onOpen }) {
-  return <button type="button" className="library-match" onClick={() => onOpen(series)}>
-    <span className="library-match-art">
-      <DiscoverCover src={series.cover} alt={`${series.title} cover`} />
-      {series.year ? <b>{series.year}</b> : null}
-    </span>
-    <h3 title={series.title}>{series.title}</h3>
-  </button>;
-}
-
-// The Search page's "Recently Searched", after the Apple TV app's: what was
-// opened from results, as cards of a cover, a title and a line under it. A
-// library run no longer in the library drops out.
-function RecentSearches({ entries, allSeries, onClear, onSearch, onOpenSeries, onOpenRun }) {
-  const cards = entries.map((entry) => {
-    if (entry.kind === "query") {
-      return { key: entry.key, title: entry.text, detail: "Search", query: true, open: () => onSearch(entry.text) };
-    }
-    if (entry.kind === "series") {
-      const series = allSeries.find((item) => String(item.id) === String(entry.id));
-      return series && { key: entry.key, title: series.title, cover: series.cover,
-        detail: [series.publisher, series.year].filter(Boolean).join(" · ") || "In your library",
-        open: () => onOpenSeries(series) };
-    }
-    const run = entry.item;
-    return { key: entry.key, title: run.title, cover: run.cover,
-      detail: [run.publisher, run.yearLabel || run.yearBegan].filter(Boolean).join(" · ") || "Comic catalog",
-      open: () => onOpenRun(run) };
-  }).filter(Boolean);
-  if (!cards.length) return null;
-  return <section className="recent-searches" aria-labelledby="recent-searches-title">
-    <header>
-      <h2 id="recent-searches-title">Recently Searched</h2>
-      <button type="button" className="recent-searches-clear" onClick={onClear}>Clear</button>
-    </header>
-    <div className="recent-search-grid">
-      {cards.map((card) => <button type="button" className="recent-search" key={card.key} onClick={card.open}>
-        {card.query
-          ? <span className="recent-search-art recent-search-query" aria-hidden="true"><MagnifyingGlass size={20} /></span>
-          : <DiscoverCover src={card.cover} alt="" className="recent-search-art" glyph={18} />}
-        <span className="recent-search-copy">
-          <strong title={card.title}>{card.title}</strong>
-          <small>{card.detail}</small>
-        </span>
-      </button>)}
-    </div>
-  </section>;
-}
-
-function LibraryMatchSkeleton() {
-  return <div className="library-match-skeleton" aria-hidden="true">
-    <span className="discover-cover" />
-    <h3><i /></h3>
-  </div>;
-}
-
 function NewRunCard({ item, state, onPull, onOpen }) {
   // How long the run is, beside when it ran: "13 issues" is the difference
   // between a one-shot and a decade, and deciding to pull turns on it.
@@ -909,20 +854,7 @@ function DiscoverView({
   const openLibraryRun = (item) => item.isCollectionSeries ? onOpenCollection(item.collection) : onOpenSeries(item);
   const openCatalogRun = (run) => setDrawer({ kind: "run", item: run });
 
-  const allSeries = useMemo(
-    () => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []),
-    [catalog, backendStatus]);
-  const savedArcs = useReadingLists(0, allSeries);
-  const libraryMatches = useMemo(() => {
-    if (!liveQuery) return [];
-    const parts = searchQueryParts(liveQuery);
-    return allSeries.filter((item) => libraryRunMatches(item, parts));
-  }, [allSeries, liveQuery]);
-  // Collections and saved story arcs answer too: everything in the library.
-  const collectionMatchCards = useMemo(() => liveQuery
-    ? runCollections.filter((card) => card.runCount && collectionMatches(card, liveQuery)) : [], [runCollections, liveQuery]);
-  const arcMatchCards = useMemo(() => liveQuery
-    ? (savedArcs || []).map(listCard).filter((list) => arcMatches(list, liveQuery.toLowerCase())) : [], [savedArcs, liveQuery]);
+  const { allSeries, libraryMatches, collectionMatchCards, arcMatchCards } = useLibraryMatches({ catalog, backendStatus, runCollections, liveQuery });
 
   async function loadReleases() {
     // The skeleton only when there is nothing to show yet; a refresh of
@@ -1058,19 +990,9 @@ function DiscoverView({
       <section className="discover-results" aria-label="In your library">
         {/* No count until there is one: "0" before the library has arrived is
             a claim, not a placeholder. */}
-        <header><h2>{libraryState === "loading" ? null : <>{libraryCount} </>}<span>In Your Library</span></h2></header>
-        {libraryState === "loading" ? <div className="library-match-row" role="status" aria-busy="true">
-          <span className="sr-only">Reading your library</span>
-          {[0, 1, 2].map((item) => <LibraryMatchSkeleton key={item} />)}
-        </div> : libraryCount ? <div className="library-match-row">
-          {collectionMatchCards.map((card) => <LibraryMatchCard series={{ id: card.key, title: card.name, cover: card.cover, year: `${card.runCount} run${card.runCount === 1 ? "" : "s"}` }}
-            onOpen={() => onOpenRunCollection?.(card)} key={card.key} />)}
-          {libraryMatches.map((series) => <LibraryMatchCard series={series}
-            onOpen={(item) => { remember("series", item); openLibraryRun(item); }}
-            key={series.id} />)}
-          {arcMatchCards.map((list) => <LibraryMatchCard series={{ id: `arc-${list.id}`, title: list.name, cover: list.cover, year: arcYears(list) || "Story arc" }}
-            onOpen={() => onOpenList?.(list)} key={`arc-${list.id}`} />)}
-        </div> : <p className="discover-note">Nothing in your library matches “{liveQuery}”.</p>}
+        <LibraryMatches state={libraryState} count={libraryCount} liveQuery={liveQuery} libraryMatches={libraryMatches}
+          collectionMatchCards={collectionMatchCards} arcMatchCards={arcMatchCards} onOpenRunCollection={onOpenRunCollection}
+          onOpenRun={(item) => { remember("series", item); openLibraryRun(item); }} onOpenList={onOpenList} />
       </section>
 
       {catalogsAllowed && arcRows.length ? <section className="discover-results" aria-label="Story arcs">
