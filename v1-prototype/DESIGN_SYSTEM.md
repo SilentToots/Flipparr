@@ -361,6 +361,33 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
     Search first on the rail, no search in a phone's tab bar but its button
     in every header, and a tablet's rail showing no F mark.
 
+### Flipparr View (a reader host)
+
+The iPad and iPhone app shows the web's own screens through a Host
+(`src/host.js`) and changes them only where it is a reader, not an
+acquisition tool (the owner, 2026-10-10; Apple HIG, Context menus,
+Progress indicators, Gauges):
+
+- **No ownership.** `readerOnly`: no owned counts or bars, no Missing or
+  Upcoming issues, no Following. A card says how many issues there are to
+  read.
+- **Covers carry state, not buttons.** `CoverStatus` sits in the top-right
+  corner: a ring filling while a comic downloads, a download mark once it
+  is on the device (a run, collection or arc: once some of it is). The
+  reading mark (Read, In progress) and the progress hairline stay. A tap
+  on an issue's cover reads it.
+- **Actions are a long press.** Touch and hold any cover for its menu
+  (`useLongPress`, `CardMenu`, `IssueMenu`): at most three groups,
+  destructive last. The menu's "…" anchor shows only to keyboard focus.
+  List rows keep their visible controls.
+- **The app's own screens** (`.reader-app`) use 44 px targets at every
+  width, one 12 px rhythm inside a card, and 16 px body copy.
+- **Storage** is a gauge (`StorageGauge`): the limit as the track, the
+  downloads as its violet fill, a label at each end.
+
+The web draws none of these: each is a host slot or the `.reader-app`
+root, and its visual capture is unchanged by them.
+
 ## Glass and motion
 
 A choice from a list is `GlassSelect`, never a native select: a capsule on

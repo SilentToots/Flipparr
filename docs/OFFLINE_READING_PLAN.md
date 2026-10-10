@@ -990,6 +990,21 @@ How:
   eight days (sessions last 30 days, `_SESSION_TTL_SECONDS`) and reopen
   (downloads still there); reconnect → progress on the server.
 
+### Phase 7b — the owner's TestFlight UI notes (2026-10-10)
+
+Twelve notes from build 48b86d8. Decided with him: hide what is not owned,
+covers show status only (actions on a long press), search the library
+only. Built (`4cf987c`..`835c36a`):
+- the reader host (`readerOnly`, `readerCatalog`), offline only what is
+  here (`readable`);
+- `CoverStatus` and long-press menus;
+- the nav's Downloading count and Offline status;
+- Downloads as a cover shelf with a storage gauge;
+- library search shared from the web;
+- spacing on the app's screens (`.reader-app`).
+Found in the simulator and fixed: the https try hung against an http-only
+server (4 s limit now). The web's capture is unchanged.
+
 ### Phase 8 — live updates (only if the owner answers yes to open question 4)
 - `@capgo/capacitor-updater` (MPL-2.0; using it unmodified is compatible
   with an MIT app — record the check) in manual mode: `download`, `next`,
