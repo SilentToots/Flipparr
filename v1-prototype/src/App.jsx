@@ -101,7 +101,8 @@ import { ActionMenu, GroupedIssueInventory, downloadFrom } from "./drawers/inven
 import { CollectedEditionsContext, EDITION_KIND_LABELS, editionKindLabel, identityKey, volumeTerminology } from "./editions.js";
 import { Nav } from "./frame/Nav.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "./search/library-search.jsx";
-import { AboutSettings, useBuild } from "./settings/about.jsx";
+import { AboutSettings } from "./settings/about.jsx";
+import { SettingsFrame, SettingsIndex } from "./settings/shell.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
 import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
 
@@ -2580,31 +2581,6 @@ function PanelFixesCard() {
   </div>;
 }
 
-// A phone's first level of Settings, after iPhone Settings: grouped rows of
-// an icon and a name, each opening its section as a page. A count rides
-// beside the name rather than in a column of its own, which would set every
-// row's columns differently and stagger the chevrons.
-function SettingsIndex({ counts = {}, onOpen, sections = SETTINGS_SECTIONS }) {
-  const build = useBuild();
-  const groups = [...new Set(sections.map((item) => item.group))];
-  return <nav className="settings-index" aria-label="Settings sections">
-    {groups.map((group) => <ul key={group}>
-      {sections.filter((item) => item.group === group).map(({ id, label, icon: Icon }) => <li key={id}>
-        <button type="button" onClick={() => onOpen(id)}
-          aria-label={counts[id] ? `${label}. ${counts[id]} need${counts[id] === 1 ? "s" : ""} a decision` : undefined}>
-          <span className={`settings-index-icon settings-index-icon--${id}`} aria-hidden="true"><Icon size={18} weight="fill" /></span>
-          <span className="settings-index-label">
-            <span>{label}</span>
-            {counts[id] ? <b className="settings-index-badge">{counts[id]}</b> : null}
-          </span>
-          <CaretRight size={16} aria-hidden="true" />
-        </button>
-      </li>)}
-    </ul>)}
-    {build ? <p className="settings-build">Flipparr build {build}</p> : null}
-  </nav>;
-}
-
 // The documented Docker mount, so most installs need no typing at all.
 const DEFAULT_LIBRARY_FOLDER = "/comics";
 
@@ -3921,23 +3897,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   }
   const languageOptions = [["en", "English"], ["fr", "French"], ["es", "Spanish"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"], ["ru", "Russian"], ["ja", "Japanese"], ["ko", "Korean"], ["zh", "Chinese"], ["pl", "Polish"], ["nl", "Dutch"], ["", "No preference"]];
   return <>
-    <PageHeader title={phone ? open.label : "Settings"}
-      leading={phone ? <button type="button" className="glass-button glass-button--icon" onClick={() => onSectionChange("")} aria-label="Back to Settings"><ArrowLeft size={20} /></button> : null} />
-    <div className={`settings-shell${current === "health" ? " settings-shell--wide" : ""}`}>
-      {/* The column runs the panel's full height, for its rule; the list in
-          it stays in view as a long section scrolls. */}
-      {phone ? null : <nav className="settings-nav" aria-label="Settings sections"><div>
-        {sections.map(({ id, label }) => <button type="button" key={id}
-          className={id === current ? "active" : ""} aria-current={id === current ? "page" : undefined}
-          onClick={() => onSectionChange(id)}>
-          <span>{label}</span>{id === "health" && needAttention ? <b>{needAttention}</b> : null}
-        </button>)}
-      </div></nav>}
-      <div className="settings-pane">
-        <header className="settings-pane-header">
-          {phone ? null : <h2>{open.label}</h2>}
-          <p>{open.detail}</p>
-        </header>
+    <SettingsFrame sections={sections} open={open} phone={phone} onSectionChange={onSectionChange}
+      counts={{ health: needAttention }} wide={current === "health"}>
         {current === "profile" ? <YourProfileSettings authStatus={authStatus} onSignOut={onSignOut} catalog={catalog} onViewerChanged={onAuthChanged} /> : null}
         {current === "profiles" ? <ProfilesSettings catalog={catalog} onCatalogChanged={onCatalogChanged} /> : null}
         {current === "health" ? <MetadataView {...health} /> : null}
@@ -4028,8 +3989,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
           </SettingsCard>
           <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>
         </> : null}
-      </div>
-    </div>
+    </SettingsFrame>
     {modals}
   </>;
 }

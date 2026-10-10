@@ -3,7 +3,7 @@
 // see what to read, read it, keep some on the device. Search, requests and
 // everything an admin manages stay in the web app.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, DownloadSimple, ShieldCheck, Trash, WifiSlash, X } from "@phosphor-icons/react";
+import { ArrowClockwise, BookOpenText, DownloadSimple, HardDrive, Info, ShieldCheck, Trash, UserCircle, WifiSlash, X } from "@phosphor-icons/react";
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
@@ -13,6 +13,8 @@ import { useToast } from "../components/Toast.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "../components/ProfileTiles.jsx";
 import { ComicsIcon, DownloadsNavIcon, ReadingListIcon, SettingsNavIcon } from "../design-icons.jsx";
 import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
+import { SettingsFrame, SettingsIndex } from "../settings/shell.jsx";
+import { usePhoneWidth } from "../dialogs.jsx";
 import { CoverArt } from "../components/CoverArt.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
@@ -1102,35 +1104,53 @@ function AppSettingsPage({ client, status, viewer, downloads, online, settings, 
     apiRequest("/api/v1/app").then((answer) => { if (live) setServer(answer); }, () => {});
     return () => { live = false; };
   }, []);
-  return <>
-    <PageHeader title="Settings" />
-    <div className="settings-pane">
-      {notice}
-      <SettingsCard title="Reading">
+  // The web's Settings layout (settings/shell.jsx): sections beside the one
+  // open, or on a phone an index that opens each over it.
+  const phone = usePhoneWidth();
+  const [section, setSection] = useState("");
+  const current = section || (phone ? "" : "reading");
+  const open = APP_SETTINGS_SECTIONS.find((item) => item.id === current);
+  if (!open) {
+    return <><PageHeader title="Settings" />{notice}<SettingsIndex onOpen={setSection} sections={APP_SETTINGS_SECTIONS} /></>;
+  }
+  return <SettingsFrame sections={APP_SETTINGS_SECTIONS} open={open} phone={phone} onSectionChange={setSection}>
+    {notice}
+    {current === "reading" ? <>
+      <SettingsCard title="Downloads">
         <Toggle checked={settings.downloadOpened} onChange={(on) => onSettings({ downloadOpened: on })} title="Download comics you open"
-          description="A comic you start reading is kept on this iPad as you read, so you can finish it offline. It counts against the download limit below." />
+          description="A comic you start reading is kept on this iPad, so you can finish it offline." />
         <Toggle checked={settings.downloadNext} onChange={(on) => onSettings({ downloadNext: on })} title="Download the next issue too"
-          description="Opening a comic also keeps the issue after it, ready when you finish." />
-        <p className="settings-card-note">Panel view, the dimming around a panel and the rest are in the reader&rsquo;s own settings, while you read. They follow your profile to every device.</p>
+          description="Opening a comic also keeps the issue after it." />
       </SettingsCard>
-      <StorageSettings downloads={downloads} viewer={viewer} />
-      <SettingsCard title="Account">
-        <p className="settings-card-lead">Reading as <strong>{viewer.name}</strong> from <strong>{client.origin.replace(/^https?:\/\//, "")}</strong>{online ? "." : ", which can\u2019t be reached right now."}</p>
-        <div className="settings-card-actions">
-          {status.household ? <button type="button" className="secondary-button" onClick={onSwitch}>Switch profile</button> : null}
-          <button type="button" className="secondary-button" onClick={onSignOut}>Sign out</button>
-        </div>
+      <SettingsCard title="Panel view">
+        <p className="settings-card-lead">Panel view, the dimming around a panel and the reading direction are in the reader&rsquo;s own settings while you read. They follow your profile to every device.</p>
       </SettingsCard>
-      <AboutSettings base={client.origin} privacy={APP_PRIVACY} buildLabel="Server build">
-        <SettingsCard title="Flipparr View">
-          {/* Two builds are in play, so each says whose it is: the app's
-              here, the server's in the Flipparr card below. */}
-          <p className="settings-card-lead">App build {typeof __VIEW_BUILD__ === "undefined" ? "dev" : __VIEW_BUILD__}.{server ? ` Server: Flipparr ${server.version}, build ${server.build}.` : ""}</p>
-        </SettingsCard>
-      </AboutSettings>
-    </div>
-  </>;
+    </> : null}
+    {current === "storage" ? <StorageSettings downloads={downloads} viewer={viewer} /> : null}
+    {current === "account" ? <SettingsCard title="Signed in">
+      <p className="settings-card-lead">Reading as <strong>{viewer.name}</strong> from <strong>{client.origin.replace(/^https?:\/\//, "")}</strong>{online ? "." : ", which can\u2019t be reached right now."}</p>
+      <div className="settings-card-actions">
+        {status.household ? <button type="button" className="secondary-button" onClick={onSwitch}>Switch profile</button> : null}
+        <button type="button" className="secondary-button" onClick={onSignOut}>Sign out</button>
+      </div>
+    </SettingsCard> : null}
+    {current === "about" ? <AboutSettings base={client.origin} privacy={APP_PRIVACY} buildLabel="Server build">
+      <SettingsCard title="Flipparr View">
+        {/* Two builds are in play, so each says whose it is: the app's
+            here, the server's in the Flipparr card below. */}
+        <p className="settings-card-lead">App build {typeof __VIEW_BUILD__ === "undefined" ? "dev" : __VIEW_BUILD__}.{server ? ` Server: Flipparr ${server.version}, build ${server.build}.` : ""}</p>
+      </SettingsCard>
+    </AboutSettings> : null}
+  </SettingsFrame>;
 }
+
+// Flipparr View's Settings sections, in the web's shape (SETTINGS_SECTIONS).
+const APP_SETTINGS_SECTIONS = [
+  { id: "reading", label: "Reading", icon: BookOpenText, group: "reading", detail: "What is kept on this iPad as you read." },
+  { id: "storage", label: "Storage", icon: HardDrive, group: "device", detail: "How much this iPad keeps, and what makes room." },
+  { id: "account", label: "Account", icon: UserCircle, group: "account", detail: "Who is reading, and from which Flipparr." },
+  { id: "about", label: "About", icon: Info, group: "about", detail: "This app, its licence, and what stays on this iPad." },
+];
 
 // What Flipparr View keeps: the server's own account, with the browser's
 // section swapped for this device's (docs/PRIVACY.md, "On the device").
@@ -1156,7 +1176,7 @@ function StorageSettings({ downloads, viewer }) {
     trimNative({ path: folder, maxBytes: Number.MAX_SAFE_INTEGER }).then(({ bytes }) => setCache(bytes), () => setCache(0));
   }, [folder]);
   const used = usageBytes(rows);
-  return <SettingsCard title="Storage">
+  return <SettingsCard title="Downloads on this iPad">
     <StorageGauge used={used} cap={cap} />
     {cap ? <GlassSelect label="Download limit" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
       options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
