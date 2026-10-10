@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   downloadComplete, downloadRow, evictionOrder, formatBytes, nextUnread, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload,
-  planDownloads, progressOf, readerCatalog, transferId, usageBytes,
+  planDownloads, progressOf, readerCatalog, transferId, usageBytes, coverStatusFor,
 } from "../src/reader-app/offline.js";
 
 const MB = 1024 * 1024;
@@ -114,4 +114,23 @@ test("offline, only what is on this device: runs, collections and families narro
   assert.deepEqual(shown.runCollections.map((collection) => collection.id), ["c1"]);
   assert.deepEqual(shown.families.map((family) => [family.id, family.runIds, family.runCount]), [["f1", ["61"], 1]]);
   assert.deepEqual(readerCatalog(catalogFixture, { onDevice: new Set() }).series, []);
+});
+
+test("a cover's corner: a ring while its comics download, a mark once some are here", () => {
+  const row = (fileId, extra) => ({ fileId, seriesRunId: "61", pageCount: 2, pagesDone: [], panelsDone: [], state: "ready", ...extra });
+  const rows = [
+    row("63"),
+    row("64", { state: "downloading", pagesDone: [0, 1], panelsDone: [] }),
+    row("90", { seriesRunId: "70", groupKey: "arc:7" }),
+  ];
+  assert.deepEqual(coverStatusFor(rows, { kind: "issue", fileId: "63" }), { state: "done", label: "On this device" });
+  assert.deepEqual(coverStatusFor(rows, { kind: "issue", fileId: "64" }), { state: "downloading", progress: 0.5 });
+  assert.equal(coverStatusFor(rows, { kind: "issue", fileId: "99" }), null);
+  assert.equal(coverStatusFor(rows, { kind: "run", id: "61" }).state, "downloading", "a run still coming says so");
+  assert.deepEqual(coverStatusFor(rows, { kind: "run", id: "70" }), { state: "done", label: "1 on this device" });
+  assert.equal(coverStatusFor(rows, { kind: "collection", id: "c1", runIds: ["70", "80"] }).state, "done");
+  const issueFiles = new Map([["5", "63"]]);
+  assert.equal(coverStatusFor(rows, { kind: "arc", id: "9", issueIds: ["5"] }, { issueFiles }).state, "done", "an arc by its issues");
+  assert.equal(coverStatusFor(rows, { kind: "arc", id: "7", issueIds: [] }).state, "done", "or by what was downloaded for it");
+  assert.equal(coverStatusFor(rows, { kind: "arc", id: "8", issueIds: ["6"] }, { issueFiles }), null);
 });

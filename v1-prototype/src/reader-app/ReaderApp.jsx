@@ -11,7 +11,7 @@ import { PasswordInput } from "../components/PasswordInput.jsx";
 import { GlassSelect } from "../components/glass.jsx";
 import { useToast } from "../components/Toast.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "../components/ProfileTiles.jsx";
-import { ComicsIcon, DownloadsNavIcon, SettingsNavIcon } from "../design-icons.jsx";
+import { ComicsIcon, DownloadsNavIcon, ReadingListIcon, SettingsNavIcon } from "../design-icons.jsx";
 import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
 import { FinishDrawer } from "../drawers/FinishDrawer.jsx";
 import { ReadingListDrawer } from "../drawers/ReadingListDrawer.jsx";
@@ -26,7 +26,7 @@ import { apiRequest, forgetAnswers, lastAnswer, setApiTransport } from "../api.j
 import { readableFile, readingContext, useReadingActions } from "../library/actions.js";
 import { LibraryView, logicalCatalogSeries } from "../library/LibraryView.jsx";
 import { isLocked, profileStorage, setStorageProfile } from "../profiles.js";
-import { EMPTY_ENTRIES } from "../reading-list-tab.js";
+import { EMPTY_ENTRIES, isOnReadingList } from "../reading-list-tab.js";
 import { ReaderView } from "../reader/ReaderView.jsx";
 import { collectionCards } from "../run-collections.js";
 import { ViewerContext } from "../viewer.js";
@@ -37,7 +37,7 @@ import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
-import { CAP_CHOICES, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, usageBytes } from "./offline.js";
+import { CAP_CHOICES, coverStatusFor, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
@@ -612,6 +612,29 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       if (row?.state === "failed") return { label: `Try downloading ${label} again`, onPress: () => downloads.retry(issue.fileId) };
       return { label: `Download ${label}`, onPress: () => downloadIssue(issue) };
     },
+    coverStatus: (target) => coverStatusFor(downloads.rows, target, { issueFiles }),
+    // A card's long-press menu (Read is the card's own): Download, the
+    // reading list, and -- destructive, last -- Remove downloads.
+    cardMenu: (target) => {
+      const items = [];
+      const listKind = target.kind === "run" ? "run" : target.kind === "arc" ? "arc" : "collection";
+      const listed = isOnReadingList(actions.readingList, listKind, target.id);
+      if (online) {
+        items.push({ key: "download", label: "Download\u2026", icon: <DownloadSimple size={16} />,
+          onSelect: () => setDownloadGroup({ kind: target.kind, id: target.id, title: target.title, runIds: target.runIds }) });
+      }
+      items.push({ key: "list", label: listed ? "Remove from reading list" : "Add to reading list", icon: <ReadingListIcon size={16} />,
+        onSelect: () => actions.toggleReadingList(listKind, target.id, !listed) });
+      const here = rowsFor(downloads.rows, target, { issueFiles }).filter((row) => row.state !== "failed");
+      if (here.length) {
+        items.push({ key: "remove", label: `Remove ${here.length} ${here.length === 1 ? "download" : "downloads"}`, icon: <Trash size={16} />,
+          onSelect: async () => {
+            for (const row of here) await downloads.remove(row.fileId);
+            showToast(`Removed ${here.length} from this device`);
+          } });
+      }
+      return items;
+    },
     groupDownload: (group) => {
       const mine = downloads.rows.filter((row) => row.groupKey === `${group.kind}:${group.id}`);
       const busy = mine.some((row) => row.state === "downloading");
@@ -642,7 +665,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       })),
     }] : []),
   // downloadVersion: the menu and badge follow the downloads as they change.
-  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role, downloadIssue, catalog, issueFiles]);
+  }), [pageSource, downloads, downloadVersion, showToast, online, viewer.role, downloadIssue, catalog, issueFiles, actions.readingList, actions.toggleReadingList]);
 
   const header = useMemo(() => ({
     profile: {
@@ -665,7 +688,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   };
 
   return <Host.Provider value={host}><ViewerContext.Provider value={viewer}><CollectedEditionsContext.Provider value={Boolean(catalog?.collectedEditionsEnabled)}><HeaderContext.Provider value={header}>
-    <div className="app-shell">
+    <div className="app-shell reader-app">
       <Nav items={NAV} active={page} onNavigate={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} catalog={catalog} backendStatus={backendStatus}
         logicalSeriesCount={logicalSeriesCount} authStatus={status} onSignOut={onSignOut} scanning={false}
         onRefresh={refreshLibrary} refreshing={refreshing} />

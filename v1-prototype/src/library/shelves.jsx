@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { DiscoverCover } from "../components/CoverArt.jsx";
+import { CoverStatus } from "../components/CoverStatus.jsx";
 import { ShelfBackIcon, ShelfNextIcon } from "../design-icons.jsx";
 import { CaretRight } from "@phosphor-icons/react";
 
@@ -21,6 +22,8 @@ export function LibraryShelf({ title, items, onSeeAll, onOpen }) {
         <button type="button" className="discover-open shelf-card-art" onClick={() => onOpen(card)}
           aria-label={[card.title, card.note].filter(Boolean).join(", ")}>
           <DiscoverCover src={card.cover} alt="" glyph={30} />
+          {/* The host's download mark (Flipparr View); the web draws none. */}
+          <CoverStatus target={card.kind === "run" ? { kind: "run", id: card.runId } : card.fileId ? { kind: "issue", fileId: card.fileId } : null} />
           {card.progress ? <span className="profile-history-progress" style={{ "--progress": `${Math.round(card.progress * 100)}%` }} aria-hidden="true" /> : null}
         </button>
         <div className="pull-card-body">

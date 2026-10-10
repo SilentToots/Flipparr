@@ -1800,6 +1800,24 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    always shown -- a control nobody can see was the complaint. Green once the
    comic is on the device. */
 .issue-tile-download { left: auto; right: var(--space-6); color: var(--text); opacity: 1; }
+/* Flipparr View's covers (a reader host, the owner 2026-10-10): status in
+   the top-right corner -- a ring while a comic downloads, a mark once it is
+   here -- and no buttons over the art. The cover itself reads; actions are
+   the long-press menu, whose anchor shows only to the keyboard. The web
+   draws none of these. */
+.cover-status { position: absolute; top: var(--space-6); right: var(--space-6); z-index: 2; width: var(--space-24); height: var(--space-24); border-radius: 50%; background: var(--overlay-control); color: var(--text); display: grid; place-items: center; pointer-events: none; }
+.cover-status svg { width: var(--space-20); height: var(--space-20); transform: rotate(-90deg); }
+.cover-status circle { fill: none; stroke-width: 3; }
+.cover-status-track { stroke: var(--chrome-label); }
+.cover-status-fill { stroke: var(--violet-text); stroke-linecap: round; transition: stroke-dashoffset var(--motion-duration-fast) linear; }
+.cover-status.done { color: var(--green); }
+@media (prefers-reduced-motion: reduce) { .cover-status-fill { transition: none; } }
+/* A hold opens the card's menu, not iOS's own image callout or a text selection. */
+.reader-app :is(.series-card, .issue-tile, .pull-card) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.issue-tile-open { position: absolute; inset: 0; z-index: 1; padding: 0; border: 0; border-radius: var(--radius-4); background: transparent; cursor: pointer; }
+.issue-tile-menu.quiet, .series-card-menu { opacity: 0; pointer-events: none; }
+.issue-tile-menu.quiet:focus-visible, .series-card-menu:focus-visible { opacity: 1; pointer-events: auto; }
+.series-card-menu { position: absolute; right: var(--space-8); bottom: var(--space-8); z-index: 3; width: var(--space-32); height: var(--space-32); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--overlay-control); color: var(--text); display: grid; place-items: center; }
 .issue-tile-download.done, .issue-row-download.done { color: var(--green); }
 /* A file that cannot be paged says so where its Read button would be. It
    used to just vanish, which made a PDF in a run look like a bug. */

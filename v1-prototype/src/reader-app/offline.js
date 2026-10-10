@@ -190,6 +190,39 @@ export function readerCatalog(catalog, { onDevice = null } = {}) {
   return { ...catalog, series, runCollections, families };
 }
 
+/**
+ * The download rows a cover stands for: an issue's own, or a run's,
+ * collection's or story arc's issues (`issueFiles`: issue id -> file id).
+ */
+export function rowsFor(rows, target, { issueFiles = new Map() } = {}) {
+  if (!target) return [];
+  if (target.kind === "issue") return rows.filter((row) => row.fileId === String(target.fileId));
+  if (target.kind === "run") return rows.filter((row) => String(row.seriesRunId) === String(target.id));
+  if (target.kind === "collection") {
+    const runs = new Set((target.runIds || []).map(String));
+    return rows.filter((row) => runs.has(String(row.seriesRunId)));
+  }
+  const files = new Set((target.issueIds || []).map((id) => issueFiles.get(String(id))).filter(Boolean));
+  return rows.filter((row) => files.has(row.fileId) || row.groupKey === `arc:${target.id}`);
+}
+
+/**
+ * What a cover's corner says (CoverStatus): `downloading` with the progress
+ * of what is still coming, else `done` once something of it is here, else
+ * nothing. A run with some issues here and none coming is `done`: "on this
+ * device", not "all of it".
+ */
+export function coverStatusFor(rows, target, options = {}) {
+  const mine = rowsFor(rows, target, options);
+  const coming = mine.filter((row) => row.state === "downloading");
+  if (coming.length) {
+    return { state: "downloading", progress: coming.reduce((sum, row) => sum + progressOf(row), 0) / coming.length };
+  }
+  const here = mine.filter((row) => row.state === "ready" || row.state === "stale").length;
+  if (!here) return null;
+  return { state: "done", label: target.kind === "issue" ? "On this device" : `${here} on this device` };
+}
+
 /** Bytes as a person reads them: 950 KB, 12.4 MB, 1.8 GB. */
 export function formatBytes(bytes) {
   const value = Math.max(0, Number(bytes) || 0);

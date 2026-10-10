@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { Host, useImageSrc } from "../host.js";
+import { CoverStatus } from "../components/CoverStatus.jsx";
 import { apiRequest, lastAnswer } from "../api.js";
 import { artTone } from "../art-tone.js";
 import { DiscoverCover, SeriesCover } from "../components/CoverArt.jsx";
@@ -366,6 +367,7 @@ export function ComicDrawerRow({ title, count, children }) {
 // An issue you do not own keeps its card, dimmed, with the same state badge
 // the Issues tab gives it -- a gap in a run should look like a gap.
 export function ComicDrawerIssueCard({ issue, medium, onOpen, onRead, readingFiles }) {
+  const readerOnly = Boolean(useContext(Host)?.readerOnly);
   const owned = issue.ownership !== "unowned";
   const state = issue.ownership === "collection" ? "In volume"
     : owned ? null
@@ -384,7 +386,8 @@ export function ComicDrawerIssueCard({ issue, medium, onOpen, onRead, readingFil
       <span className="comic-drawer-card-art">
         <DiscoverCover src={issue.fileCover || issue.cover} alt="" glyph={30} />
         {state ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{state}</span> : null}
-        {read ? <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span> : null}
+        {read && !readerOnly ? <span className="issue-tile-read" aria-hidden="true"><BookOpen size={14} weight="fill" /></span> : null}
+        {readerOnly && issue.fileId ? <CoverStatus target={{ kind: "issue", fileId: String(issue.fileId) }} /> : null}
         {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}{read?.finished ? <span className="issue-tile-mark done" aria-hidden="true"><Check size={13} weight="bold" /></span> : null}
       </span>
     </button>

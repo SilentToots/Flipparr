@@ -7,7 +7,10 @@ import { arcMaker, arcOwnerLine, arcYears } from "../reading-list.js";
 import { collectionReadTarget, countsLine } from "../run-collections.js";
 
 import { BookOpen, Check, CheckCircle, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
-import { useManages, useReaderOnly } from "../host.js";
+import { useCallback, useContext, useRef, useState } from "react";
+import { Host, useManages, useReaderOnly } from "../host.js";
+import { CoverStatus } from "../components/CoverStatus.jsx";
+import { ActionMenu, useLongPress } from "../drawers/inventory.jsx";
 
 export function publicationState(series) {
   const state = series?.publicationStatus || "unknown";
@@ -109,6 +112,7 @@ export function Ownership({ series, compact = false }) {
 }
 
 export function SeriesList({ series, onOpen, onRead, reading, view, cardAction }) {
+  const readerOnly = useReaderOnly();
   // --card-index staggers the arrival; past the first screenful there is
   // nothing to see, so the delay stops climbing.
   //
@@ -123,7 +127,8 @@ export function SeriesList({ series, onOpen, onRead, reading, view, cardAction }
     : <article className="series-card" style={{ "--card-index": Math.min(index, 11) }} key={item.id}>
     <span className="series-card-art">
       <SeriesCover series={item} />
-      <ReadRunOverlay run={item} reading={reading} onRead={onRead} />
+      {readerOnly ? <ReaderCardOverlay target={{ kind: "run", id: String(item.id), title: item.title }} title={item.title} read={runReadAction(item, reading)} onRead={onRead} />
+        : <ReadRunOverlay run={item} reading={reading} onRead={onRead} />}
       {cardAction?.(item)}
     </span>
     <span className="series-card-identity"><strong>{item.title}</strong><span className="series-card-byline">{item.publisher} • {item.year}</span></span>
@@ -172,12 +177,14 @@ export function CardFoot({ runCount, issueCount, owned, maker = "" }) {
 
 /** A collection, as a card among runs: its cover, name, years and size. */
 export function CollectionCard({ card, index, reading, onOpen, onRead, action = null }) {
+  const readerOnly = useReaderOnly();
   const count = `${card.runCount} run${card.runCount === 1 ? "" : "s"}`;
   return <article className="series-card collection-card" style={{ "--card-index": Math.min(index, 11) }}>
     <span className="series-card-art">
       <CoverArt id={card.key} title={card.name} cover={card.cover} coverCandidates={card.coverCandidates} />
       <span className="collection-card-mark" aria-hidden="true"><CollectionIcon size={16} /></span>
-      <CollectionReadOverlay card={card} reading={reading} onRead={onRead} />
+      {readerOnly ? <ReaderCardOverlay target={{ kind: "collection", id: String(card.id), title: card.name, runIds: (card.runIds || []).map(String) }} title={card.name} read={collectionReadAction(card, reading)} onRead={onRead} />
+        : <CollectionReadOverlay card={card} reading={reading} onRead={onRead} />}
       {action}
     </span>
     <span className="series-card-identity"><strong>{card.name}</strong>{card.publisher || card.years ? <span className="series-card-byline">{[card.publisher, card.years].filter(Boolean).join(" • ")}</span> : null}</span>
@@ -196,6 +203,76 @@ export function CollectionCard({ card, index, reading, onOpen, onRead, action = 
  * library on a request the grid makes on every visit -- so an unopened run
  * gets a plain Read and resolves when it is clicked.
  */
+/**
+ * What a card's Read does, for its overlay and its long-press menu alike:
+ * `{verb, label, target, place}` for a run (`runReadAction`), a collection
+ * and a story arc, or null when there is nothing to read.
+ */
+export function runReadAction(run, reading) {
+  const place = reading?.[String(run.id)];
+  const started = place?.state === "continue" && place.pageCount;
+  const verb = started ? "Continue" : place?.state === "next" ? "Begin" : place?.state === "finished" ? "Restart" : "Read";
+  const label = started
+    ? `Continue ${issueLabel(place.issueNumber, run.medium)} of ${run.title}, page ${place.page + 1} of ${place.pageCount}`
+    : `${verb} ${run.title}`;
+  return { verb, label, place, target: started ? { id: place.fileId } : { runId: run.id } };
+}
+
+export function collectionReadAction(card, reading) {
+  if (!reading) return null;
+  const { run, allRead, anyRead } = collectionReadTarget(card, reading);
+  if (!run) return null;
+  const place = reading[String(run.id)];
+  const started = place?.state === "continue" && place.pageCount;
+  const verb = started ? "Continue" : allRead ? "Restart" : place?.state === "next" || anyRead ? "Begin" : "Read";
+  return { verb, label: `${verb} ${card.name}: ${run.title}`, target: started ? { id: place.fileId } : { runId: run.id },
+    place: allRead ? { state: "finished" } : anyRead ? { state: "continue" } : null };
+}
+
+export function listReadAction(list, reading) {
+  const place = reading?.[String(list.id)];
+  const started = place?.state === "continue" && place.pageCount;
+  const verb = started ? "Continue" : place?.state === "next" ? "Begin" : place?.state === "finished" ? "Restart" : "Read";
+  const context = { listId: list.listId || list.id, listName: list.name };
+  return { verb, place, label: started ? `Continue ${list.name}, page ${place.page + 1} of ${place.pageCount}` : `${verb} ${list.name}`,
+    target: started ? { id: place.fileId, ...context } : context };
+}
+
+/**
+ * A card's actions on a reader host (Flipparr View): touch and hold the card
+ * for Read and the host's own (Download, Reading list), in Apple's
+ * context-menu way, instead of buttons over the cover. The "…" that anchors
+ * the menu is drawn only for the keyboard (focus), so the cover stays clear.
+ */
+export function CardMenu({ target, title, read, onRead }) {
+  const host = useContext(Host);
+  const [open, setOpen] = useState(false);
+  const anchor = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  useLongPress(anchor, ".series-card", () => setOpen(true));
+  const items = [];
+  if (read && onRead) items.push({ key: "read", label: read.verb, icon: <BookOpen size={16} weight="fill" />, onSelect: () => onRead(read.target) });
+  items.push(...(host?.cardMenu?.(target) || []));
+  if (!items.length) return null;
+  return <>
+    <button type="button" ref={anchor} className="series-card-menu" onClick={() => setOpen((value) => !value)}
+      aria-haspopup="menu" aria-expanded={open} aria-label={`Options for ${title}`}><DotsThree size={18} weight="bold" /></button>
+    {open ? <ActionMenu anchor={anchor} label={`Options for ${title}`} items={items} onClose={close} /> : null}
+  </>;
+}
+
+/**
+ * On a reader host, a card's cover carries its state, not buttons: the
+ * reading mark, the download mark in its corner, and the long-press menu.
+ */
+function ReaderCardOverlay({ target, title, read, onRead }) {
+  return <>
+    <ReadingMark place={read?.place} />
+    <CoverStatus target={target} />
+    <CardMenu target={target} title={title} read={read} onRead={onRead} />
+  </>;
+}
+
 export function ReadRunOverlay({ run, reading, onRead }) {
   if (!onRead) return null;
   const place = reading?.[String(run.id)];
@@ -283,10 +360,12 @@ export function arcOwnership(list) {
 // same: cover, name, how many runs and issues, and how much is here. On the
 // Runs shelf it stands in for runs it spans, which its size already counts.
 export function ArcCard({ list, index, reading, onOpen, onRead, action = null }) {
+  const readerOnly = useReaderOnly();
   return <article className="series-card" style={{ "--card-index": Math.min(index, 11) }}>
     <span className="series-card-art">
       <CoverArt id={`arc-${list.listId || list.id}`} title={list.name} cover={list.cover} />
-      <ReadListOverlay list={list} reading={reading} onRead={onRead} />
+      {readerOnly ? <ReaderCardOverlay target={{ kind: "arc", id: String(list.listId || list.id), title: list.name, issueIds: list.issueIds || [] }} title={list.name} read={listReadAction(list, reading)} onRead={onRead} />
+        : <ReadListOverlay list={list} reading={reading} onRead={onRead} />}
       {action}
     </span>
     <span className="series-card-identity"><strong>{list.name}</strong>{list.publisher || arcYears(list) ? <span className="series-card-byline">{[list.publisher, arcYears(list)].filter(Boolean).join(" • ")}</span> : null}</span>

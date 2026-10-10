@@ -13,6 +13,7 @@ import { StarRating } from "./frame.jsx";
 import { BackdropPicker, CoverPicker } from "./groups.jsx";
 import { ArrowCounterClockwise, ArrowLeft, ArrowRight, ArrowsClockwise, BookOpen, Books, CaretRight, Check, CheckCircle, CloudArrowDown, DotsThree, Eye, HardDrive, ListBullets, ListNumbers, MagnifyingGlass, PencilSimple, Plus, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { Host } from "../host.js";
+import { CoverStatus } from "../components/CoverStatus.jsx";
 
 export function CollectionCoverage({ series, editionsOn }) {
   const directOwned = series.issues?.filter((issue) => issue.directOwned).length ?? 0;
@@ -107,14 +108,18 @@ export function ActionMenu({ anchor, label, items, onClose }) {
 // the tile -- never a tap on the cover, which opens the comic. Read or
 // continue it, mark it read or unread for this profile, and, for the admin,
 // edit its metadata.
-export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, onAddToArc, className, longPress = false }) {
-  const host = useContext(Host);
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef(null);
-  const close = useCallback(() => setOpen(false), []);
+/**
+ * Touch and hold `container` (the closest match of `selector` to `anchorRef`)
+ * to call `onHold`, as iPad's context menus open (Apple HIG, Context menus).
+ * A finger only: a mouse has its button. The release that follows a hold
+ * does not also count as a tap.
+ */
+export function useLongPress(anchorRef, selector, onHold, enabled = true) {
+  const hold = useRef(onHold);
+  hold.current = onHold;
   useEffect(() => {
-    if (!longPress) return undefined;
-    const tile = buttonRef.current?.closest(".issue-tile");
+    if (!enabled) return undefined;
+    const tile = anchorRef.current?.closest(selector);
     if (!tile) return undefined;
     let timer = 0;
     let held = false;
@@ -122,7 +127,7 @@ export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, on
     function onDown(event) {
       if (event.pointerType === "mouse" || event.button !== 0) return;
       held = false;
-      timer = window.setTimeout(() => { held = true; setOpen(true); }, 500);
+      timer = window.setTimeout(() => { held = true; hold.current(); }, 500);
     }
     // A press that became the menu must not also open the comic on release.
     function onClick(event) {
@@ -141,7 +146,15 @@ export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, on
       tile.removeEventListener("pointercancel", cancel);
       tile.removeEventListener("click", onClick, true);
     };
-  }, [longPress]);
+  }, [enabled, selector, anchorRef]);
+}
+
+export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, onAddToArc, className, longPress = false }) {
+  const host = useContext(Host);
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  useLongPress(buttonRef, ".issue-tile", () => setOpen(true), longPress);
   const label = issueLabel(issue.number, medium);
   const items = [];
   if (read && onRead) items.push({ key: "read", label: read.label, icon: <BookOpen size={16} weight="fill" />, onSelect: () => onRead({ id: issue.fileId }) });
@@ -290,15 +303,21 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
               {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
                 : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span>
-                : hostBadge(issue) ? <span className={`ownership-source ${hostBadge(issue).tone}`}>{hostBadge(issue).label}</span> : null}
+                : !readerOnly && hostBadge(issue) ? <span className={`ownership-source ${hostBadge(issue).tone}`}>{hostBadge(issue).label}</span> : null}
+              {/* A reader host: the cover itself reads, status sits in its
+                  corner, and the rest is the long-press menu (owner,
+                  2026-10-10; Apple HIG, Context menus). */}
+              {readerOnly && read && onRead ? <button type="button" className="issue-tile-open" onClick={() => onRead({ id: issue.fileId })}
+                aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} /> : null}
+              {readerOnly ? <CoverStatus target={{ kind: "issue", fileId: String(issue.fileId) }} /> : null}
               {/* Inside the cover's box, not the tile's: anchored to the tile
                   it would sit under the issue title. */}
-              {read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
+              {!readerOnly && read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
                 title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
               {read?.fraction ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
-              <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-tile-menu" longPress />
-              {downloadButton(issue, "issue-tile-download")}
+              <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className={`issue-tile-menu${readerOnly ? " quiet" : ""}`} longPress />
+              {readerOnly ? null : downloadButton(issue, "issue-tile-download")}
             </span>
             {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
             <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}{hostMark(issue)}</strong>
