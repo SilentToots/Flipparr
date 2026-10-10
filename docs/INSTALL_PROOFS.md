@@ -74,7 +74,7 @@ Recorded per run in `install-drill.json` and the containers' logs under
 - Permissions on `/comics` (an unreadable library) are not checked at start:
   the setup's folder check and the System page report them.
 
-## Flipparr View on an iPad (checklist, not yet run on TestFlight)
+## Flipparr View on an iPad (checklist; TestFlight build 48b86d8 under way, 2026-10-10)
 
 Recorded per build, on a real iPad against a Flipparr over https. Parts
 already seen on the owner's iPad from Xcode builds are marked.
@@ -97,3 +97,12 @@ already seen on the owner's iPad from Xcode builds are marked.
    server.
 8. Sign out with the server down: back at sign-in, Use another server
    offered.
+
+**TestFlight run, build 48b86d8, 2026-10-10 (owner's iPad, production):**
+1. Pass: installed over the Xcode build in place; sign-in and downloads kept.
+2. Pass: signed in at 16:20:21 UTC.
+3. Pass: five issues from a run's Download sheet at 16:21:08; every page
+   and its panels on the server's log by 16:22:04; all five shown as
+   downloaded. Found: only 3 of the 5 "downloaded" notes reached the
+   server (the two that finished while the app was paused); fixed after
+   this build (notes now retried, `Downloads.noteDownloaded`).

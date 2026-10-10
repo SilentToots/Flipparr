@@ -231,11 +231,26 @@ export class Downloads extends EventTarget {
     row.state = "ready";
     row.error = null;
     row.downloadedAt = new Date().toISOString();
+    row.noted = false;
     await this.save();
-    this.client.api("/api/v1/offline/downloads", {
+    this.noteDownloaded(row).catch(() => {});
+  }
+
+  /**
+   * The server's record of what this device keeps (schema 68), told of a
+   * finished download. A comic often finishes while iOS has the app paused
+   * (the iPad locked), where this request fails; `noted` stays false and
+   * flushRemovals sends it again when the app runs and the server answers
+   * (the owner's TestFlight run, 2026-10-10: 3 of 5 notes arrived). The
+   * server updates a row it has, so a repeat is harmless.
+   */
+  async noteDownloaded(row) {
+    await this.client.api("/api/v1/offline/downloads", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device: this.device, fileId: row.fileId, fileSignature: row.fileSignature, bytes: row.bytes }),
-    }).catch(() => {});
+    });
+    row.noted = true;
+    await this.save();
   }
 
   /**
@@ -278,9 +293,14 @@ export class Downloads extends EventTarget {
     }
   }
 
-  /** Send the removals that waited for the server. */
+  /** Send the removals that waited for the server, and the downloads it was not told of. */
   async flushRemovals() {
     await this.ready;
+    // A row from before `noted` existed counts as told: telling again is
+    // harmless, but every old download at once is not worth it.
+    for (const row of this.rows.filter((item) => item.state === "ready" && item.noted === false)) {
+      try { await this.noteDownloaded(row); } catch (error) { if (error.network) break; }
+    }
     for (const removal of await this.store.pendingRemovals(this.profileId)) {
       try {
         await this.client.api("/api/v1/offline/downloads/remove", {

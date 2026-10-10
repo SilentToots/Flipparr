@@ -387,7 +387,13 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     }, () => {});
   }
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible" && transport?.online) checkDownloads(); };
+    // Back in the foreground: what finished while the iPad was locked is
+    // told to the server, and every kept comic put to it.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !transport?.online) return;
+      downloads.flushRemovals().catch(() => {});
+      checkDownloads();
+    };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   // checkDownloads reads only these.

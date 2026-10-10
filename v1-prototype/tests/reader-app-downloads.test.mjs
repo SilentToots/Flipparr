@@ -150,3 +150,26 @@ test("finished downloads can be cleared at once; one still being read stays", as
   assert.equal(await downloads.removeFinished(), 2);
   assert.deepEqual(downloads.rows.map((item) => item.fileId), ["64"]);
 });
+
+test("a download finished while the server could not be told is told when the app is back", async () => {
+  const { downloads, emit, posted } = setup();
+  await downloads.ready;
+  await downloads.download("63");
+  // Locked: the note fails as unreachable.
+  downloads.client.api = async (path) => {
+    if (path === "/api/v1/offline/downloads") throw Object.assign(new Error("unreachable"), { network: true });
+    return {};
+  };
+  await emit("transferDone", { id: "3:63:0" }); await emit("transferDone", { id: "3:63:1" });
+  await emit("transferDone", { id: "3:63:p0" }); await emit("transferDone", { id: "3:63:p1" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(downloads.row("63").noted, false);
+  const told = [];
+  downloads.client.api = async (path, options) => { told.push(path); posted.push({ path, method: options?.method }); return {}; };
+  await downloads.flushRemovals();
+  assert.ok(told.includes("/api/v1/offline/downloads"));
+  assert.equal(downloads.row("63").noted, true);
+  told.length = 0;
+  await downloads.flushRemovals();
+  assert.ok(!told.includes("/api/v1/offline/downloads"), "told once");
+});
