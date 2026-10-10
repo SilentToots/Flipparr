@@ -330,7 +330,7 @@ export function ReaderApp() {
   }) : null), [client]);
   const pickerHost = useMemo(() => ({ api: apiRequest, pageSource: pickerImages }), [pickerImages]);
 
-  if (phase === "starting") return <div className="login-shell"><LoadingIndicator size="lg" label="Starting" /></div>;
+  if (phase === "starting") return <div className="login-shell reader-app"><LoadingIndicator size="lg" label="Starting" /></div>;
   if (phase === "connect") {
     return <ConnectScreen error={error} onConnected={async (origin) => {
       await secureStore.set("server", origin);
@@ -583,6 +583,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     canManage: false,
     // A reader, not an acquisition tool: no owned counts, no missing issues.
     readerOnly: true,
+    emptyLibrary: online ? null : { title: "Nothing downloaded yet", detail: "Connect to Flipparr to read, or download comics to read offline." },
     readable: ({ kind, id, fileId, issueIds }) => {
       if (online) return true;
       if (fileId) return ["ready", "stale"].includes(downloads.row(fileId)?.state);
@@ -796,7 +797,7 @@ function ConnectScreen({ error: startError, onConnected }) {
       setBusy(false);
     }
   }
-  return <div className="login-shell"><form className="login-card" onSubmit={submit}>
+  return <div className="login-shell reader-app"><form className="login-card" onSubmit={submit}>
     <div className="login-brand"><FlipparrMark size={72} /></div>
     <label>
       <span>Your Flipparr's address</span>
@@ -831,7 +832,7 @@ function SignInScreen({ client, onSignedIn, onForget }) {
       setBusy(false);
     }
   }
-  return <div className="login-shell"><form className="login-card" onSubmit={submit}>
+  return <div className="login-shell reader-app"><form className="login-card" onSubmit={submit}>
     <div className="login-brand"><FlipparrMark size={72} /></div>
     <label>
       <span>Username</span>
@@ -944,7 +945,7 @@ function PickerScreen({ client, current, online = true, ask = null, onClose, onS
     if (isLocked(profile)) { setAsking(profile); setSecret(""); } else enter(profile);
   }
   const back = () => { setAsking(null); setError(""); };
-  return <div className="login-shell profile-picker">
+  return <div className="login-shell profile-picker reader-app">
     {onClose ? <button type="button" className="glass-button glass-button--icon profile-picker-close" onClick={onClose} aria-label="Close"><X size={20} /></button> : null}
     <div className="profile-picker-card">
       <FlipparrMark size={48} />
@@ -1062,7 +1063,7 @@ function DownloadSheet({ group, downloads, onClose, onStarted }) {
       : `Downloading ${started} ${started === 1 ? "issue" : "issues"} from ${group.title}${failure ? `. ${failure}` : ""}`, failure && !started ? "error" : undefined);
   }
   return <div className="modal-backdrop workbench-backdrop" onMouseDown={onClose}>
-    <section className="modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="download-sheet-title" onMouseDown={(event) => event.stopPropagation()}>
+    <section className="modal download-sheet" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="download-sheet-title" onMouseDown={(event) => event.stopPropagation()}>
       <DialogCloseButton onClose={onClose} label="Close" />
       <span className="eyebrow">{group.kind === "run" ? "Run" : group.kind === "arc" ? "Story arc" : "Collection"}</span>
       <h2 id="download-sheet-title">Download {group.title}</h2>
@@ -1070,11 +1071,11 @@ function DownloadSheet({ group, downloads, onClose, onStarted }) {
         : files === null ? <LoadingIndicator size="md" />
         : !unread.length ? <p className="settings-card-note">Every unread issue is on this device already.</p>
         : <>
-          <p className="settings-card-note">The next unread issues, in reading order. They keep downloading while the iPad is locked.</p>
+          <p className="settings-card-note">The next unread issues, in reading order. They finish even with the iPad locked.</p>
           <GlassSelect label="How many" value={count} onChange={(next) => setCount(Number(next))}
             options={counts.map((n) => ({ value: n, label: n === unread.length && n > 1 ? `All ${n} unread` : `Next ${n} unread` }))} />
           <p className="settings-card-note" role="status">{!plan ? "Working out the size\u2026"
-            : plan.fits ? `${formatBytes(plan.total)}${plan.evict.length ? `. Makes room by removing ${plan.evict.length} finished ${plan.evict.length === 1 ? "comic" : "comics"}, read longest ago.` : "."}`
+            : plan.fits ? `${chosen.length} ${chosen.length === 1 ? "issue" : "issues"} \u00b7 ${formatBytes(plan.total)}${plan.evict.length ? `. Removes ${plan.evict.length} finished ${plan.evict.length === 1 ? "comic" : "comics"} to make room.` : ""}`
             : plan.fitting ? `Only ${plan.fitting} of ${chosen.length} fit under this device's ${formatBytes(cap)} limit. Raise it in Downloads to take them all.`
             : `Needs ${formatBytes(plan.shortfall)} more than this device's ${formatBytes(cap)} limit allows. Raise it in Downloads.`}</p>
         </>}
@@ -1252,8 +1253,8 @@ function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
           read={readable ? { verb: row.finished ? "Read again" : row.lastReadAt ? "Continue" : "Read", target: row.fileId } : null}
           onRead={(fileId) => onRead(fileId)} />
       </span>
-      <span className="series-card-identity"><strong>{row.seriesTitle}</strong>{row.issueNumber ? <span className="series-card-byline">#{row.issueNumber}</span> : null}</span>
-      <span className="series-card-foot" role={row.state === "failed" ? "alert" : undefined}>{downloadCaption(row)}</span>
+      <span className="series-card-identity"><strong>{name}</strong>
+        <span className="series-card-byline" role={row.state === "failed" ? "alert" : undefined}>{downloadCaption(row)}</span></span>
       <button type="button" className="discover-open series-card-open" onClick={tap || undefined} disabled={!tap}
         aria-label={`${name}. ${downloadCaption(row)}`} />
     </article>;

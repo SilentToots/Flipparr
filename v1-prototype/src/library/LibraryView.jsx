@@ -530,7 +530,12 @@ export function LibraryView({ tab = "", onTab, readingList = EMPTY_ENTRIES, onTo
 export function CatalogEmpty({ onAdd }) {
   // Adding folders is the admin's, where the library is managed; a reader is
   // told what to expect instead.
-  if (!useManages()) {
+  const manages = useManages();
+  // The host's own words for an empty library: Flipparr View's offline one
+  // has nothing downloaded, not nothing added.
+  const hostEmpty = useContext(Host)?.emptyLibrary;
+  if (hostEmpty) return <div className="empty-state"><Books size={35} weight="duotone" /><strong>{hostEmpty.title}</strong><span>{hostEmpty.detail}</span></div>;
+  if (!manages) {
     return <div className="empty-state"><Books size={35} weight="duotone" /><strong>No comics yet</strong><span>Comics appear here once the library&rsquo;s admin adds them.</span></div>;
   }
   return <div className="empty-state"><Books size={35} weight="duotone" /><strong>Your library is ready for its first comics</strong><span>Choose a folder to scan without changing your files.</span><button className="primary-button" onClick={onAdd}><FolderOpen size={18} /> Import library</button></div>;

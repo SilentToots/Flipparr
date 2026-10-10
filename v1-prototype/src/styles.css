@@ -1806,7 +1806,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    the long-press menu, whose anchor shows only to the keyboard. The web
    draws none of these. */
 .cover-status { position: absolute; top: var(--space-6); right: var(--space-6); z-index: 2; width: var(--space-24); height: var(--space-24); border-radius: 50%; background: var(--overlay-control); color: var(--text); display: grid; place-items: center; pointer-events: none; }
-.cover-status svg { width: var(--space-20); height: var(--space-20); transform: rotate(-90deg); }
+.cover-status.downloading svg { width: var(--space-20); height: var(--space-20); transform: rotate(-90deg); }
 .cover-status circle { fill: none; stroke-width: 3; }
 .cover-status-track { stroke: var(--chrome-label); }
 .cover-status-fill { stroke: var(--violet-text); stroke-linecap: round; transition: stroke-dashoffset var(--motion-duration-fast) linear; }
@@ -1817,10 +1817,26 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* The sidebar's status row (Flipparr View's "Offline"), above its items: a
    label on the full sidebar, the icon alone on the tablet rail, and none in
    the phone's tab bar, where the page's banner says it. */
+/* Flipparr View's own screens (the owner's spacing note, 2026-10-10, held
+   to Apple's HIG): 44 px targets at every width, not only on a phone, and
+   one 12 px rhythm inside a card instead of each child's own margins --
+   which had a lead, a select and a note at 12/0/12 and a button flush
+   under another. Toggle rows keep their shared dividers. Body copy is the
+   16 px step, nearest the HIG's 17 pt. The web has no .reader-app. */
+.reader-app { --control-height-md: 44px; }
+.reader-app .settings-card > header, .reader-app .settings-card-lead, .reader-app .settings-card-note, .reader-app .settings-card-actions { margin: 0; }
+.reader-app .settings-card > * + * { margin-top: var(--space-12); }
+.reader-app .settings-card > .toggle-row + .toggle-row { margin-top: 0; }
+.reader-app .settings-card-lead { font-size: var(--text-md); }
+.reader-app .download-sheet .settings-card-note { margin: var(--space-12) 0; }
+.reader-app .download-sheet .metadata-edit-actions { margin-top: var(--space-20); }
 /* How much of the device's download limit is used (Flipparr View's
    StorageGauge): a label row, then the limit as a track and the downloads
    as its fill. */
 .storage-gauge { display: grid; gap: var(--space-8); }
+/* Downloads' covers, denser than the Library's: a shelf to pick from, as
+   Kindle's is. */
+.download-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-16); }
 .storage-gauge-labels { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-12); font-size: var(--text-sm); color: var(--muted); }
 .storage-gauge-labels strong { color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); }
 .storage-gauge-track { height: var(--space-8); border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }

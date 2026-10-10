@@ -42,11 +42,20 @@ export function serverOrigin(input) {
  * owner, 2026-10-09, had to type http:// for the NAS). A server that
  * answers over https is never dropped to http. A scheme typed is used as is.
  */
-export async function findServer(input, fetchImpl = globalThis.fetch) {
+export const HTTPS_TRY_MS = 4000;
+
+export async function findServer(input, fetchImpl = globalThis.fetch, { httpsWait = HTTPS_TRY_MS } = {}) {
   const typed = /^[a-z][a-z0-9+.-]*:\/\//i.test(String(input || "").trim());
   const origin = serverOrigin(input);
   try {
-    return { origin, answer: await checkServer(origin, fetchImpl) };
+    // A server that speaks only http does not always refuse https: one
+    // waits on the handshake (Waitress does), so the try has a limit and
+    // counts as nothing answering when it runs out (simulator, 2026-10-10).
+    const tried = typed ? checkServer(origin, fetchImpl) : Promise.race([
+      checkServer(origin, fetchImpl),
+      new Promise((_, reject) => setTimeout(() => reject(requestError("Nothing answered at that address", { network: true })), httpsWait)),
+    ]);
+    return { origin, answer: await tried };
   } catch (error) {
     if (typed || !error.network) throw error;
     const plain = origin.replace(/^https:/, "http:");

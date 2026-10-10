@@ -36,7 +36,9 @@ export function PublicationStatus({ series }) {
 }
 
 export function MonitoringStatus({ series }) {
-  if (series.monitoringStatus !== "monitored") return null;
+  // Following is acquisition's word; a reader host does not say it.
+  const readerOnly = useReaderOnly();
+  if (readerOnly || series.monitoringStatus !== "monitored") return null;
   return <span className="monitoring-status"><FollowedIcon size={null} /> Following</span>;
 }
 

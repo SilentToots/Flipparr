@@ -87,3 +87,10 @@ test("an address typed without a scheme tries https, then http only when https d
   const nothing = async () => { throw new TypeError("offline"); };
   await assert.rejects(findServer("nas.local", nothing), /Nothing answered/);
 });
+
+test("an https try that hangs counts as nothing answering, and http is tried", async () => {
+  const flipparr = { ok: true, json: async () => ({ name: "Flipparr", apiVersion: 1 }) };
+  const hangsOnHttps = (url) => (url.startsWith("https:") ? new Promise(() => {}) : Promise.resolve(flipparr));
+  const found = await findServer("localhost:8804", hangsOnHttps, { httpsWait: 10 });
+  assert.equal(found.origin, "http://localhost:8804");
+});

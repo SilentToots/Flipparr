@@ -27,6 +27,8 @@
 //   here and now -- offline, only what is on the device (Flipparr View).
 //   Shared screens ask it of what does not come from the catalog: story
 //   arcs, reading-list entries, Keep Reading. Absent, everything is.
+// - `emptyLibrary`, optional: `{title, detail}` for an empty library where
+//   the host knows better why (Flipparr View offline). The web gives none.
 // - `notice`, optional: the host's word on the Comics page, under its header
 //   (Flipparr View's "You're offline"). The web app gives none.
 // - `shelves()`, optional: the host's own Recommended shelves (Flipparr

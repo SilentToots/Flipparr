@@ -187,7 +187,9 @@ export function readerCatalog(catalog, { onDevice = null } = {}) {
       return { ...family, runs, runIds: runs.map((run) => run.id), runCount: runs.length };
     })
     .filter((family) => family.runs.length);
-  return { ...catalog, series, runCollections, families };
+  // The sidebar's count says what is shown: the files there are to read.
+  const files = series.reduce((sum, run) => sum + (run.fileDetails?.length || run.issues.length), 0);
+  return { ...catalog, series, runCollections, families, stats: { ...(catalog.stats || {}), files } };
 }
 
 /**
