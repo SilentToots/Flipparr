@@ -968,7 +968,8 @@ How:
 - `tools/reader_app_release.sh`: `npm run ios:sync`, `xcodebuild archive`,
   upload to TestFlight with an App Store Connect API key read from the
   owner's environment (never the repo). One command per release.
-  Written 2026-10-09, not yet run. It needs an App Store Connect record for
+  Written 2026-10-09; first upload to TestFlight the same day, by the owner
+  from his own terminal with his key (after a fix, 48b86d8). It needs an App Store Connect record for
   `com.silenttoots.flipparr.view` and an API key (`ASC_KEY_ID`,
   `ASC_ISSUER_ID`, `ASC_KEY_PATH`). It refuses a dirty tree, numbers the
   build by UTC time, and writes its logs outside the repo.

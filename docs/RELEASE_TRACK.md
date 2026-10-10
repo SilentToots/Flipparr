@@ -365,8 +365,9 @@ what it keeps on a device is `docs/PRIVACY.md`.
   server side is in production since `b602510` (schema 68).
 - **Evidence still owed:** the iPad checklist in `docs/INSTALL_PROOFS.md`
   on a TestFlight build; App Review's demo server (a Flipparr with comics
-  whose licences permit it, not the owner's instance); the release script
-  `tools/reader_app_release.sh`.
+  whose licences permit it, not the owner's instance). The release script
+  `tools/reader_app_release.sh` made the first TestFlight upload on
+  2026-10-09.
 
 ## Carried-forward findings
 
