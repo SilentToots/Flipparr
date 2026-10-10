@@ -47,6 +47,8 @@
 	</dict>
 	<!-- Plain http only on the local network (a household server by its LAN
 	     address or .local name); anywhere else, https. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
