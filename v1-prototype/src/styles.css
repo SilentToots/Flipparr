@@ -1836,7 +1836,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .storage-gauge { display: grid; gap: var(--space-8); }
 /* Downloads' covers, denser than the Library's: a shelf to pick from, as
    Kindle's is. */
-.download-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-16); }
+.series-grid.download-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-16); }
 .storage-gauge-labels { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-12); font-size: var(--text-sm); color: var(--muted); }
 .storage-gauge-labels strong { color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); }
 .storage-gauge-track { height: var(--space-8); border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
