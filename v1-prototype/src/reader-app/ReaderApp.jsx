@@ -467,6 +467,17 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     },
   });
   const { readingVersion, noteReadingChanged } = actions;
+  // Back in the foreground, where every comic is read to is asked again:
+  // read on the web or another device meanwhile, an open drawer or shelf
+  // still showed the old place (the owner, 2026-10-11: finished on one
+  // device, no Read sash in the drawer on the other).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && transport?.online) noteReadingChanged();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [transport, noteReadingChanged]);
   useEffect(() => { downloads.reading = readFileId || null; }, [downloads, readFileId]);
   useEffect(() => { if (!readFileId) noteReadingChanged(); }, [readFileId, noteReadingChanged]);
   // Back online: the library as it is now, and every place re-read.
