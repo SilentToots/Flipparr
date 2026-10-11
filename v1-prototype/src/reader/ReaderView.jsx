@@ -13,7 +13,7 @@ import { LoadingIndicator as LoadingSpinner } from "../components/LoadingIndicat
 import { HeaderToggle, SettingsCard, Toggle } from "../components/SettingsControls.jsx";
 import { DialogCloseButton, isTopDialog, useDialog, useDrawerExit } from "../dialogs.jsx";
 import {
-  FLICK_WINDOW_MS, READING_DIRECTIONS, actionForKey, clampPan, clampZoom, fittedSize, isFlick, isSpread, isSwipe, loadReaderPrefs, pageFilter, pageForAction, pageWindow, pagesLeft, panelFocus, panelMask, PANEL_FEATHER, panelStep, pinchLeavesPanel, pinchPan, pinchZoom, pointerDistance, pointerMidpoint, readablePanels, readingDirection, releasedSwipe, saveReaderPrefs, stepAt, stepCount, stepOf, swipeAction, tapAction, verticalClose, zoomAt,
+  FLICK_WINDOW_MS, READING_DIRECTIONS, actionForKey, clampPan, clampZoom, fittedSize, isFlick, isSpread, isSwipe, loadReaderPrefs, pageFilter, pageForAction, pageWindow, pagesLeft, panelFocus, panelMask, panelStep, pinchLeavesPanel, pinchPan, pinchZoom, pointerDistance, pointerMidpoint, readablePanels, readingDirection, releasedSwipe, saveReaderPrefs, stepAt, stepCount, stepOf, swipeAction, tapAction, verticalClose, zoomAt,
 } from "../reader.js";
 import {
   HANDLES, hitTest, dragRect, drawnRect, isDrawn, newPanel, nudge, removeAt, tapOrder, applyOrder, toPayload, fromReading, editorKeyIntent,
@@ -1352,7 +1352,7 @@ export function ReaderView({
         // The page dims around the panel in view; the whole page, asked for
         // with a double-tap, is shown undimmed.
         const scrim = shown && panelMode && panelScrim && !overview && !wholePageStep && Boolean(panels[number]);
-        const hole = scrim ? panelMask(pagePanels(number)[shownStep.panel], undefined, PANEL_FEATHER) : null;
+        const hole = scrim ? panelMask(pagePanels(number)[shownStep.panel]) : null;
         const tries = pageFailures[number]?.tries || 0;
         return <img key={`${number}-${tries}`} src={src(tries ? `${item.readUrl}&retry=${tries}` : item.readUrl)} alt={shown ? `Page ${number + 1} of ${count}` : ""}
           className={`reader-page${shown ? " shown" : ""}${spreads[number] ? " spread" : ""}${shown && panning ? " panning" : ""}${shown && panelMode ? " panel-view" : ""}${scrim ? " scrim" : ""}${pageFailures[number]?.failed ? " failed" : ""}`}
@@ -1361,7 +1361,7 @@ export function ReaderView({
           ref={shown ? pageRef : undefined}
           style={shown ? {
             filter, translate: `${(panning ? panRef.current : pan).x}px ${(panning ? panRef.current : pan).y}px`,
-            ...(hole ? { "--hole-w": `${hole.w}%`, "--hole-h": `${hole.h}%`, "--hole-x": `${hole.x}%`, "--hole-y": `${hole.y}%`, "--hole-fx": `${hole.fx}%`, "--hole-fy": `${hole.fy}%` } : {}),
+            ...(hole ? Object.fromEntries(Object.entries(hole).map(([key, value]) => [`--hole-${key}`, `${value}%`])) : {}),
             ...(zoom > 1 && baseRef.current ? {
               width: `${Math.round(baseRef.current.width * zoom)}px`, height: `${Math.round(baseRef.current.height * zoom)}px`,
               maxWidth: "none", maxHeight: "none",

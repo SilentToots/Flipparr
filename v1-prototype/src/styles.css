@@ -4039,29 +4039,41 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    than a repaint of a 2x bitmap on every frame. */
 /* The page dims everywhere but the panel being read, as Kindle's Panel View
    does: a mask with the panel's window at full strength over a layer at
-   28% (darker since 2026-10-11, the owner: 42% left the page too present). It rides on the image itself, so the flight between panels, a
-   drag and the night filter all carry it without a second element to keep in
-   step. The window is placed in the percentages CSS measures against the
-   room left over; reader.js (`panelMask`) does that sum.
+   28% (darker since 2026-10-11, the owner: 42% left the page too present).
+   It rides on the image itself, so the flight between panels, a drag and
+   the night filter all carry it without a second element to keep in step.
    Its edge fades into the dim rather than stopping hard, after GlobalComix
-   (the owner, 2026-10-11): a soft rectangle is two soft bands crossed -- one
-   across, one down, each fading over --hole-fx / --hole-fy -- and the dim
-   layer added over them. Masks composite from the bottom: the down band,
-   intersected with the across band, then the dim added. Between panels the
-   window glides with the page's own flight (180ms, ReaderView's step). */
+   (the owner, 2026-10-11): a soft rectangle is two soft bands crossed --
+   one across, one down, each the whole page with the window as gradient
+   stops (reader.js `panelMask`) -- and the dim layer added over them.
+   Masks composite from the bottom: the down band, intersected with the
+   across band, then the dim added. Each band covers the whole page because
+   WebKit intersects only inside the upper layer's box; a band sized to the
+   panel left the rest of an iPhone's page undimmed. The stops are typed
+   (@property) so the window glides between panels with the page's own
+   180ms flight (ReaderView's step). */
+@property --hole-l0 { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@property --hole-l1 { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@property --hole-r1 { syntax: "<percentage>"; inherits: false; initial-value: 100%; }
+@property --hole-r0 { syntax: "<percentage>"; inherits: false; initial-value: 100%; }
+@property --hole-t0 { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@property --hole-t1 { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@property --hole-b1 { syntax: "<percentage>"; inherits: false; initial-value: 100%; }
+@property --hole-b0 { syntax: "<percentage>"; inherits: false; initial-value: 100%; }
 .reader-page.panel-view.scrim {
   -webkit-mask-image: linear-gradient(color-mix(in srgb, #000 28%, transparent), color-mix(in srgb, #000 28%, transparent)),
-    linear-gradient(to right, transparent, #000 var(--hole-fx), #000 calc(100% - var(--hole-fx)), transparent),
-    linear-gradient(to bottom, transparent, #000 var(--hole-fy), #000 calc(100% - var(--hole-fy)), transparent);
+    linear-gradient(to right, transparent var(--hole-l0), #000 var(--hole-l1), #000 var(--hole-r1), transparent var(--hole-r0)),
+    linear-gradient(to bottom, transparent var(--hole-t0), #000 var(--hole-t1), #000 var(--hole-b1), transparent var(--hole-b0));
   mask-image: linear-gradient(color-mix(in srgb, #000 28%, transparent), color-mix(in srgb, #000 28%, transparent)),
-    linear-gradient(to right, transparent, #000 var(--hole-fx), #000 calc(100% - var(--hole-fx)), transparent),
-    linear-gradient(to bottom, transparent, #000 var(--hole-fy), #000 calc(100% - var(--hole-fy)), transparent);
+    linear-gradient(to right, transparent var(--hole-l0), #000 var(--hole-l1), #000 var(--hole-r1), transparent var(--hole-r0)),
+    linear-gradient(to bottom, transparent var(--hole-t0), #000 var(--hole-t1), #000 var(--hole-b1), transparent var(--hole-b0));
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-  -webkit-mask-size: 100% 100%, var(--hole-w) 100%, 100% var(--hole-h); mask-size: 100% 100%, var(--hole-w) 100%, 100% var(--hole-h);
-  -webkit-mask-position: 0 0, var(--hole-x) 0, 0 var(--hole-y); mask-position: 0 0, var(--hole-x) 0, 0 var(--hole-y);
+  -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
   -webkit-mask-composite: source-over, source-in; mask-composite: add, intersect;
-  transition: -webkit-mask-position 180ms cubic-bezier(.2, .8, .2, 1), -webkit-mask-size 180ms cubic-bezier(.2, .8, .2, 1),
-    mask-position 180ms cubic-bezier(.2, .8, .2, 1), mask-size 180ms cubic-bezier(.2, .8, .2, 1);
+  transition: --hole-l0 180ms cubic-bezier(.2, .8, .2, 1), --hole-l1 180ms cubic-bezier(.2, .8, .2, 1),
+    --hole-r1 180ms cubic-bezier(.2, .8, .2, 1), --hole-r0 180ms cubic-bezier(.2, .8, .2, 1),
+    --hole-t0 180ms cubic-bezier(.2, .8, .2, 1), --hole-t1 180ms cubic-bezier(.2, .8, .2, 1),
+    --hole-b1 180ms cubic-bezier(.2, .8, .2, 1), --hole-b0 180ms cubic-bezier(.2, .8, .2, 1);
 }
 @media (prefers-reduced-motion: reduce) { .reader-page.panel-view.scrim { transition: none; } }
 .reader-surface.zoomed .reader-page.shown { will-change: translate; }

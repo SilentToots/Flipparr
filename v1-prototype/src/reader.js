@@ -371,34 +371,30 @@ export function quadrantPanels(direction) {
 
 /**
  * Where the page's mask leaves the panel at full strength while the rest
- * dims (styles.css `.reader-page.scrim`). The window is the panel with a
- * little room around it, so a border is never shaved. Sizes are percentages
- * of the page; the position is the percentage CSS wants, which it measures
- * against the room left over rather than the page -- a window as wide as the
- * page has nowhere to go.
+ * dims (styles.css `.reader-page.scrim`), as gradient stops in percent of the
+ * page: across, the window fades in from `l0` to `l1` and out from `r1` to
+ * `r0`; down, `t0`..`t1` and `b1`..`b0`. The window is the panel with a
+ * little room around it, so a border is never shaved, and the fade runs
+ * outward from there over `feather` of the page (the owner, after
+ * GlobalComix, 2026-10-11) -- past the page's edge where it must, so it is
+ * even on every side.
  *
- * With a `feather`, the window's edge fades into the dim over that much of
- * the page instead of stopping hard (the owner, after GlobalComix,
- * 2026-10-11): the window grows by it each side, past the page's edge if it
- * must, and `fx` / `fy` are the fade's share of the window's width and
- * height, where the gradients reach full strength.
+ * Stops on bands that cover the whole page, not sized boxes placed on it:
+ * WebKit intersects mask layers only inside the upper layer's own box, so a
+ * box the width of the panel left everything beside it undimmed on an
+ * iPhone (2026-10-11).
  */
 export const PANEL_FEATHER = 0.03;
 
-export function panelMask(rect, pad = PANEL_MARGIN / 4, feather = 0) {
-  const grow = pad + feather;
-  // A hard window stops at the page's edge; a soft one runs past it, so
-  // its fade is the same on every side.
-  const clip = (value) => (feather ? value : Math.min(1, Math.max(0, value)));
-  const x0 = clip(rect.x - grow);
-  const y0 = clip(rect.y - grow);
-  const w = clip(rect.x + rect.w + grow) - x0;
-  const h = clip(rect.y + rect.h + grow) - y0;
-  // Exactly the page's size has no room to move in, and CSS places it at 0.
-  const at = (offset, size) => (Math.abs(1 - size) < 1e-6 ? 0 : (offset / (1 - size)) * 100);
+export function panelMask(rect, pad = PANEL_MARGIN / 4, feather = PANEL_FEATHER) {
+  const pct = (value) => value * 100;
+  const left = rect.x - pad;
+  const top = rect.y - pad;
+  const right = rect.x + rect.w + pad;
+  const bottom = rect.y + rect.h + pad;
   return {
-    w: w * 100, h: h * 100, x: at(x0, w), y: at(y0, h),
-    fx: w ? (feather / w) * 100 : 0, fy: h ? (feather / h) * 100 : 0,
+    l0: pct(left - feather), l1: pct(left), r1: pct(right), r0: pct(right + feather),
+    t0: pct(top - feather), t1: pct(top), b1: pct(bottom), b0: pct(bottom + feather),
   };
 }
 

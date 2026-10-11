@@ -255,38 +255,22 @@ test("a page can begin and end on the whole page when asked, and only a page of 
   assert.deepEqual(panelStep({ page: 0, panel: 3 }, "next", counts), { page: 1, panel: 0 });
 });
 
-test("the scrim's window sits on the panel, in the percentages a mask position takes", () => {
-  // A panel a quarter of the way in and a quarter wide: the window is the
-  // panel plus the pad each side, placed where CSS lands it -- position p%
-  // puts the window's left edge at p% of the room left over.
-  const hole = panelMask({ x: 0.25, y: 0.5, w: 0.25, h: 0.25 }, 0.01);
-  assert.deepEqual([hole.w, hole.h].map((v) => Math.round(v)), [27, 27]);
-  const left = (hole.x / 100) * (100 - hole.w);
-  assert.ok(Math.abs(left - 24) < 0.01, `window starts at ${left}%`);
-  const top = (hole.y / 100) * (100 - hole.h);
-  assert.ok(Math.abs(top - 49) < 0.01);
-  // Against the page's edge the pad is clipped, not pushed inside.
-  const edge = panelMask({ x: 0, y: 0, w: 0.5, h: 0.5 }, 0.01);
-  assert.deepEqual([edge.x, edge.y], [0, 0]);
-  assert.ok(Math.abs(edge.w - 51) < 0.01);
-  // A panel the width of the page has nowhere to go.
-  assert.deepEqual(panelMask({ x: 0, y: 0.2, w: 1, h: 0.3 }, 0).x, 0);
-});
-
-test("a feathered window fades over the same width on every side, past the page's edge if it must", () => {
-  const soft = panelMask({ x: 0.25, y: 0.5, w: 0.25, h: 0.25 }, 0.01, 0.03);
-  assert.ok(Math.abs(soft.w - 33) < 1e-9, "the panel, its pad and the fade each side");
-  const left = (soft.x / 100) * (100 - soft.w);
-  assert.ok(Math.abs(left - 21) < 1e-9, `window starts at ${left}%`);
-  assert.ok(Math.abs(soft.fx - (3 / 33) * 100) < 1e-9, "full strength 3% of the page in");
-  // Against the page's edge the window runs past it, so the panel's own edge
+test("the scrim's window sits on the panel, as stops on bands across the whole page", () => {
+  // A panel a quarter of the way in and a quarter wide: full strength from
+  // the panel less its pad, fading out over the feather beyond.
+  const hole = panelMask({ x: 0.25, y: 0.5, w: 0.25, h: 0.25 }, 0.01, 0.03);
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.ok(near(hole.l1, 24) && near(hole.l0, 21), `left ${hole.l0}..${hole.l1}`);
+  assert.ok(near(hole.r1, 51) && near(hole.r0, 54), `right ${hole.r1}..${hole.r0}`);
+  assert.ok(near(hole.t1, 49) && near(hole.b1, 76) && near(hole.b0, 79));
+  // Against the page's edge the fade runs past it, so the panel's own edge
   // is never in the fade.
   const edge = panelMask({ x: 0, y: 0, w: 0.5, h: 0.5 }, 0.01, 0.03);
-  const edgeLeft = (edge.x / 100) * (100 - edge.w);
-  assert.ok(Math.abs(edgeLeft + 4) < 1e-9, `starts 4% before the page: ${edgeLeft}`);
-  // A window exactly the page's size sits at 0 rather than dividing by zero.
-  assert.equal(panelMask({ x: 0.04, y: 0, w: 0.92, h: 1 }, 0.01, 0.03).x, 0);
+  assert.ok(near(edge.l0, -4) && near(edge.l1, -1));
   assert.ok(PANEL_FEATHER > 0 && PANEL_FEATHER < 0.1);
+  const soft = panelMask({ x: 0.3, y: 0.1, w: 0.2, h: 0.6 });
+  assert.ok(soft.l0 < soft.l1 && soft.l1 < soft.r1 && soft.r1 < soft.r0, "across, in order");
+  assert.ok(soft.t0 < soft.t1 && soft.t1 < soft.b1 && soft.b1 < soft.b0, "down, in order");
 });
 
 test("a swipe is a quick, mostly sideways flick, in page view and panel view alike", () => {
