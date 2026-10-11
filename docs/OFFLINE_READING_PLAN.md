@@ -990,6 +990,18 @@ How:
   eight days (sessions last 30 days, `_SESSION_TTL_SECONDS`) and reopen
   (downloads still there); reconnect → progress on the server.
 
+### Releasing from anywhere (2026-10-11)
+
+`.github/workflows/reader-app-release.yml`: Actions -> Release Flipparr View
+-> Run workflow (the GitHub app works on a phone), with the branch, tag or
+commit to ship (default `v1-forward`). It runs lint and the tests, then
+`tools/reader_app_release.sh` on GitHub's macOS 26 runner (Xcode 26.6). The
+archive is unsigned there and the upload signs it with Apple's
+cloud-managed distribution certificate, so the App Store Connect key needs
+the Admin role. Secrets: `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`,
+`DEVELOPMENT_TEAM`. Only what is pushed can be shipped. A dispatchable
+workflow must be on the default branch (`main`) to show its button.
+
 ### Phase 7b — the owner's TestFlight UI notes (2026-10-10)
 
 Twelve notes from build 48b86d8. Decided with him: hide what is not owned,

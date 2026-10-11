@@ -12,6 +12,13 @@
 #   DEVELOPMENT_TEAM  the signing team, unless ios/Signing.local.xcconfig
 #                     (git-ignored) already says it
 #
+# FLIPPARR_UNSIGNED_ARCHIVE=1 (the GitHub workflow sets it): archive without
+# signing and let the upload sign it with Apple's cloud-managed distribution
+# certificate. A fresh build machine has no certificate, and signing the
+# archive there would make a new development certificate on every run until
+# the account's limit. Cloud signing needs an App Store Connect key with the
+# Admin role (or "Access to Cloud Managed Distribution Certificate").
+#
 # The build number is the UTC time, so every upload is higher than the last,
 # as App Store Connect requires; the version shown to testers is the
 # project's MARKETING_VERSION. Outputs go to a folder outside the repository
@@ -47,11 +54,16 @@ echo "Building the app's web bundle and copying it into iOS…"
 (cd "$app" && npm run --silent build:reader-app && npx cap copy ios >/dev/null)
 
 echo "Archiving build ${stamp}…"
+unsigned=""
+if [ "${FLIPPARR_UNSIGNED_ARCHIVE:-}" = "1" ]; then
+  unsigned="CODE_SIGNING_ALLOWED=NO"
+fi
+# shellcheck disable=SC2086 # $unsigned is one build setting or nothing
 xcodebuild -project "$app/ios/App/App.xcodeproj" -scheme App -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$out/FlipparrView.xcarchive" \
   -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" \
   -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-  DEVELOPMENT_TEAM="$team" CURRENT_PROJECT_VERSION="$stamp" \
+  DEVELOPMENT_TEAM="$team" CURRENT_PROJECT_VERSION="$stamp" $unsigned \
   archive >"$out/archive.log" 2>&1 || { echo "Archive failed; see $out/archive.log" >&2; exit 1; }
 
 cat >"$out/ExportOptions.plist" <<PLIST
