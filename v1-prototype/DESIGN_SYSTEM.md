@@ -445,8 +445,10 @@ Progress indicators, Gauges):
   List rows keep their visible controls.
 - **The comic to pick up floats over the page** (`ContinueBar`; Kindle's
   bar, Music's mini player): the first of the carry-on list, with its
-  cover, page and percentage, in a glass pill at the foot of the page's
-  column; on a phone it takes the bottom edge and the tab bar rises above
+  cover, page and percentage, in a glass pill the width of the page's
+  column (Kindle's iPad bar) on the header's scroll edge turned over -- the
+  sidebar's frost, faded in over 24px at its top and from the left -- so it
+  reads over any cover passing under it; on a phone it takes the bottom edge and the tab bar rises above
   it (owner, 2026-10-11). A tap opens it where it was
   left. Not on Settings or over the reader; offline, only a comic on the
   device. The page keeps room under its last row for it.

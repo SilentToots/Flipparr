@@ -1823,11 +1823,28 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .read-state.sash b { position: absolute; top: var(--space-14); right: calc(-1 * var(--space-24)); width: var(--space-96); padding: var(--space-4) 0; transform: rotate(45deg); text-align: center; background: var(--scrim-strong); box-shadow: 0 1px 4px var(--shadow-soft); }
 .comic-drawer-download .progress-ring { width: var(--space-28); height: var(--space-28); }
 /* The comic to pick up (Flipparr View's ContinueBar; Kindle's bar above
-   its tab bar, Music's mini player): floating at the foot of the page's
-   column, over the content, in the navigation layer's glass. The page
+   its tab bar, Music's mini player): a glass pill the width of the page's
+   column, as Kindle's iPad bar is (the owner, 2026-10-11), on the header's
+   scroll edge turned over -- the sidebar's frost, faded in over 24px at
+   its top -- so the bar reads over any cover passing under it. The page
    leaves room under its last row for it. */
-.continue-bar { position: fixed; z-index: 15; left: calc(var(--sidebar-inset) + var(--sidebar-width)); right: 0; bottom: calc(var(--space-16) + env(safe-area-inset-bottom)); display: flex; justify-content: center; padding: 0 var(--page-inset); pointer-events: none; }
-.continue-bar-button { width: 100%; max-width: 480px; min-height: var(--space-64); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-12); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
+.continue-bar { position: fixed; z-index: 15; left: calc(var(--sidebar-inset) + var(--sidebar-width)); right: 0; bottom: 0; display: flex; padding: var(--space-24) var(--page-inset) calc(var(--space-16) + env(safe-area-inset-bottom)); pointer-events: none; }
+.continue-bar::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background-color: var(--scroll-edge-bg);
+  -webkit-backdrop-filter: blur(var(--scroll-edge-blur));
+  backdrop-filter: blur(var(--scroll-edge-blur));
+  /* As the header's: in from the top over 24px, and in from the left over
+     the page's inset, so the band does not end in a hard line against the
+     sidebar. A phone has no sidebar beside it, so only the top fades. */
+  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent),
+    linear-gradient(to right, transparent, #000 var(--page-inset));
+  mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent),
+    linear-gradient(to right, transparent, #000 var(--page-inset));
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.continue-bar-button { width: 100%; min-height: var(--space-64); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-12); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .continue-bar-button { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
@@ -1836,12 +1853,16 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .continue-bar-text strong { overflow: hidden; font-size: var(--text-md); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .continue-bar-text small { color: var(--muted); font-size: var(--text-sm); }
 .continue-bar-icon { flex: none; color: var(--violet-text); }
-.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-32) + var(--space-80)); }
+.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-24) + var(--space-64) + var(--space-32) + env(safe-area-inset-bottom)); }
 @media (min-width: 641px) and (max-width: 900px) { .continue-bar { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); } }
 /* On a phone the bar takes the bottom edge and the tab bar rises above it,
    8 px apart (the owner, 2026-10-11); a toast rises with them. */
 @media (max-width: 640px) {
-  .continue-bar { left: 0; bottom: calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .continue-bar { left: 0; padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .continue-bar::before {
+    -webkit-mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
+    mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
+  }
   .reader-app:has(.continue-bar) .sidebar { bottom: calc(var(--space-4) + var(--space-64) + var(--space-8)); }
   .reader-app:has(.continue-bar) .toast { bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom) + var(--space-64) + var(--space-8)); }
   .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-80)); }

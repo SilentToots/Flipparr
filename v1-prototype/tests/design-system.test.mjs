@@ -236,6 +236,7 @@ const GLASS = new Map([
   [".page-header::before", "the header's scroll edge, which blurs content passing under it"],
   [".comic-drawer-bar::before", "a drawer's pinned top bar, frosted once the title scrolls under it"],
   [".continue-bar-button", "Flipparr View's continue-reading bar, floating over the page like the tab bar (Kindle's bar, Music's mini player; owner, 2026-10-10)"],
+  [".continue-bar::before", "the continue bar's scroll edge: the header's frost turned over, so the bar reads over covers passing under it (owner, 2026-10-11)"],
 ]);
 
 test("backdrop blur is only on the navigation layer", () => {
