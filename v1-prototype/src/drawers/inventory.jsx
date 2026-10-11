@@ -304,22 +304,19 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
             <span className="issue-tile-art">
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
               {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
-                : readerOnly ? null
-                : readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span>
                 : !readerOnly && hostBadge(issue) ? <span className={`ownership-source ${hostBadge(issue).tone}`}>{hostBadge(issue).label}</span> : null}
               {/* A reader host: the cover itself reads, status sits in its
                   corner, and the rest is the long-press menu (owner,
                   2026-10-10; Apple HIG, Context menus). */}
               {readerOnly && read && onRead ? <button type="button" className="issue-tile-open" onClick={() => onRead({ id: issue.fileId })}
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} /> : null}
-              {readerOnly ? <ReadState finished={read?.finished} fraction={read?.fraction} /> : null}
+              <ReadState finished={read?.finished} fraction={read?.fraction} />
               {readerOnly ? <CoverStatus target={{ kind: "issue", fileId: String(issue.fileId) }} /> : null}
               {/* Inside the cover's box, not the tile's: anchored to the tile
                   it would sit under the issue title. */}
               {!readerOnly && read && onRead ? <button type="button" className="issue-tile-read" onClick={() => onRead({ id: issue.fileId })}
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
                 title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
-              {read?.fraction && !readerOnly ? <span className="read-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(read.fraction * 100)}%` }} /></span> : null}
               <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className={`issue-tile-menu${readerOnly ? " quiet" : ""}`} longPress />
               {readerOnly ? null : downloadButton(issue, "issue-tile-download")}
             </span>

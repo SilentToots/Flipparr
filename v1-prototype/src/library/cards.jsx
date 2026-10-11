@@ -6,7 +6,7 @@ import { issueLabel } from "../discover.js";
 import { arcMaker, arcOwnerLine, arcYears } from "../reading-list.js";
 import { collectionReadTarget, countsLine } from "../run-collections.js";
 
-import { BookOpen, Check, CheckCircle, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
+import { BookOpen, CheckCircle, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
 import { useCallback, useContext, useRef, useState } from "react";
 import { Host, useManages, useReaderOnly } from "../host.js";
 import { CoverStatus } from "../components/CoverStatus.jsx";
@@ -298,11 +298,10 @@ export function ReadRunOverlay({ run, reading, onRead }) {
   // Only a comic mid-page is opened by file: between issues the latest file is
   // the one just finished, and the reader would reopen it from page one. The
   // run resolves to the next unread -- or, once every issue is read, to #1.
-  // The marker says the same words an issue's badge does: "Read" once every
-  // issue is, "In progress" on a run that has been started. A bare count of
-  // what was left said nothing on its own (owner, 2026-09-28).
+  // How far the run is read sits in the cover's top-right corner, as on
+  // every cover (ReadState): a Read sash, or the share read.
   return <>
-    <ReadingMark place={place} />
+    <ReadState finished={place?.state === "finished"} fraction={placeFraction(place)} />
     <button type="button" className="series-card-read" title={verb}
       onClick={() => onRead(started ? { id: place.fileId } : { runId: run.id })} aria-label={label}>
       <BookOpen size={16} weight="fill" />
@@ -321,22 +320,13 @@ export function CollectionReadOverlay({ card, reading, onRead }) {
   const started = place?.state === "continue" && place.pageCount;
   const verb = started ? "Continue" : allRead ? "Restart" : place?.state === "next" || anyRead ? "Begin" : "Read";
   return <>
-    <ReadingMark place={allRead ? { state: "finished" } : anyRead ? { state: "continue" } : null} />
+    <ReadState finished={allRead} fraction={collectionReadAction(card, reading)?.place?.fraction} />
     <button type="button" className="series-card-read" title={verb}
       onClick={() => onRead(started ? { id: place.fileId } : { runId: run.id })} aria-label={`${verb} ${card.name}: ${run.title}`}>
       <BookOpen size={16} weight="fill" />
       <b>{verb}</b>
     </button>
   </>;
-}
-
-// The card's marker, the same on a run and a story arc: "Read" once every
-// comic is, "In progress" once it has been started, nothing before.
-export function ReadingMark({ place }) {
-  if (!place) return null;
-  return place.state === "finished"
-    ? <span className="series-card-mark done"><Check size={13} weight="bold" aria-hidden="true" /> Read</span>
-    : <span className="series-card-mark">In progress</span>;
 }
 
 // A story arc's Read, over its card: the same verbs a run's has, and the
@@ -350,7 +340,7 @@ export function ReadListOverlay({ list, reading, onRead }) {
   const label = started ? `Continue ${list.name}, page ${place.page + 1} of ${place.pageCount}` : `${verb} ${list.name}`;
   const context = { listId: list.listId || list.id, listName: list.name };
   return <>
-    <ReadingMark place={place} />
+    <ReadState finished={place?.state === "finished"} fraction={placeFraction(place)} />
     <button type="button" className="series-card-read" title={verb}
       onClick={() => onRead(started ? { id: place.fileId, ...context } : context)} aria-label={label}>
       <BookOpen size={16} weight="fill" />

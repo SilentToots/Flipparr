@@ -99,7 +99,7 @@ Some differences need no change, each for its reason:
 
 ## The plan
 
-### Phase 1: covers (both hosts, one batch)
+### Phase 1: covers (both hosts, one batch) -- done 2026-10-11
 
 **Downloaded gets its own mark (app).**
 - An arrow-down in a filled circle, bottom-right. This is Apple's

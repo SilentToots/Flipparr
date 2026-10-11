@@ -241,12 +241,12 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   after Plex's; a series family is no longer called a collection anywhere
   (Library's Show menu says "Series families", a run's tab "Family"). A
   collection is a run card (`.series-card.collection-card`) with the
-  collection mark -- MDI's bookmark-box-multiple -- in the cover's corner on
-  `--scrim-strong`, its years and run count for a byline, and a muted
+  collection mark -- MDI's bookmark-box-multiple -- in the cover's bottom-left
+  corner on `--scrim-strong`, its years and run count for a byline, and a muted
   "Collection" badge. The cards fill the Collections tab and sit in the Library
   grid among the runs, in the grid's own sort (since 2026-10-03; they were
-  pinned first, which A-Z ignored) (View & sort: "Show collections in Library"); since 2026-10-02 the
-  mark sits bottom right, Read (as on an arc's card) top left.
+  pinned first, which A-Z ignored) (View & sort: "Show collections in Library"); Read (as on an
+  arc's card) sits top left.
 - **Read groups: collections and story arcs** (one pattern since 2026-10-02,
   The owner: "collections are runs read in a sequence, story arcs issues read
   in a sequence"). Any profile makes either, private until shared; the
@@ -361,6 +361,25 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
     Search first on the rail, no search in a phone's tab bar but its button
     in every header, and a tablet's rail showing no F mark.
 
+### A cover's corners (both hosts, since 2026-10-11)
+
+Each corner of a cover has one job, so marks never stack or trade meanings
+(docs/STATUS_MARKS_PLAN.md):
+
+- **Top right, reading** (`ReadState`): a "Read" sash across the corner once
+  finished; a percentage tag while under way. On a run, arc or collection
+  the share is of its comics (a run's read issues plus the one under way).
+  It replaced the centred "Read" / "In progress" marks, the green corner
+  check and both progress hairlines. VoiceOver says "Read" or "42% read".
+- **Top left, Read**: the web's Read button on a card or tile.
+- **Bottom left**: a collection's stack mark.
+- **Bottom right**: Flipparr View's download mark (below); nothing on the
+  web.
+- **The centre** is ownership's alone (In volume, Missing, Upcoming), so an
+  issue can show both what it is and how far it is read.
+
+A check on a cover means read, and nothing else.
+
 ### Flipparr View (a reader host)
 
 The iPad and iPhone app shows the web's own screens through a Host
@@ -373,17 +392,14 @@ Progress indicators, Gauges):
   read.
 - **Covers carry state, not buttons** (the owner's Infuse, Apple Books and
   Kindle examples, 2026-10-10). Two corners, so the marks never stack:
-  - *Bottom right, downloads* (`CoverStatus`): Kindle's check in a dark
-    circle once a comic is on the device (a run, collection or arc: once
+  - *Bottom right, downloads* (`CoverStatus`): an arrow down in a dark
+    circle once a comic is on the device (Apple's downloaded, as Music and
+    Podcasts mark one; never a check, which means read) (a run, collection or arc: once
     some of it is). A comic on its way dims under `--scrim`, with a ring
     and its percentage in the middle (Infuse); a run, collection or arc
     on its way shows the ring small in the corner instead.
-  - *Top right, reading* (`ReadState`): a "Read" sash across the corner
-    once finished, a percentage tag while under way (a run's or arc's
-    share of its comics). These replace the web's centred mark and
-    progress hairline in the app.
-  - A collection's stack mark moves to the bottom left. A tap on an
-    issue's cover reads it.
+  - *Top right, reading* (`ReadState`), on the web too (below).
+  - A tap on an issue's cover reads it.
 - **Download controls are Apple Books'.** One `ProgressRing` for every
   download: an issue row shows a cloud, then the ring with a stop square
   (a tap stops it), then nothing once the comic is here. A drawer's

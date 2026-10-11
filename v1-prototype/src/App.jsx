@@ -46,6 +46,7 @@ import {
 import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
+import { ReadState } from "./components/ReadState.jsx";
 import { SettingsCard, Toggle } from "./components/SettingsControls.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "./components/ProfileTiles.jsx";
 import {
@@ -2976,8 +2977,7 @@ function ProfileView({ onRead, onNavigate, authStatus, onSwitch, sheet = false, 
           <span className="profile-history-cover">
             {/* A comic's first page is its cover, and a page a reader may fetch. */}
             <img src={`/api/v1/files/${item.fileId}/pages/0`} alt="" loading="lazy" />
-            {item.finishedAt ? <b className="profile-history-done" aria-label="Finished"><Check size={14} weight="bold" /></b> : null}
-            {!item.finishedAt && fraction ? <i className="profile-history-progress" style={{ "--progress": `${Math.round(fraction * 100)}%` }} aria-hidden="true" /> : null}
+            <ReadState finished={Boolean(item.finishedAt)} fraction={fraction} />
           </span>
           <strong>{item.seriesTitle || item.filename}</strong>
           <small>{[item.issueNumber ? `#${item.issueNumber}` : "", item.finishedAt ? "Finished" : item.pageCount ? `Page ${item.page + 1} of ${item.pageCount}` : ""].filter(Boolean).join(" · ")}</small>
