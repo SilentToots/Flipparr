@@ -10,7 +10,7 @@ const manifest = {
   pages: [0, 1].map((index) => ({ index, readUrl: `/api/v1/files/63/pages/${index}?v=sig&size=read` })),
 };
 
-function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], checkAnswers = {} } = {}) {
+function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], checkAnswers = {}, checkReading = {} } = {}) {
   const enqueued = [];
   const posted = [];
   const listeners = {};
@@ -44,7 +44,7 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
       if (path === "/api/v1/files/63/offline") return manifest;
       if (path === "/api/v1/offline/check") {
         posted.push({ path, body: JSON.parse(options.body) });
-        return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok" })) };
+        return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok", ...(checkReading[fileId] || {}) })) };
       }
       posted.push({ path, method: options.method });
       return {};
@@ -182,4 +182,21 @@ test("reading a comic while it downloads is kept with it", async () => {
   await downloads.noteRead("63", { at: "2026-10-10T15:00:00.000Z" });
   assert.equal(downloads.row("63").lastReadAt, "2026-10-10T15:00:00.000Z", "not Unread once it arrives");
   assert.equal(downloads.row("63").finished, false);
+});
+
+test("the check takes where this profile is with each comic from the server, when newer", async () => {
+  const { downloadRow } = await import("../src/reader-app/offline.js");
+  const ready = (fileId, extra) => ({ ...downloadRow({ ...manifest, fileId }), state: "ready", ...extra });
+  const { downloads } = setup({
+    rows: [ready("63"), ready("64", { lastReadAt: "2026-10-11T22:00:00.000Z", finished: false })],
+    checkReading: {
+      63: { lastReadAt: "2026-10-11T21:28:14.636240+00:00", finished: true },
+      64: { lastReadAt: "2026-10-11T21:00:00+00:00", finished: true },
+    },
+  });
+  await downloads.ready;
+  await downloads.check();
+  assert.equal(downloads.row("63").finished, true, "finished on another device: Read here too");
+  assert.equal(downloads.row("63").lastReadAt, "2026-10-11T21:28:14.636240+00:00");
+  assert.equal(downloads.row("64").finished, false, "a later read on this device is kept");
 });

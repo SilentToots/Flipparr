@@ -341,9 +341,18 @@ export class Downloads extends EventTarget {
       } catch {
         break;
       }
-      for (const { fileId, status } of answer?.files || []) {
+      for (const { fileId, status, lastReadAt, finished } of answer?.files || []) {
         const row = this.row(fileId);
         if (!row) continue;
+        // Where this profile is with it, as the server knows -- read on the
+        // web or another device too (the owner, 2026-10-11: finished on one
+        // iPad, Unread on the other). Taken only when newer than what this
+        // device noted; a read made here offline and not yet sent is newer.
+        if (lastReadAt && (!row.lastReadAt || Date.parse(lastReadAt) > Date.parse(row.lastReadAt))) {
+          row.lastReadAt = lastReadAt;
+          row.finished = Boolean(finished);
+          changed = true;
+        }
         if (status === "hidden" || status === "gone") {
           await this.remove(fileId, status);
           removed += 1;

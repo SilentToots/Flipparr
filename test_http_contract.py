@@ -2341,8 +2341,14 @@ class ReaderProfileHttpTests(unittest.TestCase):
         signature = body["fileSignature"]
         check = [{"fileId": str(file_id), "fileSignature": signature}, {"fileId": "99999", "fileSignature": "x"}]
         answered = self.call("POST", "/api/v1/offline/check", {"files": check}, cookies=admin)
-        self.assertEqual(answered.json()["files"], [{"fileId": str(file_id), "status": "ok"},
+        self.assertEqual(answered.json()["files"], [{"fileId": str(file_id), "status": "ok", "lastReadAt": None, "finished": False},
                                                     {"fileId": "99999", "status": "gone"}])
+        # Finished elsewhere -- the web, another iPad -- it says so, so this
+        # device's Downloads does not call it Unread.
+        self.assertEqual(self.call("POST", f"/api/v1/files/{file_id}/progress", {"page": 1}, cookies=admin).status, 200)
+        read = self.call("POST", "/api/v1/offline/check", {"files": check[:1]}, cookies=admin).json()["files"][0]
+        self.assertEqual((read["status"], read["finished"]), ("ok", True))
+        self.assertTrue(read["lastReadAt"])
         # A limited reader is kept from the run: no manifest, and its download is "hidden".
         self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "teen"}, cookies=admin)
         store.record_run_rating(run, "mature", "metron", "Mature (issue 1)")
@@ -2355,7 +2361,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         with zipfile.ZipFile(comic, "w") as archive:
             archive.writestr("01.jpg", _png_bytes())
         changed = self.call("POST", "/api/v1/offline/check", {"files": check[:1]}, cookies=admin).json()["files"]
-        self.assertEqual(changed, [{"fileId": str(file_id), "status": "changed"}])
+        self.assertEqual([(item["fileId"], item["status"], item["finished"]) for item in changed], [(str(file_id), "changed", True)])
         for bad in ({"files": "all"}, {"files": [{"fileSignature": "x"}]}, {"files": ["1"]},
                     {"files": [{"fileId": "1", "fileSignature": "x"}] * 501}):
             self.assertEqual(self.call("POST", "/api/v1/offline/check", bad, cookies=admin).status, 400)

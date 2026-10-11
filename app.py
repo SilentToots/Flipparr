@@ -14053,11 +14053,16 @@ def file_offline_manifest(file_id: int) -> dict[str, Any]:
     }
 
 
-def offline_check(entries: Any, may_see: Callable[[int], bool]) -> list[dict[str, str]]:
+def offline_check(entries: Any, may_see: Callable[[int], bool], *, user_id: int | None = None) -> list[dict[str, Any]]:
     """Which of a device's downloads are still good: `ok`, `changed` (the
     file was replaced; download again), `gone` (no longer in the library) or
     `hidden` (this profile may no longer read it). `may_see` is the rating
-    gate for the asking profile."""
+    gate for the asking profile.
+
+    With `user_id`, each comic it may still read also says where this
+    profile is with it: `lastReadAt` (null if never opened) and `finished`
+    -- so a comic finished on another device, or on the web, reads as
+    finished in this device's Downloads (the owner, 2026-10-11)."""
     if not isinstance(entries, list) or len(entries) > OFFLINE_CHECK_MAX:
         raise ValueError(f"Send up to {OFFLINE_CHECK_MAX} files as a list")
     store = catalog_store()
@@ -14082,6 +14087,13 @@ def offline_check(entries: Any, may_see: Callable[[int], bool]) -> list[dict[str
         else:
             status = "ok"
         answers.append({"fileId": str(file_id), "status": status})
+    if user_id is not None:
+        readable = [int(answer["fileId"]) for answer in answers if answer["status"] in ("ok", "changed")]
+        states = store.reading_states(readable, user_id=user_id)
+        for answer in answers:
+            if answer["status"] in ("ok", "changed"):
+                state = states.get(int(answer["fileId"]), {"lastReadAt": None, "finished": False})
+                answer.update(state)
     return answers
 
 
@@ -19093,7 +19105,7 @@ class Handler(BaseHTTPRequestHandler):
             def may_see(file_id: int) -> bool:
                 return viewer.is_admin or not viewer.max_rating or self._run_visible(f"/api/v1/files/{file_id}/pages/0")
             try:
-                self.send_json({"files": offline_check(payload.get("files"), may_see)})
+                self.send_json({"files": offline_check(payload.get("files"), may_see, user_id=self._viewer_id())})
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             return

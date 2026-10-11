@@ -502,10 +502,12 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       noteReadingChanged();
       setListsVersion((version) => version + 1);
       await transport?.replay();
+      // And where each download is read to, as the server now knows it.
+      if (!transport || transport.online) await downloads.check().catch(() => 0);
     } finally {
       setRefreshing(false);
     }
-  }, [transport, loadCatalog, noteReadingChanged]);
+  }, [transport, loadCatalog, noteReadingChanged, downloads]);
   const pullPill = usePullToRefresh({ enabled: true, onRefresh: refreshLibrary });
   // Offline, said under each page's header (the web's backend-banner).
   const offlineNotice = online ? null : <div className="backend-banner" role="status"><WifiSlash size={19} weight="fill" aria-hidden="true" />

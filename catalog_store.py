@@ -4007,6 +4007,26 @@ class CatalogStore:
             "updatedAt": row["updated_at"],
         }
 
+    def reading_states(self, file_ids: list[int], *, user_id: int) -> dict[int, dict[str, Any]]:
+        """When this reader last read each of these comics and whether they
+        finished it, for those with a place: Flipparr View's downloads check
+        (`offline_check`), so a comic finished on one device reads so on
+        every device that keeps it."""
+        ids = [int(file_id) for file_id in file_ids]
+        if not ids:
+            return {}
+        states: dict[int, dict[str, Any]] = {}
+        with self._connect() as connection:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                for row in connection.execute(
+                    f"SELECT file_id, finished_at, updated_at FROM reading_progress WHERE user_id=? AND file_id IN ({marks})",
+                    (int(user_id), *chunk),
+                ):
+                    states[int(row["file_id"])] = {"lastReadAt": row["updated_at"], "finished": row["finished_at"] is not None}
+        return states
+
     def set_reading_progress(
         self, file_id: int, page: int, page_count: int, file_signature: str,
         finished: bool = False, panel: int = 0, *, user_id: int, at: str | None = None,
