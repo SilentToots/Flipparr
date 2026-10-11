@@ -376,14 +376,30 @@ export function quadrantPanels(direction) {
  * of the page; the position is the percentage CSS wants, which it measures
  * against the room left over rather than the page -- a window as wide as the
  * page has nowhere to go.
+ *
+ * With a `feather`, the window's edge fades into the dim over that much of
+ * the page instead of stopping hard (the owner, after GlobalComix,
+ * 2026-10-11): the window grows by it each side, past the page's edge if it
+ * must, and `fx` / `fy` are the fade's share of the window's width and
+ * height, where the gradients reach full strength.
  */
-export function panelMask(rect, pad = PANEL_MARGIN / 4) {
-  const x0 = Math.max(0, rect.x - pad);
-  const y0 = Math.max(0, rect.y - pad);
-  const w = Math.min(1, rect.x + rect.w + pad) - x0;
-  const h = Math.min(1, rect.y + rect.h + pad) - y0;
-  const at = (offset, size) => (size >= 1 ? 0 : (offset / (1 - size)) * 100);
-  return { w: w * 100, h: h * 100, x: at(x0, w), y: at(y0, h) };
+export const PANEL_FEATHER = 0.03;
+
+export function panelMask(rect, pad = PANEL_MARGIN / 4, feather = 0) {
+  const grow = pad + feather;
+  // A hard window stops at the page's edge; a soft one runs past it, so
+  // its fade is the same on every side.
+  const clip = (value) => (feather ? value : Math.min(1, Math.max(0, value)));
+  const x0 = clip(rect.x - grow);
+  const y0 = clip(rect.y - grow);
+  const w = clip(rect.x + rect.w + grow) - x0;
+  const h = clip(rect.y + rect.h + grow) - y0;
+  // Exactly the page's size has no room to move in, and CSS places it at 0.
+  const at = (offset, size) => (Math.abs(1 - size) < 1e-6 ? 0 : (offset / (1 - size)) * 100);
+  return {
+    w: w * 100, h: h * 100, x: at(x0, w), y: at(y0, h),
+    fx: w ? (feather / w) * 100 : 0, fy: h ? (feather / h) * 100 : 0,
+  };
 }
 
 const READER_PREFS_KEY = "flipparr.reader";

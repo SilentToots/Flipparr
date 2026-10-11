@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   READING_DIRECTIONS, readingDirection, actionForKey, tapAction, pageForAction,
   pageWindow, isSpread, SPREAD_RATIO, clampZoom, clampPan, zoomAt, swipeAction, pagesLeft, pageFilter,
-  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, readablePanels, WHOLE_PAGE, panelMask,
+  panelFocus, panelStep, stepCount, stepAt, stepOf, REVEAL_MIN_PANELS, quadrantPanels, readablePanels, WHOLE_PAGE, panelMask, PANEL_FEATHER,
   pointerDistance, pointerMidpoint, pinchZoom, pinchPan, pinchLeavesPanel, PINCH_OUT_OF_PANEL, MIN_ZOOM, MAX_ZOOM, isSwipe, isFlick, releasedSwipe, verticalClose, fittedSize, FLICK_WINDOW_MS, isEdgeTouch, isStolenBack, EDGE_GESTURE_GRACE_MS, loadReaderPrefs, saveReaderPrefs,
 } from "../src/reader.js";
 import { readFileSync } from "node:fs";
@@ -271,6 +271,22 @@ test("the scrim's window sits on the panel, in the percentages a mask position t
   assert.ok(Math.abs(edge.w - 51) < 0.01);
   // A panel the width of the page has nowhere to go.
   assert.deepEqual(panelMask({ x: 0, y: 0.2, w: 1, h: 0.3 }, 0).x, 0);
+});
+
+test("a feathered window fades over the same width on every side, past the page's edge if it must", () => {
+  const soft = panelMask({ x: 0.25, y: 0.5, w: 0.25, h: 0.25 }, 0.01, 0.03);
+  assert.ok(Math.abs(soft.w - 33) < 1e-9, "the panel, its pad and the fade each side");
+  const left = (soft.x / 100) * (100 - soft.w);
+  assert.ok(Math.abs(left - 21) < 1e-9, `window starts at ${left}%`);
+  assert.ok(Math.abs(soft.fx - (3 / 33) * 100) < 1e-9, "full strength 3% of the page in");
+  // Against the page's edge the window runs past it, so the panel's own edge
+  // is never in the fade.
+  const edge = panelMask({ x: 0, y: 0, w: 0.5, h: 0.5 }, 0.01, 0.03);
+  const edgeLeft = (edge.x / 100) * (100 - edge.w);
+  assert.ok(Math.abs(edgeLeft + 4) < 1e-9, `starts 4% before the page: ${edgeLeft}`);
+  // A window exactly the page's size sits at 0 rather than dividing by zero.
+  assert.equal(panelMask({ x: 0.04, y: 0, w: 0.92, h: 1 }, 0.01, 0.03).x, 0);
+  assert.ok(PANEL_FEATHER > 0 && PANEL_FEATHER < 0.1);
 });
 
 test("a swipe is a quick, mostly sideways flick, in page view and panel view alike", () => {
