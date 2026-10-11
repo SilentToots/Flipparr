@@ -466,6 +466,8 @@ export function ReaderView({
   // it moved and re-rasterising when it stopped, which read as a blur that
   // came and went with the scroll.
   const baseRef = useRef(null);
+  // The surface size the panel in view was last framed for (focusFor).
+  const framedFor = useRef(null);
   useEffect(() => { if (zoom === 1) baseRef.current = null; }, [zoom]);
   const dragged = useRef(false);
   const pinching = useRef(false);
@@ -692,6 +694,7 @@ export function ReaderView({
     const viewport = surface.getBoundingClientRect();
     const base = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, viewport);
     baseRef.current = base;
+    framedFor.current = `${Math.round(viewport.width)}x${Math.round(viewport.height)}`;
     const rects = pagePanels(number);
     const at = stepAt(position, rects.length, stepPrefsRef.current);
     if (at.whole) return { zoom: 1, pan: { x: 0, y: 0 } };
@@ -725,14 +728,19 @@ export function ReaderView({
       if (size === last) return;
       const first = last === null;
       last = size;
-      if (first) return;
       const image = pageRef.current;
       if (!image?.naturalWidth) return;
+      // Panel view frames again whenever the surface is not the one the
+      // panel was framed for -- including on this observer's first look,
+      // since it is made anew whenever panels arrive, which can be in the
+      // middle of a turn.
       if (panelModeRef.current && !overviewRef.current) {
+        if (framedFor.current === null || size === framedFor.current) return;
         const focus = focusFor(at.current, panelRef.current);
         if (focus) { setZoom(focus.zoom); setPan(focus.pan); }
         return;
       }
+      if (first) return;
       if (zoomRef.current > 1) {
         const fit = Math.min(1, box.width / image.naturalWidth, box.height / image.naturalHeight);
         baseRef.current = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
@@ -798,6 +806,11 @@ export function ReaderView({
   // shelves showed through a strip at the bottom of the comic until Safari
   // caught up (owner, 2026-10-07). The visual viewport is right at every
   // moment; a browser without it keeps the stylesheet's 100dvh.
+  // A turn of the phone is read again as it settles: iOS can report the
+  // old height at the moment of the turn and send nothing after, which left
+  // the reader the portrait shape in landscape and the panel framed for it,
+  // off to one side (the owner, 2026-10-11). The surface's own observer
+  // frames the panel again whenever this changes its size.
   useEffect(() => {
     const dialog = dialogRef.current;
     const viewport = window.visualViewport;
@@ -806,14 +819,23 @@ export function ReaderView({
       dialog.style.setProperty("--reader-top", `${Math.round(viewport.offsetTop)}px`);
       dialog.style.setProperty("--reader-height", `${Math.round(viewport.height)}px`);
     }
+    let timers = [];
+    function settle() {
+      fit();
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers = [120, 350, 800].map((delay) => window.setTimeout(fit, delay));
+    }
     fit();
-    viewport.addEventListener("resize", fit);
+    viewport.addEventListener("resize", settle);
     viewport.addEventListener("scroll", fit);
-    window.addEventListener("orientationchange", fit);
+    window.addEventListener("orientationchange", settle);
+    window.addEventListener("resize", settle);
     return () => {
-      viewport.removeEventListener("resize", fit);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      viewport.removeEventListener("resize", settle);
       viewport.removeEventListener("scroll", fit);
-      window.removeEventListener("orientationchange", fit);
+      window.removeEventListener("orientationchange", settle);
+      window.removeEventListener("resize", settle);
     };
   }, [dialogRef]);
 

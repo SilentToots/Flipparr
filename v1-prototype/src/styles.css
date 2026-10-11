@@ -4038,8 +4038,8 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 /* A zoomed page moves on its own layer, so a drag is a composite rather
    than a repaint of a 2x bitmap on every frame. */
 /* The page dims everywhere but the panel being read, as Kindle's Panel View
-   does: a mask with the panel's window at full strength over a layer at less
-   than half. It rides on the image itself, so the flight between panels, a
+   does: a mask with the panel's window at full strength over a layer at
+   28% (darker since 2026-10-11, the owner: 42% left the page too present). It rides on the image itself, so the flight between panels, a
    drag and the night filter all carry it without a second element to keep in
    step. The window is placed in the percentages CSS measures against the
    room left over; reader.js (`panelMask`) does that sum.
@@ -4050,10 +4050,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    intersected with the across band, then the dim added. Between panels the
    window glides with the page's own flight (180ms, ReaderView's step). */
 .reader-page.panel-view.scrim {
-  -webkit-mask-image: linear-gradient(color-mix(in srgb, #000 42%, transparent), color-mix(in srgb, #000 42%, transparent)),
+  -webkit-mask-image: linear-gradient(color-mix(in srgb, #000 28%, transparent), color-mix(in srgb, #000 28%, transparent)),
     linear-gradient(to right, transparent, #000 var(--hole-fx), #000 calc(100% - var(--hole-fx)), transparent),
     linear-gradient(to bottom, transparent, #000 var(--hole-fy), #000 calc(100% - var(--hole-fy)), transparent);
-  mask-image: linear-gradient(color-mix(in srgb, #000 42%, transparent), color-mix(in srgb, #000 42%, transparent)),
+  mask-image: linear-gradient(color-mix(in srgb, #000 28%, transparent), color-mix(in srgb, #000 28%, transparent)),
     linear-gradient(to right, transparent, #000 var(--hole-fx), #000 calc(100% - var(--hole-fx)), transparent),
     linear-gradient(to bottom, transparent, #000 var(--hole-fy), #000 calc(100% - var(--hole-fy)), transparent);
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
