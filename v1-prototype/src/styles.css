@@ -1892,15 +1892,19 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* Downloads' covers, denser than the Library's: a shelf to pick from, as
    Kindle's is. */
 .series-grid.download-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-16); }
-/* A run kept here twice or more is one card (the owner, 2026-10-11): Kindle's
-   stack -- two edges of the comics behind it above the cover -- and how
-   many in the bottom-right corner, where a cover says download state. Every
-   card keeps the edges' band, so stacked and single covers line up. */
-.download-card:not(.download-stack) { padding-top: var(--space-16); }
-.download-stack-edges { display: grid; align-content: end; justify-items: center; gap: var(--space-2); height: var(--space-16); margin-bottom: calc(var(--space-12) * -1); padding-bottom: var(--space-2); box-sizing: border-box; }
-.download-stack-edges i { display: block; height: 3px; border-radius: var(--radius-pill) var(--radius-pill) 0 0; background: var(--line-strong); }
-.download-stack-edges i:first-child { width: 84%; }
-.download-stack-edges i:last-child { width: 92%; }
+/* A run kept here twice or more is a stack (the owner, 2026-10-11): the
+   covers of its other comics behind the card, each a step further up and
+   to the right and dimmer, so it reads as comics stacked in place. They
+   peek into the grid's gaps, so the card lines up with its neighbours; the
+   count sits in the bottom-right corner, where a cover says download
+   state. */
+.download-stack { position: relative; display: grid; isolation: isolate; }
+.download-stack > .series-card { z-index: 1; }
+.download-stack-layer { position: absolute; top: 0; left: 0; z-index: 0; width: 100%; aspect-ratio: var(--cover-ratio); overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: var(--surface-raised); box-shadow: 0 2px 8px var(--shadow-soft); pointer-events: none; }
+.download-stack-layer .discover-cover { width: 100%; height: 100%; }
+.download-stack-layer .discover-cover img { width: 100%; height: 100%; object-fit: cover; }
+.download-stack-layer.depth-1 { translate: var(--space-6) calc(var(--space-6) * -1); filter: brightness(.82); }
+.download-stack-layer.depth-2 { translate: var(--space-12) calc(var(--space-12) * -1); filter: brightness(.64); }
 .download-count { position: absolute; right: var(--space-6); bottom: var(--space-6); z-index: 2; display: grid; place-items: center; min-width: var(--space-24); height: var(--space-24); padding: 0 var(--space-6); box-sizing: border-box; border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; pointer-events: none; }
 /* The run's downloads drawer: one row per comic kept, its cover, number and
    state, the row reads it, and Remove (or a ring that stops it) at its end. */

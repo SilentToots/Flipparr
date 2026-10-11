@@ -15,7 +15,7 @@ import { ComicsIcon, DownloadsNavIcon, ReadingListIcon, SettingsNavIcon } from "
 import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
 import { SettingsFrame, SettingsIndex } from "../settings/shell.jsx";
 import { usePhoneWidth } from "../dialogs.jsx";
-import { CoverArt } from "../components/CoverArt.jsx";
+import { CoverArt, DiscoverCover } from "../components/CoverArt.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
 import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
@@ -1323,13 +1323,20 @@ function DownloadsPage({ downloads, onRead, onOpenGroup, notice = null, onOpenSe
         aria-label={`${name}. ${downloadCaption(row)}`} />
     </article>;
   };
-  // A run kept here twice or more: Kindle's stack, the count in the corner
-  // that says download state (our status marks: bottom right), reading in
-  // the top right as on every cover.
+  // A run kept here twice or more: a stack -- the covers of the run's other
+  // comics behind the card, up and to the right (the owner, 2026-10-11:
+  // outside the card, so it reads as comics stacked) -- the count in the
+  // corner that says download state (our status marks: bottom right), and
+  // reading in the top right as on every cover.
   const groupCard = (entry, index) => {
     const label = `${entry.title}, ${entry.rows.length} on this device${entry.read ? `, ${entry.read} read` : ""}`;
-    return <article className="series-card download-card download-stack" style={{ "--card-index": Math.min(index, 11) }} key={`run-${entry.runId}`}>
-      <span className="download-stack-edges" aria-hidden="true"><i /><i /></span>
+    const behind = entry.rows.map((row) => row.pageUrls?.[0]).filter((cover) => cover && cover !== entry.cover).slice(0, 2);
+    while (behind.length < Math.min(2, entry.rows.length - 1)) behind.push(entry.cover);
+    return <div className="download-stack" key={`run-${entry.runId}`}>
+      {behind.map((cover, depth) => <span className={`download-stack-layer depth-${behind.length - depth}`} aria-hidden="true" key={depth}>
+        <DiscoverCover src={cover} alt="" glyph={20} />
+      </span>)}
+    <article className="series-card download-card" style={{ "--card-index": Math.min(index, 11) }}>
       <span className="series-card-art">
         <CoverArt id={`download-run-${entry.runId}`} title={entry.title} cover={entry.cover} />
         <ReadState finished={entry.read === entry.rows.length} fraction={entry.read / entry.rows.length} />
@@ -1340,7 +1347,8 @@ function DownloadsPage({ downloads, onRead, onOpenGroup, notice = null, onOpenSe
       <span className="series-card-identity"><strong>{entry.title}</strong>
         <span className="series-card-byline">{`${entry.rows.length} issues${entry.read ? ` \u00b7 ${entry.read} read` : ""}`}</span></span>
       <button type="button" className="discover-open series-card-open" onClick={() => onOpenGroup(String(entry.runId))} aria-label={`${label}. Show its downloads`} />
-    </article>;
+    </article>
+    </div>;
   };
   const shelf = groupDownloads(here);
   return <>
