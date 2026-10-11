@@ -194,3 +194,15 @@ test("a waiting change the server refuses is dropped, not retried forever", asyn
   await transport.replay();
   assert.deepEqual(files.c2, []);
 });
+
+test("told the same profile again, it keeps that profile's downloads: a read is still noted", async () => {
+  const { transport, read } = setup();
+  // The server's answer arriving after the kept session opened the app.
+  transport.attach("2");
+  await transport.transport("/api/v1/files/63/progress", save({ page: 2 }));
+  assert.deepEqual(read, [["63", true]], "the last page, noted on the downloaded comic");
+  // Another profile starts without them.
+  transport.attach("3");
+  await transport.transport("/api/v1/files/63/progress", save({ page: 1 }));
+  assert.equal(read.length, 1);
+});

@@ -299,10 +299,20 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       if (online) console.warn(`[Flipparr] offline: ${reason || "told so"}`);
       setOnline(false);
     },
-    /** The profile now reading, and its downloads: its queue, its kept answers. */
-    attach(nextProfileId, nextDownloads = null) {
-      profileId = nextProfileId === null ? null : String(nextProfileId);
-      downloads = nextDownloads;
+    /**
+     * The profile now reading, and its downloads: its queue, its kept
+     * answers. Told the same profile again -- the server's answer arriving
+     * after the device's kept session opened the app, or a reconnect -- it
+     * keeps that profile's downloads; it used to drop them, and from then on
+     * a read was never noted on a downloaded comic ("Unread", the owner,
+     * 2026-10-11) and a downloaded comic was not served from the device if
+     * the connection then went. Another profile, or none, starts without.
+     */
+    attach(nextProfileId, nextDownloads) {
+      const next = nextProfileId === null ? null : String(nextProfileId);
+      if (next !== profileId) downloads = nextDownloads ?? null;
+      else if (nextDownloads !== undefined) downloads = nextDownloads;
+      profileId = next;
     },
     useDownloads(nextDownloads) { downloads = nextDownloads; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
