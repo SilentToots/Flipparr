@@ -686,13 +686,6 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       };
     },
     notice: offlineNotice,
-    issueBadge: (issue) => {
-      const row = issue.fileId ? downloads.row(issue.fileId) : null;
-      if (row?.state === "downloading") return { label: `Downloading ${Math.round(progressOf(row) * 100)}%`, tone: "reading-progress" };
-      return null;
-    },
-    // Downloaded is said by the issue's own control now (Phase 6), so the
-    // mark beside its number is not drawn twice.
     // Downloaded, on Recommended: first while offline, when it is what can
     // be read; after Keep Reading otherwise.
     shelves: () => (readyRows.length ? [{

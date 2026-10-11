@@ -10,14 +10,13 @@
 // - `canManage`, optional: false where the library is not managed from here
 //   (Flipparr View: an admin reading on an iPad sees the reader's drawer, not
 //   Files, Advanced, Edit or Pull). The web app leaves it out.
-// - `issueExtras(issue)`, `issueBadge(issue)` and `issueMark(issue)`,
-//   optional: the host's own items in an issue's menu, its badge where
-//   nothing else is said, and its mark beside the number (Flipparr View's
-//   downloads). The web app gives none.
+// - `issueExtras(issue)`, optional: the host's own items in an issue's menu
+//   (Flipparr View's downloads). The web app gives none.
 // - `groupDownload(group)` and `issueDownload(issue)`, optional: Download
-//   for a whole run, story arc or collection beside its bookmark, and a
-//   download control on every issue, seen without a menu (Flipparr View,
-//   Phase 6). Each answers `{label, busy, done, progress, onPress}` or null.
+//   for a whole run, story arc or collection beside Read, and a download
+//   control on an issue row (Flipparr View). Each answers `{label, busy,
+//   progress, onPress}` -- a cloud, or while busy the ring with a stop
+//   square -- or null, which draws nothing (a downloaded issue's row).
 //   `group` is `{kind: "run" | "arc" | "collection", id, title, runIds?}`.
 //   The web app gives none.
 // - `readerOnly`, optional: a reader, not an acquisition tool (Flipparr

@@ -210,14 +210,8 @@ export function RunMenu({ runRead, runStarted, onMarkRun }) {
 }
 
 export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, onRate, onMark, onMarkRun, onAddToArc, onAddIssuesToArc, empty = null, runRead = false, runStarted = false, readingFiles, medium }) {
-  // The host's badge for an issue with nothing else to say: Flipparr View's
-  // download state. The web gives none.
-  const hostBadge = useContext(Host)?.issueBadge || (() => null);
-  // And its mark beside the number, as the lock sits: Flipparr View's
-  // "downloaded", which reading's badge would otherwise hide.
-  const hostMark = useContext(Host)?.issueMark || (() => null);
-  // And its download control, seen without opening a menu (Flipparr View's
-  // Phase 6: the menu's Download was too hard to find).
+  // The host's download control on an issue row, seen without opening a
+  // menu (Flipparr View; the web gives none).
   const hostDownload = useContext(Host)?.issueDownload || (() => null);
   // A reader host lists only what there is to read: no Missing, Upcoming or
   // counts of what is owned (Flipparr View; the owner, 2026-10-10).
@@ -227,9 +221,9 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
   const downloadButton = (issue, className) => {
     const state = issue.fileId ? hostDownload(issue) : null;
     if (!state) return null;
-    return <button type="button" className={`${className}${state.done ? " done" : ""}`} onClick={state.onPress}
+    return <button type="button" className={className} onClick={state.onPress}
       aria-label={state.label} title={state.label}>
-      {state.busy ? <ProgressRing progress={state.progress}><StopSquare /></ProgressRing> : state.done ? <CheckCircle size={15} weight="fill" /> : <CloudArrowDown size={15} />}
+      {state.busy ? <ProgressRing progress={state.progress}><StopSquare /></ProgressRing> : <CloudArrowDown size={15} />}
     </button>;
   };
   // Covers are why the tab exists, so posters lead. A long run is also less
@@ -306,8 +300,7 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
                 so a missing issue's dimmed cover does not dim its badge too. */}
             <span className="issue-tile-art">
               <span className="issue-tile-cover"><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={22} /></span>
-              {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span>
-                : !readerOnly && hostBadge(issue) ? <span className={`ownership-source ${hostBadge(issue).tone}`}>{hostBadge(issue).label}</span> : null}
+              {stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}
               {/* A reader host: the cover itself reads, status sits in its
                   corner, and the rest is the long-press menu (owner,
                   2026-10-10; Apple HIG, Context menus). */}
@@ -321,14 +314,13 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
                 aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`}
                 title={read.label}><BookOpen size={14} weight="fill" /></button> : null}
               <IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className={`issue-tile-menu${readerOnly ? " quiet" : ""}`} longPress />
-              {readerOnly ? null : downloadButton(issue, "issue-tile-download")}
             </span>
             {onEditIssue ? <button type="button" className="issue-tile-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}
-            <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}{hostMark(issue)}</strong>
+            <strong>{issueLabel(issue.number, medium)}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={12} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong>
             {!genericTitle ? <small className="issue-tile-title">{issue.title}</small> : null}
           </article>;
         }
-        return <article key={issue.id}>{selectToggle(issue)}<span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}{hostMark(issue)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions">{!stateLabel && readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}{downloadButton(issue, "issue-row-download")}<IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-row-menu" /></div></article>;
+        return <article key={issue.id}>{selectToggle(issue)}<span className={`grouped-issue-cover ${issue.fileCover ? "from-file" : ""}`}><CoverArt id={`issue-${issue.id}`} title={`${issue.contextLabel || "Issue"} #${issue.number}`} cover={issue.fileCover || issue.cover} decorative placeholderSize={16} /></span><span className="grouped-issue-number">{issueLabel(issue.number, medium)}</span><div>{!genericTitle ? <strong>{issue.title}{issue.metadataLocked ? <ShieldCheck className="issue-local-lock" size={13} weight="fill" aria-label="Local metadata correction locked" /> : null}</strong> : null}<small>{releaseLabel}{read?.detail ? ` · ${read.detail}` : ""}</small></div><div className="issue-row-actions">{!stateLabel && readingBadge(read) ? <span className={`ownership-source ${readingBadge(read).tone}`}>{readingBadge(read).label}</span> : null}{onRate && issue.ownership !== "unowned" ? <StarRating rating={{ value: issue.yourRating || 0, source: issue.yourRating ? RATING_SOURCES.yours : RATING_SOURCES.none, count: 0 }} title={`${issue.contextLabel || "Issue"} ${issueLabel(issue.number, medium)}`} size={15} onRate={(value) => onRate(issue, value)} /> : null}{stateLabel ? <span className={`ownership-source ${issue.ownership} ${issue.acquisitionState || ""}`}>{stateLabel}</span> : null}{read && onRead ? <button type="button" className="issue-row-read" onClick={() => onRead({ id: issue.fileId })} aria-label={`${read.label} ${issueLabel(issue.number, medium)}${read.detail ? `, ${read.detail}` : ""}`} title={read.label}><BookOpen size={14} weight="fill" /></button> : null}{onEditIssue ? <button type="button" className="issue-row-edit" onClick={() => onEditIssue(issue)} aria-label={`Edit metadata for ${issue.contextLabel || "issue"} issue ${issue.number}`} title="Edit issue metadata"><PencilSimple size={14} /></button> : null}{downloadButton(issue, "issue-row-download")}<IssueMenu issue={issue} medium={medium} read={read} onRead={onRead} onMark={onMark} onEditIssue={onEditIssue} onAddToArc={onAddToArc} className="issue-row-menu" /></div></article>;
       })}</div>
     </section>;
   })}

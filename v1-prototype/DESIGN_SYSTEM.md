@@ -389,6 +389,30 @@ muted. Reading is said in one word, "Read", and a share as a percentage,
 on covers and rows alike; "In progress · 1 of 3 issues read" names its
 unit (comics in a run, issues in an arc, runs in a collection).
 
+### Status marks (both hosts)
+
+One meaning, one mark; one mark, one meaning. A host leaves out what it has
+no use for, never reuses it (`tests/status-marks.test.mjs` holds the parts
+that drift).
+
+| Meaning | Mark | Where | Hosts |
+|---|---|---|---|
+| Read | "Read" sash, top right; green "Read" in a row or hero | `ReadState`, `readingBadge` | both |
+| Part read | "42%" tag, top right; violet "42%" in a row; "In progress · 1 of 3 issues read" in a hero | same | both |
+| Downloaded | arrow down in a dark circle, bottom right | `CoverStatus` | app |
+| Downloading | a cover dimmed with a ring and percentage; a run's ring bottom right; a ring with a stop square on a control | `CoverStatus`, `ProgressRing` | app |
+| Can be downloaded | the cloud (`CloudArrowDown`) | rows, Download beside Read, menus | app |
+| A collection | the stack mark, bottom left | `.collection-card-mark` | both |
+| Ownership facts | muted pill, centred (In volume, Single + volume, Missing, Date needed) | `.ownership-source` | web |
+| Upcoming, waiting for release | amber | pill, `StatusBadge` | web |
+| On the way | violet "On the way" | pill | web |
+| Following | muted chip with the eye | `MonitoringStatus` | web |
+| Pulled / in library (Discover) | check-circle outline | `PulledIcon` | web |
+| Fully / partly / unknown owned | check-circle / half circle / clock, with the count | `Ownership` | web |
+| Chosen option | a bare check, violet | `GlassSelect`, sort menus | both |
+| Mark as read (an action) | check-circle outline | menus, Advanced | both |
+| Export, import a list | the download arrow (`DownloadSimple`) | buttons | web |
+
 ### Flipparr View (a reader host)
 
 The iPad and iPhone app shows the web's own screens through a Host

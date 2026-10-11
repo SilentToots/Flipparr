@@ -150,7 +150,7 @@ Some differences need no change, each for its reason:
 - **Partly owned** takes a half-filled circle, not an amber check. (Not the
   clock, as first written: the clock already means "total not known".)
 
-### Phase 4: write it down and hold it
+### Phase 4: write it down and hold it -- done 2026-10-11
 
 - **`DESIGN_SYSTEM.md` gets a "Status marks" table**: each meaning, its
   mark, position, colour, and which hosts draw it. The fix-everywhere rule

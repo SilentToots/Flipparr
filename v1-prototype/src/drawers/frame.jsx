@@ -17,7 +17,7 @@ import { RATING_SOURCES, filledStars, ratingForPress, ratingLabel } from "../rat
 import { readingAriaLabel, readingNoun, readingVerb } from "../reading-target.js";
 import { creatorRoleLabel } from "../run-details.js";
 import { issueReadState } from "./inventory.jsx";
-import { ArrowLeft, BookOpen, CheckCircle, CloudArrowDown, Star } from "@phosphor-icons/react";
+import { ArrowLeft, BookOpen, CloudArrowDown, Star } from "@phosphor-icons/react";
 
 // The skeleton occupies the loaded card's box exactly. A shelf that grows when
 // its comics arrive moves everything under it, which is the moment the reader
@@ -286,9 +286,9 @@ export function ReadWithDownload({ group, children }) {
   if (!state) return children;
   return <div className="comic-drawer-read-row">
     {children}
-    <button type="button" className={`secondary-button comic-drawer-download${state.done ? " done" : ""}`}
+    <button type="button" className="secondary-button comic-drawer-download"
       aria-label={state.label} title={state.label} onClick={state.onPress}>
-      {state.busy ? <ProgressRing progress={state.progress}><StopSquare /></ProgressRing> : state.done ? <CheckCircle size={24} weight="fill" /> : <CloudArrowDown size={24} />}
+      {state.busy ? <ProgressRing progress={state.progress}><StopSquare /></ProgressRing> : <CloudArrowDown size={24} />}
     </button>
   </div>;
 }
