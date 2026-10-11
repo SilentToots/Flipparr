@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   downloadComplete, downloadRow, evictionOrder, formatBytes, nextUnread, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload,
-  planDownloads, progressOf, readerCatalog, transferId, usageBytes, coverStatusFor, batchProgress,
+  planDownloads, progressOf, readerCatalog, transferId, usageBytes, coverStatusFor, batchProgress, groupDownloads, nextDownloaded,
 } from "../src/reader-app/offline.js";
 
 const MB = 1024 * 1024;
@@ -151,4 +151,25 @@ test("a batch's progress only goes forward as its comics finish", () => {
   const old = { ...row("2", 1), startedAt: undefined };
   assert.equal(batchProgress([row("1", 1, whole), old]), 0, "a row from an older build counts only while coming");
   assert.equal(coverStatusFor(after, { kind: "run", id: "61" }).progress, 1 / 3);
+});
+
+test("downloads group by run as Kindle shelves a series; a run with one comic here is that comic", () => {
+  const row = (fileId, runId, number, extra = {}) => ({
+    ...downloadRow({ ...manifest, fileId, issueNumber: number, run: runId ? { id: runId, title: `Run ${runId}` } : null }),
+    state: "ready", downloadedAt: "2026-10-10T10:00:00Z", ...extra,
+  });
+  const entries = groupDownloads([
+    row("1", "61", "10", { lastReadAt: "2026-10-11T09:00:00Z", finished: true }),
+    row("2", "61", "2"),
+    row("3", "61", "23.1"),
+    row("4", "70", "1", { lastReadAt: "2026-10-11T12:00:00Z" }),
+    row("5", null, null),
+  ]);
+  assert.deepEqual(entries.map((entry) => entry.kind), ["issue", "run", "issue"], "newest first: the lone run-70 comic, then run 61");
+  const run = entries[1];
+  assert.deepEqual(run.rows.map((item) => item.issueNumber), ["2", "10", "23.1"], "in issue order");
+  assert.equal(run.read, 1);
+  assert.equal(run.cover, run.rows[1].pageUrls[0], "the cover of the one read most lately");
+  assert.equal(nextDownloaded(run.rows).fileId, "2", "carry on from the first not finished");
+  assert.equal(nextDownloaded(run.rows.map((item) => ({ ...item, finished: true }))).fileId, "2", "all read: from the first");
 });

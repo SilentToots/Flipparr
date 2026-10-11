@@ -400,6 +400,7 @@ that drift).
 | Read | "Read" sash, top right; green "Read" in a row or hero | `ReadState`, `readingBadge` | both |
 | Part read | "42%" tag, top right; violet "42%" in a row; "In progress · 1 of 3 issues read" in a hero | same | both |
 | Downloaded | arrow down in a dark circle, bottom right | `CoverStatus` | app |
+| Comics of a run kept (Downloads) | the count in a dark pill, bottom right, under Kindle's stack edges | `.download-count`, `.download-stack` | app |
 | Downloading | a cover dimmed with a ring and percentage; a run's ring bottom right; a ring with a stop square on a control | `CoverStatus`, `ProgressRing` | app |
 | Can be downloaded | the cloud (`CloudArrowDown`) | rows, Download beside Read, menus | app |
 | A collection | the stack mark, bottom left | `.collection-card-mark` | both |
@@ -452,6 +453,15 @@ Progress indicators, Gauges):
   it (owner, 2026-10-11). A tap opens it where it was
   left. Not on Settings or over the reader; offline, only a comic on the
   device. The page keeps room under its last row for it.
+- **Downloads group by run** (the owner, 2026-10-11, after Kindle): a run
+  with two or more comics on the device is one card with the stack's two
+  edges above its cover and the count bottom right; one comic is its own
+  card and reads on a tap (`groupDownloads`). The group opens the run's
+  downloads drawer (`DownloadsDrawer`), the comic drawer's frame: the hero
+  with "3 on this device · 359 KB", Read or Continue beside the cloud that
+  downloads more, a row per comic (state, size, Remove or a ring that stops
+  it), then Remove read and Remove all. It is drawn from the device's own
+  record, so it works offline.
 - **The app's own screens** (`.reader-app`) use 44 px targets at every
   width, one 12 px rhythm inside a card, and 16 px body copy.
 - **Storage** is a gauge (`StorageGauge`): the limit as the track, the

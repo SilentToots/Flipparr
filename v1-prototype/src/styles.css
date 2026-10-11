@@ -1892,6 +1892,30 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* Downloads' covers, denser than the Library's: a shelf to pick from, as
    Kindle's is. */
 .series-grid.download-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-16); }
+/* A run kept here twice or more is one card (the owner, 2026-10-11): Kindle's
+   stack -- two edges of the comics behind it above the cover -- and how
+   many in the bottom-right corner, where a cover says download state. Every
+   card keeps the edges' band, so stacked and single covers line up. */
+.download-card:not(.download-stack) { padding-top: var(--space-16); }
+.download-stack-edges { display: grid; align-content: end; justify-items: center; gap: var(--space-2); height: var(--space-16); margin-bottom: calc(var(--space-12) * -1); padding-bottom: var(--space-2); box-sizing: border-box; }
+.download-stack-edges i { display: block; height: 3px; border-radius: var(--radius-pill) var(--radius-pill) 0 0; background: var(--line-strong); }
+.download-stack-edges i:first-child { width: 84%; }
+.download-stack-edges i:last-child { width: 92%; }
+.download-count { position: absolute; right: var(--space-6); bottom: var(--space-6); z-index: 2; display: grid; place-items: center; min-width: var(--space-24); height: var(--space-24); padding: 0 var(--space-6); box-sizing: border-box; border-radius: var(--radius-pill); background: var(--scrim-strong); color: var(--color-neutral-0); font-size: var(--text-xs); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; pointer-events: none; }
+/* The run's downloads drawer: one row per comic kept, its cover, number and
+   state, the row reads it, and Remove (or a ring that stops it) at its end. */
+.downloads-drawer-list { display: grid; gap: var(--space-8); }
+.download-row { display: flex; align-items: center; gap: var(--space-12); padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12); border-radius: var(--radius-12); background: var(--surface-raised); }
+.download-row-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-12); padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.download-row-open:disabled { cursor: default; }
+.download-row-cover { flex: none; }
+.download-row-cover .discover-cover { width: var(--space-40); aspect-ratio: var(--cover-ratio); border-radius: var(--radius-4); }
+.download-row-copy { min-width: 0; display: grid; gap: var(--space-2); }
+.download-row-copy strong { font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.download-row-copy small { color: var(--muted); font-size: var(--text-sm); }
+.download-row-action { flex: none; display: grid; place-items: center; width: var(--control-height-md); height: var(--control-height-md); padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
+@media (hover: hover) { .download-row-action:not(:disabled):hover { background: var(--surface-hover); color: var(--text); } }
+.downloads-drawer .advanced-tools { margin-top: var(--space-24); }
 .storage-gauge-labels { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-12); font-size: var(--text-sm); color: var(--muted); }
 .storage-gauge-labels strong { color: var(--text); font-size: var(--text-md); font-weight: var(--weight-semibold); }
 .storage-gauge-track { height: var(--space-8); border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }

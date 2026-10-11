@@ -199,6 +199,53 @@ export function readerCatalog(catalog, { onDevice = null } = {}) {
  * The download rows a cover stands for: an issue's own, or a run's,
  * collection's or story arc's issues (`issueFiles`: issue id -> file id).
  */
+/**
+ * Downloads as Kindle shelves a series (the owner, 2026-10-11): the comics
+ * kept from one run make one stacked card, and a run with only one comic
+ * here is that comic's own card. Each entry is `{kind: "issue", row}` or
+ * `{kind: "run", runId, title, rows, read, cover}` -- the run's rows in
+ * issue order, how many are read, and the cover of the one read most lately
+ * (else its first). Entries come most lately read or downloaded first, a
+ * run by its latest comic.
+ */
+export function groupDownloads(rows) {
+  const when = (row) => Date.parse(row.lastReadAt || row.downloadedAt || row.startedAt || 0) || 0;
+  const byRun = new Map();
+  const entries = [];
+  for (const row of rows) {
+    if (!row.seriesRunId) { entries.push({ kind: "issue", row }); continue; }
+    const key = String(row.seriesRunId);
+    if (!byRun.has(key)) byRun.set(key, []);
+    byRun.get(key).push(row);
+  }
+  for (const [runId, kept] of byRun) {
+    if (kept.length === 1) { entries.push({ kind: "issue", row: kept[0] }); continue; }
+    const ordered = [...kept].sort((a, b) => issueOrder(a.issueNumber, b.issueNumber));
+    const latest = [...kept].sort((a, b) => when(b) - when(a))[0];
+    entries.push({
+      kind: "run", runId, title: latest.seriesTitle, rows: ordered,
+      read: kept.filter((row) => row.finished).length,
+      cover: (latest.lastReadAt ? latest : ordered[0]).pageUrls?.[0] || null,
+    });
+  }
+  const latestOf = (entry) => (entry.kind === "issue" ? when(entry.row) : Math.max(...entry.rows.map(when)));
+  return entries.sort((a, b) => latestOf(b) - latestOf(a));
+}
+
+/** Issue numbers in reading order: 2 before 10, 23.1 after 23, a number before none. */
+export function issueOrder(a, b) {
+  const value = (number) => {
+    const parsed = Number.parseFloat(String(number ?? ""));
+    return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+  };
+  return value(a) - value(b) || String(a ?? "").localeCompare(String(b ?? ""));
+}
+
+/** The comic a run's kept issues carry on from: the first not finished, else the first. */
+export function nextDownloaded(rows) {
+  return rows.find((row) => !row.finished) || rows[0] || null;
+}
+
 export function rowsFor(rows, target, { issueFiles = new Map() } = {}) {
   if (!target) return [];
   if (target.kind === "issue") return rows.filter((row) => row.fileId === String(target.fileId));

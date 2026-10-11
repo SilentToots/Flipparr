@@ -21,6 +21,7 @@ import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
 import { CardMenu } from "../library/cards.jsx";
 import { ContinueBar } from "./ContinueBar.jsx";
+import { DownloadsDrawer } from "./DownloadsDrawer.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "../search/library-search.jsx";
 import { libraryMatchState } from "../discover.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "../recent-searches.js";
@@ -48,7 +49,7 @@ import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
-import { CAP_CHOICES, batchProgress, coverStatusFor, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
+import { CAP_CHOICES, batchProgress, coverStatusFor, groupDownloads, nextDownloaded, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 
@@ -580,6 +581,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // Downloading needs Flipparr; offline, the controls still show what is
   // here, and a press says why nothing starts.
   const [downloadGroup, setDownloadGroup] = useState(null);
+  // The run whose downloads drawer is open (Downloads' stacked card).
+  const [downloadsRun, setDownloadsRun] = useState(null);
   const issueName = (issue) => `${issue.contextLabel || "Issue"} #${issue.number}`;
   const downloadIssue = useCallback((issue) => {
     if (!online) { showToast("Connect to Flipparr to download.", "error"); return; }
@@ -743,6 +746,18 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   const logicalSeriesCount = useMemo(() => logicalCatalogSeries(catalog, series).length, [catalog]);
   const { series: readingSeries, title: readingTitle, issue: readingIssue, next: readingNext } = readingContext(catalog, readFileId);
   const finished = Boolean(readFileId) && finishedFileId === readFileId;
+  // The open downloads drawer's run, from the device's own record as it is
+  // now: it follows a download finishing or a comic removed, and closes
+  // itself once nothing of the run is left.
+  const runDownloads = useMemo(() => {
+    if (!downloadsRun) return null;
+    const kept = downloads.rows.filter((row) => String(row.seriesRunId) === downloadsRun && row.state !== "failed");
+    if (!kept.length) return null;
+    const entry = groupDownloads(kept)[0];
+    if (entry.kind === "run") return entry;
+    return { kind: "run", runId: downloadsRun, title: entry.row.seriesTitle, rows: [entry.row], read: entry.row.finished ? 1 : 0, cover: entry.row.pageUrls?.[0] || null };
+  // downloadVersion: the rows change in place.
+  }, [downloadsRun, downloads, downloadVersion]);
   const reading = {
     readingList: actions.readingList || EMPTY_ENTRIES, onToggleReadingList: actions.toggleReadingList,
     readingVersion, onRead: readComic, onOpenSeries: openSeries,
@@ -762,14 +777,14 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
         {page === "search" ? <AppSearchPage draft={searchDraft} onDraft={setSearchDraft} catalog={catalog} backendStatus={backendStatus}
           runCollections={runCollections} onOpenSeries={openSeries} onOpenList={openList}
           onOpenRunCollection={(card) => { setSelectedSeries(null); setSelectedList(null); setRunCollectionId(String(card.id)); }} /> : null}
-        {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} notice={offlineNotice}
+        {page === "downloads" ? <DownloadsPage downloads={downloads} onRead={readComic} onOpenGroup={setDownloadsRun} notice={offlineNotice}
           onOpenSettings={() => { setPage("app-settings"); window.scrollTo({ top: 0 }); }} /> : null}
         {page === "app-settings" ? <AppSettingsPage client={client} status={status} viewer={viewer} downloads={downloads} online={online}
           settings={appSettings} onSettings={changeAppSettings} onSwitch={onSwitch} onSignOut={onSignOut} notice={offlineNotice} /> : null}
       </div></main>
       {page !== "app-settings" && !readFileId ? <ContinueBar series={series} readingVersion={readingVersion} onRead={readComic} /> : null}
       {readFileId ? <ReaderView fileId={readFileId} title={readingTitle} medium={readingSeries?.medium} directionOverride={readingSeries?.readingDirection}
-        startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || finished}
+        startPage={readFrom} behind={Boolean(selectedSeries) || Boolean(selectedList) || Boolean(runDownloads) || finished}
         onFinish={() => setFinishedFileId(readFileId)} onProgressSaved={noteReadingChanged}
         onOpenRun={readingSeries ? () => openSeries(readingSeries) : undefined}
         onClose={() => { setReadFileId(""); setReadFrom(null); setFinishedFileId(""); setReadingList(null); }} /> : null}
@@ -787,6 +802,8 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       {selectedList ? <ReadingListDrawer key={selectedList.id} list={selectedList} allSeries={series} {...reading} groupTools={false}
         onClose={() => setSelectedList(null)} onMarkIssue={actions.markIssueRead} onRateIssue={actions.rateIssue}
         onMark={actions.markListRead} onGone={(message) => { setSelectedList(null); if (message) showToast(message); }} /> : null}
+      {runDownloads ? <DownloadsDrawer key={runDownloads.runId} group={runDownloads} downloads={downloads} onRead={readComic}
+        onClose={() => setDownloadsRun(null)} onToast={showToast} /> : null}
       {downloadGroup ? <DownloadSheet group={downloadGroup} downloads={downloads} onClose={() => setDownloadGroup(null)}
         onStarted={(message, tone) => { setDownloadGroup(null); showToast(message, tone); }} /> : null}
       {pullPill}
@@ -1274,9 +1291,11 @@ function downloadCaption(row) {
  * Downloads as a reader shelf, Kindle's way (the owner, 2026-10-10): covers,
  * not rows. What is on its way first, then what is here, the one read most
  * lately first. A tap reads (or retries what failed); touch and hold for
- * the rest. The limit sits on top as a gauge.
+ * the rest. The limit sits on top as a gauge. Since 2026-10-11 a run with
+ * two or more comics here is one stacked card, its count in the corner,
+ * that opens the run's downloads drawer (`groupDownloads`, DownloadsDrawer).
  */
-function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
+function DownloadsPage({ downloads, onRead, onOpenGroup, notice = null, onOpenSettings }) {
   const rows = useDownloadRows(downloads);
   const [cap, setCap] = useState(null);
   useEffect(() => { deviceStore.capBytes().then(setCap); }, []);
@@ -1304,6 +1323,26 @@ function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
         aria-label={`${name}. ${downloadCaption(row)}`} />
     </article>;
   };
+  // A run kept here twice or more: Kindle's stack, the count in the corner
+  // that says download state (our status marks: bottom right), reading in
+  // the top right as on every cover.
+  const groupCard = (entry, index) => {
+    const label = `${entry.title}, ${entry.rows.length} on this device${entry.read ? `, ${entry.read} read` : ""}`;
+    return <article className="series-card download-card download-stack" style={{ "--card-index": Math.min(index, 11) }} key={`run-${entry.runId}`}>
+      <span className="download-stack-edges" aria-hidden="true"><i /><i /></span>
+      <span className="series-card-art">
+        <CoverArt id={`download-run-${entry.runId}`} title={entry.title} cover={entry.cover} />
+        <ReadState finished={entry.read === entry.rows.length} fraction={entry.read / entry.rows.length} />
+        <span className="download-count" aria-hidden="true">{entry.rows.length}</span>
+        <CardMenu target={{ kind: "run", id: String(entry.runId), title: entry.title }} title={entry.title}
+          read={{ verb: "Read", target: nextDownloaded(entry.rows)?.fileId }} onRead={(fileId) => onRead(fileId)} />
+      </span>
+      <span className="series-card-identity"><strong>{entry.title}</strong>
+        <span className="series-card-byline">{`${entry.rows.length} issues${entry.read ? ` \u00b7 ${entry.read} read` : ""}`}</span></span>
+      <button type="button" className="discover-open series-card-open" onClick={() => onOpenGroup(String(entry.runId))} aria-label={`${label}. Show its downloads`} />
+    </article>;
+  };
+  const shelf = groupDownloads(here);
   return <>
     <PageHeader title="Downloads" />
     <div className="settings-pane">
@@ -1323,7 +1362,7 @@ function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
         <div className="series-grid download-grid">{coming.map(card)}</div>
       </SettingsCard> : null}
       <SettingsCard title="Downloaded">
-        {here.length ? <div className="series-grid download-grid">{here.map(card)}</div>
+        {here.length ? <div className="series-grid download-grid">{shelf.map((entry, index) => (entry.kind === "run" ? groupCard(entry, index) : card(entry.row, index)))}</div>
           : <p className="settings-card-lead">Nothing here yet. Comics you open are kept here, or tap Download beside Read on a run.</p>}
       </SettingsCard>
     </div>
