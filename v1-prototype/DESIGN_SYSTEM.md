@@ -397,7 +397,8 @@ Progress indicators, Gauges):
 - **The comic to pick up floats over the page** (`ContinueBar`; Kindle's
   bar, Music's mini player): the first of the carry-on list, with its
   cover, page and percentage, in a glass pill at the foot of the page's
-  column (above the tab bar on a phone). A tap opens it where it was
+  column; on a phone it takes the bottom edge and the tab bar rises above
+  it (owner, 2026-10-11). A tap opens it where it was
   left. Not on Settings or over the reader; offline, only a comic on the
   device. The page keeps room under its last row for it.
 - **The app's own screens** (`.reader-app`) use 44 px targets at every

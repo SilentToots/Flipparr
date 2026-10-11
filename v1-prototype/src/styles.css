@@ -1838,7 +1838,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    column, over the content, in the navigation layer's glass. The page
    leaves room under its last row for it. */
 .continue-bar { position: fixed; z-index: 15; left: calc(var(--sidebar-inset) + var(--sidebar-width)); right: 0; bottom: calc(var(--space-16) + env(safe-area-inset-bottom)); display: flex; justify-content: center; padding: 0 var(--page-inset); pointer-events: none; }
-.continue-bar-button { width: 100%; max-width: 480px; min-height: var(--space-64); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-8) var(--space-24) var(--space-8) var(--space-12); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
+.continue-bar-button { width: 100%; max-width: 480px; min-height: var(--space-64); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-12); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .continue-bar-button { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
@@ -1849,8 +1849,12 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .continue-bar-icon { flex: none; color: var(--violet-text); }
 .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-32) + var(--space-80)); }
 @media (min-width: 641px) and (max-width: 900px) { .continue-bar { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); } }
+/* On a phone the bar takes the bottom edge and the tab bar rises above it,
+   8 px apart (the owner, 2026-10-11); a toast rises with them. */
 @media (max-width: 640px) {
-  .continue-bar { left: 0; bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
+  .continue-bar { left: 0; bottom: calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .reader-app:has(.continue-bar) .sidebar { bottom: calc(var(--space-4) + var(--space-64) + var(--space-8)); }
+  .reader-app:has(.continue-bar) .toast { bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom) + var(--space-64) + var(--space-8)); }
   .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-80)); }
 }
 /* The download check owns a cover's bottom-right corner in the app, so a
