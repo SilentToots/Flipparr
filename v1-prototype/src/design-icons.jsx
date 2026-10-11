@@ -73,7 +73,7 @@ export const SyncIcon = sized(ArrowPathRoundedSquareIcon, 20);  // heroicons-sol
 export const GridViewIcon = sized(Squares2X2Icon, 20);          // heroicons-mini/squares-2x2
 export const ListViewIcon = sized(ListBulletIcon, 20);          // heroicons-solid/list-bullet
 export const ChevronDown = sized(ChevronDownIcon, 20);          // heroicons-mini/chevron-down
-export const FollowingIcon = sized(CheckCircleIcon, 20);        // heroicons-outline/check-circle
+export const PulledIcon = sized(CheckCircleIcon, 20);           // heroicons-outline/check-circle: on the Pull List, in the library, on the way
 
 // Card badges
 export const ActiveRunIcon = sized(BoltIcon, 12);   // heroicons-micro/bolt

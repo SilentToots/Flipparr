@@ -3,7 +3,7 @@
 // see what to read, read it, keep some on the device. Search, requests and
 // everything an admin manages stay in the web app.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, BookOpenText, DownloadSimple, HardDrive, Info, ShieldCheck, Trash, UserCircle, WifiSlash, X } from "@phosphor-icons/react";
+import { ArrowClockwise, BookOpenText, CloudArrowDown, HardDrive, Info, ShieldCheck, Trash, UserCircle, WifiSlash, X } from "@phosphor-icons/react";
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
@@ -612,7 +612,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       if (row?.state === "failed") {
         return [{ key: "offline-retry", label: "Try the download again", icon: <ArrowClockwise size={16} />, onSelect: () => downloads.retry(issue.fileId) }];
       }
-      return [{ key: "offline", label: "Download", icon: <DownloadSimple size={16} />, onSelect: () => downloadIssue(issue) }];
+      return [{ key: "offline", label: "Download", icon: <CloudArrowDown size={16} />, onSelect: () => downloadIssue(issue) }];
     },
     // An issue row's control, Apple Books' way: a cloud to download, a ring
     // with a stop square while it comes (a tap stops it), and nothing once
@@ -646,7 +646,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       const listKind = target.kind === "run" ? "run" : target.kind === "arc" ? "arc" : "collection";
       const listed = isOnReadingList(actions.readingList, listKind, target.id);
       if (online) {
-        items.push({ key: "download", label: "Download\u2026", icon: <DownloadSimple size={16} />,
+        items.push({ key: "download", label: "Download\u2026", icon: <CloudArrowDown size={16} />,
           onSelect: () => setDownloadGroup({ kind: target.kind, id: target.id, title: target.title, runIds: target.runIds }) });
       }
       items.push({ key: "list", label: listed ? "Remove from reading list" : "Add to reading list", icon: <ReadingListIcon size={16} />,
@@ -1102,7 +1102,7 @@ function DownloadSheet({ group, downloads, onClose, onStarted }) {
       <div className="metadata-edit-actions">
         <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
         <button type="button" className="primary-button" disabled={busy || !going} aria-busy={busy || undefined} onClick={start}>
-          {busy ? <LoadingIndicator size="sm" /> : <DownloadSimple size={18} />} {going ? `Download ${going}` : "Download"}
+          {busy ? <LoadingIndicator size="sm" /> : <CloudArrowDown size={18} />} {going ? `Download ${going}` : "Download"}
         </button>
       </div>
     </section>

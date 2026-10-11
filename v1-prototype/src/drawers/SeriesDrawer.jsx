@@ -17,7 +17,7 @@ import { orderedCreators, relatedRuns } from "../run-details.js";
 
 import { ComicDrawerCreators, ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerRunCard, DrawerTopBar, ReadRunButton, ReadWithDownload, ReadingListToggle, RunSynopsis, StarRating, toneProps, useArtTone } from "./frame.jsx";
 import { CollectionCoverage, CollectionManagement, EDIT_SECTIONS, FileInventory, GroupedIssueInventory, IssueCatalogCard, SeriesEditPanel, VolumeInventory } from "./inventory.jsx";
-import { ArrowCounterClockwise, ArrowLeft, ArrowsClockwise, Books, Check, Hourglass, ImageSquare, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowLeft, ArrowsClockwise, Books, CheckCircle, Hourglass, ImageSquare, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
 import { useManages, useImageSrc } from "../host.js";
 
 export function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRead, onMarkIssue, onMarkRun, readingVersion = 0,
@@ -312,7 +312,7 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
               ? "Some of this run is read or in progress. Mark it all read, or unread to forget every place -- someone else's reading on your profile included."
               : "Marks every issue of this run read, for your profile only. Each issue's menu does the same for one."}</p></div>
           <div className="advanced-card-actions">
-            {!runAllRead ? <button type="button" onClick={() => onMarkRun(series, true)}><Check size={16} weight="bold" /> Mark read</button> : null}
+            {!runAllRead ? <button type="button" onClick={() => onMarkRun(series, true)}><CheckCircle size={16} /> Mark read</button> : null}
             {runAllRead || runStarted ? <button type="button" onClick={() => onMarkRun(series, false)}><ArrowCounterClockwise size={16} /> Mark unread</button> : null}
           </div>
         </section> : null}

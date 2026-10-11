@@ -7,7 +7,7 @@ import { moveToEdge } from "../reading-list.js";
 import { moveRun } from "../run-collections.js";
 import { FollowSwitch } from "./frame.jsx";
 import { ActionMenu } from "./inventory.jsx";
-import { ArrowCounterClockwise, ArrowLineDown, ArrowLineUp, ArrowsClockwise, CaretRight, Check, DotsSixVertical, DotsThree, ListNumbers, Plus, Trash, UploadSimple, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowLineDown, ArrowLineUp, ArrowsClockwise, CaretRight, CheckCircle, DotsSixVertical, DotsThree, ListNumbers, Plus, Trash, UploadSimple, X } from "@phosphor-icons/react";
 
 /** A read group's Edit: its name and summary on the screen, one Save, and the pickers a step in. */
 export function GroupEditScreen({ name, summary, summaryLabel = "Summary", busy, onSave, rows }) {
@@ -173,7 +173,7 @@ export function GroupReadingCards({ noun, firstLabel, onRestart, allRead, anyRea
           ? `Some of this ${noun} is read or in progress. Mark it all read, or unread to forget every place -- someone else's reading on your profile included.`
           : `Marks every comic of this ${noun} read, for your profile only.`}</p></div>
       <div className="advanced-card-actions">
-        {!allRead ? <button type="button" disabled={Boolean(busy)} onClick={() => onMark(true)}><Check size={16} weight="bold" /> Mark read</button> : null}
+        {!allRead ? <button type="button" disabled={Boolean(busy)} onClick={() => onMark(true)}><CheckCircle size={16} /> Mark read</button> : null}
         {allRead || anyRead ? <button type="button" disabled={Boolean(busy)} onClick={() => onMark(false)}><ArrowCounterClockwise size={16} /> Mark unread</button> : null}
       </div>
     </section> : null}

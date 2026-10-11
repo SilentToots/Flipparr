@@ -162,7 +162,7 @@ export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, on
   if (read && onRead) items.push({ key: "read", label: read.label, icon: <BookOpen size={16} weight="fill" />, onSelect: () => onRead({ id: issue.fileId }) });
   // Part-read, it can be finished or forgotten; read, forgotten; untouched,
   // finished. Someone else's place on your profile is cleared the same way.
-  if (read && onMark && !read.finished) items.push({ key: "mark-read", label: "Mark as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMark(issue, true) });
+  if (read && onMark && !read.finished) items.push({ key: "mark-read", label: "Mark as read", icon: <CheckCircle size={16} />, onSelect: () => onMark(issue, true) });
   if (read && onMark && (read.finished || read.fraction)) items.push({ key: "mark-unread", label: "Mark as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMark(issue, false) });
   // Owned or missing alike: an arc holds the issue either way, and pulls it.
   if (onAddToArc && /^\d+$/.test(String(issue.id))) items.push({ key: "arc", label: "Add to story arc\u2026", icon: <ListNumbers size={16} />, onSelect: () => onAddToArc(issue) });
@@ -197,7 +197,7 @@ export function RunMenu({ runRead, runStarted, onMarkRun }) {
   const buttonRef = useRef(null);
   const close = useCallback(() => setOpen(false), []);
   const items = [
-    ...(runRead ? [] : [{ key: "mark-read", label: "Mark run as read", icon: <Check size={16} weight="bold" />, onSelect: () => onMarkRun(true) }]),
+    ...(runRead ? [] : [{ key: "mark-read", label: "Mark run as read", icon: <CheckCircle size={16} />, onSelect: () => onMarkRun(true) }]),
     ...(runRead || runStarted ? [{ key: "mark-unread", label: "Mark run as unread", icon: <ArrowCounterClockwise size={16} />, onSelect: () => onMarkRun(false) }] : []),
   ];
   return <>

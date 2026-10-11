@@ -6,7 +6,7 @@ import { issueLabel } from "../discover.js";
 import { arcMaker, arcOwnerLine, arcYears } from "../reading-list.js";
 import { collectionReadTarget, countsLine } from "../run-collections.js";
 
-import { BookOpen, CheckCircle, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
+import { BookOpen, CheckCircle, CircleHalf, ClockCounterClockwise, DotsThree, WarningCircle } from "@phosphor-icons/react";
 import { useCallback, useContext, useRef, useState } from "react";
 import { Host, useManages, useReaderOnly } from "../host.js";
 import { CoverStatus } from "../components/CoverStatus.jsx";
@@ -111,7 +111,7 @@ export function Ownership({ series, compact = false }) {
       {!reviewing && !catalogUnknown ? <span className="progress"><i style={{ width: `${percent}%` }} /></span> : null}
     </span>;
   }
-  return <div className={`ownership ${reviewing || series.status !== "warning" ? series.status : ""}`}><div className="ownership-label">{reviewing ? <WarningCircle size={19} weight="fill" /> : catalogUnknown ? <ClockCounterClockwise size={19} weight="fill" /> : <CheckCircle size={19} weight="fill" />}<strong>{label}</strong></div>{!reviewing && !catalogUnknown ? <div className="progress"><i style={{ width: `${percent}%` }} /></div> : null}{visibleDetail && visibleDetail !== label ? <span>{visibleDetail}</span> : null}</div>;
+  return <div className={`ownership ${reviewing || series.status !== "warning" ? series.status : ""}`}><div className="ownership-label">{reviewing ? <WarningCircle size={19} weight="fill" /> : catalogUnknown ? <ClockCounterClockwise size={19} weight="fill" /> : series.status === "partial" ? <CircleHalf size={19} weight="fill" /> : <CheckCircle size={19} weight="fill" />}<strong>{label}</strong></div>{!reviewing && !catalogUnknown ? <div className="progress"><i style={{ width: `${percent}%` }} /></div> : null}{visibleDetail && visibleDetail !== label ? <span>{visibleDetail}</span> : null}</div>;
 }
 
 export function SeriesList({ series, onOpen, onRead, reading, view, cardAction }) {

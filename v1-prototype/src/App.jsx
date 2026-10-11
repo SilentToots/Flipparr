@@ -71,7 +71,7 @@ import {
 import { isEdgeTouch, isStolenBack } from "./reader.js";
 import { readRecent, recentEntry, rememberRecent, writeRecent } from "./recent-searches.js";
 import {
-  FollowingIcon,
+  PulledIcon,
   ActiveRunIcon, FollowedIcon, PullIcon, ShelfBackIcon, ShelfNextIcon } from "./design-icons.jsx";
 
 import { setStorageProfile, storageProfile, profileStorage, migrateLegacyKeys, can, isAdmin, nextProfileColour, VIEWER_CACHE_KEY, RATINGS, RATING_LABELS, limitLabel, isLocked, lockChoices, lockPatch, LOCK_LABELS } from "./profiles.js";
@@ -532,7 +532,7 @@ function PullButton({ state, idleLabel, readerLabel = "Request", requestedLabel,
       : state === PULL_STATES.requested && requestedLabel ? requestedLabel : labels[state]}</span>
     {state === PULL_STATES.pending ? <LoadingIndicator size={16} />
       : state === PULL_STATES.requested ? <Hourglass size={16} />
-      : settled ? <FollowingIcon size={16} /> : <PullIcon />}
+      : settled ? <PulledIcon size={16} /> : <PullIcon />}
   </button>;
 }
 
@@ -1171,7 +1171,7 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
         {issue.storeDate || data.storeDate ? <StatusBadge tone="muted">Ships {formatLongDate(data.storeDate || issue.storeDate)}</StatusBadge> : null}
       </DiscoverDrawerHero>
       {/* Pull is the band's, as Read is a library drawer's (2026-10-01). */}
-      <DrawerPrimary icon={state === PULL_STATES.requested ? <Hourglass size={20} /> : state === PULL_STATES.idle ? <PullIcon /> : <FollowingIcon size={20} />}
+      <DrawerPrimary icon={state === PULL_STATES.requested ? <Hourglass size={20} /> : state === PULL_STATES.idle ? <PullIcon /> : <PulledIcon size={20} />}
         verb={state === PULL_STATES.idle ? (reader ? "Request" : "Pull") : (reader ? READER_PULL_LABELS : PULL_LABELS)[state]}
         noun={state === PULL_STATES.idle ? "this issue" : ""}
         busy={state === PULL_STATES.pending} settled={state !== PULL_STATES.idle && state !== PULL_STATES.pending}
