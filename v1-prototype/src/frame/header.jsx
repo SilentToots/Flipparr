@@ -9,6 +9,7 @@ import { bellCount, timeAgo } from "../notifications.js";
 import { isAdmin } from "../profiles.js";
 import { useViewer } from "../viewer.js";
 import { ArrowCounterClockwise, CheckCircle, SignOut, WarningCircle, X } from "@phosphor-icons/react";
+import { useImageSrc } from "../host.js";
 
 // What every page header needs from the app and no page owns: the bell's
 // notifications, and the app's search -- the current query and where a
@@ -67,9 +68,10 @@ export const NOTIFICATION_KINDS = { download: "Download", request: "Request", so
 
 export function NotificationRow({ item, news, fresh, onOpen, onDismiss, onRetry }) {
   const [busy, setBusy] = useState(false);
+  const src = useImageSrc();
   const warning = news ? item.tone === "warning" : item.severity !== "error";
   const icon = news && item.cover
-    ? <img className="notification-cover" src={item.cover} alt="" loading="lazy" />
+    ? <img className="notification-cover" src={src(item.cover)} alt="" loading="lazy" />
     : <span className={`notification-icon ${news && !warning ? "severity-done" : warning ? "severity-warning" : "severity-error"}`}>
       {news && !warning ? <CheckCircle size={20} weight="fill" /> : <WarningCircle size={20} weight={warning ? "regular" : "fill"} />}
     </span>;

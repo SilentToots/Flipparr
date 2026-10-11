@@ -8,6 +8,7 @@ import { moveRun } from "../run-collections.js";
 import { FollowSwitch } from "./frame.jsx";
 import { ActionMenu } from "./inventory.jsx";
 import { ArrowCounterClockwise, ArrowLineDown, ArrowLineUp, ArrowsClockwise, CaretRight, CheckCircle, DotsSixVertical, DotsThree, ListNumbers, Plus, Trash, UploadSimple, X } from "@phosphor-icons/react";
+import { useImageSrc } from "../host.js";
 
 /** A read group's Edit: its name and summary on the screen, one Save, and the pickers a step in. */
 export function GroupEditScreen({ name, summary, summaryLabel = "Summary", busy, onSave, rows }) {
@@ -414,6 +415,7 @@ export function DragOrderList({ ids, label, renderRow, rowClassName, onReorder }
  * choice.
  */
 export function CoverPicker({ data, busy, error, onSelect, onUpload }) {
+  const src = useImageSrc();
   const selectedSource = data.covers.selectedSource;
   // A run has many options from the same source, so identity is the option
   // id where the payload carries one, not the source alone.
@@ -423,7 +425,7 @@ export function CoverPicker({ data, busy, error, onSelect, onUpload }) {
       : selectedSource === option.source && (!data.covers.selectedUrl || data.covers.selectedUrl === option.url)
   );
   return <>
-    <div className="cover-option-grid">{data.covers.options.map((option) => <article className={isSelected(option) ? "selected" : ""} key={option.optionId || `${option.source}-${option.url}`}><img src={option.url} alt={option.label} /><div><strong>{option.label}</strong><small>{option.detail}</small><button disabled={busy} onClick={() => onSelect(option.source, option.url, option.fileId)}>{isSelected(option) ? "Selected" : "Use cover"}</button></div></article>)}</div>
+    <div className="cover-option-grid">{data.covers.options.map((option) => <article className={isSelected(option) ? "selected" : ""} key={option.optionId || `${option.source}-${option.url}`}><img src={src(option.url)} alt={option.label} /><div><strong>{option.label}</strong><small>{option.detail}</small><button disabled={busy} onClick={() => onSelect(option.source, option.url, option.fileId)}>{isSelected(option) ? "Selected" : "Use cover"}</button></div></article>)}</div>
     <div className="cover-picker-actions"><button className="ghost-button" disabled={busy} onClick={() => onSelect("auto", null)}><ArrowsClockwise size={17} /> Use automatic cover</button><label className="primary-button upload-cover-button"><UploadSimple size={18} /> Upload image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" disabled={busy} onChange={(event) => event.target.files?.[0] && onUpload(event.target.files[0])} /></label></div>
     {error ? <p className="workbench-error" role="alert">{error}</p> : null}
   </>;
@@ -436,6 +438,7 @@ export const PAGE_ARCHIVE_EXTENSIONS = new Set(["cbz", "cbr", "cb7", "cbt", "zip
 
 /** The background picker, hosted by the modal below and by the Edit panel. */
 export function BackdropPicker({ series, current, busy, error, readable, onChoose, onAutomatic }) {
+  const src = useImageSrc();
   const files = useMemo(() => [...(series.fileDetails || [])]
     .filter((file) => (readable ? readable[String(file.id)]?.readable
       : PAGE_ARCHIVE_EXTENSIONS.has(String(file.extension || "").replace(".", "").toLowerCase())))
@@ -463,7 +466,7 @@ export function BackdropPicker({ series, current, busy, error, readable, onChoos
     {pages.state === "done" && !pages.error && pages.list.length ? <div className="backdrop-page-grid">{pages.list.map((page) => {
       const selected = current?.fileId === fileId && current?.page === page.index;
       return <button type="button" className={`backdrop-page${selected ? " selected" : ""}`} aria-pressed={selected} disabled={busy} onClick={() => onChoose(fileId, page.index)} key={page.index}>
-        <img src={page.url} alt="" loading="lazy" />
+        <img src={src(page.url)} alt="" loading="lazy" />
         <span>Page {page.index + 1}</span>
       </button>;
     })}</div> : null}

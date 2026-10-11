@@ -104,6 +104,10 @@ const EDITOR_NUDGE = 0.005;
 
 function PanelEditor({ fileId, count, pages, startPage, readings, direction, onSaved, onClose }) {
   const { api: apiRequest } = useHost();
+  // The page through the host, as every reader image is: Flipparr View's web
+  // view cannot send the token with a plain image address (images.js), and
+  // the editor showed a broken image there (owner, 2026-10-11).
+  const src = useImageSrc();
   const [page, setPage] = useState(startPage);
   const [panels, setPanels] = useState([]);
   const [reading, setReading] = useState(null);
@@ -378,7 +382,7 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
       </span>
     </header>
     <div className="panel-editor-stage" ref={stageRef} onPointerDown={(event) => { if (event.target === event.currentTarget) setSelected(-1); }}>
-      <img ref={imageRef} src={pages[page]?.readUrl} alt="" draggable="false" />
+      <img ref={imageRef} src={src(pages[page]?.readUrl)} alt="" draggable="false" />
       {box && !loading ? <div className={`panel-editor-layer${ordering ? " ordering" : ""}`}
         style={{ left: box.left - EDITOR_TOUCH_PX, top: box.top - EDITOR_TOUCH_PX, width: box.width + 2 * EDITOR_TOUCH_PX, height: box.height + 2 * EDITOR_TOUCH_PX }}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
