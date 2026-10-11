@@ -380,6 +380,15 @@ Each corner of a cover has one job, so marks never stack or trade meanings
 
 A check on a cover means read, and nothing else.
 
+**Status colours** (both hosts): green is done -- read, complete, success;
+violet is under way -- reading's percentage, a download, an issue on its
+way, the selected thing; amber waits or needs a look -- upcoming, waiting
+for release, partly owned, offline; red is broken. Ownership labels (In
+volume, Single + volume, Missing, Date needed) and Following are facts,
+muted. Reading is said in one word, "Read", and a share as a percentage,
+on covers and rows alike; "In progress · 1 of 3 issues read" names its
+unit (comics in a run, issues in an arc, runs in a collection).
+
 ### Flipparr View (a reader host)
 
 The iPad and iPhone app shows the web's own screens through a Host

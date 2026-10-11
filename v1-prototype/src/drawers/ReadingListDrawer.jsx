@@ -117,7 +117,7 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
   const allRead = readableFiles.length > 0 && readableFiles.every((item) => item.finishedAt && !item.stale);
   const readCount = readableFiles.filter((item) => item.finishedAt && !item.stale).length;
   const started = readableFiles.some((item) => item.pageCount && !item.stale);
-  const readingBadgeText = allRead ? { tone: "green", text: "Read" } : started ? { tone: "violet", text: `In progress · ${readCount} of ${readableFiles.length} read` } : null;
+  const readingBadgeText = allRead ? { tone: "green", text: "Read" } : started ? { tone: "violet", text: `In progress · ${readCount} of ${readableFiles.length} ${readableFiles.length === 1 ? "issue" : "issues"} read` } : null;
   const restartFile = readableFiles[0] || null;
   const coverArt = data?.cover || list.cover || null;
   const heroArt = backdrop.shown ? backdrop.page || coverArt : null;

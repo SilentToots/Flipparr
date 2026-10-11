@@ -2234,8 +2234,9 @@ function RequestRow({ request, tab, progress = {}, openByDefault = false, onFind
   const perIssueDelete = pulled && request.targetIssueCount > 1;
   const status = pulled ? (request.status === "fulfilled" ? "Arrived" : upcoming && !jobs.length ? "Waiting for release" : "Pulled issue")
     : !following ? "Not following" : request.status === "fulfilled" ? "Up to date" : failed ? requestFailureStatus(jobs) : importing ? `${importing} adding to library` : downloading ? `${downloading} downloading` : searching ? "Searching" : queued ? `${queued} wanted` : upcoming ? "Waiting for release" : "Checking release dates";
-  const tone = pulled ? (request.status === "fulfilled" ? "green" : "violet")
-    : !following ? "muted" : request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "green" : "muted";
+  // Waiting for release is amber wherever it shows, as Upcoming is.
+  const tone = pulled ? (request.status === "fulfilled" ? "green" : upcoming && !jobs.length ? "amber" : "violet")
+    : !following ? "muted" : request.status === "fulfilled" ? "green" : failed ? "red" : queued || searching || downloading || importing ? "violet" : upcoming ? "amber" : "muted";
   const display = { id: `request-${request.id}`, title: request.title, cover: request.cover };
   // The bar is the Comics card's: owned out of the issues this pull covers.
   const ownership = {
@@ -2980,7 +2981,7 @@ function ProfileView({ onRead, onNavigate, authStatus, onSwitch, sheet = false, 
             <ReadState finished={Boolean(item.finishedAt)} fraction={fraction} />
           </span>
           <strong>{item.seriesTitle || item.filename}</strong>
-          <small>{[item.issueNumber ? `#${item.issueNumber}` : "", item.finishedAt ? "Finished" : item.pageCount ? `Page ${item.page + 1} of ${item.pageCount}` : ""].filter(Boolean).join(" · ")}</small>
+          <small>{[item.issueNumber ? `#${item.issueNumber}` : "", item.finishedAt ? "Read" : item.pageCount ? `Page ${item.page + 1} of ${item.pageCount}` : ""].filter(Boolean).join(" · ")}</small>
         </button>;
       })}</div>
     </section>

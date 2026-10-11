@@ -322,8 +322,9 @@ export function ReadRunButton({ reading, title, medium, onRead }) {
  *
  * Read-only when it is showing the average of a run's rated issues: those
  * stars are a summary, and pressing one would silently turn it into a rating
- * of the run itself. The control says which it is in its accessible name and
- * draws the average in outline so the two never look alike.
+ * of the run itself. The control says which it is in its accessible name, and
+ * draws the average muted with its number beside it, so the two never look
+ * alike.
  */
 export function StarRating({ rating, title, size = 18, onRate }) {
   const [hover, setHover] = useState(0);
@@ -373,6 +374,7 @@ export function ComicDrawerIssueCard({ issue, medium, onOpen, onRead, readingFil
   const owned = issue.ownership !== "unowned";
   const state = issue.ownership === "collection" ? "In volume"
     : owned ? null
+    : issue.acquisitionState === "queued" ? "On the way"
     : issue.releaseState === "upcoming" ? "Upcoming"
     : issue.releaseState === "unknown" ? "Date needed" : "Missing";
   const label = issueCardLabel(issue, medium);

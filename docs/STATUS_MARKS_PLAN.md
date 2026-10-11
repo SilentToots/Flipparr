@@ -123,7 +123,7 @@ Some differences need no change, each for its reason:
 
 **Collection mark** goes bottom-left on both hosts.
 
-### Phase 2: pills, rows and words (mostly web)
+### Phase 2: pills, rows and words (mostly web) -- done 2026-10-11
 
 - **Rows** (issue list view, both hosts) say reading state as words in the
   same tones as the cover: green "Read", violet "NN%". The app's list stops

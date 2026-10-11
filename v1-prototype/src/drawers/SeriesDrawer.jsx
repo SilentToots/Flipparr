@@ -9,7 +9,7 @@ import { identityKey, useCollectedEditions } from "../editions.js";
 import { MonitoringStatus, Ownership, PublicationStatus } from "../library/cards.jsx";
 import { ratingTone } from "../member-requests.js";
 import { RATING_LABELS } from "../profiles.js";
-import { runRating } from "../ratings.js";
+import { RATING_SOURCES, runRating } from "../ratings.js";
 import { EMPTY_ENTRIES, isOnReadingList } from "../reading-list-tab.js";
 import { READING_STATES } from "../reading-target.js";
 import { collectionsFor } from "../run-collections.js";
@@ -172,7 +172,7 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
   const runReadCount = readableFiles.filter((file) => file.finishedAt && !file.stale).length;
   const runStarted = readableFiles.some((file) => file.pageCount && !file.stale);
   const runReadingBadge = runAllRead ? { tone: "green", text: "Read" }
-    : runStarted ? { tone: "violet", text: `In progress · ${runReadCount} of ${readableFiles.length} read` } : null;
+    : runStarted ? { tone: "violet", text: `In progress · ${runReadCount} of ${readableFiles.length} ${readableFiles.length === 1 ? "comic" : "comics"} read` } : null;
   const wantedIssueCount = Math.max(0, Number(series.releaseSummary?.releasedMissing ?? series.unowned ?? Math.max(0, (series.total || 0) - (series.owned || 0))));
   // Volumes and Collection belong to collected-edition support; the counts
   // live on the tabs, so the header does not repeat them.
@@ -270,7 +270,7 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
       {tab === "overview" ? <>
         {/* The stars sit here, not in the header: there they outweighed the cover on a phone. */}
-        <section className="comic-drawer-rating" aria-label="Your rating"><h3>Your rating</h3><StarRating rating={runRating(series)} title={series.title} size={24} onRate={(value) => onRate?.(series, value)} /></section>
+        <section className="comic-drawer-rating" aria-label={runRating(series).source === RATING_SOURCES.average ? "Your issues' average" : "Your rating"}><h3>{runRating(series).source === RATING_SOURCES.average ? "Your issues\u2019 average" : "Your rating"}</h3><StarRating rating={runRating(series)} title={series.title} size={24} onRate={(value) => onRate?.(series, value)} /></section>
         <RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} sourcePrefix="Source:" key={series.id} />
         {series.issues?.length ? <ComicDrawerRow title="Issues" count={series.issues.length}>{series.issues.map((issue) => <ComicDrawerIssueCard issue={issue} medium={series.medium} onOpen={() => setTab("issues")} onRead={onRead} readingFiles={readingFiles} key={issue.id || issue.number} />)}</ComicDrawerRow> : null}
         {creators.length ? <ComicDrawerCreators creators={creators} key={`creators-${series.id}`} /> : null}

@@ -1388,9 +1388,9 @@ export function ReaderView({
           onClick={() => goToPage(page.index)}>
           <span className="reader-contents-art">
             <img src={src(page.url)} alt="" loading="lazy" decoding="async" />
-            {/* On the page, the way an issue tile says Upcoming or Missing on
-                its cover rather than underneath it. */}
-            {page.index === index ? <span className="ownership-source collection">Reading</span> : null}
+            {/* On the page, centred, as a tile's label sits -- its own class,
+                not an ownership one (docs/STATUS_MARKS_PLAN.md). */}
+            {page.index === index ? <span className="reader-contents-current">Reading</span> : null}
           </span>
           <b>{page.index + 1}</b>
         </button>)}

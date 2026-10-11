@@ -1198,7 +1198,7 @@ function StorageSettings({ downloads, viewer }) {
     <StorageGauge used={used} cap={cap} />
     {cap ? <GlassSelect label="Download limit" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
       options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
-    <p className="settings-card-note">Finished comics make room when you need it. Comics you&rsquo;re reading always stay.</p>
+    <p className="settings-card-note">Read comics make room when you need it. Comics you&rsquo;re reading always stay.</p>
     <div className="settings-card-actions">
       <span className="settings-card-note">Pages kept for quick reopening: {cache === null ? "\u2026" : formatBytes(cache)} (up to {formatBytes(ONLINE_MAX_BYTES)})</span>
       <button type="button" className="secondary-button" disabled={!cache} onClick={() => trimNative({ path: folder, maxBytes: 0 }).then(() => setCache(0), () => {})}>
@@ -1261,7 +1261,7 @@ function downloadCaption(row) {
   if (row.state === "downloading") return `Downloading ${Math.round(progressOf(row) * 100)}%`;
   if (row.state === "failed") return "Didn\u2019t finish. Tap to try again";
   if (row.state === "stale") return "Updated on the server";
-  return row.finished ? "Finished" : row.lastReadAt ? "In progress" : "Unread";
+  return row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread";
 }
 
 /**
@@ -1304,13 +1304,13 @@ function DownloadsPage({ downloads, onRead, notice = null, onOpenSettings }) {
       {notice}
       <SettingsCard title="On this device">
         <StorageGauge used={used} cap={cap} />
-        <p className="settings-card-note">Finished comics make room when you need it.</p>
+        <p className="settings-card-note">Read comics make room when you need it.</p>
         <div className="settings-card-actions">
           <button type="button" className="secondary-button" onClick={onOpenSettings}>Change limit</button>
           {finished.length ? <button type="button" className="secondary-button" onClick={async () => {
-            if (!window.confirm(`Remove ${finished.length} finished ${finished.length === 1 ? "comic" : "comics"} from this iPad?`)) return;
+            if (!window.confirm(`Remove ${finished.length} read ${finished.length === 1 ? "comic" : "comics"} from this iPad?`)) return;
             await downloads.removeFinished();
-          }}><Trash size={16} /> Remove finished ({finished.length})</button> : null}
+          }}><Trash size={16} /> Remove read ({finished.length})</button> : null}
         </div>
       </SettingsCard>
       {coming.length ? <SettingsCard title="Downloading">

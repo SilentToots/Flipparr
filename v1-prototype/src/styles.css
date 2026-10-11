@@ -684,8 +684,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .publication-status svg, .monitoring-status svg { flex: none; width: 12px; height: 12px; }
 .publication-status.ongoing { background: var(--badge-violet-bg); }
 .publication-status.completed { background: var(--badge-muted-bg); }
-/* White at 80% on this green measured 3.81:1; solid white is 5.02:1. */
-.monitoring-status { background: var(--badge-green-bg); color: var(--color-neutral-0); }
+/* Following is a fact about the run, muted with its eye: green beside it
+   says Read (docs/STATUS_MARKS_PLAN.md). */
+.monitoring-status { background: var(--badge-muted-bg); color: var(--color-neutral-0); }
 .ownership { display: grid; gap: var(--space-6); width: min(150px, 100%); color: var(--green); }
 .ownership.partial { color: var(--amber); }
 .ownership.unknown { color: var(--amber); }
@@ -1678,9 +1679,12 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .drawer-empty span { max-width: 330px; font-size: var(--text-sm); line-height: var(--leading-relaxed); }
 .edition-inventory, .file-inventory { display: grid; padding-top: var(--space-12); }
 .ownership-source { padding: var(--space-4) var(--space-8); border-radius: var(--radius-8); background: var(--surface-sunken); color: var(--status-muted-text); font-size: var(--text-xs); }
-.ownership-source.direct, .ownership-source.both { background: var(--green-soft); color: var(--green-text); }
-.ownership-source.collection { background: var(--violet-soft); color: var(--violet-text); }
+/* Ownership labels are plain facts, muted (In volume, Single + volume,
+   Missing, Date needed): green is for read and done, violet for under way
+   (docs/STATUS_MARKS_PLAN.md). Upcoming waits, so it is amber; an issue
+   already on its way is under way, so violet. */
 .ownership-source.awaiting_release { background: var(--amber-soft); color: var(--amber-text); }
+.ownership-source.queued { background: var(--violet-soft); color: var(--violet-text); }
 .ownership-source.metadata_pending { background: var(--surface-sunken); color: var(--status-muted-text); }
 .grouped-issue-inventory { padding-top: var(--space-14); display: grid; gap: var(--space-14); }
 .issue-run-group { border: 1px solid var(--line); border-radius: var(--radius-8); background: var(--surface); overflow: hidden; }
@@ -4149,7 +4153,8 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-contents-art { position: relative; display: block; width: 100%; }
 .reader-contents-page img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; object-position: top; display: block; border: 2px solid transparent; border-radius: var(--radius-6); background: var(--surface-raised); }
 /* Centred on the page, like an issue tile's Upcoming or Missing. */
-.reader-contents-art .ownership-source { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); border-radius: var(--radius-pill); box-shadow: 0 2px 8px var(--shadow-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.reader-contents-current { padding: var(--space-4) var(--space-8); background: var(--violet-soft); color: var(--violet-text); font-size: var(--text-xs); }
+.reader-contents-art .reader-contents-current { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 12px); border-radius: var(--radius-pill); box-shadow: 0 2px 8px var(--shadow-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .reader-contents-page b { color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-regular); }
 /* A 2px outline was not enough to find yourself among forty-odd covers: the
    page being read is ringed, brightened while the rest step back, and says so

@@ -182,10 +182,12 @@ export function IssueMenu({ issue, medium, read, onRead, onMark, onEditIssue, on
 // What an issue's badge says about reading it, in the ownership badge's spot,
 // once the issue is owned: "In progress" over its bar, "Read" when finished.
 // Unread is plain, as in every reader looked at (Komga, Plex, Panels).
+// An issue row's reading state, in the cover's words (ReadState): "Read",
+// or the share read. Green is done, violet under way.
 export function readingBadge(read) {
   if (!read) return null;
   if (read.finished) return { label: "Read", tone: "reading-read" };
-  if (read.fraction) return { label: "In progress", tone: "reading-progress" };
+  if (read.fraction) return { label: `${Math.min(99, Math.max(1, Math.round(read.fraction * 100)))}%`, tone: "reading-progress" };
   return null;
 }
 
@@ -290,6 +292,7 @@ export function GroupedIssueInventory({ issues: allIssues, onEditIssue, onRead, 
         const stateLabel = issue.ownership === "both" ? "Single + volume"
           : issue.ownership === "direct" ? null
           : issue.ownership === "collection" ? "In volume"
+          : issue.acquisitionState === "queued" ? "On the way"
           : issue.releaseState === "upcoming" ? "Upcoming"
           : issue.releaseState === "unknown" ? "Date needed" : "Missing";
         const owned = issue.ownership !== "unowned";

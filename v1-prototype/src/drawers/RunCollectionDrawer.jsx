@@ -84,7 +84,7 @@ export function RunCollectionDrawer({ card, readingVersion, readingList = EMPTY_
       .catch(() => { if (live) setFirstFile(null); });
     return () => { live = false; };
   }, [tab, firstRunId, readingVersion]);
-  const readingBadge = allRead ? { tone: "green", text: "Read" } : started || finished ? { tone: "violet", text: `In progress · ${finished} of ${runs.length} read` } : null;
+  const readingBadge = allRead ? { tone: "green", text: "Read" } : started || finished ? { tone: "violet", text: `In progress · ${finished} of ${runs.length} ${runs.length === 1 ? "run" : "runs"} read` } : null;
   const EDIT_ROWS = [
     { id: "cover", label: "Cover", detail: "A picture you upload, or one of its runs' covers.", onOpen: () => setEdit("cover") },
     { id: "backdrop", label: "Header background", detail: "A page from one of its comics, behind the header.", disabled: !files.length, onOpen: () => setEdit("backdrop") },
