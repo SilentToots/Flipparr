@@ -455,9 +455,9 @@ Progress indicators, Gauges):
   device. The page keeps room under its last row for it.
 - **Downloads group by run** (the owner, 2026-10-11, after Kindle): a run
   with two or more comics on the device is one card with two plain card edges stacked
-  behind it, Kindle's way -- each a step up and narrower, peeking into the
-  grid's gap so the card lines up -- and the count bottom
-  right; one comic is its own
+  behind it, Kindle's way -- always two, each a step up and narrower, peeking
+  into the grid's gap so the card lines up (`StackEdges`) -- and the count
+  bottom right. Recommended's Downloaded shelf groups the same way; one comic is its own
   card and reads on a tap (`groupDownloads`). The group opens the run's
   downloads drawer (`DownloadsDrawer`), the comic drawer's frame: the hero
   with "3 on this device · 359 KB", Read or Continue beside the cloud that

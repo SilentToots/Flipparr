@@ -1899,7 +1899,12 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    count sits in the bottom-right corner, where a cover says download
    state. */
 .download-stack { position: relative; display: grid; isolation: isolate; }
-.download-stack > .series-card { z-index: 1; }
+.download-stack > .series-card, .download-stack > .shelf-card { z-index: 1; }
+/* On a shelf: the stack keeps the card's width, and the row makes room
+   above for the edges its scrolling would otherwise clip. */
+.shelf-row > .download-stack { flex: none; }
+.shelf-row:has(.download-stack) { margin-top: calc(var(--space-12) * -1); padding-top: var(--space-12); }
+.shelf-row .download-stack-layer { border-radius: var(--radius-4); }
 .download-stack-layer { position: absolute; top: 0; z-index: 0; aspect-ratio: var(--cover-ratio); border-radius: var(--radius-8); background: var(--stack-edge); pointer-events: none; }
 .download-stack-layer.depth-1 { left: var(--space-6); right: var(--space-6); translate: 0 calc(var(--space-6) * -1); }
 .download-stack-layer.depth-2 { left: var(--space-12); right: var(--space-12); translate: 0 calc(var(--space-12) * -1); background: var(--stack-edge-far); }

@@ -31,7 +31,9 @@
 // - `notice`, optional: the host's word on the Comics page, under its header
 //   (Flipparr View's "You're offline"). The web app gives none.
 // - `shelves()`, optional: the host's own Recommended shelves (Flipparr
-//   View's Downloaded). The web app gives none.
+//   View's Downloaded). The web app gives none. A card may carry `stack`
+//   (how many comics it stands for: drawn as a stack with that count) and
+//   `onOpen` (what a tap does instead of reading or opening its run).
 // - `pageSource(url)`, optional: a Promise of what an <img> should load for a
 //   page, thumbnail or cover address. The web app gives none, and every image
 //   uses the address itself, exactly as before; Flipparr View gives one,

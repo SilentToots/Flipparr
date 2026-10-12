@@ -16,6 +16,7 @@ import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
 import { SettingsFrame, SettingsIndex } from "../settings/shell.jsx";
 import { usePhoneWidth } from "../dialogs.jsx";
 import { CoverArt } from "../components/CoverArt.jsx";
+import { StackEdges } from "../components/StackEdges.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
 import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
@@ -704,13 +705,20 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     notice: offlineNotice,
     // Downloaded, on Recommended: first while offline, when it is what can
     // be read; after Keep Reading otherwise.
+    // A run kept twice or more is one stacked card, as on Downloads, and
+    // opens its downloads drawer; one comic reads on a tap.
     shelves: () => (readyRows.length ? [{
       id: "downloaded", title: "Downloaded", first: !online,
-      items: readyRows.map((row) => ({
-        key: `downloaded-${row.fileId}`, fileId: row.fileId, resume: true,
-        title: `${row.seriesTitle}${row.issueNumber ? ` #${row.issueNumber}` : ""}`,
-        note: row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread", finished: row.finished,
-        cover: row.pageUrls?.[0],
+      items: groupDownloads(readyRows).map((entry) => (entry.kind === "run" ? {
+        key: `downloaded-run-${entry.runId}`, kind: "run", runId: entry.runId, title: entry.title,
+        note: `${entry.rows.length} issues${entry.read ? ` \u00b7 ${entry.read} read` : ""}`,
+        stack: entry.rows.length, finished: entry.read === entry.rows.length, progress: entry.read / entry.rows.length,
+        cover: entry.cover, onOpen: () => setDownloadsRun(String(entry.runId)),
+      } : {
+        key: `downloaded-${entry.row.fileId}`, fileId: entry.row.fileId, resume: true,
+        title: `${entry.row.seriesTitle}${entry.row.issueNumber ? ` #${entry.row.issueNumber}` : ""}`,
+        note: entry.row.finished ? "Read" : entry.row.lastReadAt ? "In progress" : "Unread", finished: entry.row.finished,
+        cover: entry.row.pageUrls?.[0],
       })),
     }] : []),
   // downloadVersion: the menu and badge follow the downloads as they change.
@@ -1325,14 +1333,13 @@ function DownloadsPage({ downloads, onRead, onOpenGroup, notice = null, onOpenSe
   };
   // A run kept here twice or more: a stack -- plain card edges behind the
   // card, each a step up and narrower, as Kindle stacks a series (the owner,
-  // 2026-10-11: option A, cards behind) -- the count in the corner that says
+  // 2026-10-11: option A, cards behind; always two) -- the count in the corner that says
   // download state (our status marks: bottom right), and reading in the top
   // right as on every cover.
   const groupCard = (entry, index) => {
     const label = `${entry.title}, ${entry.rows.length} on this device${entry.read ? `, ${entry.read} read` : ""}`;
-    const layers = Math.min(2, entry.rows.length - 1);
     return <div className="download-stack" key={`run-${entry.runId}`}>
-      {Array.from({ length: layers }, (_, at) => <span className={`download-stack-layer depth-${layers - at}`} aria-hidden="true" key={at} />)}
+      <StackEdges />
     <article className="series-card download-card" style={{ "--card-index": Math.min(index, 11) }}>
       <span className="series-card-art">
         <CoverArt id={`download-run-${entry.runId}`} title={entry.title} cover={entry.cover} />

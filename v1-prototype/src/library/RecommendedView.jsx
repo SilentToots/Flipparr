@@ -39,6 +39,11 @@ export function RecommendedView({ series, catalog, backendStatus, readingVersion
   if (!series.length) return <CatalogEmpty onAdd={onAdd} />;
   const byId = new Map(series.map((run) => [String(run.id), run]));
   function open(card) {
+    // A host's own card opens what the host says (Flipparr View: a run's downloads).
+    if (card.onOpen) {
+      card.onOpen();
+      return;
+    }
     // Keep Reading opens the comic where it was left; any other card opens
     // its run, where the issue is one tap away.
     if (card.resume) {
