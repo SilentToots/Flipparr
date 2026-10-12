@@ -93,6 +93,11 @@
   --surface-raised: var(--color-ios-gray5);
   --surface-soft: var(--color-ios-gray5);
   --surface-hover: var(--color-ios-gray4);
+  /* The card edges stacked behind a run's card in Downloads, nearest then
+     farthest. A rung above the panel they sit on (gray 5), or they vanish
+     into it as they did at gray 4 and 5. */
+  --stack-edge: var(--color-ios-gray3);
+  --stack-edge-far: var(--color-ios-gray4);
   /* A loading placeholder and the light that sweeps across it. Two tokens of
      their own because they must differ: drawn from --surface-soft and
      --status-muted-bg, the sweep vanished when both became gray 5. */
