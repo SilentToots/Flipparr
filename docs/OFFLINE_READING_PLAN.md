@@ -1032,6 +1032,21 @@ Then (same day), from his follow-ups:
   phone layout of the bar (above the tab bar, under drawers, the toast in
   the same spot).
 
+- **Keeping the library current (the owner, 2026-10-11):** neither host is
+  told when the server changes; both fetch again. iOS keeps the app
+  suspended for days, so issues downloaded overnight stayed hidden until a
+  pull. Now:
+  - coming back to the app or a web tab fetches the library and the story
+    arcs again (and on the web where every comic is read to), at most once
+    a minute (`src/refresh-on-return.js`, shared);
+  - the app's pull to refresh works. It never fired in the app: Capacitor
+    sets the web view's `bounces = false`, so the page never stretched and
+    the shared pull never saw a pull. `FlipparrViewController` turns the
+    rubber band back on (always, so a short page can be pulled too), as
+    the web has it from a Home Screen.
+  Push (the server waking the app) would need Apple's notification
+  service per household server; not for the first release.
+
 ### Phase 8 — live updates (only if the owner answers yes to open question 4)
 - `@capgo/capacitor-updater` (MPL-2.0; using it unmodified is compatible
   with an MIT app — record the check) in manual mode: `download`, `next`,

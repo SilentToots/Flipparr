@@ -53,6 +53,7 @@ import { deviceStore } from "./device-store.js";
 import { CAP_CHOICES, batchProgress, coverStatusFor, groupDownloads, nextDownloaded, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
+import { useRefreshOnReturn } from "../refresh-on-return.js";
 
 /** How long a launch's background check of the session waits for the server. */
 const LAUNCH_CHECK_MS = 5000;
@@ -427,9 +428,11 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // The server's catalog; what is shown is `catalog`, below (readerCatalog).
   const [rawCatalog, setCatalog] = useState(() => lastAnswer("/api/v1/catalog"));
   const [backendStatus, setBackendStatus] = useState(() => (lastAnswer("/api/v1/catalog") ? "live" : "loading"));
+  const catalogLoadedAt = useRef(0);
   const loadCatalog = useCallback(async () => {
     try {
       const data = await apiRequest("/api/v1/catalog");
+      catalogLoadedAt.current = Date.now();
       setCatalog(data);
       setBackendStatus("live");
       return data;
@@ -522,6 +525,14 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
     }
   }, [transport, loadCatalog, noteReadingChanged, downloads]);
   const pullPill = usePullToRefresh({ enabled: true, onRefresh: refreshLibrary });
+  // Back in the foreground: the library and the story arcs as the server has
+  // them now -- what it downloaded, and collections and arcs made on the
+  // web, while the app sat suspended -- at most once a minute. Where comics
+  // are read to is asked above; offline, coming back online does all this.
+  useRefreshOnReturn(catalogLoadedAt, () => {
+    loadCatalog();
+    setListsVersion((version) => version + 1);
+  }, online);
   // Offline, said under each page's header (the web's backend-banner).
   const offlineNotice = online ? null : <div className="backend-banner" role="status"><WifiSlash size={19} weight="fill" aria-hidden="true" />
     {readyRows.length ? "Offline. Showing downloaded comics." : "Offline. Nothing is downloaded yet."}</div>;

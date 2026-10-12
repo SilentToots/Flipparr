@@ -105,6 +105,7 @@ import { LibraryMatches, RecentSearches, useLibraryMatches } from "./search/libr
 import { AboutSettings } from "./settings/about.jsx";
 import { SettingsFrame, SettingsIndex } from "./settings/shell.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
+import { useRefreshOnReturn } from "./refresh-on-return.js";
 import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
 
 const DEMO_META_ITEMS = [
@@ -4933,6 +4934,8 @@ export function App() {
   const catalogRef = useRef(null);
   catalogRef.current = catalog;
   const catalogEtag = useRef(null);
+  // When the library was last fetched, for the refresh on return.
+  const catalogLoadedAt = useRef(0);
   const [backendStatus, setBackendStatus] = useState("loading");
   const [authStatus, setAuthStatus] = useState(null);
   // This profile's own reading (library/actions.js, shared with Flipparr View).
@@ -5436,6 +5439,7 @@ export function App() {
       const known = catalogEtag.current;
       const response = await fetch("/api/v1/catalog", known ? { headers: { "If-None-Match": known } } : undefined);
       if (response.status === 304) {
+        catalogLoadedAt.current = Date.now();
         setBackendStatus("live");
         return catalogRef.current;
       }
@@ -5447,6 +5451,7 @@ export function App() {
         throw error;
       }
       catalogEtag.current = response.headers.get("ETag") || null;
+      catalogLoadedAt.current = Date.now();
       rememberAnswer("/api/v1/catalog", data);
       setCatalog(data);
       setBackendStatus("live");
@@ -5463,6 +5468,15 @@ export function App() {
       return null;
     }
   }
+  // Back on the tab after a minute or more: the library as the server has
+  // it now (what it downloaded, collections and arcs made elsewhere), the
+  // story arcs, and where every comic is read to. The catalog's tag makes it
+  // a few bytes when nothing changed.
+  useRefreshOnReturn(catalogLoadedAt, () => {
+    loadCatalog();
+    setListsVersion((version) => version + 1);
+    noteReadingChanged();
+  });
   async function pollScan(scanId, context = {}) {
     for (;;) {
       const scan = await apiRequest(`/api/v1/scans/${scanId}`);

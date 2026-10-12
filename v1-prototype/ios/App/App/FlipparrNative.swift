@@ -365,5 +365,11 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
 class FlipparrViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(FlipparrNativePlugin())
+        // iOS's rubber band, which Capacitor turns off: pull to refresh rides
+        // it (src/frame/pullRefresh.jsx), as on the web from a Home Screen,
+        // and a page that stops dead at its ends is not how iOS scrolls (the
+        // owner, 2026-10-11). Always, so a short page can be pulled too.
+        webView?.scrollView.bounces = true
+        webView?.scrollView.alwaysBounceVertical = true
     }
 }
