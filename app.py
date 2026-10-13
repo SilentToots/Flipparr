@@ -54,6 +54,7 @@ from reading_list_formats import parse_reading_list, write_reading_list
 import arc_catalog
 import torrent_client
 import zipfile
+import zlib
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler
@@ -6936,6 +6937,14 @@ def _select_downloaded_comic(
         selected = _comic_pdf_as_cbz(selected, context)
     elif archive_kind(Path(selected["path"])) in CBZ_CONVERTIBLE_KINDS:
         selected = _comic_archive_as_cbz(selected, context)
+    if not selected.get("converted"):
+        # A conversion read every page as it went; a comic filed as it came
+        # has its pages read here, so a damaged one is never filed unseen
+        # (production, 2026-10-13: 35 damaged comics found in the library).
+        try:
+            verify_comic_archive(Path(selected["path"]))
+        except UnreadablePages as exc:
+            raise _damaged_download(exc) from exc
     return selected
 
 
@@ -6967,10 +6976,12 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
             # must come back whole, or the comic stays as it is.
             shutil.rmtree(folder, ignore_errors=True)
             folder = None
-            strict = {name: _member_strictly(source, name) for name in set(names) | set(pages)}
+            read = {name: _member_strictly(source, name) for name in set(names) | set(pages)}
+            strict = {name: data for name, (data, _said) in read.items()}
             unreadable = [name for name in pages if strict[name] is None]
             if unreadable:
-                raise UnreadablePages(unreadable, len(pages))
+                raise UnreadablePages(unreadable, len(pages), proven=_says_damaged(
+                    [*report.get("said", []), *(read[name][1] for name in unreadable)]))
         kept = 0
         with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as archive:
             for name in sorted(set(names), key=_natural_member_key):
@@ -7000,27 +7011,85 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
 class UnreadablePages(ValueError):
     """Pages of a comic that cannot be read whole: the archive is damaged
     (production, 2026-10-13: unrar finds the same pages failing their
-    checksums), and the comic needs a new copy rather than a conversion."""
+    checksums), and the comic needs a new copy rather than a conversion.
+    `proven` when the reader said why in words that mean damage -- a failed
+    checksum, data cut short -- rather than a feature it does not support."""
 
-    def __init__(self, pages: list[str], total: int) -> None:
-        self.pages, self.total = list(pages), int(total)
+    def __init__(self, pages: list[str], total: int, *, proven: bool = False) -> None:
+        self.pages, self.total, self.proven = list(pages), int(total), bool(proven)
         first = Path(self.pages[0]).name if self.pages else ""
         super().__init__(f"{len(self.pages)} of {self.total} pages can't be read (first: {first}); "
                          "the archive is damaged")
 
 
-def _member_strictly(path: Path, member: str) -> bytes | None:
+def _member_strictly(path: Path, member: str) -> tuple[bytes | None, str]:
     """One member, only if the tool hands it over whole and says nothing went
-    wrong: `read_archive_member` takes a partial answer for a cover, which a
-    conversion must never keep as a page."""
+    wrong, with what it said: `read_archive_member` takes a partial answer
+    for a cover, which a conversion must never keep as a page."""
     tool = _external_archive_tool()
     if not tool or member.startswith("-"):
-        return None
+        return None, ""
     try:
-        stdout, _stderr, returncode = _run_tool_bounded([tool, "-xOf", str(path), member], CBZ_MEMBER_MAX_BYTES)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return stdout if stdout and returncode == 0 else None
+        stdout, stderr, returncode = _run_tool_bounded([tool, "-xOf", str(path), member], CBZ_MEMBER_MAX_BYTES)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    return (stdout if stdout and returncode == 0 else None), stderr.decode("utf-8", "replace")
+
+
+# What libarchive says of data that is not what the archive promised: proof
+# the file itself is damaged, as unrar agreed on production's (2026-10-13).
+# Anything else -- an unsupported method or filter -- may be this machine.
+_ARCHIVE_DAMAGE_WORDS = re.compile(r"CRC|checksum|Bad RAR file data|Truncated|Damaged|corrupt", re.IGNORECASE)
+
+
+def _says_damaged(said: Iterable[str]) -> bool:
+    return any(_ARCHIVE_DAMAGE_WORDS.search(line or "") for line in said)
+
+
+def verify_comic_archive(path: Path) -> None:
+    """Every page of a comic read whole, or UnreadablePages: the check a
+    download gets before it is filed (a CBZ conversion does the same as it
+    goes). A zip's pages are read against their CRCs; another archive is
+    unpacked in one pass, and, if the tool stopped part way, each page is
+    asked for on its own."""
+    if not path.is_file():
+        return
+    kind = archive_kind(path)
+    if kind is None:
+        return
+    pages = archive_page_members(path)
+    if not pages:
+        return  # judged elsewhere: no pages is not a comic at all
+    if kind == "zip":
+        bad: list[str] = []
+        with zipfile.ZipFile(path) as archive:
+            for name in pages:
+                try:
+                    with archive.open(name) as member:
+                        while member.read(1024 * 1024):
+                            pass
+                except (zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError):
+                    bad.append(name)
+        if bad:
+            raise UnreadablePages(bad, len(pages), proven=True)
+        return
+    report: dict[str, Any] = {}
+    folder = unpack_archive(path, report)
+    shutil.rmtree(folder, ignore_errors=True)
+    if report.get("clean", True):
+        return
+    read = {name: _member_strictly(path, name) for name in pages}
+    unreadable = [name for name in pages if read[name][0] is None]
+    if unreadable:
+        raise UnreadablePages(unreadable, len(pages), proven=_says_damaged(
+            [*report.get("said", []), *(read[name][1] for name in unreadable)]))
+
+
+def _damaged_download(exc: UnreadablePages) -> DownloadContentMismatch:
+    """A downloaded comic with pages that cannot be read: proof of damage bars
+    the release, as a zero-filled one is, and the next is tried; a failure
+    that may be this machine's sets it aside for a day."""
+    return DownloadContentMismatch(f"The download is damaged: {exc}", kind="damaged" if exc.proven else "unreadable")
 
 
 # ---- Converting the library's existing comics to CBZ (step 6) ---------------
@@ -7231,6 +7300,11 @@ def _comic_archive_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> 
         with cpu_lane("background"):
             members = convert_archive_to_cbz(source, target)
         _score, rescored = _download_candidate_score(target, context)
+    except UnreadablePages as exc:
+        # Not a conversion's failure but the download's: never filed.
+        shutil.rmtree(converted_dir, ignore_errors=True)
+        store.record_cbz_conversion(source.name, kind, size, None, None, "kept", f"failed: {exc}")
+        raise _damaged_download(exc) from exc
     except Exception as exc:  # noqa: BLE001 -- a comic that cannot be converted is filed as it came
         shutil.rmtree(converted_dir, ignore_errors=True)
         reason = shown(exc) or type(exc).__name__

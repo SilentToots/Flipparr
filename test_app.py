@@ -11292,6 +11292,64 @@ class CbzConversionTests(unittest.TestCase):
         [row] = self.store.cbz_conversions()
         self.assertEqual((row["outcome"], row["reason"]), ("kept", "The archive has no pages"))
 
+    def _cut_short(self, member="Example/2.jpg"):
+        import tarfile
+        with tarfile.open(self.source) as archive:
+            info = archive.getmember(member)
+        self.source.write_bytes(self.source.read_bytes()[: info.offset_data + info.size // 2])
+
+    def test_a_damaged_download_is_never_filed_and_its_release_is_barred(self):
+        """Production, 2026-10-13: 35 damaged comics sat in the library because
+        nothing read every page. A download whose pages fail is refused as
+        damaged -- proof, as a zero-filled one is -- so the next release is tried."""
+        self._cut_short()
+        with patch("app.cached_setting", side_effect=lambda key: key == "convertNewToCbz"):
+            with self.assertRaises(app.DownloadContentMismatch) as caught:
+                app._comic_archive_as_cbz({"path": str(self.source)}, {})
+        self.assertEqual((caught.exception.kind, caught.exception.stage), ("damaged", "damaged"))
+        [row] = self.store.cbz_conversions()
+        self.assertEqual(row["outcome"], "kept")
+        self.assertIn("can't be read", row["reason"])
+        self.assertEqual([path.name for path in (self.root / "unpack").iterdir()], [], "nothing left behind")
+
+    def test_a_damaged_download_filed_as_it_came_is_refused_too(self):
+        self._cut_short()
+        with patch("app._choose_downloaded_comic", return_value={"path": str(self.source)}), \
+                patch("app.cached_setting", return_value=False):
+            with self.assertRaises(app.DownloadContentMismatch) as caught:
+                app._select_downloaded_comic([self.source], self.root, {}, None)
+        self.assertEqual(caught.exception.kind, "damaged")
+
+    def test_a_whole_download_filed_as_it_came_passes(self):
+        with patch("app._choose_downloaded_comic", return_value={"path": str(self.source)}), \
+                patch("app.cached_setting", return_value=False):
+            self.assertEqual(app._select_downloaded_comic([self.source], self.root, {}, None), {"path": str(self.source)})
+
+    def test_a_zip_page_failing_its_crc_is_damage(self):
+        comic = self.root / "Example 002.cbz"
+        with zipfile.ZipFile(comic, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr("01.jpg", b"\xff\xd8" + b"a" * 4000)
+            archive.writestr("02.jpg", b"\xff\xd8" + b"b" * 4000)
+        data = bytearray(comic.read_bytes())
+        data[data.index(b"b" * 4000) + 100] ^= 0xFF
+        comic.write_bytes(bytes(data))
+        with self.assertRaises(app.UnreadablePages) as caught:
+            app.verify_comic_archive(comic)
+        self.assertEqual((caught.exception.pages, caught.exception.proven), (["02.jpg"], True))
+
+    def test_a_reader_that_cannot_follow_the_archive_only_sets_the_release_aside(self):
+        """An unsupported method may be this machine, not the file: not proof."""
+        def stopped(path, report=None):
+            report.update({"clean": False, "said": ["Unsupported compression method"]})
+            return Path(tempfile.mkdtemp(dir=self.root))
+        with patch("app.unpack_archive", side_effect=stopped), \
+                patch("app._member_strictly", return_value=(None, "Unsupported compression method")), \
+                patch("app._choose_downloaded_comic", return_value={"path": str(self.source)}), \
+                patch("app.cached_setting", return_value=False):
+            with self.assertRaises(app.DownloadContentMismatch) as caught:
+                app._select_downloaded_comic([self.source], self.root, {}, None)
+        self.assertEqual((caught.exception.kind, caught.exception.stage), ("unreadable", "unidentified"))
+
     def test_the_same_issue_already_filed_as_a_cbr_is_not_filed_again_beside_it(self):
         library = self.root / "library"
         converted = self.root / "converted" / "Example 001 (2020).cbz"
