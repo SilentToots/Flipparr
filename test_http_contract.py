@@ -2408,6 +2408,12 @@ class ReaderProfileHttpTests(unittest.TestCase):
         with patch("app.reading_cache_dir", return_value=cache), \
                 patch("app.package_cache_dir", return_value=root.parent / "package-cache"), \
                 patch("app.unpack_work_dir", return_value=root.parent / "unpack"):
+            # Sizing a choice of comics does not start packing them.
+            planned = self.call("GET", f"/api/v1/files/{ids['Example 001.cbz']}/offline?plan=1", cookies=admin)
+            self.assertEqual(planned.status, 200, planned.body)
+            time.sleep(0.2)
+            self.assertEqual(list((root.parent / "package-cache").glob("*.zip")), [])
+            self.assertEqual([t for t in threading.enumerate() if t.name.startswith("flipparr-package-")], [])
             for name, pages in (("Example 001.cbz", 2), ("Example 002.cbz", 2)):
                 manifest = self.call("GET", f"/api/v1/files/{ids[name]}/offline", cookies=admin).json()
                 self.assertEqual(manifest["package"]["url"], f"/api/v1/files/{ids[name]}/package?v={manifest['fileSignature']}")

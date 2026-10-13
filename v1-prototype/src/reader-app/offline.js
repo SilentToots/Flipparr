@@ -102,6 +102,11 @@ export function downloadRow(manifest, { groupKey = null, at = new Date().toISOSt
   };
 }
 
+/** What a download's caption says while it is on its way: "Preparing" while the server packs it. */
+export function downloadingWords(row) {
+  return row.preparing && !row.received ? "Preparing" : `Downloading ${Math.round(progressOf(row) * 100)}%`;
+}
+
 /** What a download has done so far, as a fraction for a progress bar: pages, then their panels. */
 export function progressOf(row) {
   if (!row.pageCount) return 0;

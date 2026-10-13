@@ -12,12 +12,12 @@ import { ProgressRing, StopSquare } from "../components/ProgressRing.jsx";
 import { StatusBadge } from "../components/StatusBadge";
 import { useDialog, useDrawerExit, useSwipeToDismiss } from "../dialogs.jsx";
 import { DiscoverDrawerHero, ReadWithDownload } from "../drawers/frame.jsx";
-import { formatBytes, nextDownloaded, progressOf } from "./offline.js";
+import { downloadingWords, formatBytes, nextDownloaded, progressOf } from "./offline.js";
 
 const comicName = (row) => (row.issueNumber ? `#${row.issueNumber}` : row.filename);
 
 function rowCaption(row) {
-  if (row.state === "downloading") return `Downloading ${Math.round(progressOf(row) * 100)}%`;
+  if (row.state === "downloading") return downloadingWords(row);
   if (row.state === "failed") return "Didn’t finish";
   const reading = row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread";
   return row.bytes ? `${reading} · ${formatBytes(row.bytes)}` : reading;

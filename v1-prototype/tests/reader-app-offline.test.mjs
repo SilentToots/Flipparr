@@ -194,3 +194,13 @@ test("a packed comic's transfers have their own ids, and its progress follows th
   row.panelsDone = [0, 1, 2, 3];
   assert.equal(progressOf(row), 1);
 });
+
+test("a packed comic says Preparing while the server packs it, then its percentage", async () => {
+  const { downloadRow, downloadingWords } = await import("../src/reader-app/offline.js");
+  const row = downloadRow({ fileId: "63", pageCount: 4, bytesEstimate: 2000, pages: [], package: { url: "/p", bytes: null } });
+  assert.equal(downloadingWords(row), "Downloading 0%");
+  row.preparing = true;
+  assert.equal(downloadingWords(row), "Preparing");
+  row.received = 1000;
+  assert.equal(downloadingWords(row), "Downloading 49%");
+});

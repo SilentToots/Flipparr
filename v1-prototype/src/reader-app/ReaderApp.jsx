@@ -50,7 +50,7 @@ import { hashPin, newPinSalt, verifyPin } from "./offline-pin.js";
 import { mergeProfiles, offlineChoice, withPinHash } from "./offline-profiles.js";
 import { Downloads, cancelAllTransfers } from "./downloads.js";
 import { deviceStore } from "./device-store.js";
-import { CAP_CHOICES, batchProgress, coverStatusFor, groupDownloads, nextDownloaded, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
+import { CAP_CHOICES, batchProgress, coverStatusFor, downloadingWords, groupDownloads, nextDownloaded, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
 import { useRefreshOnReturn } from "../refresh-on-return.js";
@@ -1110,7 +1110,9 @@ function DownloadSheet({ group, downloads, onClose, onStarted }) {
       const estimates = [];
       // A few at a time: each is one small request to the server.
       for (let start = 0; start < chosen.length; start += 6) {
-        const batch = await Promise.all(chosen.slice(start, start + 6).map((fileId) => apiRequest(`/api/v1/files/${fileId}/offline`)
+        // `plan=1`: sizing only -- the server does not start packing comics
+        // the sheet may be closed on.
+        const batch = await Promise.all(chosen.slice(start, start + 6).map((fileId) => apiRequest(`/api/v1/files/${fileId}/offline?plan=1`)
           .then((manifest) => ({ fileId, bytes: Number(manifest.bytesEstimate) || 0 }), () => ({ fileId, bytes: 0 }))));
         estimates.push(...batch);
       }
@@ -1303,7 +1305,7 @@ function useMediaQuery(query) {
 
 // What each downloaded cover says under it, in reading words.
 function downloadCaption(row) {
-  if (row.state === "downloading") return `Downloading ${Math.round(progressOf(row) * 100)}%`;
+  if (row.state === "downloading") return downloadingWords(row);
   if (row.state === "failed") return "Didn\u2019t finish. Tap to try again";
   if (row.state === "stale") return "Updated on the server";
   return row.finished ? "Read" : row.lastReadAt ? "In progress" : "Unread";

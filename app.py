@@ -14453,7 +14453,7 @@ def stored_file_panels(file_id: int) -> dict[str, Any]:
     return {"fileId": str(file_id), "pages": {str(index): stored_page_panels(file_id, index) for index in range(count)}}
 
 
-def file_offline_manifest(file_id: int) -> dict[str, Any]:
+def file_offline_manifest(file_id: int, *, start_package: bool = True) -> dict[str, Any]:
     """Everything Flipparr View needs to download a comic and read it with
     no connection: its pages at reading size, their signature (a replaced
     file is a new download), a size estimate, and its run."""
@@ -14466,9 +14466,10 @@ def file_offline_manifest(file_id: int) -> dict[str, Any]:
     signature = _file_signature(path)
     package = offline_package_path(file_id, path)
     package_bytes = package.stat().st_size if package.is_file() else None
-    if package_bytes is None:
+    if package_bytes is None and start_package:
         # Asked for to be downloaded: packing starts now, so it is often
-        # ready by the time the device asks for it.
+        # ready by the time the device asks for it. A device only sizing a
+        # choice (`plan=1`) does not start it.
         with contextlib.suppress(Exception):
             offline_package(file_id)
     estimate = 0
@@ -19389,7 +19390,8 @@ class Handler(BaseHTTPRequestHandler):
             # Under /files/{id}/, so the dispatcher's rating gate has already
             # answered 404 for a profile kept from this comic's run.
             try:
-                payload = file_offline_manifest(int(file_offline_match.group(1)))
+                payload = file_offline_manifest(int(file_offline_match.group(1)),
+                                                start_package=str(self.query(parsed_url).get("plan") or "") != "1")
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return

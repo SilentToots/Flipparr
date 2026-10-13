@@ -45,6 +45,7 @@ export class Downloads extends EventTarget {
       await this.native.addListener("transferDone", (event) => this.onDone(event)),
       await this.native.addListener("transferFailed", (event) => this.onFailed(event)),
       await this.native.addListener("transferProgress", (event) => this.onProgress(event)),
+      await this.native.addListener("transferWaiting", (event) => this.onWaiting(event)),
     ];
     await this.reconcile();
     this.changed();
@@ -202,12 +203,23 @@ export class Downloads extends EventTarget {
     }
   }
 
+  /** The server still packing a comic: said under its cover until bytes come. */
+  onWaiting(event) {
+    const { profileId, fileId, kind } = parseTransferId(event.id);
+    if (profileId !== this.profileId || kind !== "package") return;
+    const row = this.row(fileId);
+    if (!row || row.state !== "downloading") return;
+    row.preparing = true;
+    this.changed();
+  }
+
   /** A packed comic's bytes as they arrive, for its ring; not written down. */
   onProgress(event) {
     const { profileId, fileId, kind } = parseTransferId(event.id);
     if (profileId !== this.profileId || kind !== "package") return;
     const row = this.row(fileId);
     if (!row || row.state !== "downloading") return;
+    row.preparing = false;
     row.received = Number(event.written) || 0;
     if (Number(event.expected) > 0) row.expected = Number(event.expected);
     this.changed();
