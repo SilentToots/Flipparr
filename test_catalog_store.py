@@ -6362,3 +6362,108 @@ class SeriesRemovalTests(unittest.TestCase):
                 store.series_removal_plan(run_id)
             with self.assertRaises(LookupError):
                 store.remove_series_run(run_id)
+
+
+class ComicReadingTests(unittest.TestCase):
+    """docs/READING_STATE_PLAN.md step 2a: reading belongs to the comic (the
+    issue, or the volume), written beside the file's row. Two copies of one
+    issue are one comic; a place records the copy and page it was read on."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        root = Path(self.folder.name)
+        names = ["Example 001.cbz", "Example 001 (digital).cbz", "Example 002.cbz"]
+        for name in names:
+            (root / name).write_bytes(b"comic")
+        items = [ParsedFile(str(root / name), name, ".cbz", "Example", issue="2" if "002" in name else "1") for name in names]
+        self.store = CatalogStore(root / "catalog.db")
+        self.store.perform_scan(self.store.begin_scan(str(root), True), lambda *_: items, lambda parsed: {
+            "parsed": parsed.__dict__, "lookup_identity": parsed.__dict__, "embedded_metadata": {},
+            "file_health": {"status": "ok"},
+            "recommendation": {"title": "Example", "issue": parsed.issue, "record_type": "single_issue", "source": "Test"},
+            "file_cover": None,
+        })
+        with sqlite3.connect(self.store.database_path) as connection:
+            rows = connection.execute(
+                "SELECT files.filename, files.id, l.issue_id FROM files JOIN file_issue_links l ON l.file_id=files.id").fetchall()
+        self.file = {name: file_id for name, file_id, _ in rows}
+        self.issue = {name: issue_id for name, _, issue_id in rows}
+        self.a, self.b = self.file["Example 001.cbz"], self.file["Example 001 (digital).cbz"]
+        self.assertEqual(self.issue["Example 001.cbz"], self.issue["Example 001 (digital).cbz"], "one issue, two copies")
+
+    def _comic(self, issue_id, user_id=ADMIN_USER_ID):
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute("SELECT * FROM comic_reading WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
+                                     (user_id, issue_id)).fetchone()
+        return dict(row) if row else None
+
+    def test_two_copies_of_an_issue_are_one_comic_read_on_the_copy_last_opened(self):
+        issue = self.issue["Example 001.cbz"]
+        self.store.set_reading_progress(self.a, 5, 6, "sa", finished=True, user_id=ADMIN_USER_ID, at="2026-10-01T10:00:00+00:00")
+        first = self._comic(issue)
+        self.assertEqual((first["file_id"], first["page"]), (self.a, 5))
+        self.assertTrue(first["finished_at"])
+        self.store.set_reading_progress(self.b, 2, 8, "sb", user_id=ADMIN_USER_ID, page_member="03.jpg")
+        again = self._comic(issue)
+        self.assertEqual((again["file_id"], again["page"], again["page_count"], again["page_member"]), (self.b, 2, 8, "03.jpg"))
+        self.assertIsNone(again["finished_at"], "going back into a comic makes it unfinished, as a file's place does")
+        self.assertEqual(again["started_at"], first["started_at"], "started when it was first read, on either copy")
+
+    def test_a_late_save_from_another_device_does_not_overwrite_newer_reading_of_the_comic(self):
+        issue = self.issue["Example 001.cbz"]
+        self.store.set_reading_progress(self.b, 4, 8, "sb", user_id=ADMIN_USER_ID, at="2026-10-12T12:00:00+00:00")
+        self.store.set_reading_progress(self.a, 1, 6, "sa", user_id=ADMIN_USER_ID, at="2026-10-12T09:00:00+00:00")
+        self.assertEqual(self._comic(issue)["file_id"], self.b, "the copy read later stands")
+        self.store.clear_reading_progress(self.a, user_id=ADMIN_USER_ID, at="2026-10-12T08:00:00+00:00")
+        self.assertIsNotNone(self._comic(issue), "an older 'unread' does not clear newer reading")
+        self.store.clear_reading_progress(self.a, user_id=ADMIN_USER_ID)
+        self.assertIsNone(self._comic(issue), "marked unread on either copy, the comic is unread")
+
+    def test_the_page_fingerprint_rides_with_the_place_when_it_is_known(self):
+        self.store.record_page_fingerprint(self.a, "02.jpg", "sa", "abc123", "00ff00ff00ff00ff")
+        self.store.set_reading_progress(self.a, 1, 6, "sa", user_id=ADMIN_USER_ID, page_member="02.jpg")
+        comic = self._comic(self.issue["Example 001.cbz"])
+        self.assertEqual((comic["page_sha256"], comic["page_dhash"]), ("abc123", "00ff00ff00ff00ff"))
+
+    def test_a_finished_volume_reads_the_issues_it_collects_and_one_way_only(self):
+        issue_one, issue_two = self.issue["Example 001.cbz"], self.issue["Example 002.cbz"]
+        with sqlite3.connect(self.store.database_path) as connection:
+            run = connection.execute("SELECT series_run_id FROM issues WHERE id=?", (issue_one,)).fetchone()[0]
+            edition = connection.execute(
+                "INSERT INTO editions(series_run_id, edition_key, title, isbns_json, created_at, updated_at) VALUES (?, 'vol-1', 'Vol. 1', '[]', 'now', 'now')",
+                (run,)).lastrowid
+            for number, issue in (("1", issue_one), ("2", issue_two)):
+                connection.execute(
+                    """INSERT INTO edition_coverage_claims(edition_id, issue_id, series_label, issue_number, source, confidence,
+                       resolution_status, created_at) VALUES (?, ?, 'Example', ?, 'test', 'high', 'resolved', 'now')""",
+                    (edition, issue, number))
+            volume = self.file["Example 002.cbz"]
+            connection.execute("DELETE FROM file_issue_links WHERE file_id=?", (volume,))
+            connection.execute("INSERT INTO file_edition_links(file_id, edition_id) VALUES (?, ?)", (volume, edition))
+        self.store.set_reading_progress(volume, 9, 10, "sv", finished=True, user_id=ADMIN_USER_ID)
+        for issue in (issue_one, issue_two):
+            comic = self._comic(issue)
+            self.assertTrue(comic["finished_at"])
+            self.assertEqual(comic["finished_by"], f"edition:{edition}")
+        self.store.clear_reading_progress(volume, user_id=ADMIN_USER_ID)
+        self.assertTrue(self._comic(issue_one)["finished_at"], "the volume marked unread leaves its issues read")
+
+    def test_the_backfill_takes_every_files_place_to_its_comic_hidden_files_included(self):
+        issue = self.issue["Example 001.cbz"]
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("DELETE FROM comic_reading")
+            connection.executemany(
+                """INSERT INTO reading_progress(user_id, file_id, page, panel, page_count, file_signature, started_at,
+                   finished_at, updated_at) VALUES (?, ?, ?, 0, ?, 's', ?, ?, ?)""",
+                [(ADMIN_USER_ID, self.a, 5, 6, "2026-09-01T00:00:00+00:00", "2026-09-02T00:00:00+00:00", "2026-09-02T00:00:00+00:00"),
+                 (ADMIN_USER_ID, self.b, 3, 8, "2026-09-10T00:00:00+00:00", None, "2026-09-10T00:00:00+00:00")])
+            # A replaced copy: hidden, its place stranded until now.
+            connection.execute("UPDATE files SET present=0 WHERE id=?", (self.a,))
+            connection.row_factory = sqlite3.Row
+            self.assertEqual(self.store._backfill_comic_reading(connection), 1)
+            row = dict(connection.execute("SELECT * FROM comic_reading WHERE subject_id=?", (issue,)).fetchone())
+        self.assertEqual(row["started_at"], "2026-09-01T00:00:00+00:00", "earliest start of any copy")
+        self.assertEqual(row["finished_at"], "2026-09-02T00:00:00+00:00", "finished on the hidden copy, kept")
+        self.assertEqual((row["file_id"], row["page"]), (self.b, 3), "the place where it was read last")

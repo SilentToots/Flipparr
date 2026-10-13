@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 70
+SCHEMA_VERSION = 71
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1543,6 +1543,37 @@ class CatalogStore:
                     PRIMARY KEY (file_id, page_member)
                 );
                 CREATE INDEX IF NOT EXISTS page_fingerprints_sha ON page_fingerprints(sha256);
+                -- Where a profile is with a comic (schema 71,
+                -- docs/READING_STATE_PLAN.md step 2): the issue -- or the
+                -- volume, for a collected edition -- not the file, which a
+                -- replacement, a move or a CBZ conversion changes. Started,
+                -- finished and last read are the comic's; the place is kept
+                -- with the file it was read in, its page's member name and
+                -- fingerprint, so another file of the comic finds the same
+                -- page. `file_id` is that last file: a re-matched file's
+                -- reading follows it (the owner, 2026-10-12). `finished_by`
+                -- says a volume finished it ("edition:<id>"), else null.
+                CREATE TABLE IF NOT EXISTS comic_reading (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('issue', 'edition')),
+                    subject_id INTEGER NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    finished_by TEXT,
+                    last_read_at TEXT NOT NULL,
+                    file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                    file_signature TEXT,
+                    page INTEGER NOT NULL DEFAULT 0,
+                    panel INTEGER NOT NULL DEFAULT 0,
+                    page_count INTEGER NOT NULL DEFAULT 0,
+                    page_member TEXT,
+                    page_sha256 TEXT,
+                    page_dhash TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, subject_kind, subject_id)
+                );
+                CREATE INDEX IF NOT EXISTS comic_reading_by_reader ON comic_reading(user_id, last_read_at DESC);
+                CREATE INDEX IF NOT EXISTS comic_reading_file ON comic_reading(file_id);
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -2233,6 +2264,12 @@ class CatalogStore:
                 "CREATE INDEX IF NOT EXISTS reading_progress_by_reader ON reading_progress(user_id, updated_at DESC)"
             )
             connection.execute("CREATE INDEX IF NOT EXISTS reading_progress_file ON reading_progress(file_id)")
+            # 71: reading belongs to the comic, not the file. Every place kept
+            # so far is taken to its issue or volume -- files no longer
+            # present included, which recovers a reading a replacement or a
+            # move had stranded.
+            if stored_version is not None and stored_version < 71:
+                self._backfill_comic_reading(connection)
             # 50: a profile's picture -- a photo, or a cover from the library.
             # The image is a file the app writes; the row says where it came
             # from and when, which is what makes its URL change with it.
@@ -4066,6 +4103,7 @@ class CatalogStore:
     def set_reading_progress(
         self, file_id: int, page: int, page_count: int, file_signature: str,
         finished: bool = False, panel: int = 0, *, user_id: int, at: str | None = None,
+        page_member: str | None = None,
     ) -> dict[str, Any]:
         """Remember the page (and the panel on it), and when a comic was finished.
 
@@ -4102,7 +4140,122 @@ class CatalogStore:
                 (int(user_id), int(file_id), int(page), int(panel), int(page_count), file_signature,
                  now, finished_at, now),
             )
+            self._write_comic_reading(connection, user_id=user_id, file_id=file_id, page=page, panel=panel,
+                                      page_count=page_count, file_signature=file_signature, finished=finished,
+                                      now=now, at=at, page_member=page_member)
         return self.reading_progress(file_id, user_id=user_id)
+
+    @staticmethod
+    def _comic_of_file(connection: sqlite3.Connection, file_id: int) -> tuple[str, int] | None:
+        """The comic a file is a copy of: its issue, else its volume."""
+        row = connection.execute("SELECT issue_id FROM file_issue_links WHERE file_id=?", (int(file_id),)).fetchone()
+        if row:
+            return "issue", int(row["issue_id"])
+        row = connection.execute("SELECT edition_id FROM file_edition_links WHERE file_id=?", (int(file_id),)).fetchone()
+        return ("edition", int(row["edition_id"])) if row else None
+
+    def _write_comic_reading(self, connection: sqlite3.Connection, *, user_id: int, file_id: int, page: int, panel: int,
+                             page_count: int, file_signature: str, finished: bool, now: str, at: str | None,
+                             page_member: str | None) -> None:
+        """The comic's side of a saved place (step 2a: written beside the
+        file's row; nothing reads it yet). A late save (`at`) is kept only if
+        nothing newer is stored for the comic -- read on another copy too."""
+        comic = self._comic_of_file(connection, file_id)
+        if comic is None:
+            return
+        kind, subject = comic
+        stored = connection.execute(
+            "SELECT updated_at FROM comic_reading WHERE user_id=? AND subject_kind=? AND subject_id=?",
+            (int(user_id), kind, subject),
+        ).fetchone()
+        if at is not None and stored is not None and self._stored_is_newer(stored["updated_at"], at):
+            return
+        sha = dhash = None
+        if page_member:
+            print_ = connection.execute(
+                "SELECT sha256, dhash FROM page_fingerprints WHERE file_id=? AND page_member=? AND file_signature=?",
+                (int(file_id), page_member, file_signature),
+            ).fetchone()
+            if print_:
+                sha, dhash = print_["sha256"], print_["dhash"]
+        connection.execute(
+            """INSERT INTO comic_reading(
+                   user_id, subject_kind, subject_id, started_at, finished_at, finished_by, last_read_at,
+                   file_id, file_signature, page, panel, page_count, page_member, page_sha256, page_dhash, updated_at)
+               VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, subject_kind, subject_id) DO UPDATE SET
+                   -- Going back into a comic you finished makes it unfinished
+                   -- again, as a file's place always has.
+                   finished_at=excluded.finished_at, finished_by=NULL, last_read_at=excluded.last_read_at,
+                   file_id=excluded.file_id, file_signature=excluded.file_signature, page=excluded.page,
+                   panel=excluded.panel, page_count=excluded.page_count, page_member=excluded.page_member,
+                   page_sha256=excluded.page_sha256, page_dhash=excluded.page_dhash, updated_at=excluded.updated_at""",
+            (int(user_id), kind, subject, now, now if finished else None, now, int(file_id), file_signature,
+             int(page), int(panel), int(page_count), page_member, sha, dhash, now),
+        )
+        if finished and kind == "edition":
+            # Finishing a volume reads the issues it collects (the owner,
+            # 2026-10-12), where its contents are known. One way only: the
+            # volume read again, or marked unread, leaves the issues as they
+            # are -- they may have been read on their own.
+            for claim in connection.execute(
+                """SELECT DISTINCT issue_id AS id FROM edition_coverage_claims
+                   WHERE edition_id=? AND issue_id IS NOT NULL AND resolution_status='resolved'""", (subject,),
+            ).fetchall():
+                connection.execute(
+                    """INSERT INTO comic_reading(user_id, subject_kind, subject_id, started_at, finished_at, finished_by,
+                                                 last_read_at, updated_at)
+                       VALUES (?, 'issue', ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id, subject_kind, subject_id) DO UPDATE SET
+                           finished_at=COALESCE(comic_reading.finished_at, excluded.finished_at),
+                           finished_by=COALESCE(comic_reading.finished_by, excluded.finished_by)""",
+                    (int(user_id), int(claim["id"]), now, now, f"edition:{subject}", now, now),
+                )
+
+    def _clear_comic_reading(self, connection: sqlite3.Connection, *, user_id: int, file_id: int, at: str | None) -> None:
+        comic = self._comic_of_file(connection, file_id)
+        if comic is None:
+            return
+        stored = connection.execute(
+            "SELECT updated_at FROM comic_reading WHERE user_id=? AND subject_kind=? AND subject_id=?",
+            (int(user_id), *comic),
+        ).fetchone()
+        if at is not None and stored is not None and self._stored_is_newer(stored["updated_at"], at):
+            return
+        connection.execute("DELETE FROM comic_reading WHERE user_id=? AND subject_kind=? AND subject_id=?", (int(user_id), *comic))
+
+    def _backfill_comic_reading(self, connection: sqlite3.Connection) -> int:
+        """Every file's place taken to its comic, per profile: started is the
+        earliest, finished the latest finish of any copy, the place the copy
+        read last. Files no longer present count too."""
+        rows = connection.execute(
+            """SELECT rp.*, l.issue_id, e.edition_id FROM reading_progress rp
+               LEFT JOIN file_issue_links l ON l.file_id=rp.file_id
+               LEFT JOIN file_edition_links e ON e.file_id=rp.file_id
+               ORDER BY rp.updated_at"""
+        ).fetchall()
+        comics: dict[tuple[int, str, int], dict[str, Any]] = {}
+        for row in rows:
+            if row["issue_id"] is not None:
+                key = (int(row["user_id"]), "issue", int(row["issue_id"]))
+            elif row["edition_id"] is not None:
+                key = (int(row["user_id"]), "edition", int(row["edition_id"]))
+            else:
+                continue
+            kept = comics.get(key)
+            started = min(filter(None, (kept and kept["started_at"], row["started_at"])))
+            finished = max(filter(None, (kept and kept["finished_at"], row["finished_at"])), default=None)
+            comics[key] = {**dict(row), "started_at": started, "finished_at": finished}  # rows come oldest first
+        for (user_id, kind, subject), row in comics.items():
+            connection.execute(
+                """INSERT OR IGNORE INTO comic_reading(
+                       user_id, subject_kind, subject_id, started_at, finished_at, last_read_at,
+                       file_id, file_signature, page, panel, page_count, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, kind, subject, row["started_at"], row["finished_at"], row["updated_at"],
+                 row["file_id"], row["file_signature"], row["page"], row["panel"], row["page_count"], row["updated_at"]),
+            )
+        return len(comics)
 
     def clear_reading_progress(self, file_id: int, *, user_id: int, at: str | None = None) -> None:
         """Forget a comic's place. With `at` (a late save, see
@@ -4115,6 +4268,7 @@ class CatalogStore:
             connection.execute(
                 "DELETE FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
             )
+            self._clear_comic_reading(connection, user_id=user_id, file_id=file_id, at=at)
 
     @staticmethod
     def _analysis_failed(result_json: Any) -> bool:

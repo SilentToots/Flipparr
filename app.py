@@ -15505,7 +15505,7 @@ def set_file_reading_progress(
         raise ValueError("That panel is not on the page")
     return catalog_store().set_reading_progress(
         file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1, panel=panel,
-        user_id=user_id, at=at,
+        user_id=user_id, at=at, page_member=pages[page],
     )
 
 
