@@ -11646,6 +11646,20 @@ class LibraryCbzConversionTests(_ComicCopiesTestCase):
         with zipfile.ZipFile(self.root / "Example 001.cbz") as archive:
             self.assertEqual([archive.read(name) for name in ("01.jpg", "02.jpg", "03.jpg")], self.pages)
 
+    def test_a_gone_copys_record_at_the_cbz_name_steps_aside(self):
+        cbz = self.root / "Example 001.cbz"
+        with sqlite3.connect(self.store.database_path) as connection:
+            root = connection.execute("SELECT id FROM library_roots").fetchone()[0]
+            gone = connection.execute(
+                """INSERT INTO files(root_id, path, filename, extension, size_bytes, mtime_ns, fingerprint, parsed_json,
+                   result_json, created_at, updated_at, present) VALUES (?, ?, ?, '.cbz', 1, 1, 'f', '{}', '{}', 'now', 'now', 0)""",
+                (root, str(cbz), cbz.name)).lastrowid
+        self.assertEqual(app.convert_library_file_to_cbz(self.file_id, self.comic, self.root), "converted")
+        self.assertEqual(self.store.library_file_path(self.file_id), cbz)
+        with sqlite3.connect(self.store.database_path) as connection:
+            moved = connection.execute("SELECT path, present FROM files WHERE id=?", (gone,)).fetchone()
+        self.assertEqual(moved, (f"{cbz}#superseded-by-{self.file_id}", 0))
+
     def test_a_scan_cut_off_by_a_restart_does_not_hold_the_job_back(self):
         with sqlite3.connect(self.store.database_path) as connection:
             connection.execute("UPDATE scan_runs SET status='scanning', started_at=?",

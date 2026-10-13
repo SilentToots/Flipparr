@@ -5590,6 +5590,17 @@ class CatalogStore:
                                      (int(file_id), old_path)).fetchone()
             if row is None:
                 raise LookupError("The comic moved while it was converted")
+            # A record of an earlier copy at the CBZ's name, gone from disk
+            # (Saga #002 and #003 on production: once CBZ, replaced by a
+            # CBR), steps aside under a name no file can have. One still
+            # present is a real conflict and stops the conversion.
+            holder = connection.execute("SELECT id, present FROM files WHERE path=? AND id<>?",
+                                        (new_path, int(file_id))).fetchone()
+            if holder is not None:
+                if holder["present"]:
+                    raise ValueError("Another comic in the library already has the CBZ's name")
+                connection.execute("UPDATE files SET path=? WHERE id=?",
+                                   (f"{new_path}#superseded-by-{int(file_id)}", holder["id"]))
             parsed = _load_json(row["parsed_json"], {}) or {}
             parsed.update({"path": new_path, "filename": Path(new_path).name, "extension": ".cbz"})
             result = _load_json(row["result_json"], {}) or {}
