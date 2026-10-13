@@ -1,6 +1,25 @@
 # Reading state, panels and covers belong to the comic, not the file
 
-Plan, 2026-10-12. Status: **approved** -- the owner's decisions are recorded below.
+Plan, 2026-10-12. Status: **built** (steps 1-6, 2026-10-12, overnight); steps
+2a and 2b in production, steps 3-6 committed and awaiting the owner's review
+and deploy; 2c (stop writing the file's row) waits until 2b has run a while.
+
+| Step | Commits | State |
+|---|---|---|
+| 1 Page fingerprints | 65a006b, 7f7a00b | production (with 2a) |
+| 2a Reading per comic, written beside the file's row | 7d306d6 | production; migration rehearsed on production's database (46 -> 46, finished per run identical) |
+| 2b Readers read the comic | 1918ac5, bfea825, c024ae7 | production |
+| 3 Panels per comic page | a1b1972 | committed |
+| 4 Covers and backdrops | 588d53a | committed; schema 72 rehearsed on production's database |
+| 5 Merges, rebuilds, re-matches | 00c97a7 | committed |
+| 6 Convert existing CBR to CBZ (opt-in job) | d8b1c9b | committed; not run on the library |
+| 2c Stop writing reading_progress | -- | later |
+
+Not yet done, and why: the comic page panels live in `page_panels` (found by
+the comic's page fingerprint across its copies) rather than in a new
+`comic_page_panels` table -- the same effect without moving every reading;
+issue-level reading for a volume finishes its claimed issues; the iOS app
+needed no change (the server maps file to comic).
 
 ## Why
 
