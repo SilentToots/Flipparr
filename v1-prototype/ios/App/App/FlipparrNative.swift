@@ -53,6 +53,7 @@ public class FlipparrNativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "enqueue", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "transfers", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "unpack", returnType: CAPPluginReturnPromise),
     ]
 
     private func inside(_ relative: String) throws -> URL { try flipparrPath(relative) }
@@ -233,8 +234,32 @@ extension FlipparrNativePlugin {
         for (name, value) in call.getObject("headers") ?? [:] {
             if let text = value as? String { headers[name] = text }
         }
-        FlipparrDownloads.shared.enqueue(id: id, url: url, relative: relative, headers: headers)
+        // A comic's package is unpacked into this folder as it lands.
+        let unpack = call.getString("unpack")
+        if let unpack = unpack {
+            do { _ = try inside(unpack) } catch { call.reject(error.localizedDescription); return }
+        }
+        FlipparrDownloads.shared.enqueue(id: id, url: url, relative: relative, headers: headers, unpack: unpack)
         call.resolve()
+    }
+
+    /// Unpack a package left on disk (the app was stopped as it landed) into
+    /// `folder`, and remove it. Resolves {pages}.
+    @objc func unpack(_ call: CAPPluginCall) {
+        guard let relative = call.getString("path"), let folder = call.getString("folder") else {
+            call.reject("A path and a folder are needed")
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let package = try self.inside(relative)
+                let pages = try ComicPackage.unpack(package, into: try self.inside(folder))
+                try? FileManager.default.removeItem(at: package)
+                call.resolve(["pages": pages])
+            } catch {
+                call.reject(error.localizedDescription)
+            }
+        }
     }
 
     @objc func cancel(_ call: CAPPluginCall) {
@@ -268,15 +293,36 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
         return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }()
 
-    private struct Job: Codable { let id: String; let path: String; let host: String }
+    /// One transfer: its id in the events, where it lands, the server it may
+    /// send the token to, the folder a package is unpacked into, and how many
+    /// times it has been asked again (the server busy) or resumed.
+    private struct Job: Codable {
+        let id: String
+        let path: String
+        let host: String
+        var unpack: String? = nil
+        var waits: Int? = nil
+        var resumes: Int? = nil
+    }
 
-    func enqueue(id: String, url: URL, relative: String, headers: [String: String]) {
+    /// The server packs a comic before it sends it, and says how long to
+    /// wait meanwhile (503 + Retry-After). Asked again then, by iOS, with the
+    /// app asleep; this many times at most (about an hour at a minute each).
+    private static let waitsMax = 60
+    /// A transfer that drops part way resumes from the bytes it has, this
+    /// many times (the server's ETag and byte ranges make that possible).
+    private static let resumesMax = 5
+
+    func enqueue(id: String, url: URL, relative: String, headers: [String: String], unpack: String? = nil) {
         var request = URLRequest(url: url)
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let task = session.downloadTask(with: request)
-        let job = Job(id: id, path: relative, host: url.host ?? "")
-        task.taskDescription = String(data: (try? JSONEncoder().encode(job)) ?? Data(), encoding: .utf8)
+        describe(task, Job(id: id, path: relative, host: url.host ?? "", unpack: unpack))
         task.resume()
+    }
+
+    private func describe(_ task: URLSessionTask, _ job: Job) {
+        task.taskDescription = String(data: (try? JSONEncoder().encode(job)) ?? Data(), encoding: .utf8)
     }
 
     private func job(_ task: URLSessionTask) -> Job? {
@@ -315,10 +361,36 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let job = job(downloadTask) else { return }
-        let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+        guard var job = job(downloadTask) else { return }
+        let response = downloadTask.response as? HTTPURLResponse
+        let status = response?.statusCode ?? 0
+        // Still being packed: asked again when the server says, by iOS, so
+        // it goes on with the app asleep. Not a failure.
+        if (status == 503 || status == 429), (job.waits ?? 0) < FlipparrDownloads.waitsMax,
+           let request = downloadTask.originalRequest {
+            let after = Double(response?.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 10
+            let again = session.downloadTask(with: request)
+            again.earliestBeginDate = Date().addingTimeInterval(min(max(after, 2), 300))
+            job.waits = (job.waits ?? 0) + 1
+            describe(again, job)
+            again.resume()
+            emit("transferWaiting", ["id": job.id, "seconds": after])
+            return
+        }
         guard (200..<300).contains(status) else {
             emit("transferFailed", ["id": job.id, "status": status, "error": "The server answered \(status)"])
+            return
+        }
+        if let unpack = job.unpack {
+            // Unpacked now, inside this callback: the temporary file is gone
+            // the moment it returns.
+            do {
+                let pages = try ComicPackage.unpack(location, into: try flipparrPath(unpack))
+                let size = (try? location.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                emit("transferDone", ["id": job.id, "pages": pages, "bytes": size, "status": status])
+            } catch {
+                emit("transferFailed", ["id": job.id, "status": status, "error": error.localizedDescription])
+            }
             return
         }
         do {
@@ -336,9 +408,40 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error = error, let job = job(task) else { return }
-        let cancelled = (error as NSError).code == NSURLErrorCancelled
+        guard let error = error, var job = job(task) else { return }
+        let nsError = error as NSError
+        let cancelled = nsError.code == NSURLErrorCancelled
+        // Dropped part way (the network went, the app was closed): resumed
+        // from the bytes already here, as a byte range of the same file.
+        if !cancelled, (job.resumes ?? 0) < FlipparrDownloads.resumesMax,
+           let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
+            let again = session.downloadTask(withResumeData: data)
+            job.resumes = (job.resumes ?? 0) + 1
+            describe(again, job)
+            again.resume()
+            return
+        }
         emit("transferFailed", ["id": job.id, "status": 0, "error": error.localizedDescription, "network": !cancelled, "cancelled": cancelled])
+    }
+
+    /// How far a transfer has come, for its ring: at most every half second
+    /// or every 2%, so a big package does not flood the bridge.
+    private var progressSaid: [Int: (at: Date, fraction: Double)] = [:]
+    private let progressLock = NSLock()
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard let job = job(downloadTask), job.unpack != nil else { return }
+        let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : 0
+        let fraction = expected > 0 ? Double(totalBytesWritten) / Double(expected) : 0
+        progressLock.lock()
+        let last = progressSaid[downloadTask.taskIdentifier]
+        let due = last == nil || Date().timeIntervalSince(last!.at) >= 0.5 || fraction - last!.fraction >= 0.02
+        if due { progressSaid[downloadTask.taskIdentifier] = (Date(), fraction) }
+        progressLock.unlock()
+        if due {
+            emit("transferProgress", ["id": job.id, "written": totalBytesWritten, "expected": expected])
+        }
     }
 
     /// The token goes only to the household's server: a redirect to any
@@ -358,6 +461,85 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
             self.backgroundCompletion?()
             self.backgroundCompletion = nil
         }
+    }
+}
+
+/// A comic as the server packs it for downloading (app.py
+/// `build_offline_package`): a zip of its pages, stored rather than
+/// compressed (JPEGs do not compress), named 0000.jpg, 0001.jpg... in reading
+/// order. Read here without a library: the central directory says where each
+/// page's bytes are, and they are copied out as they are.
+enum ComicPackage {
+    struct Problem: LocalizedError {
+        let reason: String
+        var errorDescription: String? { reason }
+    }
+
+    /// Unpack `package` into `folder` as {index}.jpg, each written beside its
+    /// place and moved in; returns how many pages there were.
+    static func unpack(_ package: URL, into folder: URL) throws -> Int {
+        let handle = try FileHandle(forReadingFrom: package)
+        defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        // The end of central directory record: within the last 64 KB + 22 bytes.
+        let tail = min(size, 65_557)
+        try handle.seek(toOffset: size - tail)
+        let end = try handle.read(upToCount: Int(tail)) ?? Data()
+        guard let at = lastIndex(of: [0x50, 0x4b, 0x05, 0x06], in: end) else { throw Problem(reason: "The download is not a comic package") }
+        let count = Int(le16(end, at + 10))
+        var offset = UInt64(le32(end, at + 16))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var pages = 0
+        for _ in 0..<count {
+            try handle.seek(toOffset: offset)
+            guard let header = try handle.read(upToCount: 46), header.count == 46, le32(header, 0) == 0x02014b50 else {
+                throw Problem(reason: "The comic package is damaged")
+            }
+            let method = le16(header, 10)
+            let length = UInt64(le32(header, 20))
+            let nameLength = Int(le16(header, 28)), extraLength = Int(le16(header, 30)), commentLength = Int(le16(header, 32))
+            let local = UInt64(le32(header, 42))
+            let nameData = try handle.read(upToCount: nameLength) ?? Data()
+            offset += 46 + UInt64(nameLength + extraLength + commentLength)
+            guard method == 0, let name = String(data: nameData, encoding: .utf8),
+                  name.hasSuffix(".jpg"), let index = Int(name.dropLast(4)), index >= 0 else {
+                throw Problem(reason: "The comic package holds something other than pages")
+            }
+            try handle.seek(toOffset: local)
+            guard let localHeader = try handle.read(upToCount: 30), localHeader.count == 30, le32(localHeader, 0) == 0x04034b50 else {
+                throw Problem(reason: "The comic package is damaged")
+            }
+            try handle.seek(toOffset: local + 30 + UInt64(le16(localHeader, 26)) + UInt64(le16(localHeader, 28)))
+            guard let body = try handle.read(upToCount: Int(length)), body.count == Int(length) else {
+                throw Problem(reason: "The comic package is cut short")
+            }
+            let target = folder.appendingPathComponent("\(index).jpg")
+            let partial = folder.appendingPathComponent(".\(index).jpg.partial")
+            try body.write(to: partial, options: .atomic)
+            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+            try FileManager.default.moveItem(at: partial, to: target)
+            pages += 1
+        }
+        return pages
+    }
+
+    private static func le16(_ data: Data, _ at: Int) -> UInt16 {
+        UInt16(data[data.startIndex + at]) | UInt16(data[data.startIndex + at + 1]) << 8
+    }
+
+    private static func le32(_ data: Data, _ at: Int) -> UInt32 {
+        UInt32(le16(data, at)) | UInt32(le16(data, at + 2)) << 16
+    }
+
+    private static func lastIndex(of pattern: [UInt8], in data: Data) -> Int? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= pattern.count + 18 else { return nil }
+        var index = bytes.count - 22
+        while index >= 0 {
+            if Array(bytes[index..<index + pattern.count]) == pattern { return index }
+            index -= 1
+        }
+        return nil
     }
 }
 

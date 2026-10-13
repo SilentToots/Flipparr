@@ -26,6 +26,17 @@ export function panelPartPath(profileId, fileId, index) {
   return `${comicFolder(profileId, fileId)}/panels-${index}.json`;
 }
 /**
+ * A comic as the server packs it (2026-10-12): one file of its pages, which
+ * the native side unpacks into the comic's folder as it lands; and every
+ * page's kept panels in one answer, gathered into panels.json at the end.
+ */
+export function packagePath(profileId, fileId) {
+  return `${comicFolder(profileId, fileId)}/package.zip`;
+}
+export function bulkPanelsPath(profileId, fileId) {
+  return `${comicFolder(profileId, fileId)}/panels-all.json`;
+}
+/**
  * The address of one page's panels for a download: only what the server
  * already keeps -- a person's fix, the vision model's reading -- with nothing
  * worked out for it (the owner, 2026-10-09). A page with none is read whole.
@@ -39,10 +50,14 @@ export function panelsUrl(fileId, index) {
  * so one comic's can be cancelled together.
  */
 export function transferId(profileId, fileId, index, kind = "page") {
+  if (kind === "package") return `${profileId}:${fileId}:pkg`;
+  if (kind === "allPanels") return `${profileId}:${fileId}:panels`;
   return `${profileId}:${fileId}:${kind === "panels" ? "p" : ""}${index}`;
 }
 export function parseTransferId(id) {
   const [profileId, fileId, part = ""] = String(id).split(":");
+  if (part === "pkg") return { profileId, fileId, index: null, kind: "package" };
+  if (part === "panels") return { profileId, fileId, index: null, kind: "allPanels" };
   const panels = part.startsWith("p");
   return { profileId, fileId, index: Number(panels ? part.slice(1) : part), kind: panels ? "panels" : "page" };
 }
@@ -66,6 +81,11 @@ export function downloadRow(manifest, { groupKey = null, at = new Date().toISOSt
     pageCount: Number(manifest.pageCount) || 0,
     fileSignature: manifest.fileSignature,
     pageUrls: (manifest.pages || []).map((page) => page.readUrl),
+    // The comic in one file, when the server packs it; else page by page.
+    packageUrl: manifest.package?.url || null,
+    panelsUrl: manifest.panelsUrl || null,
+    received: 0,
+    expected: Number(manifest.package?.bytes) || 0,
     pagesDone: [],
     panelsDone: [],
     bytes: 0,
@@ -85,6 +105,13 @@ export function downloadRow(manifest, { groupKey = null, at = new Date().toISOSt
 /** What a download has done so far, as a fraction for a progress bar: pages, then their panels. */
 export function progressOf(row) {
   if (!row.pageCount) return 0;
+  if (row.packageUrl) {
+    // One file: its bytes, as they arrive; the panels are a sliver at the end.
+    const total = row.expected || row.estimate;
+    const pages = (row.pagesDone?.length || 0) >= row.pageCount ? 1 : total ? Math.min(1, (row.received || 0) / total) : 0;
+    const panels = (row.panelsDone?.length || 0) >= row.pageCount ? 1 : 0;
+    return Math.min(1, pages * 0.97 + panels * 0.03);
+  }
   const done = (row.pagesDone?.length || 0) + (row.panelsDone?.length || 0);
   return Math.min(1, done / (2 * row.pageCount));
 }

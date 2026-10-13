@@ -10,7 +10,8 @@ const manifest = {
   pages: [0, 1].map((index) => ({ index, readUrl: `/api/v1/files/63/pages/${index}?v=sig&size=read` })),
 };
 
-function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], checkAnswers = {}, checkReading = {} } = {}) {
+function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], checkAnswers = {}, checkReading = {},
+  answer = manifest, files = {} } = {}) {
   const enqueued = [];
   const posted = [];
   const listeners = {};
@@ -19,7 +20,9 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
     async enqueue(job) { enqueued.push(job); },
     async cancel() {},
     async transfers() { return { transfers: inFlight.map((id) => ({ id })) }; },
+    async unpack({ path, folder }) { unpacked.push({ path, folder }); onDisk.pages = [0, 1]; return { pages: 2 }; },
   };
+  const unpacked = [];
   const saved = { panels: null };
   const store = {
     async downloads() { return rows; },
@@ -36,12 +39,14 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
     async removeComic(profileId, fileId) { saved.removed = [...(saved.removed || []), fileId]; },
     async pendingRemovals() { return []; },
     async savePendingRemovals() {},
+    async takeBulkPanels() { saved.bulk = true; return { 1: { segmented: true, panels: [{ x: 1 }] } }; },
+    async exists(path) { return Boolean(files[path]); },
   };
   const client = {
     origin: "http://server:8803",
     headers: () => ({ Authorization: "Bearer t" }),
     async api(path, options = {}) {
-      if (path === "/api/v1/files/63/offline") return manifest;
+      if (path === "/api/v1/files/63/offline") return answer;
       if (path === "/api/v1/offline/check") {
         posted.push({ path, body: JSON.parse(options.body) });
         return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok", ...(checkReading[fileId] || {}) })) };
@@ -52,8 +57,14 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
   };
   const downloads = new Downloads({ client, profileId: 3, store, native, idOfDevice: async () => "ios-test" });
   const emit = (name, event) => listeners[name](event);
-  return { downloads, enqueued, posted, saved, emit };
+  return { downloads, enqueued, posted, saved, emit, unpacked };
 }
+
+// The server packs a comic (2026-10-12): one file and one answer of panels.
+const packaged = {
+  ...manifest, package: { url: "/api/v1/files/63/package?v=sig", quality: "read", bytes: null },
+  panelsUrl: "/api/v1/files/63/panels?stored=only",
+};
 
 test("a download hands each page and each page's panels to the background session", async () => {
   const { downloads, enqueued } = setup();
@@ -199,4 +210,63 @@ test("the check takes where this profile is with each comic from the server, whe
   assert.equal(downloads.row("63").finished, true, "finished on another device: Read here too");
   assert.equal(downloads.row("63").lastReadAt, "2026-10-11T21:28:14.636240+00:00");
   assert.equal(downloads.row("64").finished, false, "a later read on this device is kept");
+});
+
+test("a packed comic is two transfers: the package, unpacked as it lands, and every page's panels in one answer", async () => {
+  const { downloads, enqueued, emit, saved, posted } = setup({ answer: packaged });
+  await downloads.ready;
+  await downloads.download("63");
+  assert.deepEqual(enqueued.map((job) => job.id), ["3:63:pkg", "3:63:panels"], "not one request a page");
+  const [pkg, panels] = enqueued;
+  assert.equal(pkg.url, "http://server:8803/api/v1/files/63/package?v=sig");
+  assert.equal(pkg.unpack, "u3/files/63", "unpacked into the comic's folder, where the reader looks");
+  assert.equal(panels.url, "http://server:8803/api/v1/files/63/panels?stored=only");
+  assert.equal(panels.path, "u3/files/63/panels-all.json");
+  await emit("transferProgress", { id: "3:63:pkg", written: 500, expected: 1000 });
+  const { progressOf } = await import("../src/reader-app/offline.js");
+  assert.ok(Math.abs(progressOf(downloads.row("63")) - 0.485) < 0.001, "the ring follows the bytes");
+  await emit("transferDone", { id: "3:63:pkg", pages: 2, bytes: 900 });
+  assert.equal(downloads.row("63").state, "downloading", "the pages alone are not the comic");
+  await emit("transferDone", { id: "3:63:panels" });
+  const row = downloads.row("63");
+  assert.equal(row.state, "ready");
+  assert.equal(row.bytes, 900);
+  assert.equal(saved.bulk, true, "the one answer becomes panels.json");
+  assert.equal(saved.panels[1].segmented, true);
+  assert.deepEqual(posted.map((item) => item.path), ["/api/v1/offline/downloads"]);
+});
+
+test("a packed comic whose panels could not be had reads whole; one changed on the server is downloaded again as it is", async () => {
+  const { downloads, enqueued, emit } = setup({ answer: packaged });
+  await downloads.ready;
+  await downloads.download("63");
+  await emit("transferFailed", { id: "3:63:panels", status: 500 });
+  await emit("transferDone", { id: "3:63:pkg", pages: 2, bytes: 900 });
+  assert.equal(downloads.row("63").state, "ready");
+  const again = setup({ answer: packaged });
+  await again.downloads.ready;
+  await again.downloads.download("63");
+  await again.emit("transferFailed", { id: "3:63:pkg", status: 409 });
+  assert.equal(again.downloads.row("63").state, "downloading", "asked for again, not failed");
+  assert.equal(again.enqueued.filter((job) => job.id === "3:63:pkg").length, 2);
+  assert.equal(enqueued.length, 2);
+});
+
+test("after a launch, a package left whole is unpacked, a panels answer on disk counts, and nothing is asked twice", async () => {
+  const { downloadRow } = await import("../src/reader-app/offline.js");
+  const onDisk = { pages: [], panels: [] };
+  const { downloads, enqueued, unpacked } = setup({
+    rows: [downloadRow(packaged)], onDisk,
+    files: { "u3/files/63/package.zip": true, "u3/files/63/panels-all.json": true },
+  });
+  await downloads.ready;
+  assert.deepEqual(unpacked, [{ path: "u3/files/63/package.zip", folder: "u3/files/63" }]);
+  assert.deepEqual(enqueued, []);
+  assert.equal(downloads.row("63").state, "ready");
+  const inFlight = setup({ rows: [downloadRow(packaged)], inFlight: ["3:63:pkg", "3:63:panels"] });
+  await inFlight.downloads.ready;
+  assert.deepEqual(inFlight.enqueued, [], "in flight: left to the session");
+  const lost = setup({ rows: [downloadRow(packaged)] });
+  await lost.downloads.ready;
+  assert.deepEqual(lost.enqueued.map((job) => job.id), ["3:63:pkg", "3:63:panels"], "neither here nor in flight: asked again");
 });

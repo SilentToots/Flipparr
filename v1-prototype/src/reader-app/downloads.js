@@ -1,6 +1,9 @@
 // Downloading comics for offline reading (Phase 3). One engine per signed-in
 // profile: it asks the server what a comic needs (/files/{id}/offline), makes
-// room under the device's cap, hands every page to the background session
+// room under the device's cap, and hands the comic to the background session
+// -- as one packed file and one answer of panels where the server packs it
+// (2026-10-12: page by page, one profile's downloads filled the server), else
+// every page
 // and each page's panels (FlipparrNative.enqueue -- it carries on while the
 // app is suspended or the device locked, and moves each file into place
 // itself; panels only as the server already keeps them, ?stored=only: the
@@ -9,7 +12,10 @@
 // are offline.js's.
 import { registerPlugin } from "@capacitor/core";
 import { deviceStore, deviceId } from "./device-store.js";
-import { downloadComplete, downloadRow, pagePath, panelPartPath, panelsUrl, parseTransferId, planDownload, transferId } from "./offline.js";
+import {
+  bulkPanelsPath, comicFolder, downloadComplete, downloadRow, packagePath, pagePath, panelPartPath, panelsUrl, parseTransferId,
+  planDownload, transferId,
+} from "./offline.js";
 
 const Native = registerPlugin("FlipparrNative");
 
@@ -38,6 +44,7 @@ export class Downloads extends EventTarget {
     this.listeners = [
       await this.native.addListener("transferDone", (event) => this.onDone(event)),
       await this.native.addListener("transferFailed", (event) => this.onFailed(event)),
+      await this.native.addListener("transferProgress", (event) => this.onProgress(event)),
     ];
     await this.reconcile();
     this.changed();
@@ -145,6 +152,7 @@ export class Downloads extends EventTarget {
    * were fetched by the page, which iOS pauses with the screen).
    */
   async enqueueMissing(row, pages, { skip = new Set() } = {}) {
+    if (row.packageUrl) return this.enqueuePackage(row, { skip });
     const pagesDone = new Set(row.pagesDone);
     const panelsDone = new Set(row.panelsDone || []);
     const headers = this.client.headers();
@@ -166,6 +174,45 @@ export class Downloads extends EventTarget {
     }
   }
 
+  /**
+   * A packed comic: the package, unpacked by the native side into the
+   * comic's folder as it lands, and the panels' one answer. The server packs
+   * a comic before sending it and says how long that takes; the session asks
+   * again then by itself, with the app asleep.
+   */
+  async enqueuePackage(row, { skip = new Set() } = {}) {
+    const headers = this.client.headers();
+    const packageId = transferId(this.profileId, row.fileId, null, "package");
+    if ((row.pagesDone?.length || 0) < row.pageCount && !skip.has(packageId)) {
+      await this.native.enqueue({
+        id: packageId, url: new URL(row.packageUrl, this.client.origin).href,
+        path: packagePath(this.profileId, row.fileId), unpack: comicFolder(this.profileId, row.fileId), headers,
+      });
+    }
+    const panelsId = transferId(this.profileId, row.fileId, null, "allPanels");
+    if ((row.panelsDone?.length || 0) < row.pageCount && !skip.has(panelsId)) {
+      if (!row.panelsUrl) {
+        this.mark(row, "allPanels");
+      } else {
+        await this.native.enqueue({
+          id: panelsId, url: new URL(row.panelsUrl, this.client.origin).href,
+          path: bulkPanelsPath(this.profileId, row.fileId), headers,
+        });
+      }
+    }
+  }
+
+  /** A packed comic's bytes as they arrive, for its ring; not written down. */
+  onProgress(event) {
+    const { profileId, fileId, kind } = parseTransferId(event.id);
+    if (profileId !== this.profileId || kind !== "package") return;
+    const row = this.row(fileId);
+    if (!row || row.state !== "downloading") return;
+    row.received = Number(event.written) || 0;
+    if (Number(event.expected) > 0) row.expected = Number(event.expected);
+    this.changed();
+  }
+
   async onDone(event) {
     const { profileId, fileId, index, kind } = parseTransferId(event.id);
     if (profileId !== this.profileId) return;
@@ -178,6 +225,17 @@ export class Downloads extends EventTarget {
 
   /** One page, or one page's panels, in. */
   mark(row, kind, index, bytes = 0) {
+    const every = () => Array.from({ length: row.pageCount }, (_, page) => page);
+    if (kind === "package") {
+      row.pagesDone = every();
+      row.bytes = bytes || row.bytes;
+      row.received = row.expected || row.received;
+      return;
+    }
+    if (kind === "allPanels") {
+      row.panelsDone = every();
+      return;
+    }
     if (kind === "panels") {
       if (!(row.panelsDone || []).includes(index)) row.panelsDone = [...(row.panelsDone || []), index];
       return;
@@ -193,9 +251,14 @@ export class Downloads extends EventTarget {
     if (profileId !== this.profileId || event.cancelled) return;
     const row = this.row(fileId);
     if (!row || row.state !== "downloading") return;
-    if (kind === "panels" && event.status !== 401) {
+    if (kind === "package" && event.status === 409) {
+      // The comic changed on the server since it was asked for: as it is now.
+      await this.redownload(fileId);
+      return;
+    }
+    if ((kind === "panels" || kind === "allPanels") && event.status !== 401) {
       // Best-effort: a page whose panels could not be had is read whole.
-      this.mark(row, "panels", index);
+      this.mark(row, kind, index);
       if (downloadComplete(row)) await this.finish(row);
       else await this.save();
       return;
@@ -226,7 +289,9 @@ export class Downloads extends EventTarget {
   async finishOnce(row) {
     // Each page's panels came with it, as the server kept them (a page with
     // none is read whole offline); gathered into one file, the parts go.
-    const panels = await this.store.gatherPanelParts(this.profileId, row.fileId, row.pageCount);
+    const panels = row.packageUrl
+      ? await this.store.takeBulkPanels(this.profileId, row.fileId)
+      : await this.store.gatherPanelParts(this.profileId, row.fileId, row.pageCount);
     await this.store.savePanels(this.profileId, row.fileId, panels);
     row.state = "ready";
     row.error = null;
@@ -396,6 +461,12 @@ export class Downloads extends EventTarget {
     const { transfers = [] } = await this.native.transfers().catch(() => ({}));
     const inFlight = new Set(transfers.map((transfer) => transfer.id));
     for (const row of this.rows.filter((other) => other.state === "downloading")) {
+      if (row.packageUrl) {
+        await this.reconcilePackage(row, inFlight);
+        if (downloadComplete(row)) await this.finish(row);
+        else await this.enqueuePackage(row, { skip: inFlight });
+        continue;
+      }
       for (const page of await this.store.pagesOnDisk(this.profileId, row.fileId)) this.mark(row, "page", page.index, page.size);
       for (const index of await this.store.panelPartsOnDisk(this.profileId, row.fileId)) this.mark(row, "panels", index);
       if (downloadComplete(row)) { await this.finish(row); continue; }
@@ -403,5 +474,26 @@ export class Downloads extends EventTarget {
       await this.enqueueMissing(row, pages, { skip: inFlight });
     }
     await this.store.saveDownloads(this.profileId, this.rows);
+  }
+
+  /**
+   * A packed comic after a launch: its pages are on disk if the package
+   * landed while no page listened; a package left whole (the app stopped
+   * as it was unpacked) is unpacked now; the panels' answer, if it came.
+   */
+  async reconcilePackage(row, inFlight) {
+    const onDisk = await this.store.pagesOnDisk(this.profileId, row.fileId);
+    const packageId = transferId(this.profileId, row.fileId, null, "package");
+    if (onDisk.length >= row.pageCount) {
+      this.mark(row, "package", null, onDisk.reduce((sum, page) => sum + page.size, 0));
+    } else if (!inFlight.has(packageId) && await this.store.exists(packagePath(this.profileId, row.fileId))) {
+      try {
+        await this.native.unpack({ path: packagePath(this.profileId, row.fileId), folder: comicFolder(this.profileId, row.fileId) });
+        const pages = await this.store.pagesOnDisk(this.profileId, row.fileId);
+        if (pages.length >= row.pageCount) this.mark(row, "package", null, pages.reduce((sum, page) => sum + page.size, 0));
+      } catch { /* fetched again below */ }
+    }
+    const panelsId = transferId(this.profileId, row.fileId, null, "allPanels");
+    if (!inFlight.has(panelsId) && await this.store.exists(bulkPanelsPath(this.profileId, row.fileId))) this.mark(row, "allPanels");
   }
 }

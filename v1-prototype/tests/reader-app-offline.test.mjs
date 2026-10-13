@@ -173,3 +173,24 @@ test("downloads group by run as Kindle shelves a series; a run with one comic he
   assert.equal(nextDownloaded(run.rows).fileId, "2", "carry on from the first not finished");
   assert.equal(nextDownloaded(run.rows.map((item) => ({ ...item, finished: true }))).fileId, "2", "all read: from the first");
 });
+
+test("a packed comic's transfers have their own ids, and its progress follows the bytes", async () => {
+  const { transferId, parseTransferId, downloadRow, progressOf, packagePath, bulkPanelsPath } = await import("../src/reader-app/offline.js");
+  assert.equal(transferId("3", "63", null, "package"), "3:63:pkg");
+  assert.equal(transferId("3", "63", null, "allPanels"), "3:63:panels");
+  assert.deepEqual(parseTransferId("3:63:pkg"), { profileId: "3", fileId: "63", index: null, kind: "package" });
+  assert.deepEqual(parseTransferId("3:63:panels"), { profileId: "3", fileId: "63", index: null, kind: "allPanels" });
+  assert.deepEqual(parseTransferId("3:63:p4"), { profileId: "3", fileId: "63", index: 4, kind: "panels" }, "a page's panels as before");
+  assert.equal(packagePath("3", "63"), "u3/files/63/package.zip");
+  assert.equal(bulkPanelsPath("3", "63"), "u3/files/63/panels-all.json");
+  const row = downloadRow({ fileId: "63", pageCount: 4, bytesEstimate: 2000, pages: [],
+    package: { url: "/api/v1/files/63/package?v=s", bytes: null }, panelsUrl: "/api/v1/files/63/panels?stored=only" });
+  assert.equal(progressOf(row), 0);
+  row.received = 1000;
+  assert.ok(Math.abs(progressOf(row) - 0.485) < 0.001, "half the estimate");
+  row.expected = 4000;
+  assert.ok(Math.abs(progressOf(row) - 0.2425) < 0.001, "the server's length, once known");
+  row.pagesDone = [0, 1, 2, 3];
+  row.panelsDone = [0, 1, 2, 3];
+  assert.equal(progressOf(row), 1);
+});

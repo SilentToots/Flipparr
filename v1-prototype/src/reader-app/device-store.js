@@ -19,10 +19,23 @@ async function readJson(path, fallback) {
   }
 }
 
-async function writeJson(path, value) {
-  const temporary = `${path}.tmp`;
-  await Filesystem.writeFile({ ...at(temporary), data: JSON.stringify(value), encoding: Encoding.UTF8, recursive: true });
-  await Filesystem.rename({ from: `${ROOT}/${temporary}`, to: `${ROOT}/${path}`, directory: Directory.Library, toDirectory: Directory.Library });
+// Writes to one file, one at a time and in the order asked: two saves at once
+// (several comics finishing together, 2026-10-12) shared one .tmp, and the
+// second's rename found it gone.
+const writing = new Map();
+let written = 0;
+
+function writeJson(path, value) {
+  const data = JSON.stringify(value);
+  const run = (writing.get(path) || Promise.resolve()).catch(() => {}).then(async () => {
+    written += 1;
+    const temporary = `${path}.${written}.tmp`;
+    await Filesystem.writeFile({ ...at(temporary), data, encoding: Encoding.UTF8, recursive: true });
+    await Filesystem.rename({ from: `${ROOT}/${temporary}`, to: `${ROOT}/${path}`, directory: Directory.Library, toDirectory: Directory.Library });
+  });
+  writing.set(path, run);
+  run.finally(() => { if (writing.get(path) === run) writing.delete(path); }).catch(() => {});
+  return run;
 }
 
 export const deviceStore = {
@@ -67,6 +80,13 @@ export const deviceStore = {
       try { await Filesystem.deleteFile(at(`${comicFolder(profileId, fileId)}/panels-${index}.json`)); } catch { /* none */ }
     }
     return panels;
+  },
+  /** The panels a packed download took in one answer, {index: answer}; the file removed. */
+  async takeBulkPanels(profileId, fileId) {
+    const path = `${comicFolder(profileId, fileId)}/panels-all.json`;
+    const answer = await readJson(path, null);
+    try { await Filesystem.deleteFile(at(path)); } catch { /* none */ }
+    return answer?.pages || {};
   },
   /** Page files a comic already has: [{index, size}]. */
   async pagesOnDisk(profileId, fileId) {
