@@ -160,6 +160,20 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
     }
   }
 
+  // A page's panels fixed by hand, into a downloaded comic's own panels too,
+  // so it reads the fix offline from now on -- sent or still waiting. One
+  // page at a time: each rewrites the comic's panels.json.
+  let panelsChain = Promise.resolve();
+  function keepPanels(change, answer) {
+    const [, fileId, page] = change.key.split(":");
+    if (!answer || !store.savePanels || !readyRow(fileId)) return;
+    const forProfile = profileId;
+    panelsChain = panelsChain.then(async () => {
+      const saved = (await store.panels(forProfile, fileId)) || {};
+      await store.savePanels(forProfile, fileId, { ...saved, [page]: answer });
+    }).catch(() => {});
+  }
+
   // A comic replaced on the server since (`stale`) is still read from the
   // copy kept, offline, until it is downloaded again.
   function readyRow(fileId) {
@@ -236,6 +250,11 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       let body = {};
       try { body = JSON.parse(options.body || "{}"); } catch { body = {}; }
       const change = changeFor(path, method, body);
+      if (change?.key.startsWith("panels:")) {
+        const answer = await sendChange(path, options, change);
+        keepPanels(change, answer);
+        return answer;
+      }
       if (change) return sendChange(path, options, change);
     }
     if (!online) {

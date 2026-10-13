@@ -26,7 +26,8 @@ function setup({ reachable = true } = {}) {
     async saveProgressQueue(id, queue) { files[`q${id}`] = queue; },
     async answer(id, path) { return files[`a${id}${path}`] ?? null; },
     async saveAnswer(id, path, value) { files[`a${id}${path}`] = value; },
-    async panels() { return { 1: { segmented: true, panels: [{ x: 0 }] } }; },
+    async panels(id, fileId) { return files[`p${id}-${fileId}`] ?? { 1: { segmented: true, panels: [{ x: 0 }] } }; },
+    async savePanels(id, fileId, panels) { files[`p${id}-${fileId}`] = panels; },
     async changeQueue(id) { return files[`c${id}`] || []; },
     async saveChangeQueue(id, queue) { files[`c${id}`] = queue; },
   };
@@ -194,6 +195,39 @@ test("a rating made offline waits, shows at once, and is sent with its time on r
   assert.equal(replayed.body.rating, 4);
   assert.ok(replayed.body.at, "with when it was given");
   assert.deepEqual(files.c2, [], "and nothing waits");
+});
+
+test("a page's panels fixed offline: read so at once, kept in the downloaded comic, sent on reconnecting", async () => {
+  const { transport, server, sent, files } = setup();
+  server.reachable = false;
+  transport.setOffline();
+  const box = { x: 0.1, y: 0.1, w: 0.5, h: 0.4 };
+  const fixed = await transport.transport("/api/v1/files/63/pages/2/panels", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ panels: [box] }),
+  });
+  assert.equal(fixed.source, "manual");
+  assert.deepEqual(fixed.panels.map(({ x, y, w, h }) => ({ x, y, w, h })), [box]);
+  assert.equal(files.c2.length, 1, "the fix waits");
+  const reread = await transport.transport("/api/v1/files/63/pages/2/panels");
+  assert.equal(reread.source, "manual", "the reader asks again and gets the fix");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(files["p2-63"][2].source, "manual", "the downloaded comic keeps it");
+  assert.ok(files["p2-63"][1], "beside the pages it had");
+  server.reachable = true;
+  await transport.probe();
+  await transport.replay();
+  const replayed = sent.filter((item) => item.path === "/api/v1/files/63/pages/2/panels").at(-1);
+  assert.equal(replayed.method, "PATCH");
+  assert.deepEqual(replayed.body.panels, [box]);
+  assert.deepEqual(files.c2, [], "and nothing waits");
+});
+
+test("reading a page again needs the server: offline it is refused, not kept", async () => {
+  const { transport, server, files } = setup();
+  server.reachable = false;
+  transport.setOffline();
+  await assert.rejects(transport.transport("/api/v1/files/63/pages/2/panels", { method: "DELETE" }), (error) => error.network === true);
+  assert.equal((files.c2 || []).length, 0);
 });
 
 test("a reading-list entry taken off offline is sent as a DELETE with ?at=", async () => {

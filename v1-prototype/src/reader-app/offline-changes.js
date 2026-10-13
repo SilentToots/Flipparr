@@ -1,6 +1,7 @@
 // What a profile changes about its own reading while Flipparr View cannot
 // reach the server (Phase 5): a rating, a run or story arc marked read or
-// unread, a reading-list entry added or taken off. Each waits on the device
+// unread, a reading-list entry added or taken off -- and the admin's fix to
+// a page's panels (the owner, 2026-10-12), sent as made, last one standing. Each waits on the device
 // as one row per thing changed -- the latest wins -- with when it was made,
 // and is sent on reconnecting with that `at`, so the server keeps whichever
 // is newer (catalog_store `set_rating`, `set_reading_list_entry`,
@@ -15,6 +16,7 @@ const RATING = /^\/api\/v1\/(issues|series)\/(\d+)\/rating$/;
 const BOOKMARK = /^\/api\/v1\/me\/reading-list\/(run|arc|collection)\/(\d+)$/;
 const RUN_READ = /^\/api\/v1\/series\/(\d+)\/reading$/;
 const ARC_READ = /^\/api\/v1\/reading-lists\/(\d+)\/reading$/;
+const PANELS = /^\/api\/v1\/files\/(\d+)\/pages\/(\d+)\/panels$/;
 
 /**
  * A request that can wait on the device, as a change: `{key, path, method,
@@ -41,7 +43,26 @@ export function changeFor(path, method = "GET", body = {}) {
   if (match && verb === "POST" && typeof body.read === "boolean") {
     return { key: `arc-read:${match[1]}`, path: clean, method: "POST", body: { read: body.read } };
   }
+  // A page's panels fixed by hand. Reading a page again (DELETE) needs the
+  // server's finder, so it is not one of these.
+  match = clean.match(PANELS);
+  if (match && verb === "PATCH" && Array.isArray(body.panels)) {
+    return { key: `panels:${match[1]}:${match[2]}`, path: clean, method: "PATCH", body: { panels: body.panels } };
+  }
   return null;
+}
+
+/**
+ * A page's panels as the server answers once it keeps a person's fix
+ * (app.py `file_page_panels`): in the order drawn, the reader's ids, and no
+ * rectangles for the page read whole.
+ */
+export function manualReading(fileId, page, panels, readingDirection = undefined) {
+  return {
+    fileId: String(fileId), page: Number(page), source: "manual", segmented: true,
+    ...(readingDirection ? { readingDirection } : {}),
+    panels: panels.map((panel, position) => ({ id: `${page}-${position}`, ...panel, order: position })),
+  };
 }
 
 /** The queue with a change in it: one row per thing, the latest replacing what waited. */
@@ -62,7 +83,7 @@ export function replayRequest(row) {
   }
   return {
     path: row.path,
-    options: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...row.body, at: row.at }) },
+    options: { method: row.method || "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...row.body, at: row.at }) },
   };
 }
 
@@ -159,8 +180,13 @@ export function withChanges(path, answer, queue) {
   const marks = new Map(queue.filter((row) => /^(run|arc)-read:/.test(row.key)).map((row) => [row.key, row]));
   if (clean === "/api/v1/catalog") return patchCatalog(answer, ratings);
   if (clean === "/api/v1/me/reading-list") return bookmarks.length ? patchReadingList(answer, bookmarks) : answer;
+  let match = clean.match(PANELS);
+  if (match) {
+    const fix = queue.find((row) => row.key === `panels:${match[1]}:${match[2]}`);
+    return fix ? manualReading(match[1], match[2], fix.body.panels, answer.readingDirection) : answer;
+  }
   if (!marks.size) return answer;
-  let match = clean.match(/^\/api\/v1\/series\/(\d+)\/reading$/);
+  match = clean.match(/^\/api\/v1\/series\/(\d+)\/reading$/);
   if (match) return patchRunReading(answer, match[1], marks);
   match = clean.match(/^\/api\/v1\/reading-lists\/(\d+)$/);
   if (match) return patchArc(answer, match[1], marks);
@@ -179,6 +205,7 @@ export function answerWhileWaiting(change, kept, queue) {
   if (kind === "list") return withChanges("/api/v1/me/reading-list", kept || { runs: [], arcs: [], collections: [] }, queue);
   if (kind === "run-read") return withChanges(`/api/v1/series/${subject}/reading`, kept || {}, queue);
   if (kind === "arc-read") return withChanges(`/api/v1/reading-lists/${subject}`, kept || {}, queue);
+  if (kind === "panels") return manualReading(subject, id, change.body.panels, kept?.readingDirection);
   return {};
 }
 

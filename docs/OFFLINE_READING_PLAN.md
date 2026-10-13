@@ -1047,6 +1047,17 @@ Then (same day), from his follow-ups:
   Push (the server waking the app) would need Apple's notification
   service per household server; not for the first release.
 
+- **Panel fixes offline (the owner, 2026-10-12):** the 2026-10-09 build
+  fixed panels only while online ("a later step"). Now the admin's Fix
+  panels stays offline: a page's fix (`PATCH …/pages/{n}/panels`) waits in
+  the change queue as `panels:<file>:<page>`, the reader reads it at once
+  (`withChanges`), the downloaded comic's `panels.json` keeps it, and it is
+  sent as a PATCH on reconnecting -- the last fix of a page standing, as
+  the server keeps a person's fix (no `at` there: a fix made on the web
+  meanwhile is overwritten by the one sent later). Reading a page again
+  and Scan again need the server's finder, so offline they say Flipparr
+  could not be reached.
+
 ### Phase 8 — live updates (only if the owner answers yes to open question 4)
 - `@capgo/capacitor-updater` (MPL-2.0; using it unmodified is compatible
   with an MIT app — record the check) in manual mode: `download`, `next`,

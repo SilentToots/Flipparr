@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  answerWhileWaiting, changeFor, dropChange, queueChange, replayRequest, withChanges, withPlaces,
+  answerWhileWaiting, changeFor, dropChange, manualReading, queueChange, replayRequest, withChanges, withPlaces,
 } from "../src/reader-app/offline-changes.js";
 
 test("ratings, reading-list entries and run and arc marks can wait; nothing else does", () => {
@@ -111,4 +111,25 @@ test("a comic marked or read offline shows so in its run and its arcs", () => {
   const arc = withPlaces("/api/v1/reading-lists/7", { items: [{ fileId: "64", page: 0, pageCount: 8 }, { fileId: null }] }, places);
   assert.deepEqual([arc.items[0].page, arc.items[0].finishedAt], [7, "t2"], "the last page finishes it");
   assert.equal(withPlaces("/api/v1/catalog", reading, places), reading);
+});
+
+test("a page's panels fixed by hand can wait; reading the page again cannot", () => {
+  const box = { x: 0, y: 0, w: 1, h: 0.5 };
+  const change = changeFor("/api/v1/files/63/pages/4/panels", "PATCH", { panels: [box] });
+  assert.equal(change.key, "panels:63:4");
+  assert.deepEqual(change.body, { panels: [box] });
+  assert.equal(changeFor("/api/v1/files/63/pages/4/panels", "DELETE"), null);
+  assert.equal(changeFor("/api/v1/files/63/pages/4/panels", "PATCH", {}), null);
+  const queue = queueChange([], change, "2026-10-12T20:00:00Z");
+  const replay = replayRequest(queue[0]);
+  assert.equal(replay.options.method, "PATCH", "sent as made, not as a POST");
+  assert.deepEqual(JSON.parse(replay.options.body), { panels: [box], at: "2026-10-12T20:00:00Z" });
+  const automatic = { fileId: "63", page: 4, source: "auto", segmented: true, readingDirection: "rtl", panels: [{ id: "4-0", x: 0.2, y: 0.2, w: 0.1, h: 0.1 }] };
+  const shown = withChanges("/api/v1/files/63/pages/4/panels?vision=no", automatic, queue);
+  assert.equal(shown.source, "manual");
+  assert.equal(shown.readingDirection, "rtl");
+  assert.deepEqual(shown.panels[0], { id: "4-0", ...box, order: 0 });
+  assert.equal(withChanges("/api/v1/files/63/pages/5/panels", automatic, queue), automatic, "another page is untouched");
+  assert.deepEqual(answerWhileWaiting(change, null, queue), manualReading("63", "4", [box]));
+  assert.deepEqual(manualReading("63", 4, []).panels, [], "no rectangles: the page read whole, as the server keeps it");
 });

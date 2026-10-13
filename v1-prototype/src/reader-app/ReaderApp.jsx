@@ -611,10 +611,10 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // Download for a whole run, arc or collection beside its bookmark.
   const host = useMemo(() => ({
     api: apiRequest,
-    // Panel fixes as on the web (the admin's), and only while Flipparr
-    // answers: a fix saves to the server as it is made (the owner,
-    // 2026-10-09; fixes made offline and sent later are a later step).
-    canEditPanels: online && viewer.role === "admin",
+    // Panel fixes as on the web (the admin's), online or not: offline a
+    // fix waits on the device, the downloaded comic reads it at once, and
+    // it is sent on reconnecting (the owner, 2026-10-12).
+    canEditPanels: viewer.role === "admin",
     canManage: false,
     // A reader, not an acquisition tool: no owned counts, no missing issues.
     readerOnly: true,

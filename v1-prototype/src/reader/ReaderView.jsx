@@ -523,8 +523,9 @@ export function ReaderView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The page's panels, being corrected by hand over the page itself.
   const [fixingPanels, setFixingPanels] = useState(false);
-  // The host can take panel fixing away while the editor is open: Flipparr
-  // View does when the server stops answering, as a fix saves to it.
+  // The host can take panel fixing away while the editor is open (a
+  // profile switched under it); Flipparr View keeps it offline, its fixes
+  // waiting on the device.
   const canFixPanels = useHost().canEditPanels;
   // Reading an issue's panels again: the comic's automatic readings are
   // forgotten on the server (a person's pages stay theirs) and the reader's
