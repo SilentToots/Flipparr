@@ -6957,26 +6957,70 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
     pages = archive_page_members(source)
     if not pages:
         raise ValueError("The archive has no pages")
-    folder = unpack_archive(source)
+    report: dict[str, Any] = {}
+    folder = unpack_archive(source, report)
     try:
+        if not report.get("clean", True):
+            # The tool stopped on a member it could not decode, leaving the
+            # rest unpacked and that one perhaps half written: nothing from
+            # this pass is trusted. Each member is asked for on its own, and
+            # must come back whole, or the comic stays as it is.
+            shutil.rmtree(folder, ignore_errors=True)
+            folder = None
+            strict = {name: _member_strictly(source, name) for name in set(names) | set(pages)}
+            unreadable = [name for name in pages if strict[name] is None]
+            if unreadable:
+                raise UnreadablePages(unreadable, len(pages))
         kept = 0
         with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as archive:
             for name in sorted(set(names), key=_natural_member_key):
                 try:
-                    data = read_unpacked_member(folder, name, CBZ_MEMBER_MAX_BYTES)
+                    if folder is not None:
+                        data = read_unpacked_member(folder, name, CBZ_MEMBER_MAX_BYTES)
+                    elif strict[name] is None:
+                        raise ValueError("unreadable")
+                    else:
+                        data = strict[name]
                 except ValueError:
                     if name in pages:
-                        raise ValueError(f"Page {name} could not be read from the archive") from None
+                        raise UnreadablePages([name], len(pages)) from None
                     continue  # an empty file, a link, a name outside the archive: not part of the comic
                 entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                 entry.compress_type = zipfile.ZIP_STORED
                 archive.writestr(entry, data)
                 kept += 1
     finally:
-        shutil.rmtree(folder, ignore_errors=True)
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
     if archive_page_members(target) != pages:
         raise ValueError("The CBZ did not have the archive's pages")
     return kept
+
+
+class UnreadablePages(ValueError):
+    """Pages of a comic that cannot be read whole: the archive is damaged
+    (production, 2026-10-13: unrar finds the same pages failing their
+    checksums), and the comic needs a new copy rather than a conversion."""
+
+    def __init__(self, pages: list[str], total: int) -> None:
+        self.pages, self.total = list(pages), int(total)
+        first = Path(self.pages[0]).name if self.pages else ""
+        super().__init__(f"{len(self.pages)} of {self.total} pages can't be read (first: {first}); "
+                         "the archive is damaged")
+
+
+def _member_strictly(path: Path, member: str) -> bytes | None:
+    """One member, only if the tool hands it over whole and says nothing went
+    wrong: `read_archive_member` takes a partial answer for a cover, which a
+    conversion must never keep as a page."""
+    tool = _external_archive_tool()
+    if not tool or member.startswith("-"):
+        return None
+    try:
+        stdout, _stderr, returncode = _run_tool_bounded([tool, "-xOf", str(path), member], CBZ_MEMBER_MAX_BYTES)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return stdout if stdout and returncode == 0 else None
 
 
 # ---- Converting the library's existing comics to CBZ (step 6) ---------------
@@ -7067,7 +7111,31 @@ def _run_cbz_conversion(files: list[dict[str, Any]], keep_originals: bool) -> No
 
 def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_original: bool = True) -> str:
     """One comic in the library stored as CBZ beside where it was, its record
-    kept: "converted", or "kept" (left as it is, and why, in cbz_conversions)."""
+    kept: "converted", or "kept" (left as it is, and why, in cbz_conversions).
+    A comic that fails is left as it is and the failure kept there too, past
+    the container's log; one whose pages cannot be read is marked damaged, so
+    Library health offers to replace it."""
+    try:
+        return _convert_library_file_to_cbz(file_id, path, root, keep_original=keep_original)
+    except Exception as exc:
+        store = catalog_store()
+        try:
+            size = path.stat().st_size if path.exists() else None
+            store.record_cbz_conversion(path.name, archive_kind(path) if path.exists() else None, size, None, None,
+                                        "kept", f"failed: {shown(exc) or type(exc).__name__}", file_id=file_id)
+            if isinstance(exc, UnreadablePages):
+                store.set_file_health(file_id, str(path), {
+                    "status": "error", "code": "unreadable_pages",
+                    "message": f"{len(exc.pages)} of {exc.total} pages can't be read "
+                               f"({', '.join(Path(name).name for name in exc.pages[:3])}"
+                               f"{'…' if len(exc.pages) > 3 else ''}). The archive is damaged; replace the comic.",
+                })
+        except Exception as inner:  # noqa: BLE001 -- the comic's own failure is the one to raise
+            log_exception("cbz_library_conversion_record_failed", inner, level="warning", fileId=file_id)
+        raise
+
+
+def _convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_original: bool = True) -> str:
     store = catalog_store()
     kind = archive_kind(path)
     size = path.stat().st_size
@@ -14489,11 +14557,14 @@ UNPACK_BYTES_MAX = 4 * 1024 * 1024 * 1024
 UNPACK_SECONDS_MAX = 120
 
 
-def unpack_archive(path: Path) -> Path:
+def unpack_archive(path: Path, report: dict[str, Any] | None = None) -> Path:
     """Unpack a non-zip archive once into a fresh work folder, bounded in
     size and time; the caller removes the folder. bsdtar refuses absolute
     and `..` names unless told otherwise (-P), and the members are read back
-    only from inside the folder (`read_unpacked_member`)."""
+    only from inside the folder (`read_unpacked_member`). With `report`, how
+    the tool finished: `clean` is False when it complained about any member
+    -- one it could not decode stops it there, and the member it stopped on
+    can be left on disk part written."""
     tool = _external_archive_tool()
     if not tool:
         raise ArchiveToolMissing("This comic is a RAR archive, which needs bsdtar (libarchive-tools) to read.")
@@ -14515,6 +14586,10 @@ def unpack_archive(path: Path) -> Path:
             time.sleep(0.1)
         if _folder_bytes(folder) > cap:
             raise ValueError("The archive unpacked to more than a comic could be")
+        if report is not None:
+            said = process.stderr.read(64 * 1024) if process.stderr else b""
+            report.update({"clean": process.returncode == 0,
+                           "said": said.decode("utf-8", "replace").strip().splitlines()[-1:] or []})
         # A partly damaged archive still yields the pages it can reach; the
         # pages that are missing fail on their own when read.
         return folder

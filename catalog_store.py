@@ -698,6 +698,7 @@ def _health_label(code: str) -> str:
         "corrupt_archive": "Corrupt archive",
         "mislabeled_archive": "Mislabeled archive",
         "no_image_pages": "No image pages",
+        "unreadable_pages": "Damaged pages",
         "invalid_pdf": "Invalid PDF",
     }.get(code, code.replace("_", " ").title())
 
@@ -5534,6 +5535,23 @@ class CatalogStore:
                 (source_name, source_kind, source_bytes, cbz_bytes, members, outcome, reason, _utc_now(),
                  file_id, from_signature, to_signature),
             )
+
+    def set_file_health(self, file_id: int, path: str, health: dict[str, Any]) -> bool:
+        """A file found to be damaged after its scan -- reading every page
+        for a CBZ conversion does what the scan's cheap checks cannot. Kept
+        in the file's analysis, so Library health shows it with Replace, and
+        kept until the file itself changes (a scan reuses an unchanged
+        file's analysis; a new copy is looked at afresh)."""
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute("SELECT result_json FROM files WHERE id=? AND path=?",
+                                     (int(file_id), path)).fetchone()
+            if row is None:
+                return False
+            result = _load_json(row["result_json"], {}) or {}
+            result["file_health"] = dict(health)
+            connection.execute("UPDATE files SET result_json=?, updated_at=? WHERE id=?",
+                               (_json(result), _utc_now(), int(file_id)))
+        return True
 
     def converted_from(self, file_id: int, from_signature: str, to_signature: str) -> bool:
         """Whether this file became `to_signature` by a CBZ conversion of

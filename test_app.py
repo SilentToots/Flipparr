@@ -11612,6 +11612,40 @@ class LibraryCbzConversionTests(_ComicCopiesTestCase):
         [row] = self.store.cbz_conversions()
         self.assertEqual((row["file_id"], row["from_signature"], row["to_signature"]), (self.file_id, before, after))
 
+    def test_a_damaged_comic_is_left_as_it_is_recorded_and_offered_for_replacement(self):
+        import tarfile
+        with tarfile.open(self.comic) as archive:
+            last = archive.getmember("03.jpg")
+        self.comic.write_bytes(self.comic.read_bytes()[: last.offset_data + last.size // 2])  # the last page cut short
+        damaged = self.comic.read_bytes()
+        with self.assertRaises(app.UnreadablePages) as caught:
+            app.convert_library_file_to_cbz(self.file_id, self.comic, self.root)
+        self.assertIn("03.jpg", caught.exception.pages)
+        self.assertEqual(self.comic.read_bytes(), damaged, "the comic left exactly as it was")
+        self.assertFalse((self.root / "Example 001.cbz").exists())
+        self.assertFalse((self.root / ".flipparr" / "converted").exists())
+        [row] = self.store.cbz_conversions()
+        self.assertEqual((row["outcome"], row["file_id"]), ("kept", self.file_id))
+        self.assertTrue(row["reason"].startswith("failed: "), row["reason"])
+        with sqlite3.connect(self.store.database_path) as connection:
+            result = json.loads(connection.execute("SELECT result_json FROM files WHERE id=?", (self.file_id,)).fetchone()[0])
+        self.assertEqual((result["file_health"]["status"], result["file_health"]["code"]), ("error", "unreadable_pages"))
+        from catalog_store import _health_label
+        self.assertEqual(_health_label("unreadable_pages"), "Damaged pages")
+
+    def test_a_pass_the_tool_stopped_part_way_is_not_trusted_but_whole_members_are(self):
+        """bsdtar stops at a member it cannot decode and can leave it half
+        written; the conversion then asks for each member on its own."""
+        def stopped(path, report=None):
+            folder = Path(tempfile.mkdtemp(dir=self.root))
+            (folder / "01.jpg").write_bytes(self.pages[0][:100])  # half written
+            report.update({"clean": False, "said": ["Bad RAR file data"]})
+            return folder
+        with patch("app.unpack_archive", side_effect=stopped):
+            self.assertEqual(app.convert_library_file_to_cbz(self.file_id, self.comic, self.root), "converted")
+        with zipfile.ZipFile(self.root / "Example 001.cbz") as archive:
+            self.assertEqual([archive.read(name) for name in ("01.jpg", "02.jpg", "03.jpg")], self.pages)
+
     def test_a_scan_cut_off_by_a_restart_does_not_hold_the_job_back(self):
         with sqlite3.connect(self.store.database_path) as connection:
             connection.execute("UPDATE scan_runs SET status='scanning', started_at=?",
