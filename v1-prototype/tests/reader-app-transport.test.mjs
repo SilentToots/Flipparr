@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAppTransport } from "../src/reader-app/transport.js";
+import { PANELS_TIMEOUT_MS, REQUEST_TIMEOUT_MS, createAppTransport } from "../src/reader-app/transport.js";
 
 // A server that can be switched off, a device store in memory, and one
 // downloaded comic.
@@ -134,8 +134,47 @@ test("a request can wait less than the usual time, as a launch's check does", as
     setTimer: (fire, ms) => { waits.push(ms); fire(); return 0; }, clearTimer: () => {},
   });
   await assert.rejects(transport.transport("/api/v1/auth/status", { timeoutMs: 5000 }), (error) => error.network === true);
-  assert.deepEqual(waits, [5000]);
-  assert.equal(transport.online, false, "and the server counts as unreachable");
+  assert.deepEqual(waits, [5000, REQUEST_TIMEOUT_MS], "then the usual wait to see whether the server answers at all");
+  assert.equal(transport.online, false, "and, as it does not, the server counts as unreachable");
+});
+
+// The owner's iPhone, 2026-10-12: a panel reading took 23 s on a busy
+// server, the app counted it as gone, and Fix panels vanished mid-fix.
+function slowServer() {
+  const waits = [];
+  const asked = [];
+  const transport = createAppTransport({
+    client: { api: (path) => { asked.push(path); return path === "/api/v1/app" ? Promise.resolve({ name: "Flipparr" }) : new Promise(() => {}); } },
+    store: { progressQueue: async () => [], saveProgressQueue: async () => {}, answer: async () => null, saveAnswer: async () => {},
+      panels: async () => null, changeQueue: async () => [], saveChangeQueue: async () => {} },
+    setTimer: (fire, ms) => { waits.push(ms); fire(); return 0; }, clearTimer: () => {},
+  });
+  return { transport, waits, asked };
+}
+
+test("a request that only runs out of time leaves the app online when the server still answers", async () => {
+  const { transport, asked } = slowServer();
+  const changes = [];
+  transport.subscribe((online) => changes.push(online));
+  await assert.rejects(transport.transport("/api/v1/catalog"), (error) => error.network === true && error.timedOut === true);
+  assert.deepEqual(asked, ["/api/v1/catalog", "/api/v1/app"]);
+  assert.equal(transport.online, true);
+  assert.deepEqual(changes, [], "never offline, so nothing hides");
+});
+
+test("a page's panels are waited for longer, as the vision model can take half a minute", async () => {
+  const { transport, waits } = slowServer();
+  await assert.rejects(transport.transport("/api/v1/files/63/pages/4/panels"));
+  assert.equal(waits[0], PANELS_TIMEOUT_MS);
+  assert.ok(PANELS_TIMEOUT_MS >= 30000);
+});
+
+test("a place saved to a slow server waits on the device without taking the app offline", async () => {
+  const { transport } = slowServer();
+  transport.attach("2", null);
+  const place = await transport.transport("/api/v1/files/63/progress", save({ page: 2 }));
+  assert.equal(place.page, 2);
+  assert.equal(transport.online, true);
 });
 
 

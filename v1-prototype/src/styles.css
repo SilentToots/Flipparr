@@ -2414,8 +2414,12 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   .monitoring-summary { align-items: flex-start; flex-direction: column; }
   .drawer-identity { align-items: flex-start; }
   .drawer-cover { flex-basis: 90px; width: 90px; height: 120px; }
-  .series-drawer, .collection-drawer { width: 100%; padding: var(--space-20) var(--space-16) calc(var(--space-24) + env(safe-area-inset-bottom)); border-left: 0; }
-  .series-drawer > .modal-close { top: 12px; right: 12px; }
+  /* Full screen on a phone, so under the status bar where the page runs
+     to the screen's top (Flipparr View; viewport-fit=cover): the title and
+     Back clear it (the owner, 2026-10-12: Reader settings' Back sat in it).
+     A comic drawer pads its own hero. */
+  .series-drawer, .collection-drawer { width: 100%; padding: calc(var(--space-20) + env(safe-area-inset-top)) var(--space-16) calc(var(--space-24) + env(safe-area-inset-bottom)); border-left: 0; }
+  .series-drawer > .modal-close { top: calc(12px + env(safe-area-inset-top)); right: 12px; }
   .drawer-actions { flex-wrap: wrap; }
   .drawer-actions > button { white-space: nowrap; }
   .coverage-overview { grid-template-columns: 1fr; }

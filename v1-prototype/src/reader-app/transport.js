@@ -38,9 +38,16 @@ import {
 export const REQUEST_TIMEOUT_MS = 15000;
 /** How often an offline app asks whether the server is back. */
 export const PROBE_EVERY_MS = 30000;
+/**
+ * How long a page's panels are waited for. The server may ask the vision
+ * model, which took 19 and 23 s on production (2026-10-12, the owner's
+ * iPhone); at the usual 15 s the page fell back to whole and the app took
+ * the server for gone.
+ */
+export const PANELS_TIMEOUT_MS = 60000;
 
-function unreachable(cause) {
-  return Object.assign(new Error("Flipparr could not be reached"), { network: true, cause });
+function unreachable(cause, timedOut = false) {
+  return Object.assign(new Error("Flipparr could not be reached"), { network: true, timedOut, cause });
 }
 
 export function createAppTransport({ client, store, onLost = () => {}, now = () => new Date().toISOString(),
@@ -64,7 +71,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
   function send(path, { timeoutMs: wait = timeoutMs, ...options } = {}) {
     let timer;
     const started = Date.now();
-    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error(`timed out after ${wait} ms`))), wait); });
+    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error(`timed out after ${wait} ms`), true)), wait); });
     return Promise.race([client.api(path, options), late])
       .catch((error) => {
         // Why the app thinks it is offline, in the device's console: the
@@ -73,6 +80,27 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
         throw error;
       })
       .finally(() => clearTimer(timer));
+  }
+
+  /** Whether the server answers its one public route, without saying so to anyone. */
+  async function reachable() {
+    try {
+      await send("/api/v1/app", { headers: {} });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A request that failed for want of the server. One that only ran out of
+   * time may have met a busy server, not a missing one: the app goes offline
+   * only if the server then does not answer at all (the owner, 2026-10-12:
+   * a slow panel reading hid Fix panels and closed the open editor).
+   */
+  async function lost(error) {
+    if (error.timedOut && await reachable()) return;
+    setOnline(false);
   }
 
   /** The profile's queue, changed one at a time. */
@@ -124,7 +152,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       return answer;
     } catch (error) {
       if (error.network) {
-        setOnline(false);
+        await lost(error);
         return wait(change);
       }
       if (error.status === 401) onLost();
@@ -185,7 +213,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       return answer;
     } catch (error) {
       if (error.network) {
-        setOnline(false);
+        await lost(error);
         return progressFromBody(fileId, body, at, { pageCount: row?.pageCount });
       }
       // Refused, not unreachable: it will not be accepted later either.
@@ -216,7 +244,8 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       throw unreachable();
     }
     try {
-      const answer = await send(path, options);
+      const wait = method === "GET" && route?.kind === "panels" && options.timeoutMs === undefined ? { timeoutMs: PANELS_TIMEOUT_MS } : {};
+      const answer = await send(path, { ...options, ...wait });
       setOnline(true);
       if (method === "GET" && profileId !== null) {
         if (keepsAnswer(path)) store.saveAnswer(profileId, path, answer).catch(() => {});
@@ -226,7 +255,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       return answer;
     } catch (error) {
       if (error.network) {
-        setOnline(false);
+        await lost(error);
         const answer = method === "GET" ? await fromDevice(path, route) : undefined;
         if (answer !== undefined) return shown(path, answer);
       }
@@ -252,7 +281,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
           // had one -- is where the comic opens next, online or not.
           if (answer && typeof answer === "object") store.saveAnswer(forProfile, path, answer).catch(() => {});
         } catch (error) {
-          if (error.network) { setOnline(false); return; }
+          if (error.network) { await lost(error); return; }
           if (error.status === 401) { onLost(); return; }
           // Gone or refused: not sendable later either.
           await withQueue((queue) => queueDrop(queue, row.fileId, row.at));
@@ -268,7 +297,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
           const { path, options } = replayRequest(row);
           await send(path, options);
         } catch (error) {
-          if (error.network) { setOnline(false); return; }
+          if (error.network) { await lost(error); return; }
           if (error.status === 401) { onLost(); return; }
           // Gone or refused: not sendable later either.
         }
@@ -280,14 +309,9 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
 
   /** Whether the server is back: the one public route, answered quickly. */
   async function probe() {
-    try {
-      await send("/api/v1/app", { headers: {} });
-      setOnline(true);
-      return true;
-    } catch {
-      setOnline(false);
-      return false;
-    }
+    const back = await reachable();
+    setOnline(back);
+    return back;
   }
 
   return {

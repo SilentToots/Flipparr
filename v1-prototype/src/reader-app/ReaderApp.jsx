@@ -546,6 +546,9 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       setSelectedSeries(null);
       setSelectedList(null);
       setRunCollectionId(null);
+      // And a run's downloads drawer: Continue there opened the comic under
+      // it, so nothing seemed to happen (the owner, 2026-10-12).
+      setDownloadsRun(null);
       setFinishedFileId("");
       // A comic opened is kept on the device too, downloading behind the
       // reader as Kindle and Apple Books do (the owner, 2026-10-09), so it
