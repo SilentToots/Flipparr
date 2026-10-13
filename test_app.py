@@ -11515,6 +11515,15 @@ class ArchiveCheckTests(_ComicCopiesTestCase):
         self.assertTrue(app.page_image_damage("01.jpg", page[: len(page) // 2]))
         self.assertTrue(app.page_image_damage("01.png", b"\x00" * 64))
 
+    def test_libarchive_saying_a_rars_data_is_broken_is_proof_and_unsupported_is_not(self):
+        """libarchive 3.8.9's wording for production's damaged RARs (2026-10-13)."""
+        for said in ("x.jpg: Bad RAR file data: Invalid or incomplete multibyte or wide character",
+                     "x.jpg: Invalid PPMd sequence", "x.jpg: Invalid location to Huffman tree specified"):
+            self.assertTrue(app._says_damaged([said]), said)
+        self.assertFalse(app._says_damaged(["Unsupported compression method for RAR file"]))
+        self.assertEqual(app._tool_complaint("x.jpg: Invalid PPMd sequence\nbsdtar: Error exit delayed from previous errors"),
+                         "x.jpg: Invalid PPMd sequence", "the line that says what, not the one it ends on")
+
     def test_the_check_marks_a_damaged_comic_keeps_why_and_skips_what_it_read_whole(self):
         ids = self._damaged_and_whole()
         whole, damaged = ids["Example 001.cbz"], ids["Example 002.cbz"]

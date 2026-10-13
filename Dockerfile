@@ -35,6 +35,34 @@ RUN apt-get update \
  && make -j"$(nproc)" && make install \
  && mkdir /out && cp -L /opt/sqlite/lib/libsqlite3.so.0 /out/libsqlite3.so.0
 
+# libarchive (bsdtar), built from source. Debian 12's is 3.6.2, which fails on
+# valid RAR comics: on production's library (2026-10-13) it refused pages of
+# Geiger #018, Ultimate Spider-Man #046 and #081, Harrow County #025 and Green
+# Lantern #023 that unrar reads and that decode, so the reader could not show
+# them and the damage check called them damaged; and it stops at the first bad
+# member of a damaged RAR, hiding the good pages after it. 3.8.9 agreed with
+# unrar on all 42 RARs tried (33 whole, page for page; 9 damaged), where 3.6.2
+# got 5 wrong and unar 3. BSD-licensed, like Debian's. Pinned by checksum, the
+# digest GitHub records for the release asset; its signature was checked
+# against Martin Matuska's key (659C 84C0 E23E A1FA 97E0 B58C C040 B508 D63D
+# 2B36), 2026-10-13. Only bsdtar and the library are kept.
+FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS libarchive-build
+ADD --checksum=sha256:888c934f9d95648ecb9163dc8e23ab80a476ecb81a8f1154704a227b5b676dde \
+    https://github.com/libarchive/libarchive/releases/download/v3.8.9/libarchive-3.8.9.tar.xz /tmp/libarchive.tar.xz
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes gcc libc6-dev make xz-utils \
+      zlib1g-dev libbz2-dev liblzma-dev libzstd-dev liblz4-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir /tmp/libarchive && tar -xJf /tmp/libarchive.tar.xz -C /tmp/libarchive --strip-components=1 \
+ && cd /tmp/libarchive \
+ && ./configure --prefix=/opt/libarchive --disable-static --without-openssl --without-xml2 --without-expat \
+      --without-nettle --without-mbedtls --disable-acl --disable-xattr \
+      --disable-bsdcpio --disable-bsdcat --disable-bsdunzip \
+ && make -j"$(nproc)" && make install \
+ && mkdir -p /out/bin /out/lib \
+ && cp -L /opt/libarchive/bin/bsdtar /out/bin/bsdtar \
+ && cp -L /opt/libarchive/lib/libarchive.so.13 /out/lib/libarchive.so.13
+
 FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
 
 # Stamped by the build with the commit that produced it, and reported by
@@ -55,15 +83,19 @@ ENV FLIPPARR_BUILD=${FLIPPARR_BUILD} \
 # decoded in pure Python. bsdtar (libarchive) reads it, and unlike unrar or
 # 7-Zip's RAR decoder it is BSD-licensed, so redistributing this image with it
 # carries no condition. It also covers .cb7 and .cbt, which were routed to a
-# zip reader and could never have worked.
+# zip reader and could never have worked. The build is libarchive-build's,
+# with the compression libraries it was built against.
 RUN apt-get update \
- && apt-get install --no-install-recommends --yes libarchive-tools \
+ && apt-get install --no-install-recommends --yes zlib1g libbz2-1.0 liblzma5 libzstd1 liblz4-1 \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=libarchive-build /out/bin/bsdtar /usr/local/bin/bsdtar
+COPY --from=libarchive-build /out/lib/libarchive.so.13 /usr/local/lib/libarchive.so.13
 
 # The fixed SQLite (see sqlite-build) ahead of Debian's: /usr/local/lib comes
 # first in the loader's search path, so Python's sqlite3 module loads it.
 COPY --from=sqlite-build /out/libsqlite3.so.0 /usr/local/lib/libsqlite3.so.0
-RUN ldconfig && python -c "import sqlite3, sys; sys.exit(sqlite3.sqlite_version_info < (3, 51, 3))"
+RUN ldconfig && python -c "import sqlite3, sys; sys.exit(sqlite3.sqlite_version_info < (3, 51, 3))" \
+ && bsdtar --version | grep -q "libarchive 3.8.9"
 
 WORKDIR /app
 COPY requirements.txt ./

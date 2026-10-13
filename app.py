@@ -7065,7 +7065,20 @@ def _member_strictly(path: Path, member: str) -> tuple[bytes | None, str]:
 # What libarchive says of data that is not what the archive promised: proof
 # the file itself is damaged, as unrar agreed on production's (2026-10-13).
 # Anything else -- an unsupported method or filter -- may be this machine.
-_ARCHIVE_DAMAGE_WORDS = re.compile(r"CRC|checksum|Bad RAR file data|Truncated|Damaged|corrupt", re.IGNORECASE)
+# libarchive 3.8.9 words a RAR's broken compressed data several ways (Bad RAR
+# file data, Invalid PPMd sequence, Invalid location to Huffman tree); on 42 of
+# production's RARs it said so exactly where unrar found checksum errors. Its
+# "unsupported" messages are not among these.
+_ARCHIVE_DAMAGE_WORDS = re.compile(
+    r"CRC|checksum|Bad RAR file data|Invalid PPMd|Huffman|Truncated|Damaged|corrupt", re.IGNORECASE)
+
+
+def _tool_complaint(said: str) -> str:
+    """The line of a tool's complaint that says what went wrong, not the
+    "Error exit delayed from previous errors" it ends on."""
+    lines = [line.strip() for line in (said or "").splitlines() if line.strip()]
+    telling = [line for line in lines if "exit delayed" not in line]
+    return (telling or lines or [""])[0]
 
 
 def _says_damaged(said: Iterable[str]) -> bool:
@@ -7158,7 +7171,7 @@ def check_comic_archive(path: Path) -> dict[str, Any]:
             # Pages the tool would not hand over prove damage only when it
             # said so; a page that is no whole image proves it regardless.
             proven = not unread or _says_damaged(tool_said)
-            said = [*(line.strip().splitlines()[-1] for line in tool_said if line and line.strip()), *said]
+            said = [*(_tool_complaint(line) for line in tool_said if line and line.strip()), *said]
     if bad:
         result.update({"outcome": "damaged" if proven else "unreadable", "pages": bad, "said": "; ".join(said)[:1000]})
     return result
@@ -14960,8 +14973,11 @@ def unpack_archive(path: Path, report: dict[str, Any] | None = None) -> Path:
             raise ValueError("The archive unpacked to more than a comic could be")
         if report is not None:
             said = process.stderr.read(64 * 1024) if process.stderr else b""
+            # Every line: the one naming the damage comes before the "Error exit
+            # delayed" the tool ends on.
             report.update({"clean": process.returncode == 0,
-                           "said": said.decode("utf-8", "replace").strip().splitlines()[-1:] or []})
+                           "said": [line.strip() for line in said.decode("utf-8", "replace").splitlines()
+                                    if line.strip() and "exit delayed" not in line][:50]})
         # A partly damaged archive still yields the pages it can reach; the
         # pages that are missing fail on their own when read.
         return folder
