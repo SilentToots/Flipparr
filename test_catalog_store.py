@@ -6505,3 +6505,9 @@ class ComicSummaryTests(ComicReadingTests):
         arc = self.store.reading_progress_by_list(user_id=ADMIN_USER_ID)[str(listing)]
         self.assertEqual(list(arc), [str(min(self.a, self.b))], "named by the issue's first copy, as the arc lists it")
         self.assertEqual(arc[str(min(self.a, self.b))]["page"], 3, "read in the second copy")
+
+    def test_a_profiles_numbers_count_an_issue_read_in_two_copies_once(self):
+        self.store.set_reading_progress(self.a, 5, 6, "sa", finished=True, user_id=ADMIN_USER_ID)
+        self.store.set_reading_progress(self.b, 7, 8, "sb", finished=True, user_id=ADMIN_USER_ID)
+        stats = self.store.reading_activity(ADMIN_USER_ID)["stats"]
+        self.assertEqual((stats["issuesRead"], stats["inProgress"], stats["pagesRead"], stats["runs"]), (1, 0, 8, 1))

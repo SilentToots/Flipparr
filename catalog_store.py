@@ -6110,23 +6110,20 @@ class CatalogStore:
         """
         year = _utc_now()[:4]
         with self._connect() as connection:
-            row = connection.execute(
-                """SELECT COUNT(*) AS started,
-                          SUM(CASE WHEN reading_progress.finished_at IS NOT NULL THEN 1 ELSE 0 END) AS finished,
-                          SUM(CASE WHEN reading_progress.finished_at IS NOT NULL
-                                   THEN reading_progress.page_count ELSE reading_progress.page + 1 END) AS pages,
-                          SUM(CASE WHEN substr(reading_progress.finished_at, 1, 4)=? THEN 1 ELSE 0 END) AS this_year,
-                          COUNT(DISTINCT file_identities.series_run_id) AS runs
-                   FROM reading_progress
-                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
-                   LEFT JOIN file_identities ON file_identities.file_id=files.id
-                   WHERE reading_progress.user_id=?""",
-                (year, int(user_id)),
-            ).fetchone()
+            # Comics, not files (docs/READING_STATE_PLAN.md step 2b): two
+            # copies of an issue read are one issue read.
+            comics = self._comic_rows(connection, user_id)
             rated = connection.execute(
                 "SELECT (SELECT COUNT(*) FROM issue_ratings WHERE user_id=?) + (SELECT COUNT(*) FROM series_run_ratings WHERE user_id=?)",
                 (int(user_id), int(user_id)),
             ).fetchone()[0]
+        row = {
+            "started": len(comics),
+            "finished": sum(1 for comic in comics if comic["finished_at"]),
+            "pages": sum(int(comic["page_count"] or 0) if comic["finished_at"] else int(comic["page"] or 0) + 1 for comic in comics),
+            "this_year": sum(1 for comic in comics if str(comic["finished_at"] or "")[:4] == year),
+            "runs": len({comic["series_run_id"] for comic in comics if comic["series_run_id"] is not None}),
+        }
         started = int(row["started"] or 0)
         finished = int(row["finished"] or 0)
         return {
