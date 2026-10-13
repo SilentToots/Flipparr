@@ -6467,3 +6467,41 @@ class ComicReadingTests(unittest.TestCase):
         self.assertEqual(row["started_at"], "2026-09-01T00:00:00+00:00", "earliest start of any copy")
         self.assertEqual(row["finished_at"], "2026-09-02T00:00:00+00:00", "finished on the hidden copy, kept")
         self.assertEqual((row["file_id"], row["page"]), (self.b, 3), "the place where it was read last")
+
+
+class ComicSummaryTests(ComicReadingTests):
+    """docs/READING_STATE_PLAN.md step 2b, group 2: the cards, Keep Reading
+    and the downloads check read the comic. Two copies of an issue are one
+    issue: read in either, counted once, shown read in both."""
+
+    def test_the_run_counts_issues_not_copies_and_an_issue_read_in_its_second_copy_shows(self):
+        issue = self.issue["Example 001.cbz"]
+        run = None
+        with sqlite3.connect(self.store.database_path) as connection:
+            run = str(connection.execute("SELECT series_run_id FROM issues WHERE id=?", (issue,)).fetchone()[0])
+        self.assertEqual(self.store.issue_file_counts_by_run()[run], 2, "two issues, though three files")
+        self.store.set_reading_progress(self.b, 7, 8, "sb", finished=True, user_id=ADMIN_USER_ID)
+        summary = self.store.reading_progress_by_run(user_id=ADMIN_USER_ID)[run]
+        self.assertEqual(list(summary), [str(self.b)], "the issue once, through the copy read")
+        drawer = self.store.reading_progress_for_run(int(run), user_id=ADMIN_USER_ID)
+        self.assertEqual({key for key, record in drawer.items() if record["finishedAt"]}, {str(self.a), str(self.b)},
+                         "either copy naming the issue shows it read")
+        states = self.store.reading_states([self.a, self.b, self.file["Example 002.cbz"]], user_id=ADMIN_USER_ID)
+        self.assertEqual({key: value["finished"] for key, value in states.items()}, {self.a: True, self.b: True},
+                         "a download of the other copy reads as finished too")
+
+    def test_keep_reading_lists_a_comic_once_and_an_arc_counts_its_second_copy(self):
+        issue = self.issue["Example 001.cbz"]
+        self.store.set_reading_progress(self.a, 1, 6, "sa", user_id=ADMIN_USER_ID, at="2026-10-12T08:00:00+00:00")
+        self.store.set_reading_progress(self.b, 3, 8, "sb", user_id=ADMIN_USER_ID, at="2026-10-12T09:00:00+00:00")
+        recent = self.store.recent_reading(user_id=ADMIN_USER_ID)
+        self.assertEqual([(item["fileId"], item["page"]) for item in recent], [(str(self.b), 3)])
+        with sqlite3.connect(self.store.database_path) as connection:
+            listing = connection.execute(
+                "INSERT INTO reading_lists(name, created_at, updated_at) VALUES ('Arc', 'now', 'now')").lastrowid
+            connection.execute(
+                """INSERT INTO reading_list_items(reading_list_id, position, issue_id, series_title, issue_number, created_at, updated_at)
+                   VALUES (?, 1, ?, 'Example', '1', 'now', 'now')""", (listing, issue))
+        arc = self.store.reading_progress_by_list(user_id=ADMIN_USER_ID)[str(listing)]
+        self.assertEqual(list(arc), [str(min(self.a, self.b))], "named by the issue's first copy, as the arc lists it")
+        self.assertEqual(arc[str(min(self.a, self.b))]["page"], 3, "read in the second copy")

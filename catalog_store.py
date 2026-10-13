@@ -4065,6 +4065,69 @@ class CatalogStore:
                 (series_run_id, int(file_id), member, source, file_signature, _utc_now()),
             )
 
+    # Each comic a reader has read, once, with the present file it is shown
+    # through: the copy last read when it is still here, else the comic's
+    # first copy ("read"); or always its first copy ("first", as arcs and
+    # the catalog name an issue by). A comic with no copy here is left out.
+    _COMIC_ROWS_SQL = """
+        WITH comics AS (
+            SELECT c.*,
+                   CASE c.subject_kind WHEN 'issue' THEN
+                        (SELECT MIN(l.file_id) FROM file_issue_links l JOIN files f ON f.id=l.file_id AND f.present=1
+                          WHERE l.issue_id=c.subject_id)
+                   ELSE (SELECT MIN(e.file_id) FROM file_edition_links e JOIN files f ON f.id=e.file_id AND f.present=1
+                          WHERE e.edition_id=c.subject_id) END AS first_file,
+                   (SELECT f.id FROM files f WHERE f.id=c.file_id AND f.present=1 AND (
+                        (c.subject_kind='issue' AND EXISTS(SELECT 1 FROM file_issue_links l WHERE l.file_id=f.id AND l.issue_id=c.subject_id))
+                     OR (c.subject_kind='edition' AND EXISTS(SELECT 1 FROM file_edition_links e WHERE e.file_id=f.id AND e.edition_id=c.subject_id))
+                   )) AS read_file
+              FROM comic_reading c WHERE c.user_id=?
+        )
+        SELECT comics.*, {shown} AS shown_file, file_identities.series_run_id, file_identities.issue_number,
+               printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
+          FROM comics
+          JOIN files ON files.id={shown}
+          JOIN file_identities ON file_identities.file_id=files.id
+    """
+
+    def _comic_rows(self, connection: sqlite3.Connection, user_id: int, shown: str = "read") -> list[Any]:
+        column = "COALESCE(comics.read_file, comics.first_file)" if shown == "read" else "comics.first_file"
+        rows = [dict(row) for row in connection.execute(self._COMIC_ROWS_SQL.format(shown=column), (int(user_id),))]
+        return rows + self._unlinked_rows(connection, user_id)
+
+    # A file linked to no issue or volume -- which a scan never leaves, but a
+    # file put in by hand can be -- keeps its own place, as before: its
+    # reading is never dropped for want of a comic to belong to.
+    _UNLINKED_SQL = """
+        SELECT rp.file_id, rp.file_id AS shown_file, rp.page, rp.panel, rp.page_count, rp.file_signature,
+               rp.started_at, rp.finished_at, rp.updated_at AS last_read_at, 'file' AS subject_kind,
+               rp.file_id AS subject_id, file_identities.series_run_id, file_identities.issue_number,
+               printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
+          FROM reading_progress rp
+          JOIN files ON files.id=rp.file_id AND files.present=1
+          LEFT JOIN file_identities ON file_identities.file_id=files.id
+         WHERE rp.user_id=?
+           AND NOT EXISTS (SELECT 1 FROM file_issue_links l WHERE l.file_id=rp.file_id)
+           AND NOT EXISTS (SELECT 1 FROM file_edition_links e WHERE e.file_id=rp.file_id)
+    """
+
+    def _unlinked_rows(self, connection: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:
+        return [dict(row) for row in connection.execute(self._UNLINKED_SQL, (int(user_id),))]
+
+    @staticmethod
+    def _comic_record(row: sqlite3.Row) -> dict[str, Any]:
+        """A comic's reading as the per-file summaries have always had it. The
+        page is the comic's; it is stale only in the copy it was read in and
+        only once that file changed -- another copy finds the page when opened."""
+        read_here = row["file_id"] is not None and int(row["file_id"]) == int(row["shown_file"])
+        return {
+            "page": int(row["page"] or 0), "pageCount": int(row["page_count"] or 0),
+            "finishedAt": row["finished_at"], "updatedAt": row["last_read_at"],
+            "issueNumber": row["issue_number"],
+            "stale": bool(read_here and row["file_signature"] and row["file_signature"] != row["scanned_signature"]
+                          and not row["finished_at"]),
+        }
+
     def comic_reading_for_file(self, file_id: int, *, user_id: int) -> dict[str, Any] | None:
         """Where this reader is with the comic this file is a copy of -- read on
         any copy of it (docs/READING_STATE_PLAN.md step 2)."""
@@ -4095,9 +4158,9 @@ class CatalogStore:
 
     def reading_states(self, file_ids: list[int], *, user_id: int) -> dict[int, dict[str, Any]]:
         """When this reader last read each of these comics and whether they
-        finished it, for those with a place: Flipparr View's downloads check
-        (`offline_check`), so a comic finished on one device reads so on
-        every device that keeps it."""
+        finished it -- the comic, read on any copy -- for those with a place:
+        Flipparr View's downloads check (`offline_check`), so a comic finished
+        on one device, or in another copy, reads so on every device."""
         ids = [int(file_id) for file_id in file_ids]
         if not ids:
             return {}
@@ -4107,10 +4170,20 @@ class CatalogStore:
                 chunk = ids[start:start + 500]
                 marks = ",".join("?" * len(chunk))
                 for row in connection.execute(
-                    f"SELECT file_id, finished_at, updated_at FROM reading_progress WHERE user_id=? AND file_id IN ({marks})",
+                    f"""SELECT f.id AS file_id, c.finished_at, c.last_read_at
+                          FROM files f
+                          LEFT JOIN file_issue_links l ON l.file_id=f.id
+                          LEFT JOIN file_edition_links e ON e.file_id=f.id
+                          JOIN comic_reading c ON c.user_id=? AND (
+                               (c.subject_kind='issue' AND c.subject_id=l.issue_id)
+                            OR (c.subject_kind='edition' AND c.subject_id=e.edition_id))
+                         WHERE f.id IN ({marks})""",
                     (int(user_id), *chunk),
                 ):
-                    states[int(row["file_id"])] = {"lastReadAt": row["updated_at"], "finished": row["finished_at"] is not None}
+                    states[int(row["file_id"])] = {"lastReadAt": row["last_read_at"], "finished": row["finished_at"] is not None}
+            for row in self._unlinked_rows(connection, user_id):
+                if int(row["file_id"]) in ids:
+                    states[int(row["file_id"])] = {"lastReadAt": row["last_read_at"], "finished": row["finished_at"] is not None}
         return states
 
     def set_reading_progress(
@@ -4305,34 +4378,31 @@ class CatalogStore:
             return False
 
     def recent_reading(self, limit: int = 24, *, user_id: int) -> list[dict[str, Any]]:
-        """What was read lately, newest first, with what it belongs to.
+        """What was read lately, newest first, with what it belongs to: each
+        comic once, through the copy last read (else its first copy here).
 
-        Only comics the library still holds: a file that has gone is not
+        Only comics the library still holds: a comic with no copy here is not
         something to offer to continue.
         """
         with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT reading_progress.*, files.filename, files.path,
-                          file_identities.issue_number AS issue_number,
-                          series_runs.id AS series_run_id, series_runs.canonical_title AS series_title,
-                          series_runs.format AS medium
-                   FROM reading_progress
-                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
-                   LEFT JOIN file_identities ON file_identities.file_id=files.id
-                   LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
-                   WHERE reading_progress.user_id=?
-                   ORDER BY reading_progress.updated_at DESC
-                   LIMIT ?""",
-                (int(user_id), int(limit)),
-            ).fetchall()
+            rows = sorted(self._comic_rows(connection, user_id), key=lambda row: str(row["last_read_at"] or ""), reverse=True)[:int(limit)]
+            details = {
+                int(row["id"]): row for row in connection.execute(
+                    f"""SELECT files.id, files.filename, series_runs.canonical_title AS series_title, series_runs.format AS medium
+                          FROM files LEFT JOIN file_identities ON file_identities.file_id=files.id
+                          LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
+                         WHERE files.id IN ({",".join("?" * len(rows)) or "NULL"})""",
+                    tuple(int(row["shown_file"]) for row in rows),
+                )
+            }
         return [
             {
-                "fileId": str(row["file_id"]), "filename": row["filename"],
+                "fileId": str(row["shown_file"]), "filename": details[int(row["shown_file"])]["filename"],
                 "issueNumber": row["issue_number"],
                 "seriesRunId": str(row["series_run_id"]) if row["series_run_id"] else None,
-                "seriesTitle": row["series_title"], "medium": row["medium"],
-                "page": int(row["page"]), "pageCount": int(row["page_count"]),
-                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
+                "seriesTitle": details[int(row["shown_file"])]["series_title"], "medium": details[int(row["shown_file"])]["medium"],
+                "page": int(row["page"] or 0), "pageCount": int(row["page_count"] or 0),
+                "finishedAt": row["finished_at"], "updatedAt": row["last_read_at"],
             }
             for row in rows
         ]
@@ -4396,67 +4466,50 @@ class CatalogStore:
         }
 
     def reading_progress_for_run(self, series_run_id: int, *, user_id: int) -> dict[str, dict[str, Any]]:
-        """Where every comic in one run was left, keyed by file id.
+        """Where every comic in one run was left, keyed by file id -- every
+        copy of a comic carrying the comic's reading, so an issue read in its
+        second copy shows read whichever copy names it.
 
         Staleness is decided in SQL rather than by opening the files: the
         signature `app._file_signature` writes is the file's mtime and size in
         hex, and both are columns here, so `printf('%x-%x', ...)` rebuilds it
-        exactly.
-
-        Those columns are only as fresh as the last scan, which makes this
-        good enough to decide whether to draw a progress bar in a list and not
-        good enough to decide where to open a comic. The reader's own check in
-        `file_reading_progress` stats the real file and stays authoritative.
+        exactly -- as fresh as the last scan; `file_reading_progress` stats the
+        real file and stays authoritative.
         """
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT reading_progress.*,
-                          printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
-                   FROM reading_progress
-                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
-                   JOIN file_identities ON file_identities.file_id=files.id
-                   WHERE file_identities.series_run_id=? AND reading_progress.user_id=?""",
+                """SELECT files.id AS copy, c.*, printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature,
+                          file_identities.issue_number
+                     FROM files
+                     JOIN file_identities ON file_identities.file_id=files.id AND file_identities.series_run_id=?
+                     LEFT JOIN file_issue_links l ON l.file_id=files.id
+                     LEFT JOIN file_edition_links e ON e.file_id=files.id
+                     JOIN comic_reading c ON c.user_id=? AND (
+                          (c.subject_kind='issue' AND c.subject_id=l.issue_id)
+                       OR (c.subject_kind='edition' AND c.subject_id=e.edition_id))
+                    WHERE files.present=1""",
                 (series_run_id, int(user_id)),
             ).fetchall()
-        return {
-            str(row["file_id"]): {
-                "page": int(row["page"]), "pageCount": int(row["page_count"]),
-                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
-                "stale": row["file_signature"] != row["scanned_signature"],
-            }
-            for row in rows
-        }
+            unlinked = [row for row in self._unlinked_rows(connection, user_id) if row["series_run_id"] == series_run_id]
+        records = {str(row["copy"]): self._comic_record({**dict(row), "shown_file": row["copy"]}) for row in rows}
+        records.update({str(row["shown_file"]): self._comic_record(row) for row in unlinked})
+        return records
 
     def reading_progress_by_run(self, *, user_id: int) -> dict[str, dict[str, dict[str, Any]]]:
-        """Every run that has been read in, and where each of its comics sits.
+        """Every run that has been read in, and where each of its comics sits:
+        each comic once (two copies of an issue are one issue read), keyed by
+        the copy it is shown through.
 
         One query for the whole library, because the Comics grid asks about
-        every run at once and a request per card would be a request per card.
-        Runs nobody has opened are absent rather than empty: the grid draws
-        nothing for them, so there is nothing to say.
-
-        Staleness is decided the same way as `reading_progress_for_run`, and
-        carries the same caveat -- the columns are as fresh as the last scan.
+        every run at once. Runs nobody has opened are absent rather than empty.
         """
         with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT reading_progress.*, file_identities.series_run_id,
-                          file_identities.issue_number,
-                          printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
-                   FROM reading_progress
-                   JOIN files ON files.id=reading_progress.file_id AND files.present=1
-                   JOIN file_identities ON file_identities.file_id=files.id
-                   WHERE file_identities.series_run_id IS NOT NULL AND reading_progress.user_id=?""",
-                (int(user_id),),
-            ).fetchall()
+            rows = self._comic_rows(connection, user_id)
         by_run: dict[str, dict[str, dict[str, Any]]] = {}
         for row in rows:
-            by_run.setdefault(str(row["series_run_id"]), {})[str(row["file_id"])] = {
-                "page": int(row["page"]), "pageCount": int(row["page_count"]),
-                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
-                "issueNumber": row["issue_number"],
-                "stale": row["file_signature"] != row["scanned_signature"],
-            }
+            if row["series_run_id"] is None:
+                continue
+            by_run.setdefault(str(row["series_run_id"]), {})[str(row["shown_file"])] = self._comic_record(row)
         return by_run
 
     # ----- Story arcs saved as reading lists (schema 57) -----
@@ -4874,27 +4927,24 @@ class CatalogStore:
         ]
 
     def reading_progress_by_list(self, *, user_id: int) -> dict[str, dict[str, dict[str, Any]]]:
-        """Where each arc's comics were left, keyed by arc then file -- one
-        query for the grid, as `reading_progress_by_run` is."""
+        """Where each arc's comics were left, keyed by arc then the file the
+        arc names its issue by (its first copy) -- one query for the grid, as
+        `reading_progress_by_run` is; read in any copy, it counts."""
         with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT items.reading_list_id, items.issue_number, issues.series_run_id, reading_progress.*,
-                          printf('%x-%x', files.mtime_ns, files.size_bytes) AS scanned_signature
-                     FROM reading_list_items AS items
-                     JOIN issues ON issues.id=items.issue_id
-                     JOIN file_issue_links ON file_issue_links.issue_id=issues.id
-                     JOIN files ON files.id=file_issue_links.file_id AND files.present=1
-                     JOIN reading_progress ON reading_progress.file_id=files.id AND reading_progress.user_id=?
-                    WHERE items.removed_at IS NULL""",
-                (int(user_id),),
+            comics = {int(row["subject_id"]): row for row in self._comic_rows(connection, user_id, shown="first")
+                      if row["subject_kind"] == "issue"}
+            items = connection.execute(
+                "SELECT reading_list_id, issue_id, issue_number FROM reading_list_items WHERE removed_at IS NULL AND issue_id IS NOT NULL"
             ).fetchall()
+            runs = {int(row["id"]): row["series_run_id"] for row in connection.execute("SELECT id, series_run_id FROM issues")}
         by_list: dict[str, dict[str, dict[str, Any]]] = {}
-        for row in rows:
-            by_list.setdefault(str(row["reading_list_id"]), {})[str(row["file_id"])] = {
-                "page": int(row["page"]), "pageCount": int(row["page_count"]),
-                "finishedAt": row["finished_at"], "updatedAt": row["updated_at"],
-                "issueNumber": row["issue_number"], "runId": str(row["series_run_id"]),
-                "stale": row["file_signature"] != row["scanned_signature"],
+        for item in items:
+            row = comics.get(int(item["issue_id"]))
+            if row is None:
+                continue
+            by_list.setdefault(str(item["reading_list_id"]), {})[str(row["shown_file"])] = {
+                **self._comic_record(row), "issueNumber": item["issue_number"],
+                "runId": str(runs.get(int(item["issue_id"]))),
             }
         return by_list
 
@@ -5437,9 +5487,13 @@ class CatalogStore:
         """
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT file_identities.series_run_id AS run_id, COUNT(*) AS files
+                # Issues, not files: two copies of an issue are one issue to
+                # read (docs/READING_STATE_PLAN.md step 2b).
+                """SELECT file_identities.series_run_id AS run_id,
+                          COUNT(DISTINCT COALESCE('i' || file_issue_links.issue_id, 'f' || files.id)) AS files
                    FROM files
                    JOIN file_identities ON file_identities.file_id=files.id
+                   LEFT JOIN file_issue_links ON file_issue_links.file_id=files.id
                    WHERE files.present=1
                      AND file_identities.series_run_id IS NOT NULL
                      AND file_identities.issue_number IS NOT NULL
