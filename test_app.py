@@ -11539,6 +11539,80 @@ class ComicBackdropTests(_ComicCopiesTestCase):
         self.assertEqual(self.store.series_backdrop_preference(run)["fileId"], str(new), "and kept as the choice")
 
 
+class LibraryCbzConversionTests(_ComicCopiesTestCase):
+    """docs/READING_STATE_PLAN.md step 6: a RAR comic already in the library,
+    converted to CBZ on the admin's word, keeps its record and everything a
+    profile did with it. A tar stands in for the RAR (the same bsdtar path)."""
+
+    def setUp(self):
+        super().setUp()
+        import tarfile
+        if not app._external_archive_tool():
+            self.skipTest("bsdtar is not installed")
+        self.pages = [self._page(index) for index in range(3)]
+        comic = self.root / "Example 001.cbr"
+        with tarfile.open(comic, "w") as archive:
+            for index, data in enumerate(self.pages):
+                info = tarfile.TarInfo(f"{index + 1:02d}.jpg")
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        parsed = [app.ParsedFile(str(comic), comic.name, ".cbr", "Example", issue="1")]
+        self.store.perform_scan(self.store.begin_scan(str(self.root), True), lambda *_: list(parsed), lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {}, "file_health": {"status": "ok"},
+            "recommendation": {"title": "Example", "issue": "1", "record_type": "single_issue", "publisher": "X", "source": "Test"},
+            "file_cover": None,
+        })
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.file_id = connection.execute("SELECT id FROM files").fetchone()[0]
+        self.comic = comic
+        patcher = patch("app.CBZ_CONVERTIBLE_KINDS", frozenset({"tar"}))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_comic_keeps_its_record_its_reading_and_its_panels(self):
+        app.render_file_page(self.file_id, 1, "read")
+        app.set_file_reading_progress(self.file_id, 1, user_id=ADMIN_USER_ID)
+        boxes = [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]
+        app.save_page_panels(self.file_id, 1, {"panels": boxes}, fixed_by=ADMIN_USER_ID)
+        self.assertEqual(app.convert_library_file_to_cbz(self.file_id, self.comic, self.root), "converted")
+        cbz = self.root / "Example 001.cbz"
+        self.assertTrue(zipfile.is_zipfile(cbz))
+        self.assertFalse(self.comic.exists())
+        self.assertTrue((self.root / ".flipparr" / "converted" / "Example 001.cbr").is_file(), "the original kept aside")
+        self.assertEqual(self.store.library_file_path(self.file_id), cbz, "the same record, at its new path")
+        place = app.file_reading_progress(self.file_id, user_id=ADMIN_USER_ID)
+        self.assertEqual(place["page"], 1, "the place, found by its page's bytes")
+        with patch("app.panel_finder.detect_panels", side_effect=AssertionError("worked out again")):
+            panels = app.file_page_panels(self.file_id, 1)
+        self.assertEqual(panels["source"], "manual", "the fix, kept")
+        [row] = self.store.cbz_conversions()
+        self.assertEqual((row["outcome"], row["members"]), ("converted", 3))
+
+    def test_a_zip_under_a_cbr_name_is_renamed_and_keeps_its_record(self):
+        disguised = self.root / "Example 002.cbr"
+        with zipfile.ZipFile(disguised, "w") as archive:
+            archive.writestr("01.jpg", self.pages[0])
+        with sqlite3.connect(self.store.database_path) as connection:
+            root = connection.execute("SELECT id FROM library_roots").fetchone()[0]
+            file_id = connection.execute(
+                """INSERT INTO files(root_id, path, filename, extension, size_bytes, mtime_ns, fingerprint, parsed_json, result_json,
+                   created_at, updated_at) VALUES (?, ?, ?, '.cbr', 1, 1, 'f', '{}', '{}', 'now', 'now')""",
+                (root, str(disguised), disguised.name)).lastrowid
+        self.assertEqual(app.convert_library_file_to_cbz(file_id, disguised, self.root), "converted")
+        self.assertEqual(self.store.library_file_path(file_id), self.root / "Example 002.cbz")
+        self.assertFalse(disguised.exists())
+
+    def test_the_job_converts_the_candidates_and_can_be_left_with_originals_removed(self):
+        self.assertEqual(app.cbz_conversion_status()["candidates"], 1)
+        with patch("app.threading.Thread") as thread:
+            app.start_cbz_conversion(keep_originals=False)
+            target, args = thread.call_args.kwargs["target"], thread.call_args.kwargs["args"]
+        target(*args)
+        status = app.cbz_conversion_status()
+        self.assertEqual((status["done"], status["failed"], status["running"], status["candidates"]), (1, 0, False, 0))
+        self.assertFalse((self.root / ".flipparr" / "converted").exists(), "not kept, as chosen")
+
+
 class _StopAfterOnePass(threading.Event):
     """A stop event that lets a worker loop finish one whole pass."""
 

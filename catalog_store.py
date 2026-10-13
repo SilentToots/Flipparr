@@ -5513,6 +5513,42 @@ class CatalogStore:
                 (source_name, source_kind, source_bytes, cbz_bytes, members, outcome, reason, _utc_now()),
             )
 
+    def convertible_library_files(self) -> list[dict[str, Any]]:
+        """Present files whose name says RAR or 7z (.cbr, .cb7), with their
+        library folder: the candidates for converting to CBZ; the caller
+        checks the bytes."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT files.id, files.path, library_roots.path AS root FROM files
+                     JOIN library_roots ON library_roots.id=files.root_id
+                    WHERE files.present=1 AND lower(files.extension) IN ('.cbr', '.cb7')
+                    ORDER BY files.id"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def repoint_converted_file(self, file_id: int, old_path: str, new_path: str, *, size: int, mtime_ns: int,
+                               file_cover: dict[str, Any] | None) -> None:
+        """A file converted to CBZ in place keeps its record -- its id, and with
+        it everything that hangs on the id -- now at its new path (step 6)."""
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute("SELECT parsed_json, result_json FROM files WHERE id=? AND path=?",
+                                     (int(file_id), old_path)).fetchone()
+            if row is None:
+                raise LookupError("The comic moved while it was converted")
+            parsed = _load_json(row["parsed_json"], {}) or {}
+            parsed.update({"path": new_path, "filename": Path(new_path).name, "extension": ".cbz"})
+            result = _load_json(row["result_json"], {}) or {}
+            if file_cover is not None or "file_cover" in result:
+                result["file_cover"] = file_cover
+            if isinstance(result.get("parsed"), dict):
+                result["parsed"].update({"path": new_path, "filename": Path(new_path).name, "extension": ".cbz"})
+            connection.execute(
+                """UPDATE files SET path=?, filename=?, extension='.cbz', size_bytes=?, mtime_ns=?, fingerprint=?,
+                       parsed_json=?, result_json=?, updated_at=? WHERE id=?""",
+                (new_path, Path(new_path).name, int(size), int(mtime_ns), f"{LOCAL_ANALYSIS_VERSION}:{int(size)}:{int(mtime_ns)}",
+                 _json(parsed), _json(result), _utc_now(), int(file_id)),
+            )
+
     def cbz_conversions(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM cbz_conversions ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()

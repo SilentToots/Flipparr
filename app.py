@@ -6979,6 +6979,153 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
     return kept
 
 
+# ---- Converting the library's existing comics to CBZ (step 6) ---------------
+# docs/READING_STATE_PLAN.md step 6: with reading, panels and covers kept by
+# the comic, a comic's file can change under it, so the RAR comics already in
+# the library can be stored as CBZ too -- an admin's choice, started by hand,
+# one comic at a time in the background lane, never on its own. Each keeps its
+# record (the same file id, now at its .cbz path); its pages are the same
+# bytes, so places and panels find them by fingerprint. The original goes to
+# .flipparr/converted in its library folder (scans skip it) unless the admin
+# chose not to keep originals.
+
+_CBZ_JOB_LOCK = threading.Lock()
+_CBZ_JOB: dict[str, Any] = {"running": False, "stop": False, "total": 0, "done": 0, "kept": 0, "failed": 0,
+                            "current": None, "startedAt": None, "finishedAt": None, "lastError": None, "lastKept": None,
+                            "keepOriginals": True}
+
+
+def _library_cbz_candidates() -> list[dict[str, Any]]:
+    """The library's comics that are not stored as CBZ but can be: a RAR or
+    7z to convert, or a zip under a .cbr name to rename -- read from the
+    bytes, as archive_kind does."""
+    return [item for item in catalog_store().convertible_library_files()
+            if archive_kind(Path(item["path"])) in CBZ_CONVERTIBLE_KINDS | {"zip"}]
+
+
+def cbz_conversion_status() -> dict[str, Any]:
+    with _CBZ_JOB_LOCK:
+        job = dict(_CBZ_JOB)
+    job.pop("stop", None)
+    job["candidates"] = len(_library_cbz_candidates())
+    return job
+
+
+def start_cbz_conversion(*, keep_originals: bool = True) -> dict[str, Any]:
+    store = catalog_store()
+    with store._connect() as connection:
+        if connection.execute("SELECT 1 FROM scan_runs WHERE status IN ('queued', 'scanning') LIMIT 1").fetchone():
+            raise ValueError("Wait for the library scan to finish first")
+    with _CBZ_JOB_LOCK:
+        if _CBZ_JOB["running"]:
+            return cbz_conversion_status()
+        files = _library_cbz_candidates()
+        _CBZ_JOB.update({"running": True, "stop": False, "total": len(files), "done": 0, "kept": 0, "failed": 0,
+                         "current": None, "startedAt": _utc_now_iso(), "finishedAt": None, "lastError": None,
+                         "lastKept": None,
+                         "keepOriginals": bool(keep_originals)})
+    threading.Thread(target=_run_cbz_conversion, args=(files, bool(keep_originals)), name="flipparr-cbz-library",
+                     daemon=True).start()
+    return cbz_conversion_status()
+
+
+def stop_cbz_conversion() -> dict[str, Any]:
+    with _CBZ_JOB_LOCK:
+        _CBZ_JOB["stop"] = True
+    return cbz_conversion_status()
+
+
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def _run_cbz_conversion(files: list[dict[str, Any]], keep_originals: bool) -> None:
+    try:
+        for item in files:
+            with _CBZ_JOB_LOCK:
+                if _CBZ_JOB["stop"]:
+                    break
+                _CBZ_JOB["current"] = Path(item["path"]).name
+            try:
+                outcome = convert_library_file_to_cbz(int(item["id"]), Path(item["path"]), Path(item["root"]),
+                                                      keep_original=keep_originals)
+            except Exception as exc:  # noqa: BLE001 -- one comic's failure is said, and the job goes on
+                log_exception("cbz_library_conversion_failed", exc, level="warning", fileId=item["id"])
+                with _CBZ_JOB_LOCK:
+                    _CBZ_JOB["failed"] += 1
+                    _CBZ_JOB["lastError"] = f"{Path(item['path']).name}: {shown(exc) or type(exc).__name__}"
+                continue
+            with _CBZ_JOB_LOCK:
+                _CBZ_JOB["done" if outcome == "converted" else "kept"] += 1
+    finally:
+        with _CBZ_JOB_LOCK:
+            _CBZ_JOB.update({"running": False, "current": None, "finishedAt": _utc_now_iso()})
+
+
+def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_original: bool = True) -> str:
+    """One comic in the library stored as CBZ beside where it was, its record
+    kept: "converted", or "kept" (left as it is, and why, in cbz_conversions)."""
+    store = catalog_store()
+    kind = archive_kind(path)
+    size = path.stat().st_size
+    def kept(reason: str) -> str:
+        store.record_cbz_conversion(path.name, kind, size, None, None, "kept", reason)
+        with _CBZ_JOB_LOCK:
+            _CBZ_JOB["lastKept"] = f"{path.name}: {reason}"
+        return "kept"
+    target = path.with_suffix(".cbz")
+    if target.exists():
+        return kept("A CBZ of it is already there")
+    if kind == "zip":
+        # Already a zip under a .cbr name: the name is all that changes.
+        os.replace(path, target)
+        stat = target.stat()
+        try:
+            store.repoint_converted_file(file_id, str(path), str(target), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                                         file_cover=file_cover_info(target))
+        except Exception:
+            os.replace(target, path)
+            raise
+        store.record_cbz_conversion(path.name, kind, size, stat.st_size, None, "converted", "renamed: already a zip")
+        return "converted"
+    if kind not in CBZ_CONVERTIBLE_KINDS:
+        return kept("Not a RAR or 7z archive")
+    if archive_is_locked(path):
+        return kept("The archive is locked")
+    work = unpack_work_dir()
+    work.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix="flipparr-cbz-", dir=work))
+    partial = target.with_name(f".{target.stem}.flipparr-convert.partial.cbz")
+    try:
+        with cpu_lane("background"):
+            members = convert_archive_to_cbz(path, folder / "comic.cbz")
+        shutil.copyfile(folder / "comic.cbz", partial)
+        with partial.open("rb") as handle:
+            os.fsync(handle.fileno())
+        health = inspect_file_health(partial)
+        if health.get("status") == "error":
+            raise ValueError(health.get("message") or "The CBZ failed its check")
+        os.replace(partial, target)
+        stat = target.stat()
+        try:
+            store.repoint_converted_file(file_id, str(path), str(target), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                                         file_cover=file_cover_info(target))
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        if keep_original:
+            aside = root / MANAGED_LIBRARY_DIR / "converted" / path.relative_to(root)
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path, aside)
+        else:
+            path.unlink()
+        store.record_cbz_conversion(path.name, kind, size, stat.st_size, members, "converted")
+        return "converted"
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+        partial.unlink(missing_ok=True)
+
+
 def _comic_archive_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """A comic that arrived as a RAR (or 7z), as the CBZ the library keeps,
     when `convertNewToCbz` is on. Only the release already chosen, and never
@@ -19630,6 +19777,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        if parsed_url.path == "/api/v1/library/cbz-conversion":
+            self.send_json(cbz_conversion_status())
+            return
         file_package_match = re.fullmatch(r"/api/v1/files/(\d+)/package", parsed_url.path)
         if file_package_match:
             # Under /files/{id}/, so the rating gate has already answered 404
@@ -20146,6 +20296,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             except OSError as exc:
                 self.send_json({"error": f"Could not read that folder: {exc.strerror}"}, 400)
+            return
+        if parsed_url.path == "/api/v1/library/cbz-conversion":
+            # Converting the library's RAR comics to CBZ: the admin's, by hand
+            # (docs/READING_STATE_PLAN.md step 6); access_policy keeps it so.
+            action = str(payload.get("action") or "")
+            try:
+                if action == "start":
+                    result = start_cbz_conversion(keep_originals=payload.get("keepOriginals") is not False)
+                elif action == "stop":
+                    result = stop_cbz_conversion()
+                else:
+                    raise ValueError("Say start or stop")
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 409 if "scan" in str(exc) else 400)
+                return
+            self.send_json(result)
             return
         if parsed_url.path == "/api/v1/scans":
             folder = str(payload.get("folder") or "")

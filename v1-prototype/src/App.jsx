@@ -104,6 +104,7 @@ import { Nav } from "./frame/Nav.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "./search/library-search.jsx";
 import { AboutSettings } from "./settings/about.jsx";
 import { SettingsFrame, SettingsIndex } from "./settings/shell.jsx";
+import { LibraryCbzConversion } from "./settings/cbz-conversion.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
 import { useRefreshOnReturn } from "./refresh-on-return.js";
 import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
@@ -3932,8 +3933,9 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             </SettingsCard> : null}
             <SettingsCard title="New downloads">
               <Toggle checked={convertToCbz} onChange={savingConvertToCbz ? () => {} : saveConvertToCbz} title="Store new comics as CBZ"
-                description="Comics Flipparr downloads as CBR are saved as CBZ, every page kept as it was. CBZ pages open faster and download to Flipparr View with less work for the server. Comics already in your library are not changed." />
+                description="Comics Flipparr downloads as CBR are saved as CBZ, every page kept as it was. CBZ pages open faster and download to Flipparr View with less work for the server. Comics already in your library are converted only if you choose to, below." />
             </SettingsCard>
+            <LibraryCbzConversion />
           </> : null}
         {current === "matching" ? <>
           <SettingsCard title="How matches are accepted">
