@@ -6364,10 +6364,8 @@ class SeriesRemovalTests(unittest.TestCase):
                 store.remove_series_run(run_id)
 
 
-class ComicReadingTests(unittest.TestCase):
-    """docs/READING_STATE_PLAN.md step 2a: reading belongs to the comic (the
-    issue, or the volume), written beside the file's row. Two copies of one
-    issue are one comic; a place records the copy and page it was read on."""
+class _ComicCatalogTestCase(unittest.TestCase):
+    """A run with issue #1 in two copies and issue #2, for the reading-state tests."""
 
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -6398,6 +6396,13 @@ class ComicReadingTests(unittest.TestCase):
             row = connection.execute("SELECT * FROM comic_reading WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
                                      (user_id, issue_id)).fetchone()
         return dict(row) if row else None
+
+
+
+class ComicReadingTests(_ComicCatalogTestCase):
+    """docs/READING_STATE_PLAN.md step 2a: reading belongs to the comic (the
+    issue, or the volume), written beside the file's row. Two copies of one
+    issue are one comic; a place records the copy and page it was read on."""
 
     def test_two_copies_of_an_issue_are_one_comic_read_on_the_copy_last_opened(self):
         issue = self.issue["Example 001.cbz"]
@@ -6469,7 +6474,7 @@ class ComicReadingTests(unittest.TestCase):
         self.assertEqual((row["file_id"], row["page"]), (self.b, 3), "the place where it was read last")
 
 
-class ComicSummaryTests(ComicReadingTests):
+class ComicSummaryTests(_ComicCatalogTestCase):
     """docs/READING_STATE_PLAN.md step 2b, group 2: the cards, Keep Reading
     and the downloads check read the comic. Two copies of an issue are one
     issue: read in either, counted once, shown read in both."""
@@ -6513,7 +6518,7 @@ class ComicSummaryTests(ComicReadingTests):
         self.assertEqual((stats["issuesRead"], stats["inProgress"], stats["pagesRead"], stats["runs"]), (1, 0, 8, 1))
 
 
-class ComicCoverTests(ComicReadingTests):
+class ComicCoverTests(_ComicCatalogTestCase):
     """docs/READING_STATE_PLAN.md step 4: a chosen cover belongs to the issue
     and the run, not to the file it was chosen on."""
 
@@ -6541,3 +6546,58 @@ class ComicCoverTests(ComicReadingTests):
                 (run, self.a))
         series = next(item for item in self.store.catalog()["series"] if str(item["id"]) == str(run))
         self.assertEqual(series["cover"], "https://covers/one.jpg", "issue 1's face, through the copy that is here")
+
+
+class PersonalIssueDataTests(_ComicCatalogTestCase):
+    """docs/READING_STATE_PLAN.md step 5: merges, rebuilds and re-matches keep
+    what profiles did with an issue -- ratings, reading, a chosen cover."""
+
+    def _run_of(self, issue):
+        with sqlite3.connect(self.store.database_path) as connection:
+            return connection.execute("SELECT series_run_id FROM issues WHERE id=?", (issue,)).fetchone()[0]
+
+    def test_merging_a_duplicate_run_moves_its_issues_ratings_and_reading_and_the_runs_own(self):
+        keep = self._run_of(self.issue["Example 001.cbz"])
+        with sqlite3.connect(self.store.database_path) as connection:
+            dupe = connection.execute(
+                """INSERT INTO series_runs(canonical_title, canonical_key, created_at, updated_at)
+                   VALUES ('Example (dupe)', 'exampledupe', 'now', 'now')""").lastrowid
+            gone = connection.execute(
+                "INSERT INTO issues(series_run_id, issue_number, created_at, updated_at) VALUES (?, '1', 'now', 'now')", (dupe,)).lastrowid
+            connection.execute("INSERT INTO issue_ratings(user_id, issue_id, rating, updated_at) VALUES (?, ?, 4, 'now')", (ADMIN_USER_ID, gone))
+            connection.execute("INSERT INTO series_run_ratings(user_id, series_run_id, rating, updated_at) VALUES (?, ?, 5, 'now')", (ADMIN_USER_ID, dupe))
+            connection.execute(
+                """INSERT INTO comic_reading(user_id, subject_kind, subject_id, started_at, finished_at, last_read_at, updated_at)
+                   VALUES (?, 'issue', ?, '2026-10-01', '2026-10-02', '2026-10-02', '2026-10-02')""", (ADMIN_USER_ID, gone))
+        self.store.merge_series(dupe, keep, allow_provider_conflicts=True)
+        issue = self.issue["Example 001.cbz"]
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.assertEqual(connection.execute("SELECT rating FROM issue_ratings WHERE issue_id=?", (issue,)).fetchone()[0], 4)
+            self.assertEqual(connection.execute("SELECT rating FROM series_run_ratings WHERE series_run_id=?", (keep,)).fetchone()[0], 5)
+        self.assertEqual(self._comic(issue)["finished_at"], "2026-10-02", "read, on the issue it merged into")
+
+    def test_a_rebuild_never_deletes_an_issue_someone_rated_or_read(self):
+        run = self._run_of(self.issue["Example 001.cbz"])
+        with sqlite3.connect(self.store.database_path) as connection:
+            lonely = connection.execute(
+                "INSERT INTO issues(series_run_id, issue_number, created_at, updated_at) VALUES (?, '9', 'now', 'now')", (run,)).lastrowid
+            connection.execute("INSERT INTO issue_ratings(user_id, issue_id, rating, updated_at) VALUES (?, ?, 3, 'now')", (ADMIN_USER_ID, lonely))
+            bare = connection.execute(
+                "INSERT INTO issues(series_run_id, issue_number, created_at, updated_at) VALUES (?, '10', 'now', 'now')", (run,)).lastrowid
+        self.store.rebuild_series_run(run)
+        with sqlite3.connect(self.store.database_path) as connection:
+            left = {row[0] for row in connection.execute("SELECT id FROM issues WHERE series_run_id=?", (run,))}
+        self.assertIn(lonely, left, "kept: someone rated it")
+        self.assertNotIn(bare, left, "an issue nobody touched is still pruned")
+
+    def test_a_re_matched_files_reading_moves_with_it_and_only_its_own(self):
+        one, two = self.issue["Example 001.cbz"], self.issue["Example 002.cbz"]
+        self.store.set_reading_progress(self.a, 3, 6, "sa", user_id=ADMIN_USER_ID)
+        with self.store._write_lock, self.store._connect() as connection:
+            self.store._move_personal_issue_data(connection, one, two, only_file=self.b)
+        self.assertIsNotNone(self._comic(one), "read in another copy: stays")
+        with self.store._write_lock, self.store._connect() as connection:
+            connection.execute("UPDATE file_issue_links SET issue_id=? WHERE file_id=?", (two, self.a))
+            self.store._move_personal_issue_data(connection, one, two, only_file=self.a)
+        self.assertIsNone(self._comic(one))
+        self.assertEqual(self._comic(two)["page"], 3, "the reading follows the file to the issue it really is")

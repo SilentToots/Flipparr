@@ -3275,11 +3275,19 @@ class CatalogStore:
                            )""",
                         (previous_edition["edition_id"], previous_edition["edition_id"]),
                     )
+                previous_issue = connection.execute(
+                    "SELECT issue_id FROM file_issue_links WHERE file_id=?", (file_id,)
+                ).fetchone()
                 connection.execute(
                     """INSERT INTO file_issue_links(file_id, issue_id) VALUES (?, ?)
                        ON CONFLICT(file_id) DO UPDATE SET issue_id=excluded.issue_id""",
                     (file_id, issue_id),
                 )
+                if previous_issue is not None and int(previous_issue["issue_id"]) != int(issue_id):
+                    # Re-matched: what was read in this file was the issue it
+                    # now is (the owner's decision 3, step 5).
+                    self._move_personal_issue_data(connection, int(previous_issue["issue_id"]), int(issue_id),
+                                                   only_file=int(file_id))
                 return
 
             isbns = [re.sub(r"[^0-9Xx]", "", str(value)).upper() for value in recommendation.get("isbns", []) if value]
@@ -4339,6 +4347,50 @@ class CatalogStore:
         if at is not None and stored is not None and self._stored_is_newer(stored["updated_at"], at):
             return
         connection.execute("DELETE FROM comic_reading WHERE user_id=? AND subject_kind=? AND subject_id=?", (int(user_id), *comic))
+
+    def _move_personal_issue_data(self, connection: sqlite3.Connection, from_issue: int, to_issue: int,
+                                  *, only_file: int | None = None) -> None:
+        """Profiles' ratings, reading and chosen cover of one issue, onto another
+        -- an issue merged into its duplicate, or a file re-matched to the issue
+        it really is (docs/READING_STATE_PLAN.md step 5; the owner's decision 3).
+        With `only_file`, only the reading last done in that file moves, and a
+        profile's rating stays: what was read in the re-matched file was the
+        other issue. Where both issues have something, the newer stands, and a
+        reading keeps the earlier start."""
+        if int(from_issue) == int(to_issue):
+            return
+        readings = connection.execute(
+            "SELECT * FROM comic_reading WHERE subject_kind='issue' AND subject_id=?"
+            + (" AND file_id=?" if only_file is not None else ""),
+            (int(from_issue), *((int(only_file),) if only_file is not None else ())),
+        ).fetchall()
+        for row in readings:
+            there = connection.execute(
+                "SELECT * FROM comic_reading WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
+                (row["user_id"], int(to_issue)),
+            ).fetchone()
+            if there is None or not self._stored_is_newer(there["updated_at"], row["updated_at"]):
+                connection.execute("DELETE FROM comic_reading WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
+                                   (row["user_id"], int(to_issue)))
+                started = min(filter(None, (row["started_at"], there["started_at"] if there else None)))
+                connection.execute("UPDATE comic_reading SET subject_id=?, started_at=? WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
+                                   (int(to_issue), started, row["user_id"], int(from_issue)))
+            else:
+                connection.execute("UPDATE comic_reading SET started_at=MIN(started_at, ?) WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
+                                   (row["started_at"], row["user_id"], int(to_issue)))
+                connection.execute("DELETE FROM comic_reading WHERE user_id=? AND subject_kind='issue' AND subject_id=?",
+                                   (row["user_id"], int(from_issue)))
+        if only_file is not None:
+            return
+        for row in connection.execute("SELECT * FROM issue_ratings WHERE issue_id=?", (int(from_issue),)).fetchall():
+            there = connection.execute("SELECT 1 FROM issue_ratings WHERE user_id=? AND issue_id=?",
+                                       (row["user_id"], int(to_issue))).fetchone()
+            if there is None:
+                connection.execute("UPDATE issue_ratings SET issue_id=? WHERE user_id=? AND issue_id=?",
+                                   (int(to_issue), row["user_id"], int(from_issue)))
+        cover = connection.execute("SELECT 1 FROM issue_cover_preferences WHERE issue_id=?", (int(to_issue),)).fetchone()
+        if cover is None:
+            connection.execute("UPDATE issue_cover_preferences SET issue_id=? WHERE issue_id=?", (int(to_issue), int(from_issue)))
 
     def _backfill_comic_reading(self, connection: sqlite3.Connection) -> int:
         """Every file's place taken to its comic, per profile: started is the
@@ -6942,6 +6994,12 @@ class CatalogStore:
                           JOIN files ON files.id=file_issue_links.file_id
                           WHERE file_issue_links.issue_id=issues.id AND files.present=1
                       )
+                      -- Never an issue holding a profile's ratings, reading or
+                      -- chosen cover (docs/READING_STATE_PLAN.md step 5).
+                      AND NOT EXISTS(SELECT 1 FROM issue_ratings WHERE issue_ratings.issue_id=issues.id)
+                      AND NOT EXISTS(SELECT 1 FROM comic_reading
+                                    WHERE comic_reading.subject_kind='issue' AND comic_reading.subject_id=issues.id)
+                      AND NOT EXISTS(SELECT 1 FROM issue_cover_preferences WHERE issue_cover_preferences.issue_id=issues.id)
                       AND NOT EXISTS(
                           SELECT 1 FROM edition_coverage_claims
                           WHERE edition_coverage_claims.issue_id=issues.id
@@ -7068,6 +7126,10 @@ class CatalogStore:
                          JOIN files ON files.id=file_issue_links.file_id
                          WHERE file_issue_links.issue_id=issues.id AND files.present=1
                      )
+                     AND NOT EXISTS(SELECT 1 FROM issue_ratings WHERE issue_ratings.issue_id=issues.id)
+                     AND NOT EXISTS(SELECT 1 FROM comic_reading
+                                    WHERE comic_reading.subject_kind='issue' AND comic_reading.subject_id=issues.id)
+                     AND NOT EXISTS(SELECT 1 FROM issue_cover_preferences WHERE issue_cover_preferences.issue_id=issues.id)
                      AND NOT EXISTS(
                          SELECT 1 FROM edition_coverage_claims
                          WHERE edition_coverage_claims.issue_id=issues.id
@@ -7816,6 +7878,8 @@ class CatalogStore:
                     "UPDATE file_issue_links SET issue_id=? WHERE file_id=?",
                     (target_issue_id, file_id),
                 )
+                # What was read in this file was the issue it now is (step 5).
+                self._move_personal_issue_data(connection, int(issue["id"]), int(target_issue_id), only_file=int(file_id))
 
             edition = connection.execute(
                 """SELECT editions.* FROM file_edition_links
@@ -10561,6 +10625,9 @@ class CatalogStore:
                                 "UPDATE issue_provider_ids SET issue_id=?, updated_at=? WHERE id=?",
                                 (target_issue["id"], _utc_now(), provider_id["id"]),
                             )
+                    # Ratings and reading of the duplicate go to the issue it
+                    # merges into, rather than with it (step 5).
+                    self._move_personal_issue_data(connection, int(issue["id"]), int(target_issue["id"]))
                     connection.execute("DELETE FROM issues WHERE id=?", (issue["id"],))
                 else:
                     connection.execute("UPDATE issues SET series_run_id=?, updated_at=? WHERE id=?", (target_id, _utc_now(), issue["id"]))
@@ -10686,6 +10753,18 @@ class CatalogStore:
                    WHERE id=?""",
                 (merged_title, merged_start_year, merged_publisher, _utc_now(), target_id),
             )
+            # The run's own ratings and chosen face and header go to the run
+            # it merges into where that has none, rather than with it (step 5).
+            connection.execute(
+                """UPDATE series_run_ratings SET series_run_id=? WHERE series_run_id=? AND NOT EXISTS(
+                       SELECT 1 FROM series_run_ratings AS kept WHERE kept.series_run_id=? AND kept.user_id=series_run_ratings.user_id)""",
+                (target_id, source_id, target_id),
+            )
+            for table in ("series_cover_preferences", "series_backdrop_preferences"):
+                connection.execute(
+                    f"UPDATE {table} SET series_run_id=? WHERE series_run_id=? AND NOT EXISTS(SELECT 1 FROM {table} AS kept WHERE kept.series_run_id=?)",
+                    (target_id, source_id, target_id),
+                )
             connection.execute("DELETE FROM series_runs WHERE id=?", (source_id,))
             return {
                 "status": "merged", "seriesId": str(target_id),
