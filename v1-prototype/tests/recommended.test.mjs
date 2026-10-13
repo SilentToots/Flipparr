@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, formatDay, localDay, ownedIssues,
+  keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, formatDay, localDay, ownedIssues, issueOfFile,
 } from "../src/recommended.js";
 
 const series = [
@@ -62,4 +62,17 @@ test("dates read as a person writes them", () => {
   assert.equal(formatDay("2012-03-14", now), "Mar 14, 2012");
   assert.equal(formatDay("", now), "");
   assert.equal(localDay(new Date(2026, 0, 5)), "2026-01-05");
+});
+
+test("a second copy of an issue is still that issue: its cover, rating and next", () => {
+  // If Destruction Be Our Lot #2, 2026-10-13: the catalog showed #2 by file
+  // 144 and "up next" named its other copy, 602; the card lost its cover.
+  const run = { id: 5, title: "If Destruction Be Our Lot", cover: "/run.jpg",
+    issues: [{ id: 441, number: "2", fileId: "144", fileCover: "/two.jpg" }, { id: 143, number: "3", fileId: "143" }],
+    fileDetails: [{ id: "144", issueNumber: "2" }, { id: "602", issueNumber: "002" }, { id: "143", issueNumber: "3" }] };
+  const [card] = keepReading([{ fileId: "602", seriesRunId: "5", seriesTitle: run.title, issueNumber: "2", resume: "next" }], [run]);
+  assert.equal(card.cover, "/two.jpg");
+  assert.equal(card.fileId, "602", "it still opens the copy named");
+  assert.equal(issueOfFile(run, "602")?.id, 441, "found by the file's own number when none is given");
+  assert.equal(issueOfFile(run, "999"), null);
 });

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api.js";
 import { EMPTY_ENTRIES, withEntry } from "../reading-list-tab.js";
+import { issueOfFile } from "../recommended.js";
 
 const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
@@ -35,7 +36,8 @@ export function readingContext(catalog, fileId) {
   const series = (catalog?.series || []).find((item) => (item.fileDetails || []).some((file) => String(file.id) === String(fileId))) || null;
   const title = (series?.fileDetails || []).find((file) => String(file.id) === String(fileId))?.filename || series?.title || "Reading";
   const issues = series?.issues || [];
-  const issue = issues.find((item) => String(item.fileId) === String(fileId)) || null;
+  // The issue, even when this is a second copy of it (issueOfFile).
+  const issue = issueOfFile(series, fileId) || null;
   const next = issue ? issues.slice(issues.indexOf(issue) + 1).find((item) => item.fileId) || null : null;
   return { series, title, issue, next };
 }

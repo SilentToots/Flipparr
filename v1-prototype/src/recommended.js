@@ -24,6 +24,24 @@ export function ownedIssues(series) {
   return issues;
 }
 
+const numberKey = (number) => String(number ?? "").trim().replace(/^0+(?=\d)/, "");
+
+/**
+ * The issue a file is, in its run: by the file the catalog shows for the
+ * issue, else by the issue's number. An issue with two copies is shown by
+ * one, and reading or "up next" can name the other (If Destruction Be Our
+ * Lot #2, 2026-10-13: its card lost its cover on the web and in Flipparr
+ * View). A cover, a rating and the next issue belong to the issue.
+ */
+export function issueOfFile(run, fileId, issueNumber) {
+  const issues = run?.issues || [];
+  const byFile = issues.find((issue) => issue.fileId && String(issue.fileId) === String(fileId));
+  if (byFile) return byFile;
+  const number = issueNumber ?? (run?.fileDetails || []).find((file) => String(file.id) === String(fileId))?.issueNumber;
+  if (number === undefined || number === null || number === "") return null;
+  return issues.find((issue) => issue.fileId && numberKey(issue.number) === numberKey(number)) || null;
+}
+
 /** An issue as a shelf card. */
 export function issueCard(issue, run, extra = {}) {
   const number = issue?.number ?? extra.issueNumber;
@@ -45,8 +63,15 @@ export function issueCard(issue, run, extra = {}) {
 export function keepReading(items, series, limit = SHELF_SIZE) {
   const byFile = new Map();
   for (const { issue, run } of ownedIssues(series)) byFile.set(String(issue.fileId), { issue, run });
+  const runs = new Map((series || []).map((run) => [String(run.id), run]));
   return (items || []).slice(0, limit).map((item) => {
-    const found = byFile.get(String(item.fileId));
+    let found = byFile.get(String(item.fileId));
+    if (!found) {
+      // Another copy of the issue than the one the catalog shows.
+      const run = runs.get(String(item.seriesRunId));
+      const issue = issueOfFile(run, item.fileId, item.issueNumber);
+      found = issue ? { issue, run } : null;
+    }
     const started = item.resume === "continue" && item.pageCount > 0;
     return issueCard(found?.issue, found?.run, {
       fileId: String(item.fileId), runId: item.seriesRunId, runTitle: item.seriesTitle,
