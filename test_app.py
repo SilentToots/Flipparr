@@ -11588,6 +11588,42 @@ class LibraryCbzConversionTests(_ComicCopiesTestCase):
         [row] = self.store.cbz_conversions()
         self.assertEqual((row["outcome"], row["members"]), ("converted", 3))
 
+    def test_what_was_kept_with_the_rar_is_the_cbzs_and_nothing_is_read_again(self):
+        """The pages are the same bytes, so a conversion is not a change: an
+        automatic reading -- a paid one, say -- stands, the place is exact,
+        and a device holding the RAR is told its copy is still good."""
+        before = app._file_signature(self.comic)
+        boxes = [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}]
+        self.store.set_page_panels(self.file_id, "03.jpg", before, "vlm", boxes, True)
+        app.set_file_reading_progress(self.file_id, 2, user_id=ADMIN_USER_ID)
+        self.assertEqual(app.convert_library_file_to_cbz(self.file_id, self.comic, self.root), "converted")
+        after = app._file_signature(self.root / "Example 001.cbz")
+        self.assertNotEqual(before, after)
+        stored = app.stored_page_panels(self.file_id, 2)
+        self.assertEqual((stored["source"], stored.get("whole")), ("vlm", None), "the reading stands, not whole")
+        with patch("app._read_page_panels", side_effect=AssertionError("read again")):
+            self.assertEqual(app.file_page_panels(self.file_id, 2)["source"], "vlm")
+        place = app.file_reading_progress(self.file_id, user_id=ADMIN_USER_ID)
+        self.assertEqual(place["page"], 2)
+        self.assertIn(place.get("placeFound"), (None, "exact"), "no 'the file changed' note")
+        answers = app.offline_check([{"fileId": self.file_id, "fileSignature": before},
+                                     {"fileId": self.file_id, "fileSignature": "something-else"}], lambda _id: True)
+        self.assertEqual([answer["status"] for answer in answers], ["ok", "changed"])
+        [row] = self.store.cbz_conversions()
+        self.assertEqual((row["file_id"], row["from_signature"], row["to_signature"]), (self.file_id, before, after))
+
+    def test_a_scan_cut_off_by_a_restart_does_not_hold_the_job_back(self):
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("UPDATE scan_runs SET status='scanning', started_at=?",
+                               ((dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat(),))
+        with patch("app.threading.Thread"):
+            self.assertTrue(app.start_cbz_conversion()["running"])
+        app._CBZ_JOB["running"] = False
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("UPDATE scan_runs SET started_at=?", (dt.datetime.now(dt.timezone.utc).isoformat(),))
+        with self.assertRaisesRegex(ValueError, "scan"):
+            app.start_cbz_conversion()
+
     def test_a_zip_under_a_cbr_name_is_renamed_and_keeps_its_record(self):
         disguised = self.root / "Example 002.cbr"
         with zipfile.ZipFile(disguised, "w") as archive:

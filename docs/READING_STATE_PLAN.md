@@ -12,8 +12,19 @@ and deploy; 2c (stop writing the file's row) waits until 2b has run a while.
 | 3 Panels per comic page | a1b1972 | committed |
 | 4 Covers and backdrops | 588d53a | committed; schema 72 rehearsed on production's database |
 | 5 Merges, rebuilds, re-matches | 00c97a7 | committed |
-| 6 Convert existing CBR to CBZ (opt-in job) | d8b1c9b | committed; not run on the library |
+| 6 Convert existing CBR to CBZ (opt-in job) | d8b1c9b, see below | committed; not run on the library |
 | 2c Stop writing reading_progress | -- | later |
+
+Before the first library run (2026-10-13), the conversion was made a
+non-change: the pages are the same bytes under the same names, so what was
+kept with the RAR's signature (panels, places, fingerprints, a backdrop, the
+server's download records) moves to the CBZ's signature in the same write
+that repoints the file, and `cbz_conversions` records the file and both
+signatures (schema 73) so a device holding the RAR is told its copy is still
+good. Without it, every automatic and paid panel reading on a converted comic
+would have read as stale. The job's scan guard now ignores a scan cut off by
+a restart, as the automatic scan does (production had one "scanning" since
+2026-09-07).
 
 Not yet done, and why: the comic page panels live in `page_panels` (found by
 the comic's page fingerprint across its copies) rather than in a new

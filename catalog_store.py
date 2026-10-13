@@ -23,7 +23,13 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 72
+SCHEMA_VERSION = 73
+
+# What is kept with a file's signature, so that a changed file is looked at
+# again -- and carried over when the change is only a CBZ conversion of the
+# same pages (repoint_converted_file).
+_SIGNED_BY_FILE = ("reading_progress", "page_panels", "page_fingerprints", "comic_reading",
+                   "series_backdrop_preferences", "offline_downloads")
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1594,7 +1600,10 @@ class CatalogStore:
                     members INTEGER,
                     outcome TEXT NOT NULL CHECK(outcome IN ('converted', 'kept')),
                     reason TEXT,
-                    converted_at TEXT NOT NULL
+                    converted_at TEXT NOT NULL,
+                    file_id INTEGER,
+                    from_signature TEXT,
+                    to_signature TEXT
                 );
                 /* The people reading this library (schema 49). Profile 1 is
                    the admin and always exists; a household with one person
@@ -2295,6 +2304,14 @@ class CatalogStore:
                         WHERE p.source<>'auto'
                         ORDER BY p.updated_at"""
                 )
+            # 73: a library comic converted to CBZ keeps its record (step 6),
+            # and the conversion says which file and which signatures: its
+            # pages are the same bytes, so a device holding the RAR's
+            # signature still holds this comic (offline_check).
+            conversion_columns = {row["name"] for row in connection.execute("PRAGMA table_info(cbz_conversions)")}
+            for column, kind in (("file_id", "INTEGER"), ("from_signature", "TEXT"), ("to_signature", "TEXT")):
+                if column not in conversion_columns:
+                    connection.execute(f"ALTER TABLE cbz_conversions ADD COLUMN {column} {kind}")
             # 50: a profile's picture -- a photo, or a cover from the library.
             # The image is a file the app writes; the row says where it came
             # from and when, which is what makes its URL change with it.
@@ -5504,14 +5521,29 @@ class CatalogStore:
         return {row["page_member"]: {"sha256": row["sha256"], "dhash": row["dhash"]} for row in rows}
 
     def record_cbz_conversion(self, source_name: str, source_kind: str | None, source_bytes: int | None,
-                              cbz_bytes: int | None, members: int | None, outcome: str, reason: str | None = None) -> None:
-        """One comic converted to CBZ at import, or kept as it came and why."""
+                              cbz_bytes: int | None, members: int | None, outcome: str, reason: str | None = None,
+                              *, file_id: int | None = None, from_signature: str | None = None,
+                              to_signature: str | None = None) -> None:
+        """One comic converted to CBZ -- at import, or a library comic on the
+        admin's word (with its file and signatures) -- or kept as it came and why."""
         with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO cbz_conversions(source_name, source_kind, source_bytes, cbz_bytes, members,
-                                                  outcome, reason, converted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (source_name, source_kind, source_bytes, cbz_bytes, members, outcome, reason, _utc_now()),
+                                                  outcome, reason, converted_at, file_id, from_signature, to_signature)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (source_name, source_kind, source_bytes, cbz_bytes, members, outcome, reason, _utc_now(),
+                 file_id, from_signature, to_signature),
             )
+
+    def converted_from(self, file_id: int, from_signature: str, to_signature: str) -> bool:
+        """Whether this file became `to_signature` by a CBZ conversion of
+        `from_signature`: the same pages, under a new signature."""
+        with self._connect() as connection:
+            return connection.execute(
+                """SELECT 1 FROM cbz_conversions WHERE file_id=? AND from_signature=? AND to_signature=?
+                     AND outcome='converted' LIMIT 1""",
+                (int(file_id), from_signature, to_signature),
+            ).fetchone() is not None
 
     def convertible_library_files(self) -> list[dict[str, Any]]:
         """Present files whose name says RAR or 7z (.cbr, .cb7), with their
@@ -5527,9 +5559,14 @@ class CatalogStore:
         return [dict(row) for row in rows]
 
     def repoint_converted_file(self, file_id: int, old_path: str, new_path: str, *, size: int, mtime_ns: int,
-                               file_cover: dict[str, Any] | None) -> None:
+                               file_cover: dict[str, Any] | None, old_signature: str | None = None,
+                               new_signature: str | None = None) -> None:
         """A file converted to CBZ in place keeps its record -- its id, and with
-        it everything that hangs on the id -- now at its new path (step 6)."""
+        it everything that hangs on the id -- now at its new path (step 6).
+        Its pages are the same bytes under the same names, so what was kept
+        with the old file's signature -- panels, places, fingerprints, a
+        backdrop, downloads -- is carried to the new one: a conversion is not
+        a change to the comic, and nothing is read or paid for again."""
         with self._write_lock, self._connect() as connection:
             row = connection.execute("SELECT parsed_json, result_json FROM files WHERE id=? AND path=?",
                                      (int(file_id), old_path)).fetchone()
@@ -5548,6 +5585,12 @@ class CatalogStore:
                 (new_path, Path(new_path).name, int(size), int(mtime_ns), f"{LOCAL_ANALYSIS_VERSION}:{int(size)}:{int(mtime_ns)}",
                  _json(parsed), _json(result), _utc_now(), int(file_id)),
             )
+            if old_signature and new_signature and old_signature != new_signature:
+                for table in _SIGNED_BY_FILE:
+                    connection.execute(
+                        f"UPDATE OR IGNORE {table} SET file_signature=? WHERE file_id=? AND file_signature=?",
+                        (new_signature, int(file_id), old_signature),
+                    )
 
     def cbz_conversions(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._connect() as connection:

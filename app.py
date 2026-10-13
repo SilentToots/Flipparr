@@ -7013,9 +7013,12 @@ def cbz_conversion_status() -> dict[str, Any]:
 
 def start_cbz_conversion(*, keep_originals: bool = True) -> dict[str, Any]:
     store = catalog_store()
-    with store._connect() as connection:
-        if connection.execute("SELECT 1 FROM scan_runs WHERE status IN ('queued', 'scanning') LIMIT 1").fetchone():
-            raise ValueError("Wait for the library scan to finish first")
+    # A scan still "running" after AUTO_SCAN_STALE_SECONDS was cut off by a
+    # restart, as the automatic scan judges it; only a live one holds this back
+    # (production had one left "scanning" since 2026-09-07).
+    running_since = _auto_scan_time(store.scan_schedule().get("activeSince"))
+    if running_since and (dt.datetime.now(dt.timezone.utc) - running_since).total_seconds() < AUTO_SCAN_STALE_SECONDS:
+        raise ValueError("Wait for the library scan to finish first")
     with _CBZ_JOB_LOCK:
         if _CBZ_JOB["running"]:
             return cbz_conversion_status()
@@ -7068,6 +7071,7 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
     store = catalog_store()
     kind = archive_kind(path)
     size = path.stat().st_size
+    old_signature = _file_signature(path)
     def kept(reason: str) -> str:
         store.record_cbz_conversion(path.name, kind, size, None, None, "kept", reason)
         with _CBZ_JOB_LOCK:
@@ -7080,13 +7084,16 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
         # Already a zip under a .cbr name: the name is all that changes.
         os.replace(path, target)
         stat = target.stat()
+        new_signature = _file_signature(target)
         try:
             store.repoint_converted_file(file_id, str(path), str(target), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
-                                         file_cover=file_cover_info(target))
+                                         file_cover=file_cover_info(target), old_signature=old_signature,
+                                         new_signature=new_signature)
         except Exception:
             os.replace(target, path)
             raise
-        store.record_cbz_conversion(path.name, kind, size, stat.st_size, None, "converted", "renamed: already a zip")
+        store.record_cbz_conversion(path.name, kind, size, stat.st_size, None, "converted", "renamed: already a zip",
+                                    file_id=file_id, from_signature=old_signature, to_signature=new_signature)
         return "converted"
     if kind not in CBZ_CONVERTIBLE_KINDS:
         return kept("Not a RAR or 7z archive")
@@ -7107,9 +7114,11 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
             raise ValueError(health.get("message") or "The CBZ failed its check")
         os.replace(partial, target)
         stat = target.stat()
+        new_signature = _file_signature(target)
         try:
             store.repoint_converted_file(file_id, str(path), str(target), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
-                                         file_cover=file_cover_info(target))
+                                         file_cover=file_cover_info(target), old_signature=old_signature,
+                                         new_signature=new_signature)
         except Exception:
             target.unlink(missing_ok=True)
             raise
@@ -7119,7 +7128,8 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
             os.replace(path, aside)
         else:
             path.unlink()
-        store.record_cbz_conversion(path.name, kind, size, stat.st_size, members, "converted")
+        store.record_cbz_conversion(path.name, kind, size, stat.st_size, members, "converted",
+                                    file_id=file_id, from_signature=old_signature, to_signature=new_signature)
         return "converted"
     finally:
         shutil.rmtree(folder, ignore_errors=True)
@@ -14723,9 +14733,12 @@ def offline_check(entries: Any, may_see: Callable[[int], bool], *, user_id: int 
         except (LookupError, OSError):
             answers.append({"fileId": str(file_id), "status": "gone"})
             continue
+        held = str(entry.get("fileSignature") or "")
         if not may_see(file_id):
             status = "hidden"
-        elif str(entry.get("fileSignature") or "") != signature:
+        elif held != signature and not (held and store.converted_from(file_id, held, signature)):
+            # A comic converted to CBZ on the server is the same pages: the
+            # device's copy is still good, not one to download again.
             status = "changed"
         else:
             status = "ok"
