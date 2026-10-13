@@ -1058,6 +1058,38 @@ Then (same day), from his follow-ups:
   and Scan again need the server's finder, so offline they say Flipparr
   could not be reached.
 
+- **One package per comic (the owner, 2026-10-12;** `3f0e4d8`, `91d3596`,
+  `7a9d462`). Production's log that evening: one profile's downloads asked
+  for 5,481 pages and 4,652 panel answers in four hours, one request each.
+  Each RAR page was a bsdtar scan of the whole archive plus a re-encode (p50
+  1.5 s). The 32 threads filled (peak 33, Waitress queue 99), a catalog took
+  20 s and the owner's panel reads 19-23 s, past the app's 15 s; the app
+  took the server for gone and hid Fix panels. Measured on the NAS: a whole
+  RAR unpacks in 0.2-0.9 s; a page resizes to reading size in 0.15 s; the
+  library is 71% RAR (2,019 of 2,831), pages JPEG, median 1.4 MB and 3,056
+  px; the reading cache sat full at 2 GB. What changed, after how Plex and
+  Komga hand over files rather than work per request:
+  - The server packs a comic once: reading-size pages in a stored zip from
+    one pass over the archive, in a background CPU lane, kept
+    (`build_offline_package`; `GET /files/{id}/package`, resumable, 503 +
+    Retry-After while packing). Every page's kept panels come in one answer
+    (`GET /files/{id}/panels?stored=only`).
+  - The app downloads the package and the panels: two transfers, not two a
+    page. iOS asks again after Retry-After by itself, resumes a dropped
+    transfer, and the package is unpacked into the comic's folder as it
+    lands. A server that does not pack keeps the page-by-page path, and an
+    older app build keeps asking page by page.
+  - CPU lanes sized from the machine (`FLIPPARR_CPUS`, the container's
+    quota read): readers half, bulk work a quarter; the panel detector's
+    threads shared out, no spinning.
+  - New downloads are stored as CBZ (`convertNewToCbz`, on); the library's
+    existing comics are left as they are.
+  - Load test, scratch server (18-core Mac), a 120-page comic: 120 page
+    requests at once held a catalog request up to 2.9 s; six package
+    downloads at once, 24 ms at most (median 2 ms). To confirm on the NAS
+    after the deploy: server_queue notices and peak concurrency while a run
+    downloads.
+
 ### Phase 8 — live updates (only if the owner answers yes to open question 4)
 - `@capgo/capacitor-updater` (MPL-2.0; using it unmodified is compatible
   with an MIT app — record the check) in manual mode: `download`, `next`,

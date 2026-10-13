@@ -89,6 +89,9 @@ All settings have working defaults; you only need these if you are changing path
 | `FLIPPARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
 | `FLIPPARR_HTTP_THREADS` | `32` | worker threads answering requests (4-128) |
 | `FLIPPARR_COVER_CACHE_MB` | `512` | covers kept in `/config/cover-cache` so a restart does not re-read every cover; least recently used dropped first |
+| `FLIPPARR_READING_CACHE_MB` | `4096` | reading-size pages kept in `/config/reading-cache`, so a page turned to again is not rendered again; least recently used dropped first |
+| `FLIPPARR_PACKAGE_CACHE_MB` | `4096` | comics packed for Flipparr View to download (one file each), kept in `/config/package-cache` so a second device or a retry costs nothing |
+| `FLIPPARR_CPUS` | *(detected)* | how many CPUs Flipparr's heavy work may use. Detected from the container's CPU limit when it has one, else the machine's; set it to keep Flipparr to fewer. People reading get half, downloads and other bulk work a quarter, so reading never waits behind a download |
 | `FLIPPARR_LOG_DIR` | `/config/logs` | where the log is kept as well as the console (`flipparr.log`, then `.1` to `.4`, 10 MB each, oldest dropped) |
 | `FLIPPARR_TEMP_DIR` | *(unset: `/config/tmp`)* | where temporary files go (uploads while they arrive, comic packs being unpacked). Flipparr makes a `flipparr-tmp` folder inside the folder you name and empties only that at start |
 
