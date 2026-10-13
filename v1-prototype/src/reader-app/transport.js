@@ -45,6 +45,8 @@ export const PROBE_EVERY_MS = 30000;
  * the server for gone.
  */
 export const PANELS_TIMEOUT_MS = 60000;
+/** How long the server's public route gets to say it is there: it answers at once or not at all. */
+export const CHECK_TIMEOUT_MS = 5000;
 
 function unreachable(cause, timedOut = false) {
   return Object.assign(new Error("Flipparr could not be reached"), { network: true, timedOut, cause });
@@ -85,7 +87,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
   /** Whether the server answers its one public route, without saying so to anyone. */
   async function reachable() {
     try {
-      await send("/api/v1/app", { headers: {} });
+      await send("/api/v1/app", { headers: {}, timeoutMs: CHECK_TIMEOUT_MS });
       return true;
     } catch {
       return false;
@@ -263,8 +265,8 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       throw unreachable();
     }
     try {
-      const wait = method === "GET" && route?.kind === "panels" && options.timeoutMs === undefined ? { timeoutMs: PANELS_TIMEOUT_MS } : {};
-      const answer = await send(path, { ...options, ...wait });
+      const panelsWait = method === "GET" && route?.kind === "panels" && options.timeoutMs === undefined ? { timeoutMs: PANELS_TIMEOUT_MS } : {};
+      const answer = await send(path, { ...options, ...panelsWait });
       setOnline(true);
       if (method === "GET" && profileId !== null) {
         if (keepsAnswer(path)) store.saveAnswer(profileId, path, answer).catch(() => {});

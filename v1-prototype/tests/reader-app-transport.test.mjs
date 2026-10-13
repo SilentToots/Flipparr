@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PANELS_TIMEOUT_MS, REQUEST_TIMEOUT_MS, createAppTransport } from "../src/reader-app/transport.js";
+import { CHECK_TIMEOUT_MS, PANELS_TIMEOUT_MS, createAppTransport } from "../src/reader-app/transport.js";
 
 // A server that can be switched off, a device store in memory, and one
 // downloaded comic.
@@ -135,7 +135,7 @@ test("a request can wait less than the usual time, as a launch's check does", as
     setTimer: (fire, ms) => { waits.push(ms); fire(); return 0; }, clearTimer: () => {},
   });
   await assert.rejects(transport.transport("/api/v1/auth/status", { timeoutMs: 5000 }), (error) => error.network === true);
-  assert.deepEqual(waits, [5000, REQUEST_TIMEOUT_MS], "then the usual wait to see whether the server answers at all");
+  assert.deepEqual(waits, [5000, CHECK_TIMEOUT_MS], "then a short check whether the server answers at all");
   assert.equal(transport.online, false, "and, as it does not, the server counts as unreachable");
 });
 
