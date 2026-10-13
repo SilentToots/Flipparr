@@ -5,6 +5,7 @@ import email.message
 import io
 import pathlib
 import os
+import hashlib
 import shutil
 import sqlite3
 import tempfile
@@ -11286,6 +11287,73 @@ class CbzConversionTests(unittest.TestCase):
         destination.with_suffix(".cbr").write_bytes(b"the issue, as it came before")
         with self.assertRaisesRegex(ValueError, "already exists"):
             app._import_selected_comic({"path": str(converted), "convertedFromSuffix": ".cbr"}, context, {"job_id": 1}, library)
+
+
+class PageFingerprintTests(unittest.TestCase):
+    """docs/READING_STATE_PLAN.md step 1: a page's fingerprint (its bytes and
+    its image) is kept whenever its bytes are read anyway, so a reader's
+    place, panels and chosen pages can be found again in another file."""
+
+    def setUp(self):
+        from PIL import Image
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.pages = {}
+        comic = self.root / "Example 001.cbz"
+        with zipfile.ZipFile(comic, "w") as archive:
+            for index, colour in enumerate(((200, 40, 40), (40, 200, 40), (40, 40, 200))):
+                image = Image.new("RGB", (60, 90), colour)
+                image.paste((255, 255, 255), (10 + index * 10, 10, 30 + index * 10, 40))
+                buffer = io.BytesIO()
+                image.save(buffer, "JPEG")
+                self.pages[f"{index + 1:02d}.jpg"] = buffer.getvalue()
+                archive.writestr(f"{index + 1:02d}.jpg", buffer.getvalue())
+        parsed = [app.ParsedFile(str(comic), comic.name, ".cbz", "Example", issue="1")]
+        self.store = CatalogStore(self.root / "catalog.db")
+        self.store.perform_scan(self.store.begin_scan(str(self.root), True), lambda *_: list(parsed), lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {}, "file_health": {"status": "ok"},
+            "recommendation": {"title": "Example", "issue": p.issue, "record_type": "single_issue", "publisher": "X", "source": "Test"},
+            "file_cover": None,
+        })
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.file_id = connection.execute("SELECT id FROM files").fetchone()[0]
+        self.comic = comic
+        for each in (patch("app.catalog_store", return_value=self.store),
+                     patch("app.reading_cache_dir", return_value=self.root / "reading-cache"),
+                     patch("app.cover_cache_dir", return_value=self.root / "cover-cache"),
+                     patch("app.package_cache_dir", return_value=self.root / "package-cache"),
+                     patch("app.unpack_work_dir", return_value=self.root / "unpack")):
+            each.start()
+            self.addCleanup(each.stop)
+
+    def _kept(self):
+        return self.store.page_fingerprints(self.file_id, app._file_signature(self.comic))
+
+    def test_reading_a_page_keeps_its_fingerprint_from_the_bytes_in_hand(self):
+        app.render_file_page(self.file_id, 1, "read")
+        kept = self._kept()
+        self.assertEqual(set(kept), {"02.jpg"})
+        self.assertEqual(kept["02.jpg"]["sha256"], hashlib.sha256(self.pages["02.jpg"]).hexdigest())
+        self.assertRegex(kept["02.jpg"]["dhash"], r"^[0-9a-f]{16}$")
+        app.render_file_page(self.file_id, 1, "read")
+        self.assertEqual(set(self._kept()), {"02.jpg"}, "a page already rendered is not read again for it")
+
+    def test_packing_and_a_one_pass_fill_fingerprint_every_page(self):
+        app.build_offline_package(self.file_id)
+        self.assertEqual(set(self._kept()), set(self.pages))
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("DELETE FROM page_fingerprints")
+        app.render_file_page(self.file_id, 0, "read")
+        filled = app.ensure_page_fingerprints(self.file_id)
+        self.assertEqual({member: row["sha256"] for member, row in filled.items()},
+                         {member: hashlib.sha256(data).hexdigest() for member, data in self.pages.items()})
+
+    def test_a_changed_file_has_no_fingerprints_until_read_again(self):
+        app.render_file_page(self.file_id, 0, "read")
+        time.sleep(0.01)
+        with zipfile.ZipFile(self.comic, "a") as archive:
+            archive.writestr("04.jpg", self.pages["01.jpg"])
+        self.assertEqual(self._kept(), {}, "fingerprints hold for the file as it was")
 
 
 class _StopAfterOnePass(threading.Event):

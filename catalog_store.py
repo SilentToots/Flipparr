@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 69
+SCHEMA_VERSION = 70
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1524,6 +1524,25 @@ class CatalogStore:
                 -- "converted", or "kept" with the reason it was filed as it
                 -- came. Evidence for how often it happens and whether it
                 -- fails, kept past the container's log.
+                -- What each page of a comic looks like, as a fingerprint
+                -- (schema 70, docs/READING_STATE_PLAN.md step 1): the hash of
+                -- the page's bytes as the archive holds them, and the
+                -- difference hash of its image. A page is the same page in
+                -- another file of the comic -- a replacement, a CBZ of it,
+                -- another release -- when these match, whatever its number
+                -- or name there: what a reader's place, panels and chosen
+                -- pages are found again by. Recorded whenever the page's
+                -- bytes are read anyway; good while the file is unchanged.
+                CREATE TABLE IF NOT EXISTS page_fingerprints (
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    page_member TEXT NOT NULL,
+                    file_signature TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    dhash TEXT,
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY (file_id, page_member)
+                );
+                CREATE INDEX IF NOT EXISTS page_fingerprints_sha ON page_fingerprints(sha256);
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -5092,6 +5111,29 @@ class CatalogStore:
                    WHERE user_id=? AND device=? AND file_id=? AND removed_at IS NULL""",
                 (_utc_now(), reason, int(user_id), device, int(file_id)),
             ).rowcount
+
+    def record_page_fingerprint(self, file_id: int, page_member: str, file_signature: str,
+                                sha256: str, dhash: str | None) -> None:
+        """A page's fingerprint, as its bytes and image are now."""
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO page_fingerprints(file_id, page_member, file_signature, sha256, dhash, recorded_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(file_id, page_member) DO UPDATE SET
+                       file_signature=excluded.file_signature, sha256=excluded.sha256,
+                       dhash=COALESCE(excluded.dhash, page_fingerprints.dhash), recorded_at=excluded.recorded_at""",
+                (int(file_id), page_member, file_signature, sha256, dhash, _utc_now()),
+            )
+
+    def page_fingerprints(self, file_id: int, file_signature: str) -> dict[str, dict[str, Any]]:
+        """A file's page fingerprints that still hold, by member name: those
+        recorded while the file was as it is now."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT page_member, sha256, dhash FROM page_fingerprints WHERE file_id=? AND file_signature=?",
+                (int(file_id), file_signature),
+            ).fetchall()
+        return {row["page_member"]: {"sha256": row["sha256"], "dhash": row["dhash"]} for row in rows}
 
     def record_cbz_conversion(self, source_name: str, source_kind: str | None, source_bytes: int | None,
                               cbz_bytes: int | None, members: int | None, outcome: str, reason: str | None = None) -> None:

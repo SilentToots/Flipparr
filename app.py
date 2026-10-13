@@ -10479,6 +10479,7 @@ def _thumbnail_cache_key(path: Path, member: str, max_dimension: int) -> str:
 def render_file_cover_thumbnail(
     path: Path, member: str, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION,
     cache_dir: Path | None = None, budget: int | None = None,
+    on_read: Callable[[bytes, bytes], None] | None = None,
 ) -> bytes:
     """Extract and cache a web-sized JPEG without modifying the comic archive."""
     if cache_dir is None:
@@ -10500,6 +10501,9 @@ def render_file_cover_thumbnail(
     source_bytes = read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
     body = normalize_image_to_jpeg(source_bytes, max_dimension)
     _cache_put(cache_dir, cache_key, body, budget)
+    if on_read is not None:
+        # The page's bytes are in hand: whoever asked may keep what it needs of them.
+        on_read(source_bytes, body)
     return body
 
 
@@ -14382,8 +14386,10 @@ def build_offline_package(file_id: int) -> Path:
                 if body is None:
                     if pages is None:
                         pages = ComicPages(path).__enter__()
-                    body = normalize_image_to_jpeg(pages.read(member), size)
+                    source = pages.read(member)
+                    body = normalize_image_to_jpeg(source, size)
                     _cache_put(reading_dir, key, body, READING_CACHE_MAX_BYTES)
+                    note_page_fingerprint(file_id, path, member, source, body)
                 entry = zipfile.ZipInfo(PACKAGE_PAGE_NAME.format(index=index), date_time=(1980, 1, 1, 0, 0, 0))
                 entry.compress_type = zipfile.ZIP_STORED
                 package.writestr(entry, body)
@@ -15025,12 +15031,56 @@ def vision_budget_allows(viewer_id: int) -> bool:
         return True
 
 
-def page_hashes(path: Path, member: str, image: Any) -> tuple[str, str]:
+def page_hashes(path: Path, member: str, image: Any, *, file_id: int | None = None) -> tuple[str, str]:
     """A page's fingerprint: its bytes hashed, and the difference hash of its
     render -- what a reader's fix is keyed to besides the file it was made
-    on, so the fix follows the page to another file or another Flipparr."""
+    on, so the fix follows the page to another file or another Flipparr.
+    With `file_id`, kept as the page's fingerprint too (page_fingerprints)."""
     digest = hashlib.sha256(read_archive_member(path, member)).hexdigest()
-    return digest, panel_finder.page_dhash(image)
+    dhash = panel_finder.page_dhash(image)
+    if file_id is not None:
+        with contextlib.suppress(Exception):
+            catalog_store().record_page_fingerprint(file_id, member, _file_signature(path), digest, dhash)
+    return digest, dhash
+
+
+def note_page_fingerprint(file_id: int, path: Path, member: str, source: bytes, rendered: bytes | None = None) -> None:
+    """Keep a page's fingerprint, from its bytes as the archive holds them and,
+    when there is one, a render of it (for the image's difference hash):
+    called wherever a page's bytes are read anyway, so it costs a hash and no
+    reading (docs/READING_STATE_PLAN.md step 1). Never fails what called it."""
+    try:
+        dhash = None
+        if rendered:
+            from PIL import Image
+            with Image.open(io.BytesIO(rendered)) as image:
+                image.draft("L", (64, 64))
+                dhash = panel_finder.page_dhash(image)
+        catalog_store().record_page_fingerprint(file_id, member, _file_signature(path),
+                                                hashlib.sha256(source).hexdigest(), dhash)
+    except Exception as exc:  # noqa: BLE001 -- a fingerprint is never worth a failed page
+        log_exception("page_fingerprint_failed", exc, level="warning")
+
+
+def ensure_page_fingerprints(file_id: int) -> dict[str, dict[str, Any]]:
+    """Every page of a comic fingerprinted, the missing ones from one pass
+    over the archive in the background lane; by member name."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    signature = _file_signature(path)
+    members = cached_page_members(path)
+    known = store.page_fingerprints(file_id, signature)
+    missing = [member for member in members if member not in known]
+    if missing:
+        with cpu_lane("background"), ComicPages(path) as pages:
+            for member in missing:
+                try:
+                    data = pages.read(member)
+                except ValueError:
+                    continue
+                note_page_fingerprint(file_id, path, member, data, normalize_image_to_jpeg(data, 64))
+        known = store.page_fingerprints(file_id, signature)
+    return known
 
 
 def _reattach_manual_panels(store: Any, file_id: int, member: str, signature: str, page_hash: str,
@@ -15092,7 +15142,7 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
             # of this same page made elsewhere -- on the file this one
             # replaced, in an import -- is this page's answer.
             try:
-                hashes = page_hashes(path, member, image)
+                hashes = page_hashes(path, member, image, file_id=file_id)
             except Exception as exc:  # noqa: BLE001 -- a page is read with or without its fingerprint
                 log_exception("page_hash_failed", exc, level="warning")
             if hashes and record is None:
@@ -15232,7 +15282,7 @@ def save_page_panels(file_id: int, index: int, payload: Any, *, fixed_by: int | 
     hashes: tuple[str, str] | None = None
     try:
         with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
-            hashes = page_hashes(path, pages[index], image)
+            hashes = page_hashes(path, pages[index], image, file_id=file_id)
     except Exception as exc:  # noqa: BLE001 -- a fix is kept with or without its page's fingerprint
         log_exception("page_hash_failed", exc, level="warning")
     store.set_page_panels(file_id, pages[index], _file_signature(path), "manual", panels, True,
@@ -15510,10 +15560,12 @@ def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
         if not cached.is_file():
             with contextlib.suppress(Exception):
                 offline_package(file_id)
+    member = pages[index]
     return render_file_cover_thumbnail(
-        path, pages[index], PAGE_SIZES[size],
+        path, member, PAGE_SIZES[size],
         cache_dir=reading_cache_dir() if reading else None,
         budget=READING_CACHE_MAX_BYTES if reading else None,
+        on_read=lambda source, body: note_page_fingerprint(file_id, path, member, source, body),
     )
 
 
