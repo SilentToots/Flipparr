@@ -1,0 +1,92 @@
+name: Release Flipparr View
+
+# Flipparr View to TestFlight from anywhere (the owner, 2026-10-11): Actions
+# -> Release Flipparr View -> Run workflow, from the GitHub app on a phone.
+# It runs tools/reader_app_release.sh on GitHub's Mac, the same release the
+# owner runs on his own, so what ships is still one named commit.
+#
+# Only by hand, never on a push: a release is a decision. The repository
+# is public, so its run logs are too; the key, its ids and the team come
+# from encrypted repository secrets, which GitHub masks in the log, and no
+# log or archive is kept as an artifact (an artifact is not masked).
+#
+# Secrets (Settings -> Secrets and variables -> Actions):
+#   ASC_KEY_ID        the App Store Connect API key's id
+#   ASC_ISSUER_ID     its issuer id
+#   ASC_KEY_P8        the whole .p8 file, BEGIN and END lines included
+#   DEVELOPMENT_TEAM  the signing team
+# The key needs the Admin role (or "Access to Cloud Managed Distribution
+# Certificate"): this Mac has no certificate of its own, so the upload signs
+# with Apple's cloud-managed one (FLIPPARR_UNSIGNED_ARCHIVE in the script).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to ship"
+        required: true
+        default: v1-forward
+
+permissions:
+  contents: read
+
+# One release at a time: two would race for the same build number minute.
+concurrency:
+  group: reader-app-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Named, not "latest", as the other workflow's runner is: macOS 26 with
+    # Xcode 26.6 as of 2026-10. Change it here, deliberately.
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: v1-prototype/package-lock.json
+      - name: Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+      - run: npm ci
+        working-directory: v1-prototype
+      # The bundle that ships is the one the tests passed on.
+      - name: Lint and tests
+        working-directory: v1-prototype
+        run: |
+          npm run lint
+          npm test
+      - name: The key, for this run only
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+      - name: Archive and upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+          FLIPPARR_UNSIGNED_ARCHIVE: "1"
+          FLIPPARR_RELEASE_OUT: ${{ runner.temp }}/release
+        run: ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" tools/reader_app_release.sh
+      # The script keeps xcodebuild's output in files; on a failure their ends
+      # go to the log, where the secrets are masked.
+      - name: What went wrong
+        if: failure()
+        run: |
+          for log in "$RUNNER_TEMP"/release/*.log; do
+            [ -f "$log" ] || continue
+            echo "::group::$(basename "$log")"
+            tail -n 80 "$log"
+            echo "::endgroup::"
+          done
+      - name: Forget the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
