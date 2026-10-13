@@ -220,17 +220,34 @@ class ModelTierTests(unittest.TestCase):
         fake = types.ModuleType("onnxruntime")
         fake.disable_telemetry_events = lambda: seen.setdefault("switched_off", True)
 
-        def session(path, providers):
+        class Options:
+            def __init__(self):
+                self.config = {}
+                self.intra_op_num_threads = 0
+
+            def add_session_config_entry(self, key, value):
+                self.config[key] = value
+
+        def session(path, sess_options=None, providers=None):
             seen["telemetry_env_at_load"] = os.environ.get("ORT_DISABLE_TELEMETRY")
+            seen["options"] = sess_options
             return "session"
 
+        fake.SessionOptions = Options
         fake.InferenceSession = session
         with tempfile.NamedTemporaryFile(suffix=".onnx") as model, patch.dict(sys.modules, {"onnxruntime": fake}), \
                 patch.dict(os.environ, {"ORT_DISABLE_TELEMETRY": "0"}):
             self.assertIsNone(load_model_session(model.name + ".missing"))
             self.assertEqual(seen, {}, "no model file: the runtime is never touched")
             self.assertEqual(load_model_session(model.name), "session")
+            self.assertEqual(seen["options"].intra_op_num_threads, 0, "no share given: the runtime's own default")
+            self.assertEqual(load_model_session(model.name, threads=2), "session")
+        options = seen.pop("options")
         self.assertEqual(seen, {"switched_off": True, "telemetry_env_at_load": "1"})
+        # Several pages read at once share the cores rather than each taking all of them, and
+        # idle threads do not spin (onnxruntime's threading guide, 2026-10-12).
+        self.assertEqual(options.intra_op_num_threads, 2)
+        self.assertEqual(options.config, {"session.intra_op.allow_spinning": "0"})
 
     def test_two_boxes_that_mostly_overlap_are_one_panel_seen_twice(self):
         kept = suppress([(0.9, (0, 0, 100, 100)), (0.7, (5, 5, 100, 100)), (0.8, (200, 0, 300, 100))])

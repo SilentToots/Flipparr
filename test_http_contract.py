@@ -1888,6 +1888,8 @@ NOT_ADMIN = {
     ("GET", "/api/v1/auth/status"): "public",
     ("GET", "/api/v1/app"): "public",
     ("GET", "/api/v1/files/1/offline"): "reader",
+    ("GET", "/api/v1/files/1/package"): "reader",
+    ("GET", "/api/v1/files/1/panels"): "reader",
     ("POST", "/api/v1/offline/check"): "reader",
     ("GET", "/api/v1/offline/downloads"): "reader",
     ("POST", "/api/v1/offline/downloads"): "reader",
@@ -2331,7 +2333,7 @@ class ReaderProfileHttpTests(unittest.TestCase):
         body = manifest.json()
         # The fields Flipparr View reads (reader API 1): add to these, never take away.
         self.assertEqual(set(body), {"fileId", "fileSignature", "pageCount", "bytesEstimate", "filename", "run", "kind",
-                                     "issueNumber", "volumeNumber", "readingDirection", "pages"})
+                                     "issueNumber", "volumeNumber", "readingDirection", "pages", "package", "panelsUrl"})
         self.assertEqual((body["pageCount"], body["filename"], body["run"]["title"], body["issueNumber"]),
                          (2, "Example 001.cbz", "Example", "1"))
         self.assertEqual(body["bytesEstimate"], 2 * app.OFFLINE_PAGE_BYTES_GUESS, "nothing rendered yet")
@@ -2365,6 +2367,88 @@ class ReaderProfileHttpTests(unittest.TestCase):
         for bad in ({"files": "all"}, {"files": [{"fileSignature": "x"}]}, {"files": ["1"]},
                     {"files": [{"fileId": "1", "fileSignature": "x"}] * 501}):
             self.assertEqual(self.call("POST", "/api/v1/offline/check", bad, cookies=admin).status, 400)
+
+    def _package(self, file_id, signature, cookies, headers=None, wait=True):
+        """The comic's package, asked again while it is being packed, as the device does."""
+        cookie = "; ".join(f"{name}={value}" for name, value in (cookies or {}).items())
+        for _ in range(100):
+            answer = request("GET", f"{self.base}/api/v1/files/{file_id}/package?v={signature}",
+                             headers={**({"Cookie": cookie} if cookie else {}), **(headers or {})})
+            if answer.status != 503 or not wait:
+                return answer
+            self.assertTrue(any(k.lower() == "retry-after" for k in answer.headers), "a device is told when to ask again")
+            time.sleep(0.05)
+        self.fail("the package was never ready")
+
+    def test_flipparr_view_downloads_a_comic_as_one_resumable_package(self):
+        """Production, 2026-10-12: a download asked for every page on its own, and a
+        200-page comic filled the server's threads. Now it is one file, packed once."""
+        import tarfile
+        header = lambda response, name: next((v for k, v in response.headers.items() if k.lower() == name.lower()), None)  # noqa: E731
+        store, run = self._library_of_one_run()
+        root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
+        comic = root / "Example 001.cbz"
+        with zipfile.ZipFile(comic, "w") as archive:
+            archive.writestr("10.jpg", _png_bytes(6))
+            archive.writestr("2.jpg", _png_bytes(5))
+            archive.writestr("ComicInfo.xml", "<ComicInfo/>")
+        # A comic bsdtar unpacks (RAR's path; a tar stands in, as RAR cannot be written here).
+        unpacked = root / "Example 002.cbz"
+        with tarfile.open(unpacked, "w") as archive:
+            for name, size in (("a/01.png", 4), ("a/02.png", 7)):
+                data = _png_bytes(size)
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        with sqlite3.connect(store.database_path) as connection:
+            ids = {Path(path).name: file_id for file_id, path in connection.execute("SELECT id, path FROM files")}
+        sam = self._household_with_a_reader()
+        admin = self.call("POST", "/api/v1/profiles/switch", {"userId": 1, "pin": "2468"}).cookies
+        cache = root.parent / "pkg-reading-cache"
+        with patch("app.reading_cache_dir", return_value=cache), \
+                patch("app.package_cache_dir", return_value=root.parent / "package-cache"), \
+                patch("app.unpack_work_dir", return_value=root.parent / "unpack"):
+            for name, pages in (("Example 001.cbz", 2), ("Example 002.cbz", 2)):
+                manifest = self.call("GET", f"/api/v1/files/{ids[name]}/offline", cookies=admin).json()
+                self.assertEqual(manifest["package"]["url"], f"/api/v1/files/{ids[name]}/package?v={manifest['fileSignature']}")
+                self.assertEqual(manifest["panelsUrl"], f"/api/v1/files/{ids[name]}/panels?stored=only")
+                whole = self._package(ids[name], manifest["fileSignature"], admin)
+                self.assertEqual(whole.status, 200, whole.body)
+                self.assertEqual((header(whole, "Content-Type"), header(whole, "Accept-Ranges")), ("application/zip", "bytes"))
+                etag = header(whole, "ETag")
+                self.assertTrue(etag and not etag.startswith("W/"), "a strong tag, so a download can resume")
+                with zipfile.ZipFile(io.BytesIO(whole.body)) as package:
+                    self.assertEqual(package.namelist(), [f"{index:04d}.jpg" for index in range(pages)],
+                                     "numbered pages in reading order, nothing else")
+                    self.assertTrue(all(info.compress_type == zipfile.ZIP_STORED for info in package.infolist()))
+                    self.assertTrue(all(package.read(entry).startswith(b"\xff\xd8") for entry in package.namelist()), "JPEGs")
+                if name == "Example 001.cbz":
+                    with zipfile.ZipFile(io.BytesIO(whole.body)) as package:
+                        from PIL import Image
+                        self.assertEqual(Image.open(io.BytesIO(package.read("0000.jpg"))).size, (5, 5), "2.jpg before 10.jpg")
+                    # Resumed part way: the rest of the same bytes.
+                    rest = self._package(ids[name], manifest["fileSignature"], admin, {"Range": "bytes=10-", "If-Range": etag})
+                    self.assertEqual((rest.status, rest.body), (206, whole.body[10:]))
+                    self.assertEqual(header(rest, "Content-Range"), f"bytes 10-{len(whole.body) - 1}/{len(whole.body)}")
+                    self.assertEqual(self._package(ids[name], manifest["fileSignature"], admin, {"If-None-Match": etag}).status, 304)
+                    self.assertEqual(self._package(ids[name], manifest["fileSignature"], admin,
+                                                   {"Range": f"bytes={len(whole.body) + 5}-"}).status, 416)
+                    self.assertEqual(self._package(ids[name], "stale-signature", admin).status, 409)
+                    # Packed once; asked again, the same file.
+                    self.assertEqual(self._package(ids[name], manifest["fileSignature"], admin).body, whole.body)
+                    again = self.call("GET", f"/api/v1/files/{ids[name]}/offline", cookies=admin).json()
+                    self.assertEqual(again["bytesEstimate"], len(whole.body), "the size, once it is packed")
+                    panels = self.call("GET", f"/api/v1/files/{ids[name]}/panels?stored=only", cookies=admin)
+                    self.assertEqual(panels.status, 200, panels.body)
+                    self.assertEqual(set(panels.json()["pages"]), {"0", "1"})
+                    self.assertEqual(self.call("GET", f"/api/v1/files/{ids[name]}/panels", cookies=admin).status, 400)
+            self.assertEqual(list((root.parent / "unpack").iterdir()), [], "nothing left unpacked")
+            # A profile kept from the run gets neither.
+            self.call("PATCH", f"/api/v1/users/{sam}", {"maxRating": "teen"}, cookies=admin)
+            store.record_run_rating(run, "mature", "metron", "Mature (issue 1)")
+            reader = self.call("POST", "/api/v1/profiles/switch", {"userId": sam}).cookies
+            self.assertEqual(self._package(ids["Example 001.cbz"], "", reader, wait=False).status, 404)
+            self.assertEqual(self.call("GET", f"/api/v1/files/{ids['Example 001.cbz']}/panels?stored=only", cookies=reader).status, 404)
 
     def test_reader_api_1_keeps_every_field_flipparr_reader_reads(self):
         """ReaderAppContractTests, as the plan names it: the fields

@@ -11059,6 +11059,161 @@ class VisionBudgetTests(unittest.TestCase):
         self.assertEqual(app._PANELS_INFLIGHT, {})
 
 
+class CpuLaneTests(unittest.TestCase):
+    """Production, 2026-10-12: a download's twenty jobs at once on the NAS's
+    four cores slowed every other request past the app's patience. The lanes
+    are sized from the CPUs Flipparr may use, on any machine."""
+
+    def _cgroup(self, files):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return root
+
+    def test_a_container_quota_counts_not_the_hosts_cores(self):
+        root = self._cgroup({"proc": "0::/\n", "sys/cpu.max": "200000 100000\n"})
+        self.assertEqual(app.available_cpus(override="", proc_cgroup=root / "proc", cgroup_root=root / "sys", scheduled=16), 2)
+
+    def test_a_fractional_quota_rounds_up_and_no_quota_is_the_machine(self):
+        root = self._cgroup({"proc": "0::/flipparr\n", "sys/flipparr/cpu.max": "50000 100000\n"})
+        self.assertEqual(app.available_cpus(override="", proc_cgroup=root / "proc", cgroup_root=root / "sys", scheduled=8), 1)
+        root = self._cgroup({"proc": "0::/\n", "sys/cpu.max": "max 100000\n"})
+        self.assertEqual(app.available_cpus(override="", proc_cgroup=root / "proc", cgroup_root=root / "sys", scheduled=4), 4)
+
+    def test_cgroup_v1_quota_and_the_override(self):
+        root = self._cgroup({"proc": "4:cpu,cpuacct:/docker/abc\n",
+                             "sys/cpu,cpuacct/docker/abc/cpu.cfs_quota_us": "300000\n",
+                             "sys/cpu,cpuacct/docker/abc/cpu.cfs_period_us": "100000\n"})
+        self.assertEqual(app.available_cpus(override="", proc_cgroup=root / "proc", cgroup_root=root / "sys", scheduled=12), 3)
+        self.assertEqual(app.available_cpus(override="6", proc_cgroup=root / "proc", cgroup_root=root / "sys", scheduled=12), 6)
+        nothing = self._cgroup({})
+        self.assertEqual(app.available_cpus(override="", proc_cgroup=nothing / "proc", cgroup_root=nothing / "sys", scheduled=4), 4)
+
+    def test_lanes_are_sized_from_the_cpus(self):
+        self.assertEqual(app.READING_LANE_SIZE, max(1, app.CPUS // 2))
+        self.assertEqual(app.BACKGROUND_LANE_SIZE, max(1, app.CPUS // 4))
+
+    def _peak(self, allow_vision, pages=8):
+        running, peak, lock = [0], [0], threading.Lock()
+
+        def work(file_id, index, *, allow_vision):
+            with app.cpu_lane():
+                with lock:
+                    running[0] += 1
+                    peak[0] = max(peak[0], running[0])
+                time.sleep(0.03)
+                with lock:
+                    running[0] -= 1
+            return {"segmented": False, "panels": []}
+
+        with patch("app._file_page_panels", side_effect=work):
+            threads = [threading.Thread(target=app.file_page_panels, args=(3, index), kwargs={"allow_vision": allow_vision})
+                       for index in range(pages)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        return peak[0]
+
+    def test_bulk_and_reading_each_run_no_more_than_their_lane(self):
+        self.assertEqual(self._peak(False), min(8, app.BACKGROUND_LANE_SIZE))
+        self.assertEqual(self._peak(True), min(8, app.READING_LANE_SIZE))
+
+    def test_a_reader_is_not_queued_behind_bulk_work(self):
+        holding, release = threading.Event(), threading.Event()
+        holders = []
+
+        def bulk():
+            with app.cpu_lane("background"):
+                holding.set()
+                release.wait(2)
+
+        for _ in range(app.BACKGROUND_LANE_SIZE):
+            holding.clear()
+            thread = threading.Thread(target=bulk)
+            thread.start()
+            holders.append(thread)
+            self.assertTrue(holding.wait(2))
+        started = time.monotonic()
+        with app.cpu_lane():
+            pass
+        self.assertLess(time.monotonic() - started, 0.5, "the reading lane was free")
+        release.set()
+        for thread in holders:
+            thread.join()
+
+    def test_the_local_tiers_hold_the_threads_lane_and_the_thread_goes_back_to_reading(self):
+        seen = []
+
+        def detect(image, *args):
+            seen.append(app._CPU_LANES["background"]._value)
+            return {"segmented": False, "panels": []}
+
+        def work(file_id, index, *, allow_vision):
+            return app._read_page_panels(object(), None, False, False, "ltr")
+
+        with patch("app.panel_finder.detect_panels", side_effect=detect), patch("app._file_page_panels", side_effect=work):
+            app.file_page_panels(3, 1, allow_vision=False)
+        self.assertEqual(seen, [app.BACKGROUND_LANE_SIZE - 1], "the background lane was held while the page was read")
+        self.assertEqual(app._CPU_LANES["background"]._value, app.BACKGROUND_LANE_SIZE)
+        self.assertEqual(getattr(app._CPU_LANE, "name", "reading"), "reading")
+
+
+class UnpackTests(unittest.TestCase):
+    """A comic unpacked once (packing, CBZ conversion) is read back only from
+    inside its work folder, and cannot unpack to more than a comic could be."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_a_member_is_read_only_from_inside_the_folder(self):
+        folder = self.root / "unpacked"
+        (folder / "a").mkdir(parents=True)
+        (folder / "a" / "01.jpg").write_bytes(b"page")
+        (self.root / "secret.jpg").write_bytes(b"not yours")
+        (folder / "link.jpg").symlink_to(self.root / "secret.jpg")
+        self.assertEqual(app.read_unpacked_member(folder, "a/01.jpg"), b"page")
+        for name in ("../secret.jpg", "link.jpg", "a", "missing.jpg"):
+            with self.assertRaises(ValueError, msg=name):
+                app.read_unpacked_member(folder, name)
+
+    def test_an_archive_that_unpacks_past_a_comic_is_refused_and_leaves_nothing(self):
+        import tarfile
+        if not app._external_archive_tool():
+            self.skipTest("bsdtar is not installed")
+        bomb = self.root / "bomb.cbt"
+        with tarfile.open(bomb, "w:gz") as archive:
+            data = b"\0" * (8 * 1024 * 1024)
+            info = tarfile.TarInfo("01.jpg")
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+        work = self.root / "work"
+        with patch("app.unpack_work_dir", return_value=work), patch("app.UNPACK_BYTES_MAX", 1024 * 1024):
+            with self.assertRaises(ValueError):
+                app.unpack_archive(bomb)
+        self.assertEqual(list(work.iterdir()), [])
+
+    def test_a_tar_is_unpacked_once_and_read_by_member(self):
+        import tarfile
+        if not app._external_archive_tool():
+            self.skipTest("bsdtar is not installed")
+        comic = self.root / "comic.cbt"
+        with tarfile.open(comic, "w") as archive:
+            for name in ("p/01.jpg", "p/02.jpg"):
+                info = tarfile.TarInfo(name)
+                info.size = 4
+                archive.addfile(info, io.BytesIO(name.encode()[:4]))
+        with patch("app.unpack_work_dir", return_value=self.root / "work"):
+            with app.ComicPages(comic) as pages:
+                self.assertEqual(pages.read("p/02.jpg"), b"p/02")
+                folder = pages.folder
+            self.assertFalse(folder.exists(), "the work folder goes with it")
+
+
 class _StopAfterOnePass(threading.Event):
     """A stop event that lets a worker loop finish one whole pass."""
 

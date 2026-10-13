@@ -128,7 +128,82 @@ READING_PAGE_MAX_DIMENSION = 1800
 # are dropped. They live beside the catalog rather than in /tmp: the container
 # mounts a 256MB tmpfs there and shares it with SQLite and the cover cache, and
 # one issue at reading size is ~10MB.
-READING_CACHE_MAX_BYTES = max(64, int(_env("READING_CACHE_MB", "2048") or 2048)) * 1024 * 1024
+# 4096 since 2026-10-12: at 2048 production's cache sat full, so pages were
+# rendered again and again as they were dropped.
+READING_CACHE_MAX_BYTES = max(64, int(_env("READING_CACHE_MB", "4096") or 4096)) * 1024 * 1024
+# Comics packed for Flipparr View to download, one file each (a stored zip of
+# its pages at reading size), kept so a second device or a retry costs nothing.
+PACKAGE_CACHE_MAX_BYTES = max(256, int(_env("PACKAGE_CACHE_MB", "4096") or 4096)) * 1024 * 1024
+# How much CPU Flipparr may use, for sizing its own CPU work (the lanes
+# below, the panel detector's threads) on whatever machine it runs on.
+# Python counts the CPUs a process may be scheduled on, not its container's
+# CPU quota: a container held to two CPUs on a sixteen-core NAS reads sixteen
+# (cpython#120078; Dask reads the quota the same way). FLIPPARR_CPUS wins.
+def available_cpus(*, override: str | None = None, proc_cgroup: Path = Path("/proc/self/cgroup"),
+                   cgroup_root: Path = Path("/sys/fs/cgroup"), scheduled: int | None = None) -> int:
+    """The CPUs Flipparr may use: FLIPPARR_CPUS, else the fewer of those it
+    may be scheduled on and its cgroup's quota (v2 cpu.max, v1 cfs quota)."""
+    override = _env("CPUS", "") if override is None else override
+    try:
+        if override.strip():
+            return max(1, int(float(override)))
+    except ValueError:
+        pass
+    if scheduled is None:
+        counter = getattr(os, "process_cpu_count", None) or os.cpu_count
+        scheduled = counter() or 1
+    quota = _cgroup_cpu_quota(proc_cgroup, cgroup_root)
+    return max(1, min(scheduled, quota) if quota else scheduled)
+
+
+def _cgroup_cpu_quota(proc_cgroup: Path, cgroup_root: Path) -> int | None:
+    """The CPU quota of this process's cgroup, rounded up; None when there is none."""
+    try:
+        lines = proc_cgroup.read_text().splitlines()
+    except OSError:
+        lines = []
+    v2_path, v1_path = "/", None
+    for line in lines:
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        if parts[0] == "0" and parts[1] == "":
+            v2_path = parts[2] or "/"
+        elif "cpu" in parts[1].split(","):
+            v1_path = parts[2] or "/"
+
+    def read(path: Path) -> str | None:
+        try:
+            return path.read_text().strip()
+        except OSError:
+            return None
+
+    # v2: "max 100000" is no limit; "200000 100000" is two CPUs. Inside a
+    # container's own namespace the path is "/", so the root is tried too.
+    for candidate in (cgroup_root / v2_path.lstrip("/") / "cpu.max", cgroup_root / "cpu.max"):
+        text = read(candidate)
+        if text:
+            quota, _, period = text.partition(" ")
+            if quota == "max":
+                return None
+            try:
+                return max(1, -(-int(quota) // int(period or 100000)))
+            except ValueError:
+                return None
+    for folder in ("cpu", "cpu,cpuacct"):
+        for base in ((cgroup_root / folder / (v1_path or "/").lstrip("/")), cgroup_root / folder):
+            quota, period = read(base / "cpu.cfs_quota_us"), read(base / "cpu.cfs_period_us")
+            if quota is None or period is None:
+                continue
+            try:
+                quota_us, period_us = int(quota), int(period)
+            except ValueError:
+                return None
+            return None if quota_us <= 0 or period_us <= 0 else max(1, -(-quota_us // period_us))
+    return None
+
+
+CPUS = available_cpus()
 _LEGACY_USER_COVER_DIR = Path(__file__).parent / ".data" / "user-covers"
 _DEFAULT_CONFIG_DIR = Path(__file__).parent / ".data"
 
@@ -2304,6 +2379,18 @@ def reading_cache_dir() -> Path:
 
 def cover_cache_dir() -> Path:
     return _configured_path("COVER_CACHE", catalog_database_path().parent / "cover-cache")
+
+
+def package_cache_dir() -> Path:
+    """Where comics packed for Flipparr View are kept (`build_offline_package`)."""
+    return _configured_path("PACKAGE_CACHE", catalog_database_path().parent / "package-cache")
+
+
+def unpack_work_dir() -> Path:
+    """Where a comic is unpacked once to be packed or converted. On the config
+    volume, not /tmp: the container's /tmp is a small tmpfs, and a comic can
+    be 200 MB."""
+    return _configured_path("UNPACK_DIR", catalog_database_path().parent / "unpack")
 
 
 # A comic a person fetched themselves. Larger than any single issue needs, and
@@ -10319,16 +10406,22 @@ def render_file_cover_thumbnail(
 
     source_bytes = read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
     body = normalize_image_to_jpeg(source_bytes, max_dimension)
+    _cache_put(cache_dir, cache_key, body, budget)
+    return body
+
+
+def _cache_put(cache_dir: Path, cache_key: str, body: bytes, budget: int | None) -> None:
+    """Keep a rendered image under its key, swept to `budget`; a cache that
+    cannot be written is only a slower next time."""
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_temp = cache_dir / f".{cache_key}-{threading.get_ident()}.tmp"
         cache_temp.write_bytes(body)
-        os.replace(cache_temp, cached)
+        os.replace(cache_temp, cache_dir / f"{cache_key}.jpg")
         if budget:
             sweep_image_cache(cache_dir, budget)
     except OSError:
         pass
-    return body
 
 
 # The most pixels an image is decoded to, whoever sent it: a reader's
@@ -14026,6 +14119,247 @@ def file_pages(file_id: int) -> dict[str, Any]:
 OFFLINE_PAGE_BYTES_GUESS = 380_000
 
 
+# ---- A comic packed for Flipparr View ---------------------------------------
+# A download used to ask for every page on its own -- hundreds of requests,
+# each a RAR scanned again and a page re-encoded -- and a 200-page comic
+# filled the server's 32 threads, so everyone else waited (production,
+# 2026-10-12). Now a comic is packed once, as Plex and Komga hand over a
+# file: its pages at reading size in one stored zip, built in the background
+# lane and kept, then sent as a plain file a download can resume.
+
+PACKAGE_QUALITY = "read"
+# Pages are numbered in the package, so the device need not know member names.
+PACKAGE_PAGE_NAME = "{index:04d}.jpg"
+# How many comics may wait to be packed. Past it a request is told to come
+# back; it is asked again, so nothing is lost, and nothing piles up.
+PACKAGE_PENDING_MAX = 64
+# A comic that could not be packed answers so for a while, rather than being
+# tried again on every retry.
+PACKAGE_FAILURE_SECONDS = 600
+_PACKAGE_LOCK = threading.Lock()
+_PACKAGE_BUILDS: dict[int, threading.Thread] = {}
+_PACKAGE_FAILED: dict[tuple[int, str], tuple[float, str]] = {}
+
+
+class ComicPages:
+    """A comic's page bytes, read in one pass: a zip member by member, any
+    other archive (RAR, 7z) unpacked once with bsdtar into a work folder that
+    is removed afterwards. Asking bsdtar for one page at a time scans the
+    archive each time (0.2-0.9 s for a whole RAR, measured 2026-10-12, against
+    about 1.5 s for each page asked separately)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.kind = archive_kind(path)
+        self.folder: Path | None = None
+        self._zip: zipfile.ZipFile | None = None
+
+    def __enter__(self) -> "ComicPages":
+        if self.kind == "zip":
+            self._zip = zipfile.ZipFile(self.path)
+        elif self.kind is None:
+            raise ValueError("This file is not an archive Flipparr can read")
+        else:
+            self.folder = unpack_archive(self.path)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        if self._zip is not None:
+            self._zip.close()
+        if self.folder is not None:
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+    def read(self, member: str, limit: int = COVER_SOURCE_MAX_BYTES) -> bytes:
+        if self._zip is not None:
+            info = self._zip.getinfo(member)
+            if info.file_size <= 0 or info.file_size > limit:
+                raise ValueError("Archive entry is larger than the limit")
+            return self._zip.read(info)
+        return read_unpacked_member(self.folder, member, limit)
+
+
+# An unpacked archive may take at most this many times its own size, and
+# never more than this: a comic's JPEGs barely compress, so anything past
+# it is a decompression bomb, not a comic.
+UNPACK_RATIO_MAX = 4
+UNPACK_BYTES_MAX = 4 * 1024 * 1024 * 1024
+UNPACK_SECONDS_MAX = 120
+
+
+def unpack_archive(path: Path) -> Path:
+    """Unpack a non-zip archive once into a fresh work folder, bounded in
+    size and time; the caller removes the folder. bsdtar refuses absolute
+    and `..` names unless told otherwise (-P), and the members are read back
+    only from inside the folder (`read_unpacked_member`)."""
+    tool = _external_archive_tool()
+    if not tool:
+        raise ArchiveToolMissing("This comic is a RAR archive, which needs bsdtar (libarchive-tools) to read.")
+    work = unpack_work_dir()
+    work.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix="unpack-", dir=work))
+    cap = min(UNPACK_BYTES_MAX, max(64 * 1024 * 1024, path.stat().st_size * UNPACK_RATIO_MAX))
+    process = subprocess.Popen(  # noqa: S603 - argv list, never a shell string
+        [tool, "-xf", str(path), "-C", str(folder), "--no-same-owner", "--no-same-permissions"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + UNPACK_SECONDS_MAX
+    try:
+        while process.poll() is None:
+            if time.monotonic() > deadline or _folder_bytes(folder) > cap:
+                process.kill()
+                process.wait(5)
+                raise ValueError("The archive unpacked to more than a comic could be")
+            time.sleep(0.1)
+        if _folder_bytes(folder) > cap:
+            raise ValueError("The archive unpacked to more than a comic could be")
+        # A partly damaged archive still yields the pages it can reach; the
+        # pages that are missing fail on their own when read.
+        return folder
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    finally:
+        if process.stderr:
+            process.stderr.close()
+
+
+def _folder_bytes(folder: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(os.path.join(root, name)).st_size
+    return total
+
+
+def read_unpacked_member(folder: Path | None, member: str, limit: int = COVER_SOURCE_MAX_BYTES) -> bytes:
+    """A member unpacked into `folder`: a regular file inside it, never a
+    link or anything outside it."""
+    if folder is None:
+        raise ValueError("Nothing was unpacked")
+    root = folder.resolve()
+    candidate = folder / member
+    resolved = candidate.resolve()
+    if candidate.is_symlink() or not resolved.is_relative_to(root) or not resolved.is_file():
+        raise ValueError("That page is not in the archive")
+    size = resolved.stat().st_size
+    if size <= 0 or size > limit:
+        raise ValueError("Archive entry is larger than the limit")
+    return resolved.read_bytes()
+
+
+def offline_package_path(file_id: int, path: Path) -> Path:
+    """Where a comic's package is kept: its file as it is now, so a replaced
+    file is a new package."""
+    return package_cache_dir() / f"{int(file_id)}-{_file_signature(path)}-{PACKAGE_QUALITY}.zip"
+
+
+def build_offline_package(file_id: int) -> Path:
+    """Pack a comic's pages at reading size into one stored zip, numbered
+    from 0000.jpg in reading order (`cached_page_members`), and keep it.
+    A page already rendered for reading is taken from the reading cache;
+    the others are rendered from one pass over the archive, and kept there
+    too, so the comic also reads at once online. Runs in the background lane."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    target = offline_package_path(file_id, path)
+    if target.is_file():
+        with contextlib.suppress(OSError):
+            os.utime(target)
+        return target
+    members = cached_page_members(path)
+    if not members:
+        raise ValueError("This comic has no pages to pack")
+    reading_dir = reading_cache_dir()
+    size = PAGE_SIZES[PACKAGE_QUALITY]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.parent / f".{target.name}.{threading.get_ident()}.partial"
+    pages: ComicPages | None = None
+    try:
+        with cpu_lane("background"), zipfile.ZipFile(partial, "w", zipfile.ZIP_STORED) as package:
+            for index, member in enumerate(members):
+                key = _thumbnail_cache_key(path, member, size)
+                cached = reading_dir / f"{key}.jpg"
+                body = None
+                with contextlib.suppress(OSError):
+                    if cached.is_file():
+                        body = cached.read_bytes()
+                if body is None:
+                    if pages is None:
+                        pages = ComicPages(path).__enter__()
+                    body = normalize_image_to_jpeg(pages.read(member), size)
+                    _cache_put(reading_dir, key, body, READING_CACHE_MAX_BYTES)
+                entry = zipfile.ZipInfo(PACKAGE_PAGE_NAME.format(index=index), date_time=(1980, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_STORED
+                package.writestr(entry, body)
+        os.replace(partial, target)
+    finally:
+        if pages is not None:
+            pages.__exit__(None, None, None)
+        with contextlib.suppress(OSError):
+            partial.unlink()
+    sweep_image_cache(target.parent, PACKAGE_CACHE_MAX_BYTES, interval=0)
+    return target
+
+
+def offline_package(file_id: int) -> dict[str, Any]:
+    """A comic's package if it is ready -- {"ready": path} -- else it is
+    started in the background and {"wait": seconds} says when to ask again;
+    {"failed": message} for a comic that could not be packed lately."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    signature = _file_signature(path)
+    target = offline_package_path(file_id, path)
+    if target.is_file():
+        return {"ready": target}
+    now = time.monotonic()
+    with _PACKAGE_LOCK:
+        failed = _PACKAGE_FAILED.get((int(file_id), signature))
+        if failed and now - failed[0] < PACKAGE_FAILURE_SECONDS:
+            return {"failed": failed[1]}
+        running = _PACKAGE_BUILDS.get(int(file_id))
+        if running is None or not running.is_alive():
+            if sum(1 for thread in _PACKAGE_BUILDS.values() if thread.is_alive()) >= PACKAGE_PENDING_MAX:
+                return {"wait": 30}
+            thread = threading.Thread(target=_package_in_background, args=(int(file_id), signature),
+                                      name=f"flipparr-package-{int(file_id)}", daemon=True)
+            _PACKAGE_BUILDS[int(file_id)] = thread
+            thread.start()
+        ahead = sum(1 for thread in _PACKAGE_BUILDS.values() if thread.is_alive())
+    # A page takes a fraction of a second; a comic a few seconds, more with
+    # others ahead of it in the lane.
+    pages = len(cached_page_members(path))
+    return {"wait": max(3, min(60, round(pages * 0.2 * max(1, ahead / BACKGROUND_LANE_SIZE))))}
+
+
+def _package_in_background(file_id: int, signature: str) -> None:
+    try:
+        build_offline_package(file_id)
+    except Exception as exc:  # noqa: BLE001 -- said to the device that asks, and logged
+        with _PACKAGE_LOCK:
+            _PACKAGE_FAILED[(file_id, signature)] = (time.monotonic(), shown(exc) or "This comic could not be packed")
+        log_exception("offline_package_failed", exc, level="warning", fileId=file_id)
+    finally:
+        with _PACKAGE_LOCK:
+            if _PACKAGE_BUILDS.get(file_id) is threading.current_thread():
+                _PACKAGE_BUILDS.pop(file_id, None)
+
+
+def stored_file_panels(file_id: int) -> dict[str, Any]:
+    """Every page's panels as kept, nothing worked out: what a download
+    takes in one request rather than one a page."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    if not path.is_file() or archive_kind(path) is None:
+        raise ValueError("Pages can only be read from comic archives")
+    count = len(cached_page_members(path))
+    return {"fileId": str(file_id), "pages": {str(index): stored_page_panels(file_id, index) for index in range(count)}}
+
+
 def file_offline_manifest(file_id: int) -> dict[str, Any]:
     """Everything Flipparr View needs to download a comic and read it with
     no connection: its pages at reading size, their signature (a replaced
@@ -14036,6 +14370,14 @@ def file_offline_manifest(file_id: int) -> dict[str, Any]:
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("Pages can only be read from comic archives")
     pages = cached_page_members(path)
+    signature = _file_signature(path)
+    package = offline_package_path(file_id, path)
+    package_bytes = package.stat().st_size if package.is_file() else None
+    if package_bytes is None:
+        # Asked for to be downloaded: packing starts now, so it is often
+        # ready by the time the device asks for it.
+        with contextlib.suppress(Exception):
+            offline_package(file_id)
     estimate = 0
     cache_dir = reading_cache_dir()
     for member in pages:
@@ -14045,11 +14387,16 @@ def file_offline_manifest(file_id: int) -> dict[str, Any]:
         except OSError:
             estimate += OFFLINE_PAGE_BYTES_GUESS
     return {
-        "fileId": str(file_id), "fileSignature": _file_signature(path), "pageCount": len(pages),
-        "bytesEstimate": estimate, "filename": context["filename"], "run": context["run"],
+        "fileId": str(file_id), "fileSignature": signature, "pageCount": len(pages),
+        "bytesEstimate": package_bytes or estimate, "filename": context["filename"], "run": context["run"],
         "kind": context["kind"], "issueNumber": context["issueNumber"], "volumeNumber": context["volumeNumber"],
         "readingDirection": store.file_reading_direction(file_id),
         "pages": [{"index": index, "readUrl": _page_url(str(file_id), index, path, "read")} for index in range(len(pages))],
+        # The comic in one file, and its panels in one answer (2026-10-12);
+        # an app that knows neither still has `pages`.
+        "package": {"url": f"/api/v1/files/{file_id}/package?v={signature}", "quality": PACKAGE_QUALITY,
+                    "bytes": package_bytes},
+        "panelsUrl": f"/api/v1/files/{file_id}/panels?stored=only",
     }
 
 
@@ -14463,7 +14810,10 @@ _PANEL_MODEL: dict[str, Any] = {}
 def panel_model_session() -> Any:
     """The optional panel detector, probed once. None is the ordinary case."""
     if "session" not in _PANEL_MODEL:
-        _PANEL_MODEL["session"] = panel_finder.load_model_session(os.environ.get("FLIPPARR_PANEL_MODEL"))
+        # Its threads shared out over the jobs the lanes let run at once:
+        # by default each run takes every core, and several at once fought.
+        _PANEL_MODEL["session"] = panel_finder.load_model_session(
+            os.environ.get("FLIPPARR_PANEL_MODEL"), threads=max(1, CPUS // (READING_LANE_SIZE + BACKGROUND_LANE_SIZE)))
         # ONNX Runtime aborts the interpreter if a session is still alive
         # when the modules are torn down (a recursive_mutex failure, seen on
         # macOS). Let it go while the interpreter is still whole.
@@ -14478,6 +14828,39 @@ _PANELS_INFLIGHT: dict[tuple[int, int], threading.Lock] = {}
 _PANELS_INFLIGHT_LOCK = threading.Lock()
 
 
+# Flipparr's heavy CPU work -- reading a page's panels (the gutter cut, the
+# detector, the leftover pass), building a comic's download package,
+# unpacking a RAR -- runs in two lanes sized from the CPUs it may use. On
+# 2026-10-12 twenty such jobs at once on a four-core NAS made every other
+# request wait (a catalog took 20 s). People reading get half the CPUs;
+# bulk work (downloads, warming a comic's pages) a quarter, in a lane of its
+# own, so a person reading never queues behind a download. A vision model's
+# answer is waited for outside the lanes: that is the network, not the CPU.
+READING_LANE_SIZE = max(1, CPUS // 2)
+BACKGROUND_LANE_SIZE = max(1, CPUS // 4)
+_CPU_LANES = {"reading": threading.BoundedSemaphore(READING_LANE_SIZE),
+              "background": threading.BoundedSemaphore(BACKGROUND_LANE_SIZE)}
+_CPU_LANE = threading.local()
+
+
+@contextlib.contextmanager
+def cpu_lane(name: str | None = None):
+    """Hold a lane while doing CPU work: the one named, else this thread's (reading by default)."""
+    with _CPU_LANES[name or getattr(_CPU_LANE, "name", "reading")]:
+        yield
+
+
+@contextlib.contextmanager
+def _lane_for_thread(name: str):
+    """Work on this thread, until done, counts against `name`'s lane."""
+    previous = getattr(_CPU_LANE, "name", "reading")
+    _CPU_LANE.name = name
+    try:
+        yield
+    finally:
+        _CPU_LANE.name = previous
+
+
 def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     """Where the panels are on one page, in the order its run reads.
 
@@ -14489,7 +14872,8 @@ def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> 
     """
     with _PANELS_INFLIGHT_LOCK:
         lock = _PANELS_INFLIGHT.setdefault((int(file_id), int(index)), threading.Lock())
-    with lock:
+    # `vision=no` is a download's question (the route says so): bulk work.
+    with lock, _lane_for_thread("reading" if allow_vision else "background"):
         try:
             return _file_page_panels(file_id, index, allow_vision=allow_vision)
         finally:
@@ -14688,10 +15072,11 @@ def _read_page_panels(image: Any, session: Any, vision: bool, every: bool, direc
     tiers' reading is kept under their own name, which is what gets a page
     asked again once the connector is back.
     """
-    found = panel_finder.detect_panels(image) if detail is None else panel_finder.detect_panels(image, session, detail)
-    if found["segmented"]:
-        # Whatever the local tiers left out, read from the ink they left.
-        found = {**found, "panels": panel_finder.add_leftover_panels(panel_finder.page_mask(image), found["panels"])}
+    with cpu_lane():
+        found = panel_finder.detect_panels(image) if detail is None else panel_finder.detect_panels(image, session, detail)
+        if found["segmented"]:
+            # Whatever the local tiers left out, read from the ink they left.
+            found = {**found, "panels": panel_finder.add_leftover_panels(panel_finder.page_mask(image), found["panels"])}
     if detail is None or not vision:
         return found
     if detail_bytes is None:
@@ -15021,6 +15406,16 @@ def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
     # Reading pages are kept beside the catalog under their own budget, so a
     # long sitting cannot evict the covers of a whole library.
     reading = size == "read"
+    if reading and archive_kind(path) != "zip":
+        # A RAR is scanned whole for each page asked of it on its own: a
+        # first page not yet rendered packs the comic in the background, in
+        # one pass, so the pages after it are there by the time they are
+        # turned to (and a download of it is ready). This page is still
+        # rendered now, as before.
+        cached = reading_cache_dir() / f"{_thumbnail_cache_key(path, pages[index], PAGE_SIZES[size])}.jpg"
+        if not cached.is_file():
+            with contextlib.suppress(Exception):
+                offline_package(file_id)
     return render_file_cover_thumbnail(
         path, pages[index], PAGE_SIZES[size],
         cache_dir=reading_cache_dir() if reading else None,
@@ -18910,6 +19305,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        file_package_match = re.fullmatch(r"/api/v1/files/(\d+)/package", parsed_url.path)
+        if file_package_match:
+            # Under /files/{id}/, so the rating gate has already answered 404
+            # for a profile kept from this comic's run.
+            self.handle_offline_package(int(file_package_match.group(1)), str(self.query(parsed_url).get("v") or ""))
+            return
+        file_panels_match = re.fullmatch(r"/api/v1/files/(\d+)/panels", parsed_url.path)
+        if file_panels_match:
+            if str(self.query(parsed_url).get("stored") or "") != "only":
+                self.send_json({"error": "Ask for the panels kept: ?stored=only"}, 400)
+                return
+            try:
+                payload = stored_file_panels(int(file_panels_match.group(1)))
+            except LookupError as exc:
+                self.send_json({"error": str(exc)}, 404)
+                return
+            except (zipfile.BadZipFile, OSError, ValueError) as exc:
+                self.send_json({"error": shown(exc) or "That comic could not be read"}, 422)
+                return
+            self.send_json(payload)
+            return
         file_pages_match = re.fullmatch(r"/api/v1/files/(\d+)/pages", parsed_url.path)
         if file_pages_match:
             try:
@@ -20615,6 +21031,86 @@ class Handler(BaseHTTPRequestHandler):
             else {"status": "signed out" if expire else "authenticated"}
         )
 
+    def handle_offline_package(self, file_id: int, signature: str) -> None:
+        """A comic packed for Flipparr View: the file, resumable, when it is
+        ready; else 503 with Retry-After while it is packed, so the device
+        asks again later rather than holding one of the server's threads."""
+        try:
+            path = catalog_store().library_file_path(file_id)
+            if signature and signature != _file_signature(path):
+                self.send_json({"error": "This comic has changed since it was asked for; ask again."}, 409)
+                return
+            state = offline_package(file_id)
+        except LookupError as exc:
+            self.send_json({"error": str(exc)}, 404)
+            return
+        except (zipfile.BadZipFile, OSError, ValueError) as exc:
+            self.send_json({"error": shown(exc) or "That comic could not be read"}, 422)
+            return
+        if "failed" in state:
+            self.send_json({"error": state["failed"]}, 422)
+            return
+        if "wait" in state:
+            self.send_json({"status": "preparing", "retryAfter": state["wait"]}, 503,
+                           headers={"Retry-After": str(state["wait"])})
+            return
+        self.send_file(state["ready"], "application/zip", f'"{state["ready"].stem}"')
+
+    def send_file(self, path: Path, content_type: str, etag: str) -> None:
+        """A file on disk, streamed rather than read into memory, with a
+        strong ETag and byte ranges, so a download that drops resumes where
+        it stopped (RFC 9110 sections 13 and 14)."""
+        total = path.stat().st_size
+        if self.headers.get("If-None-Match", "").strip() == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+        start, end = 0, total - 1
+        status = 200
+        asked = self.headers.get("Range", "").strip()
+        if_range = self.headers.get("If-Range", "").strip()
+        if asked and (not if_range or if_range == etag):
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", asked)
+            if match and (match.group(1) or match.group(2)):
+                if match.group(1):
+                    start = int(match.group(1))
+                    end = min(int(match.group(2)), total - 1) if match.group(2) else total - 1
+                else:
+                    start = max(0, total - int(match.group(2)))
+                if start > end or start >= total:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = 206
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "private, no-cache")
+        self.send_header("Vary", "Cookie")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        if hasattr(self, "wsgi_headers"):
+            # Under Waitress the body is handed back as an iterable (`respond`).
+            self.wsgi_file = (path, start, end - start + 1)
+            return
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
     def send_image(self, body: bytes, content_type: str = "image/jpeg", headers: dict[str, str] | None = None) -> None:
         """An image of a comic, for the profile asking. Kept by the browser but
         asked about again each time (`no-cache` plus an ETag): after a switch
@@ -21126,13 +21622,29 @@ class _WSGIHandler(Handler):
             method()
         if self.wsgi_status is None:
             return "500 Internal Server Error", [("Content-Length", "0")], b""
+        if getattr(self, "wsgi_file", None):
+            return self.wsgi_status, self.wsgi_headers, _file_chunks(*self.wsgi_file)
         return self.wsgi_status, self.wsgi_headers, self.wfile.getvalue()
 
 
-def wsgi_app(environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
+def _file_chunks(path: Path, start: int, length: int):
+    """A file's bytes from `start`, `length` of them, a megabyte at a time:
+    a package is sent from disk, never held in memory whole."""
+    with open(path, "rb") as handle:
+        handle.seek(start)
+        remaining = length
+        while remaining > 0:
+            chunk = handle.read(min(1024 * 1024, remaining))
+            if not chunk:
+                return
+            remaining -= len(chunk)
+            yield chunk
+
+
+def wsgi_app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Any:
     status, headers, body = _WSGIHandler(environ).respond()
     start_response(status, headers)
-    return [body]
+    return [body] if isinstance(body, bytes) else body
 
 
 def http_thread_count() -> int:
@@ -21366,6 +21878,7 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     log_event("server_started", host=args.host, port=port, threads=http_thread_count(),
+              cpus=CPUS, readingLane=READING_LANE_SIZE, backgroundLane=BACKGROUND_LANE_SIZE,
               tempDir=tempfile.gettempdir(), version=APP_VERSION, build=APP_BUILD)
     try:
         server.run()

@@ -139,6 +139,9 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     # Flipparr View: what to download for a comic, and whether the
     # downloads on a device are still good.
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/offline", READER),
+    # The comic packed in one file, and its kept panels in one answer.
+    (frozenset({"GET"}), r"/api/v1/files/(\d+)/package", READER),
+    (frozenset({"GET"}), r"/api/v1/files/(\d+)/panels", READER),
     (frozenset({"POST"}), r"/api/v1/offline/check", READER),
     (frozenset({"GET", "POST"}), r"/api/v1/offline/downloads", READER),
     (frozenset({"POST"}), r"/api/v1/offline/downloads/remove", READER),

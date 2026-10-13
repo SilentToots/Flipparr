@@ -238,8 +238,13 @@ def quadrant_panels(direction: str = READING_LTR) -> list[dict[str, Any]]:
     return order_panels(rects, direction)
 
 
-def load_model_session(path: str | None) -> Any:
+def load_model_session(path: str | None, threads: int | None = None) -> Any:
     """An ONNX Runtime session for the detector at `path`, or None.
+
+    `threads` caps the threads one run uses. ONNX Runtime's default is every
+    physical core, with idle threads spinning; a server running several pages
+    at once wants each run on its share and no spinning (its threading guide,
+    onnxruntime.ai/docs/performance/tune-performance/threading.html).
 
     None whenever the tier is not there -- no path, no file, no runtime -- so
     the caller carries on with the gutter finder alone. No model ships with
@@ -261,8 +266,12 @@ def load_model_session(path: str | None) -> Any:
         onnxruntime.disable_telemetry_events()
     except Exception:  # noqa: BLE001 -- an older runtime without the switch
         pass
+    options = onnxruntime.SessionOptions()
+    if threads:
+        options.intra_op_num_threads = int(threads)
+        options.add_session_config_entry("session.intra_op.allow_spinning", "0")
     try:
-        return onnxruntime.InferenceSession(path, providers=["CPUExecutionProvider"])
+        return onnxruntime.InferenceSession(path, sess_options=options, providers=["CPUExecutionProvider"])
     except Exception:  # noqa: BLE001 -- a broken model file is a missing tier, not an error page
         return None
 
