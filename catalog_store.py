@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 68
+SCHEMA_VERSION = 69
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1518,6 +1518,23 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS offline_downloads_device
                     ON offline_downloads(user_id, device, file_id);
+                -- Comics Flipparr downloaded and stored as CBZ rather than as
+                -- the RAR they came as (schema 69, `convertNewToCbz`): what
+                -- came in, what went to the library, and how it went --
+                -- "converted", or "kept" with the reason it was filed as it
+                -- came. Evidence for how often it happens and whether it
+                -- fails, kept past the container's log.
+                CREATE TABLE IF NOT EXISTS cbz_conversions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_name TEXT NOT NULL,
+                    source_kind TEXT,
+                    source_bytes INTEGER,
+                    cbz_bytes INTEGER,
+                    members INTEGER,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('converted', 'kept')),
+                    reason TEXT,
+                    converted_at TEXT NOT NULL
+                );
                 /* The people reading this library (schema 49). Profile 1 is
                    the admin and always exists; a household with one person
                    never sees another. A name to sign in with is optional --
@@ -5075,6 +5092,21 @@ class CatalogStore:
                    WHERE user_id=? AND device=? AND file_id=? AND removed_at IS NULL""",
                 (_utc_now(), reason, int(user_id), device, int(file_id)),
             ).rowcount
+
+    def record_cbz_conversion(self, source_name: str, source_kind: str | None, source_bytes: int | None,
+                              cbz_bytes: int | None, members: int | None, outcome: str, reason: str | None = None) -> None:
+        """One comic converted to CBZ at import, or kept as it came and why."""
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO cbz_conversions(source_name, source_kind, source_bytes, cbz_bytes, members,
+                                                  outcome, reason, converted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (source_name, source_kind, source_bytes, cbz_bytes, members, outcome, reason, _utc_now()),
+            )
+
+    def cbz_conversions(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM cbz_conversions ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        return [dict(row) for row in rows]
 
     def offline_downloads(self, user_id: int | None = None, device: str | None = None,
                           *, on_device: bool = True) -> list[dict[str, Any]]:

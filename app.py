@@ -572,11 +572,17 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # the Docker log holds no visitor addresses; sign-in throttling keeps its
     # own count in memory either way.
     "logClientAddresses": False,
+    # Whether a comic Flipparr downloads as a RAR (or 7z) is stored as a CBZ:
+    # every member kept as it was, in a zip. A zip's pages are read one by
+    # one; a RAR's are not (each is a scan of the archive), so this makes
+    # reading and packing for Flipparr View cheap (the owner, 2026-10-12).
+    # Comics already in the library are left as they are.
+    "convertNewToCbz": True,
 }
 RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
     "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
-    "ratingsFromCovers", "communityListsEnabled", "logClientAddresses",
+    "ratingsFromCovers", "communityListsEnabled", "logClientAddresses", "convertNewToCbz",
 })
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
@@ -6928,7 +6934,87 @@ def _select_downloaded_comic(
         selected = {**selected, "converted": True, "convertedDir": str(converted_dir)}
     elif context.get("format") != "manga" and Path(selected["path"]).suffix.lower() == ".pdf":
         selected = _comic_pdf_as_cbz(selected, context)
+    elif archive_kind(Path(selected["path"])) in CBZ_CONVERTIBLE_KINDS:
+        selected = _comic_archive_as_cbz(selected, context)
     return selected
+
+
+CBZ_CONVERTIBLE_KINDS = frozenset({"rar", "rar5", "7z"})
+# A member of a comic converted to CBZ may be at most this large: past any
+# page, ComicInfo or cover worth keeping.
+CBZ_MEMBER_MAX_BYTES = 256 * 1024 * 1024
+
+
+def convert_archive_to_cbz(source: Path, target: Path) -> int:
+    """A RAR or 7z comic as a CBZ: every member kept as it was, in a stored
+    zip (pages are JPEGs; compressing them again gains nothing), named as
+    before, in a fixed order with a fixed date, so the same comic converts to
+    the same bytes -- an import restarted part way finds it already there.
+    One pass over the archive (`unpack_archive`). Returns the members kept;
+    raises ValueError when the result would not be the same comic."""
+    names = [name for name in archive_member_names(source)
+             if "__MACOSX" not in Path(name).parts and not name.endswith("/")]
+    pages = archive_page_members(source)
+    if not pages:
+        raise ValueError("The archive has no pages")
+    folder = unpack_archive(source)
+    try:
+        kept = 0
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as archive:
+            for name in sorted(set(names), key=_natural_member_key):
+                try:
+                    data = read_unpacked_member(folder, name, CBZ_MEMBER_MAX_BYTES)
+                except ValueError:
+                    if name in pages:
+                        raise ValueError(f"Page {name} could not be read from the archive") from None
+                    continue  # an empty file, a link, a name outside the archive: not part of the comic
+                entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_STORED
+                archive.writestr(entry, data)
+                kept += 1
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    if archive_page_members(target) != pages:
+        raise ValueError("The CBZ did not have the archive's pages")
+    return kept
+
+
+def _comic_archive_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """A comic that arrived as a RAR (or 7z), as the CBZ the library keeps,
+    when `convertNewToCbz` is on. Only the release already chosen, and never
+    a replacement for a file kept under another name: the comic would move to
+    a new path and leave its reading progress behind. A comic that cannot be
+    converted is filed as it came; that is never a reason to refuse it."""
+    source = Path(selected["path"])
+    if not cached_setting("convertNewToCbz"):
+        return selected
+    original = str(context.get("replacementFilePath") or "")
+    if original and Path(original).suffix.lower() != ".cbz":
+        return selected
+    store = catalog_store()
+    kind = archive_kind(source)
+    size = source.stat().st_size
+    if archive_is_locked(source):
+        store.record_cbz_conversion(source.name, kind, size, None, None, "kept", "The archive is locked")
+        return selected
+    # On the config volume, not /tmp (a small tmpfs in the container): a comic can be 200 MB.
+    work = unpack_work_dir()
+    work.mkdir(parents=True, exist_ok=True)
+    converted_dir = Path(tempfile.mkdtemp(prefix="flipparr-cbz-", dir=work))
+    target = converted_dir / f"{source.stem}.cbz"
+    try:
+        with cpu_lane("background"):
+            members = convert_archive_to_cbz(source, target)
+        _score, rescored = _download_candidate_score(target, context)
+    except Exception as exc:  # noqa: BLE001 -- a comic that cannot be converted is filed as it came
+        shutil.rmtree(converted_dir, ignore_errors=True)
+        reason = shown(exc) or type(exc).__name__
+        log_event("cbz_conversion_failed", file=source.name, reason=reason)
+        store.record_cbz_conversion(source.name, kind, size, None, None, "kept", reason)
+        return selected
+    store.record_cbz_conversion(source.name, kind, size, target.stat().st_size, members, "converted")
+    return {**selected, **rescored, "path": target, "converted": True, "convertedDir": str(converted_dir),
+            "convertedFromSuffix": source.suffix.lower()}
 
 
 def _comic_pdf_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -7360,6 +7446,13 @@ def _import_selected_comic(
         replacement_id and replacement_original
         and destination.resolve() == replacement_original.resolve()
     )
+    # A comic converted to CBZ is filed under .cbz; the same issue already in
+    # the library as the .cbr it came as is a different comic at the
+    # organized place, as it was before conversion, not a second copy beside it.
+    came_as = str(selected.get("convertedFromSuffix") or "")
+    if came_as and came_as != destination.suffix.lower() and destination.with_suffix(came_as).exists() \
+            and not replacing_destination:
+        raise ValueError("A different comic already exists at the organized destination")
     if destination.exists():
         if replacing_destination:
             if destination.stat().st_size == source_size and _sha256_file(destination) == source_hash:

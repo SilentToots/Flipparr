@@ -11214,6 +11214,80 @@ class UnpackTests(unittest.TestCase):
             self.assertFalse(folder.exists(), "the work folder goes with it")
 
 
+class CbzConversionTests(unittest.TestCase):
+    """The owner, 2026-10-12: a comic Flipparr downloads as a RAR is stored as
+    a CBZ, every member kept as it was. A tar stands in for the RAR here --
+    the same bsdtar path -- as a RAR cannot be written in a test."""
+
+    def setUp(self):
+        import tarfile
+        if not app._external_archive_tool():
+            self.skipTest("bsdtar is not installed")
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.source = self.root / "Example 001 (2020).cbr"
+        with tarfile.open(self.source, "w") as archive:
+            for name, data in (("Example/10.jpg", b"\xff\xd8page ten"), ("Example/2.jpg", b"\xff\xd8page two"),
+                               ("Example/ComicInfo.xml", b"<ComicInfo><Number>1</Number></ComicInfo>")):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        self.store = CatalogStore(self.root / "catalog.db")
+        self.patches = [patch("app.catalog_store", return_value=self.store),
+                        patch("app.unpack_work_dir", return_value=self.root / "unpack"),
+                        patch("app.CBZ_CONVERTIBLE_KINDS", frozenset({"tar"})),
+                        patch("app._download_candidate_score", return_value=(90, {"score": 90}))]
+        for each in self.patches:
+            each.start()
+            self.addCleanup(each.stop)
+
+    def test_every_member_is_kept_as_it_was_and_the_same_comic_converts_to_the_same_bytes(self):
+        first, second = self.root / "a.cbz", self.root / "b.cbz"
+        self.assertEqual(app.convert_archive_to_cbz(self.source, first), 3)
+        app.convert_archive_to_cbz(self.source, second)
+        self.assertEqual(first.read_bytes(), second.read_bytes(), "an import restarted part way finds it already there")
+        with zipfile.ZipFile(first) as archive:
+            self.assertEqual(archive.namelist(), ["Example/2.jpg", "Example/10.jpg", "Example/ComicInfo.xml"])
+            self.assertEqual(archive.read("Example/10.jpg"), b"\xff\xd8page ten")
+            self.assertTrue(all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist()))
+        self.assertEqual(app.archive_page_members(first), app.archive_page_members(self.source))
+        self.assertEqual(list((self.root / "unpack").iterdir()), [], "nothing left unpacked")
+
+    def test_a_download_is_converted_when_the_setting_is_on_and_says_so_in_the_catalog(self):
+        with patch("app.cached_setting", side_effect=lambda key: key == "convertNewToCbz"):
+            selected = app._comic_archive_as_cbz({"path": str(self.source)}, {})
+        self.addCleanup(shutil.rmtree, selected.get("convertedDir", ""), True)
+        self.assertTrue(selected["converted"])
+        self.assertEqual(Path(selected["path"]).suffix, ".cbz")
+        self.assertEqual(selected["convertedFromSuffix"], ".cbr")
+        [row] = self.store.cbz_conversions()
+        self.assertEqual((row["source_name"], row["outcome"], row["members"]), (self.source.name, "converted", 3))
+
+    def test_off_a_replacement_or_a_failure_files_it_as_it_came(self):
+        selected = {"path": str(self.source)}
+        with patch("app.cached_setting", return_value=False):
+            self.assertIs(app._comic_archive_as_cbz(selected, {}), selected, "off: as it came")
+        with patch("app.cached_setting", return_value=True):
+            self.assertIs(app._comic_archive_as_cbz(selected, {"replacementFilePath": "/library/Example 001.cbr"}), selected,
+                          "a replacement keeps its path, and so its reading progress")
+            with patch("app.convert_archive_to_cbz", side_effect=ValueError("The archive has no pages")):
+                self.assertIs(app._comic_archive_as_cbz(selected, {}), selected, "never a reason to refuse the comic")
+        [row] = self.store.cbz_conversions()
+        self.assertEqual((row["outcome"], row["reason"]), ("kept", "The archive has no pages"))
+
+    def test_the_same_issue_already_filed_as_a_cbr_is_not_filed_again_beside_it(self):
+        library = self.root / "library"
+        converted = self.root / "converted" / "Example 001 (2020).cbz"
+        converted.parent.mkdir()
+        app.convert_archive_to_cbz(self.source, converted)
+        context = {"seriesTitle": "Example", "year": 2020, "issueNumber": "1", "publisher": "Example Press"}
+        destination = app._issue_destination(converted, context, library.resolve() if library.exists() else (library.mkdir() or library.resolve()))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.with_suffix(".cbr").write_bytes(b"the issue, as it came before")
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            app._import_selected_comic({"path": str(converted), "convertedFromSuffix": ".cbr"}, context, {"job_id": 1}, library)
+
+
 class _StopAfterOnePass(threading.Event):
     """A stop event that lets a worker loop finish one whole pass."""
 

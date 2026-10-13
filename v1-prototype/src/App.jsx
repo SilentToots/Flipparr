@@ -3594,8 +3594,12 @@ function YourProfileSettings({ authStatus, onSignOut, catalog, onViewerChanged }
 
 // A setting that is one switch: shown at once, saved, and put back if the
 // save fails.
-function useSettingToggle(key, last) {
-  const [value, setValue] = useState(Boolean(last?.[key]));
+function useSettingToggle(key, last, fallback = false) {
+  // The server's answer once it is in: on a first visit `last` is empty and
+  // a setting that defaults on would read off until the page was opened again.
+  const known = last?.[key];
+  const [value, setValue] = useState(typeof known === "boolean" ? known : fallback);
+  useEffect(() => { if (typeof known === "boolean") setValue(known); }, [known]);
   const [saving, setSaving] = useState(false);
   async function save(next) {
     setSaving(true);
@@ -3732,6 +3736,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   const [everyPage, setEveryPage] = useState(settingsLast?.visionReadsEveryPage ?? false);
   const [communityLists, saveCommunityLists, savingCommunityLists] = useSettingToggle("communityListsEnabled", settingsLast);
   const [logAddresses, saveLogAddresses, savingLogAddresses] = useSettingToggle("logClientAddresses", settingsLast);
+  const [convertToCbz, saveConvertToCbz, savingConvertToCbz] = useSettingToggle("convertNewToCbz", settingsLast, true);
   const [forReaders, setForReaders] = useState(Boolean(settingsLast?.visionForReaders));
   const [savingEveryPage, setSavingEveryPage] = useState(false);
   const [providers, setProviders] = useState(() => lastAnswer("/api/v1/providers")?.providers ?? []);
@@ -3925,6 +3930,10 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
                 onChange={(next) => saveAutoScan({ autoScanIntervalMinutes: Number(next) })}
                 options={[{ value: 15, label: "Every 15 minutes" }, { value: 60, label: "Every hour" }, { value: 360, label: "Every 6 hours" }, { value: 1440, label: "Once a day" }]} /></div> : null}
             </SettingsCard> : null}
+            <SettingsCard title="New downloads">
+              <Toggle checked={convertToCbz} onChange={savingConvertToCbz ? () => {} : saveConvertToCbz} title="Store new comics as CBZ"
+                description="Comics Flipparr downloads as CBR are saved as CBZ, every page kept as it was. CBZ pages open faster and download to Flipparr View with less work for the server. Comics already in your library are not changed." />
+            </SettingsCard>
           </> : null}
         {current === "matching" ? <>
           <SettingsCard title="How matches are accepted">
