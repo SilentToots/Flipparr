@@ -5143,6 +5143,60 @@ class CatalogStore:
             "previous": previous[0] if previous else None,
         }
 
+    def comic_page_panels(self, file_id: int, page_hash: str, page_dhash: str | None, *, near: int,
+                          include_self: bool = False) -> dict[str, Any] | None:
+        """A reading of this same page kept on another copy of the comic -- a
+        replaced file, another release, a CBZ of it, present or not: the
+        page's bytes first, else its image within `near` bits. A person's fix
+        first, then a model's, then the cut's (docs/READING_STATE_PLAN.md
+        step 3: panels belong to the comic's page)."""
+        from page_panels import dhash_distance  # noqa: PLC0415 -- the store needs it only here
+        with self._connect() as connection:
+            comic = self._comic_of_file(connection, file_id)
+            if comic is None:
+                return None
+            link = "file_issue_links" if comic[0] == "issue" else "file_edition_links"
+            column = "issue_id" if comic[0] == "issue" else "edition_id"
+            rows = connection.execute(
+                f"""SELECT pp.* FROM page_panels pp JOIN {link} link ON link.file_id=pp.file_id
+                     WHERE link.{column}=? AND (? OR pp.file_id<>?) AND pp.page_hash IS NOT NULL""",
+                (comic[1], int(include_self), int(file_id)),
+            ).fetchall()
+        rank = {"manual": 0, "acbf": 1, "vlm": 2, "model": 3, "auto": 4}
+        exact = [row for row in rows if row["page_hash"] == page_hash]
+        candidates = exact or [
+            row for row in rows
+            if page_dhash and row["page_dhash"] and dhash_distance(row["page_dhash"], page_dhash) <= near
+        ]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda row: (rank.get(row["source"], 9),
+                                                0 if exact else dhash_distance(row["page_dhash"], page_dhash)))
+        return {"fileId": int(best["file_id"]), "member": best["page_member"], "source": best["source"],
+                "segmented": bool(best["segmented"]), "panels": _load_json(best["panels_json"], []),
+                "fixedBy": best["fixed_by"], "byBytes": bool(exact)}
+
+    def copies_of_page(self, file_id: int, page_hash: str) -> list[dict[str, Any]]:
+        """The same page -- the same bytes -- in the comic's other present
+        copies, as far as their fingerprints or readings say."""
+        with self._connect() as connection:
+            comic = self._comic_of_file(connection, file_id)
+            if comic is None:
+                return []
+            link = "file_issue_links" if comic[0] == "issue" else "file_edition_links"
+            column = "issue_id" if comic[0] == "issue" else "edition_id"
+            rows = connection.execute(
+                f"""SELECT DISTINCT pages.file_id, pages.page_member, pages.file_signature FROM (
+                         SELECT file_id, page_member, file_signature FROM page_fingerprints WHERE sha256=?
+                         UNION SELECT file_id, page_member, file_signature FROM page_panels WHERE page_hash=?
+                     ) pages
+                     JOIN {link} link ON link.file_id=pages.file_id
+                     JOIN files ON files.id=pages.file_id AND files.present=1
+                     WHERE link.{column}=? AND pages.file_id<>?""",
+                (page_hash, page_hash, comic[1], int(file_id)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def set_page_panels(
         self, file_id: int, member: str, file_signature: str, source: str,
         panels: list[dict[str, Any]], segmented: bool, *,

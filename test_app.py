@@ -7023,6 +7023,8 @@ class PagePanelTests(unittest.TestCase):
     def _ask(self, record=None, direction="ltr", png=None, index=1):
         from pathlib import Path
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
         store.file_reading_direction.return_value = direction
@@ -7049,6 +7051,8 @@ class PagePanelTests(unittest.TestCase):
         from pathlib import Path
         hand = [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 0}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 1}]
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
         store.file_reading_direction.return_value = "ltr"
@@ -7116,6 +7120,8 @@ class ManualPanelTests(unittest.TestCase):
     def _saving(self, payload, index=1, record=None):
         from pathlib import Path
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
         store.file_reading_direction.return_value = "ltr"
@@ -7164,6 +7170,8 @@ class ManualPanelTests(unittest.TestCase):
         kept = {"fileSignature": "old", "source": "manual", "segmented": True,
                 "panels": [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 1}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 0}]}
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = kept
         store.file_reading_direction.return_value = "ltr"
@@ -7184,6 +7192,8 @@ class ManualPanelTests(unittest.TestCase):
     def test_forgetting_drops_the_row_and_reads_afresh(self):
         from pathlib import Path
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         with patch("app.catalog_store", return_value=store), \
              patch("app.archive_kind", return_value="zip"), \
@@ -7483,6 +7493,8 @@ class VisionInPanelPipelineTests(PagePanelTests):
     def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True, every=False, fixed=()):
         from pathlib import Path
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
         store.file_reading_direction.return_value = "ltr"
@@ -7502,6 +7514,8 @@ class VisionInPanelPipelineTests(PagePanelTests):
     def test_a_readers_page_never_asks_the_connector_unless_the_admin_allows_it(self):
         from pathlib import Path
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
         store.file_reading_direction.return_value = "ltr"
@@ -7627,6 +7641,8 @@ class VisionInPanelPipelineTests(PagePanelTests):
     def test_a_connector_that_did_not_answer_stamps_nothing(self):
         from pathlib import Path
         store = Mock()
+        store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
         store.file_reading_direction.return_value = "ltr"
@@ -11356,10 +11372,8 @@ class PageFingerprintTests(unittest.TestCase):
         self.assertEqual(self._kept(), {}, "fingerprints hold for the file as it was")
 
 
-class ComicPlaceTests(unittest.TestCase):
-    """docs/READING_STATE_PLAN.md step 2b: where a comic was left is the
-    comic's, and opening another copy of it -- a replacement with an ad page
-    added, a re-encoded release -- finds the same page by its fingerprint."""
+class _ComicCopiesTestCase(unittest.TestCase):
+    """Copies of one comic in a scratch library, for the reading-state tests."""
 
     @staticmethod
     def _page(index, quality=90):
@@ -11396,6 +11410,13 @@ class ComicPlaceTests(unittest.TestCase):
         })
         with sqlite3.connect(self.store.database_path) as connection:
             return {name: file_id for name, file_id in connection.execute("SELECT filename, id FROM files")}
+
+
+
+class ComicPlaceTests(_ComicCopiesTestCase):
+    """docs/READING_STATE_PLAN.md step 2b: where a comic was left is the
+    comic's, and opening another copy of it -- a replacement with an ad page
+    added, a re-encoded release -- finds the same page by its fingerprint."""
 
     def test_a_replacement_with_an_ad_page_added_opens_on_the_same_page(self):
         pages = [self._page(index) for index in range(4)]
@@ -11439,6 +11460,60 @@ class ComicPlaceTests(unittest.TestCase):
         })
         app.set_file_reading_progress(ids["Example 001.cbz"], 2, user_id=ADMIN_USER_ID)
         self.assertTrue(app.file_reading_progress(ids["Example 001 (new).cbz"], user_id=ADMIN_USER_ID)["finishedAt"])
+
+
+class ComicPagePanelTests(_ComicCopiesTestCase):
+    """docs/READING_STATE_PLAN.md step 3 (the owner, 2026-10-12: fixed panels
+    and panel view live with the issue): a page's panels are the comic's
+    page's -- read once, in any copy, and kept through a replacement."""
+
+    def setUp(self):
+        super().setUp()
+        self.pages = [self._page(index) for index in range(3)]
+        self.ids = self._comics({
+            "Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(self.pages)],
+            "Example 001 (new).cbz": [("00-ad.jpg", self._page(9))] + [(f"p{index + 1}.jpg", data) for index, data in enumerate(self.pages)],
+        })
+        self.old, self.new = self.ids["Example 001.cbz"], self.ids["Example 001 (new).cbz"]
+        for each in (patch("app.panel_model_session", return_value=None), patch("app.vision_model_ready", return_value=False)):
+            each.start()
+            self.addCleanup(each.stop)
+
+    def _vlm_reading_on_old_page_two(self):
+        boxes = [{"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.4}, {"x": 0.5, "y": 0.5, "w": 0.4, "h": 0.4}]
+        sha = hashlib.sha256(self.pages[1]).hexdigest()
+        from PIL import Image
+        dhash = app.panel_finder.page_dhash(Image.open(io.BytesIO(self.pages[1])))
+        self.store.set_page_panels(self.old, "02.jpg", app._file_signature(self.root / "Example 001.cbz"), "vlm", boxes, True,
+                                   page_hash=sha, page_dhash=dhash)
+        return boxes
+
+    def test_another_copy_reads_a_page_already_read_and_nothing_is_worked_out_or_paid_for_again(self):
+        boxes = self._vlm_reading_on_old_page_two()
+        with patch("app.panel_finder.detect_panels", side_effect=AssertionError("worked out again")):
+            reading = app.file_page_panels(self.new, 2)
+        self.assertEqual(reading["source"], "vlm", "the vision model's reading, kept")
+        self.assertEqual(sorted((panel["x"], panel["y"]) for panel in reading["panels"]), sorted((b["x"], b["y"]) for b in boxes))
+        self.assertEqual(self.store.page_panels(self.new, "p2.jpg")["source"], "vlm", "and kept as this page's")
+
+    def test_a_fix_on_one_copy_fixes_the_same_page_in_the_others(self):
+        app.ensure_page_fingerprints(self.new)
+        fixed = [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]
+        app.save_page_panels(self.old, 1, {"panels": fixed}, fixed_by=ADMIN_USER_ID)
+        other = self.store.page_panels(self.new, "p2.jpg")
+        self.assertEqual((other["source"], other["fixedBy"]), ("manual", ADMIN_USER_ID))
+        self.assertEqual([(panel["y"], panel["h"]) for panel in other["panels"]], [(0.0, 0.5), (0.5, 0.5)])
+        self.assertIsNone(self.store.page_panels(self.new, "p1.jpg"), "only the same page")
+
+    def test_a_file_changed_around_unchanged_pages_keeps_their_readings(self):
+        self._vlm_reading_on_old_page_two()
+        comic = self.root / "Example 001.cbz"
+        time.sleep(0.01)
+        with zipfile.ZipFile(comic, "a") as archive:
+            archive.writestr("ComicInfo.xml", "<ComicInfo><Title>re-tagged</Title></ComicInfo>")
+        with patch("app.panel_finder.detect_panels", side_effect=AssertionError("worked out again")):
+            reading = app.file_page_panels(self.old, 1)
+        self.assertEqual(reading["source"], "vlm", "re-tagged, its pages the same: nothing read again")
 
 
 class _StopAfterOnePass(threading.Event):

@@ -15100,6 +15100,25 @@ def _reattach_manual_panels(store: Any, file_id: int, member: str, signature: st
     return {"source": "manual", "segmented": True, "panels": found["panels"]}
 
 
+def _comic_page_reading(store: Any, file_id: int, member: str, signature: str, record: dict[str, Any] | None,
+                        page_hash: str, page_dhash: str) -> dict[str, Any] | None:
+    """This page's reading from the comic's page: this copy's own, when only
+    the file around an unchanged page changed, else another copy's of the
+    same page (`comic_page_panels`). Kept as this page's, with its source."""
+    if record is not None and record.get("pageHash") == page_hash:
+        found = {"source": record["source"], "segmented": record["segmented"], "panels": record["panels"],
+                 "fixedBy": record.get("fixedBy"), "fileId": int(file_id), "byBytes": True}
+    else:
+        found = store.comic_page_panels(file_id, page_hash, page_dhash, near=panel_finder.DHASH_NEAR)
+    if found is None:
+        return None
+    store.set_page_panels(file_id, member, signature, found["source"], found["panels"], bool(found["segmented"]),
+                          page_hash=page_hash, page_dhash=page_dhash, fixed_by=found.get("fixedBy"))
+    log_event("panels_from_comic_page", file_id=file_id, page=member[-40:], from_file=found["fileId"],
+              source=found["source"], by_bytes=found["byBytes"])
+    return found
+
+
 def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     from PIL import Image
 
@@ -15152,6 +15171,20 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
                     return {
                         "fileId": str(file_id), "page": index, "source": "manual", "segmented": True,
                         "readingDirection": direction,
+                        "panels": [{"id": f"{index}-{position}", **panel} for position, panel in enumerate(ordered)],
+                    }
+            if hashes and not upgrade:
+                # The comic's page already read -- in this copy before it was
+                # changed (re-tagged, its pages the same), or in another copy
+                # of the comic: that reading is this page's, whatever source
+                # it was, and nothing is worked out or paid for again (the
+                # owner, 2026-10-12: panels live with the comic).
+                reused = _comic_page_reading(store, file_id, member, signature, record, *hashes)
+                if reused is not None:
+                    ordered = panel_finder.order_panels(reused["panels"], direction) if reused["segmented"] else []
+                    return {
+                        "fileId": str(file_id), "page": index, "source": reused["source"],
+                        "segmented": bool(reused["segmented"]), "readingDirection": direction,
                         "panels": [{"id": f"{index}-{position}", **panel} for position, panel in enumerate(ordered)],
                     }
             spread = panel_finder.is_spread(*image.size)
@@ -15288,6 +15321,13 @@ def save_page_panels(file_id: int, index: int, payload: Any, *, fixed_by: int | 
     store.set_page_panels(file_id, pages[index], _file_signature(path), "manual", panels, True,
                           page_hash=hashes[0] if hashes else None, page_dhash=hashes[1] if hashes else None,
                           fixed_by=fixed_by)
+    if hashes:
+        # The same page in the comic's other copies -- the same bytes -- is
+        # fixed with it: a fix belongs to the comic's page, not one file.
+        for copy in store.copies_of_page(file_id, hashes[0]):
+            with contextlib.suppress(LookupError, ValueError):
+                store.set_page_panels(int(copy["file_id"]), copy["page_member"], copy["file_signature"], "manual", panels, True,
+                                      page_hash=hashes[0], page_dhash=hashes[1], fixed_by=fixed_by)
     return file_page_panels(file_id, index)
 
 
