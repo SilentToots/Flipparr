@@ -53,6 +53,7 @@ import { deviceStore } from "./device-store.js";
 import { CAP_CHOICES, batchProgress, coverStatusFor, downloadingWords, groupDownloads, nextDownloaded, formatBytes, nextUnread, planDownloads, progressOf, readerCatalog, rowsFor, usageBytes } from "./offline.js";
 import { DialogCloseButton, useDialog } from "../dialogs.jsx";
 import { PROBE_EVERY_MS, createAppTransport } from "./transport.js";
+import { sendOtherProfilesWaiting } from "./replay-profiles.js";
 import { useRefreshOnReturn } from "../refresh-on-return.js";
 
 /** How long a launch's background check of the session waits for the server. */
@@ -124,6 +125,15 @@ export function ReaderApp() {
   // (transport.js). `online` is its word on whether the server answers.
   const transportRef = useRef(null);
   const [online, setOnline] = useState(true);
+  // Other profiles' offline places and changes go when the server is back,
+  // each with its own kept session (replay-profiles.js), one run at a time.
+  const sendingOthers = useRef(null);
+  function sendOthers(next, viewerId) {
+    if (sendingOthers.current || viewerId === null || viewerId === undefined) return;
+    sendingOthers.current = sendOtherProfilesWaiting({ origin: next.origin, currentProfileId: viewerId })
+      .catch(() => 0)
+      .finally(() => { sendingOthers.current = null; });
+  }
   async function enter(origin) {
     const next = await openClient(origin);
     const transport = createAppTransport({ client: next, store: deviceStore, onLost: () => lostRef.current() });
@@ -132,7 +142,10 @@ export function ReaderApp() {
       setOnline(now);
       // Back: where this device stands may have changed while it was away
       // (a new PIN, devices forgotten), so the server is asked again.
-      if (now) next.api("/api/v1/auth/status").then((answer) => settle(next, answer), () => {});
+      if (now) {
+        next.api("/api/v1/auth/status").then((answer) => settle(next, answer), () => {});
+        sendOthers(next, settledViewer.current);
+      }
     });
     setApiTransport(transport.transport);
     setClient(next);
@@ -198,6 +211,8 @@ export function ReaderApp() {
     // it comes, saves the session and brings the reader settings.
     if (kept) { setPhase("ready"); return; }
     deviceStore.saveSession(answer).catch(() => {});
+    // The server answered: anything another profile left waiting goes too.
+    sendOthers(next, answer.viewer.id);
     rememberProfile(next.origin, answer).catch(() => {});
     try {
       const me = await next.api("/api/v1/me");

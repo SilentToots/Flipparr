@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  answerWhileWaiting, changeFor, dropChange, manualReading, queueChange, replayRequest, withChanges, withPlaces,
+  answerWhileWaiting, changeFor, dropChange, manualReading, queueChange, replayRequest, summaryWithPlaces, withChanges, withPlaces,
 } from "../src/reader-app/offline-changes.js";
 
 test("ratings, reading-list entries and run and arc marks can wait; nothing else does", () => {
@@ -132,4 +132,25 @@ test("a page's panels fixed by hand can wait; reading the page again cannot", ()
   assert.equal(withChanges("/api/v1/files/63/pages/5/panels", automatic, queue), automatic, "another page is untouched");
   assert.deepEqual(answerWhileWaiting(change, null, queue), manualReading("63", "4", [box]));
   assert.deepEqual(manualReading("63", 4, []).panels, [], "no rectangles: the page read whole, as the server keeps it");
+});
+
+test("an issue read offline counts on its run's card at once: the read count, the state, where it points", () => {
+  const files = [
+    { id: "1", issueNumber: "1", page: 5, pageCount: 6, finishedAt: "2026-10-01T00:00:00Z" },
+    { id: "2", issueNumber: "2", page: 5, pageCount: 6, finishedAt: "2026-10-12T09:00:00Z" }, // read offline, laid over
+    { id: "3", issueNumber: "3", page: 0, pageCount: 6, finishedAt: null },
+  ];
+  const before = { state: "next", fileId: "1", issueNumber: "1", page: 5, pageCount: 6, lastReadAt: "2026-10-01T00:00:00Z", read: 1, total: 3 };
+  const places = [{ fileId: "2", body: { read: true }, at: "2026-10-12T09:00:00Z" }];
+  const after = summaryWithPlaces(before, files, places, 3);
+  assert.equal(after.read, 2);
+  assert.equal(after.state, "next", "one left");
+  assert.equal(after.lastReadAt, "2026-10-12T09:00:00Z");
+  files[2] = { ...files[2], finishedAt: "2026-10-12T10:00:00Z", page: 5 };
+  const done = summaryWithPlaces(before, files, [...places, { fileId: "3", body: { read: true }, at: "2026-10-12T10:00:00Z" }], 3);
+  assert.deepEqual([done.read, done.state], [3, "finished"]);
+  const begun = summaryWithPlaces(undefined, [{ id: "9", issueNumber: "1", page: 2, pageCount: 6, finishedAt: null }],
+    [{ fileId: "9", body: { page: 2 }, at: "2026-10-12T11:00:00Z" }], 4);
+  assert.deepEqual([begun.state, begun.fileId, begun.page, begun.read, begun.total], ["continue", "9", 2, 0, 4], "a run begun offline gets a card");
+  assert.equal(summaryWithPlaces(before, files, [{ fileId: "77", body: { page: 1 }, at: "x" }], 3), before, "another run's place changes nothing");
 });

@@ -245,3 +245,34 @@ export function keptPathFor(change) {
   if (kind === "arc-read") return `/api/v1/reading-lists/${subject}`;
   return null;
 }
+
+/**
+ * A run's or arc's card summary (app.py `_reading_place`) with the places
+ * waiting on the device laid over it: an issue read or begun offline counts
+ * on its run's and arcs' cards at once, not only after reconnecting (the
+ * backlog, 2026-10-12). `files` are the run's or arc's comics as its kept
+ * detail answer has them, the places already laid over (`withPlaces`), as
+ * {id, issueNumber, page, pageCount, finishedAt}; `total` is how many it
+ * has when there is no summary yet. The same three states as the server.
+ */
+export function summaryWithPlaces(entry, files, places, total) {
+  const waiting = new Map(places.map((row) => [String(row.fileId), row]));
+  const touched = files.filter((file) => waiting.has(String(file.id)));
+  if (!touched.length) return entry;
+  const history = files.filter((file) => file.finishedAt || Number(file.page) > 0 || waiting.has(String(file.id)));
+  const started = history.filter((file) => !file.finishedAt);
+  const read = history.length - started.length;
+  const newest = touched.map((file) => ({ file, at: waiting.get(String(file.id)).at }))
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)))[0];
+  const point = !newest.file.finishedAt ? newest.file
+    : started.find((file) => String(file.id) === String(entry?.fileId)) || started[0] || newest.file;
+  const count = Number(entry?.total ?? total) || 0;
+  return {
+    ...(entry || {}),
+    state: started.length ? "continue" : count - read > 0 ? "next" : "finished",
+    fileId: String(point.id), issueNumber: point.issueNumber ?? null,
+    page: Number(point.page) || 0, pageCount: Number(point.pageCount) || 0,
+    lastReadAt: [entry?.lastReadAt, newest.at].filter(Boolean).sort().pop() || null,
+    read, total: count,
+  };
+}

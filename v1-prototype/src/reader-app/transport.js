@@ -31,7 +31,7 @@ import {
   replayOrder,
 } from "./offline-reading.js";
 import {
-  answerWhileWaiting, changeFor, dropChange, keptPathFor, queueChange, replayRequest, withChanges, withPlaces,
+  answerWhileWaiting, changeFor, dropChange, keptPathFor, queueChange, replayRequest, summaryWithPlaces, withChanges, withPlaces,
 } from "./offline-changes.js";
 
 /** How long a request waits before the server counts as unreachable. */
@@ -133,7 +133,50 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
   async function shown(path, answer) {
     if (profileId === null || answer == null) return answer;
     const changed = store.changeQueue ? withChanges(path, answer, await store.changeQueue(profileId)) : answer;
-    return withPlaces(path, changed, await store.progressQueue(profileId));
+    const places = await store.progressQueue(profileId);
+    const placed = withPlaces(path, changed, places);
+    if (!places.length) return placed;
+    const clean = String(path).split("?")[0];
+    if (clean === "/api/v1/reading/runs") return runsWithPlaces(placed, places);
+    if (clean === "/api/v1/reading/lists") return listsWithPlaces(placed, places);
+    return placed;
+  }
+
+  // The cards' summaries with the places waiting here, worked out from the
+  // details kept on the device (a run's or arc's drawer, opened before).
+  async function runsWithPlaces(answer, places) {
+    const catalog = await store.answer(profileId, "/api/v1/catalog");
+    const runOf = new Map();
+    for (const run of catalog?.series || []) {
+      for (const issue of run.issues || []) if (issue.fileId) runOf.set(String(issue.fileId), String(run.id));
+      for (const file of run.fileDetails || []) if (file.id) runOf.set(String(file.id), String(run.id));
+    }
+    const runs = { ...(answer.runs || {}) };
+    for (const runId of new Set(places.map((row) => runOf.get(String(row.fileId))).filter(Boolean))) {
+      const detailPath = `/api/v1/series/${runId}/reading`;
+      const detail = await store.answer(profileId, detailPath);
+      if (!detail) continue;
+      const laid = withPlaces(detailPath, detail, places);
+      const files = [...(laid.issues || []), ...(laid.volumes || [])];
+      const summary = summaryWithPlaces(runs[runId], files, places, (laid.issues || []).length);
+      if (summary) runs[runId] = summary;
+    }
+    return { ...answer, runs };
+  }
+
+  async function listsWithPlaces(answer, places) {
+    const index = await store.answer(profileId, "/api/v1/reading-lists");
+    const lists = { ...(answer.lists || {}) };
+    for (const list of index?.lists || []) {
+      const detailPath = `/api/v1/reading-lists/${list.id}`;
+      const detail = await store.answer(profileId, detailPath);
+      if (!detail?.items) continue;
+      const laid = withPlaces(detailPath, detail, places);
+      const files = laid.items.filter((item) => item.fileId).map((item) => ({ ...item, id: item.fileId }));
+      const summary = summaryWithPlaces(lists[String(list.id)], files, places, files.length);
+      if (summary) lists[String(list.id)] = summary;
+    }
+    return { ...answer, lists };
   }
 
   /** A change waiting on the device, and what it answers meanwhile. */

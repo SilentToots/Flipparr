@@ -647,9 +647,8 @@ How:
     - The Downloads page, and reading a downloaded comic with no page
       requests.
 - **Not yet, and open:**
-  - Drawer history: in the app, Back does not close a drawer. The web
-    ties drawers to the address (`historyStep`). The app's drawers close
-    with their X and the swipe.
+  - Done 2026-10-12: iOS's edge swipe is Back in the app: it closes the
+    drawer or sheet in front (`edge-back.js`), never the reader.
   - The bell (notifications) in the app.
   - Making arcs and collections in the app.
   - A downloaded issue that is in progress still shows "In progress", not
@@ -842,13 +841,12 @@ How:
   - `/offline/check` on launch, reconnect and foreground (`Downloads.check`):
     `hidden`/`gone` removed with a toast, `changed` → `stale` (still read
     offline from the copy kept, Download again in Downloads).
-  - Open: a profile's waiting changes and places are sent only when that
-    profile is next active online; sending every profile's with its kept
-    session on reconnect is a follow-up.
-  - Open: one issue marked read offline shows on its row in the run's
-    drawer and its arcs, but the run's card count and Read badge
-    (`/reading/runs`) catch up only on reconnecting; a whole run marked
-    does update the card.
+  - Done 2026-10-12: every profile's waiting changes and places are sent on
+    reconnecting, each with its own kept session (`replay-profiles.js`); a
+    profile whose session ended keeps them until it signs in again.
+  - Done 2026-10-12: an issue read or marked read offline counts on its
+    run's and arcs' cards at once, worked out from the details kept on the
+    device (`summaryWithPlaces`), not only after reconnecting.
 
 - **Panels for downloads, changed 2026-10-09 (the owner):** a download takes
   only the panels the server already keeps (`?stored=only`,

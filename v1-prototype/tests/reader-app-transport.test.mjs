@@ -279,3 +279,18 @@ test("told the same profile again, it keeps that profile's downloads: a read is 
   await transport.transport("/api/v1/files/63/progress", save({ page: 1 }));
   assert.equal(read.length, 1);
 });
+
+test("offline, an issue marked read shows on its run's card from the details kept here", async () => {
+  const { transport, server, files } = setup();
+  files["a2/api/v1/catalog"] = { series: [{ id: "61", issues: [{ id: "5", fileId: "63" }, { id: "6", fileId: "64" }] }] };
+  files["a2/api/v1/series/61/reading"] = { issues: [
+    { id: "63", issueNumber: "1", page: 0, pageCount: 3, finishedAt: null },
+    { id: "64", issueNumber: "2", page: 0, pageCount: 3, finishedAt: null },
+  ], volumes: [] };
+  files["a2/api/v1/reading/runs"] = { runs: {} };
+  server.reachable = false;
+  transport.setOffline();
+  await transport.transport("/api/v1/files/63/progress", save({ read: true }));
+  const { runs } = await transport.transport("/api/v1/reading/runs");
+  assert.deepEqual([runs["61"].read, runs["61"].total, runs["61"].state], [1, 2, "next"]);
+});
