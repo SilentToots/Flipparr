@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import datetime as dt
 import json
 import email.message
@@ -25,6 +26,17 @@ from unittest.mock import MagicMock, Mock, call, patch
 import app
 from access_policy import Viewer
 from app import _run_end_evidence, SABSubmissionError, UploadRedirected, CompletedDownloadNotVisible, Handler, MetadataRateLimited, PAGE, ReleaseDownloadError, _RELEASE_CANDIDATES, _auto_grab_release, _gcd_discovery_search_rows, _comic_vine_issue_entries, _hydrate_gcd_issue_entries_with_status, _metron_collected_edition_candidates, _metron_issue_entries, _metron_reprint_coverage, _resolve_sab_download_source, assess_identity_confidence, batch_enrich, catalog_api_payload, confirm_gcd_series_collection, confirm_gcd_series_run, discover_gcd_series, discover_metron_series, discover_series, embedded_epub_candidate, enrich, enrich_catalog_series, extract_issue_coverage, file_cover_info, find_archive_cover_member, archive_page_members, automatic_backdrop_page, import_downloaded_comic, inspect_file_health, inventory_file, lookup_identity, parse_filename, post_multipart_file_json, public_acquisition_service_config, public_provider_config, rank_gcd_series_runs, read_embedded_metadata, reconcile_acquisition_download, request_discovered_gcd_series, request_discovered_series, render_batch_results, run_metadata_enrichment_job, save_acquisition_service_config, save_provider_config, scan_folder, score_candidate, search_file_match_candidates, search_gcd, search_google_books, search_open_library, search_prowlarr_releases, send_release_to_sabnzbd, sync_gcd_issue_catalog, sync_issue_catalog, test_acquisition_service_connection
+
+
+@functools.lru_cache(maxsize=None)
+def comic_page(label: str = "page") -> bytes:
+    """A small whole JPEG for a comic's page; `label` keeps pages apart.
+    Pages are read whole before a comic is filed (2026-10-13), so a fixture's
+    page must be an image, not a few placeholder bytes."""
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 12), "blue").save(buffer, "JPEG", comment=label.encode())
+    return buffer.getvalue()
 
 
 class FilenameParserTests(unittest.TestCase):
@@ -2166,7 +2178,7 @@ class FilenameParserTests(unittest.TestCase):
             source_folder.mkdir(parents=True)
             source = source_folder / "Saga 001 (2012).cbz"
             with zipfile.ZipFile(source, "w") as archive:
-                archive.writestr("001.jpg", b"comic-page")
+                archive.writestr("001.jpg", comic_page("comic-page"))
             store = Mock()
             store.get_acquisition_job_context.return_value = {
                 "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
@@ -2197,7 +2209,7 @@ class FilenameParserTests(unittest.TestCase):
             destination.write_bytes(b"damaged-original")
             source = source_folder / "Saga 001 (2012).cbz"
             with zipfile.ZipFile(source, "w") as archive:
-                archive.writestr("001.jpg", b"replacement-page")
+                archive.writestr("001.jpg", comic_page("replacement-page"))
             store = Mock()
             store.get_acquisition_job_context.return_value = {
                 "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
@@ -2274,7 +2286,7 @@ class FilenameParserTests(unittest.TestCase):
             source_folder.mkdir(parents=True)
             source = source_folder / "Chew 015 (2010) (D) (Kingpin-Empire.cbz"
             with zipfile.ZipFile(source, "w") as archive:
-                archive.writestr("001.jpg", b"comic-page")
+                archive.writestr("001.jpg", comic_page("comic-page"))
             store = Mock()
             store.get_acquisition_job_context.return_value = {
                 "seriesTitle": "Chew", "seriesYear": 2009, "publisher": "Image",
@@ -2304,7 +2316,7 @@ class FilenameParserTests(unittest.TestCase):
             library.mkdir()
             source_folder.mkdir(parents=True)
             with zipfile.ZipFile(source_folder / "Saga 002 (2012).cbz", "w") as archive:
-                archive.writestr("001.jpg", b"comic-page")
+                archive.writestr("001.jpg", comic_page("comic-page"))
             store = Mock()
             store.get_acquisition_job_context.return_value = {
                 "seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics",
@@ -4125,7 +4137,7 @@ class ManualImportTests(unittest.TestCase):
     def _comic_bytes():
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("001.png", b"\x89PNG\r\n\x1a\n" + b"0" * 128)
+            archive.writestr("001.png", comic_page())
         return buffer.getvalue()
 
     @contextlib.contextmanager
@@ -4214,7 +4226,7 @@ class ComicPackDownloadTests(unittest.TestCase):
             for number in (1, 2, 3):
                 comic = io.BytesIO()
                 with zipfile.ZipFile(comic, "w") as inner:
-                    inner.writestr("001.jpg", b"page")
+                    inner.writestr("001.jpg", comic_page())
                 pack.writestr(f"Batman Beyond 2.0 001-020 (2013-2014)/Batman Beyond 2.0 00{number} (2013) "
                               "(digital) (Son of Ultron-Empire).cbz", comic.getvalue())
             for name, body in (extra or {}).items():
@@ -4271,7 +4283,7 @@ class ComicPackDownloadTests(unittest.TestCase):
             root = Path(folder).resolve()
             comic = io.BytesIO()
             with zipfile.ZipFile(comic, "w") as inner:
-                inner.writestr("001.jpg", b"page")
+                inner.writestr("001.jpg", comic_page())
             source = self._pack(root, {"../../Batman Beyond 2.0 002 (2013) escaped.cbz": comic.getvalue()})
             with patch("app.inventory_file", side_effect=self._inventory):
                 selected = app.select_downloaded_comic(source, self.JOB, root)
@@ -10666,10 +10678,10 @@ class ImportRestartSafetyTests(unittest.TestCase):
     beside its destination under a name no later import looked for -- and,
     ending in .cbz, the next scan would have catalogued it."""
 
-    def _comic(self, path, page=b"page"):
+    def _comic(self, path, page=None):
         path.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr("001.jpg", page)
+            archive.writestr("001.jpg", comic_page() if page is None else page)
         return path
 
     def _context(self, **extra):
@@ -10774,7 +10786,7 @@ class ImportRestartSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             library, completed = root / "library", root / "completed"
-            source = self._comic(completed / "Saga.001.2012" / "Saga 001 (2012).cbz", b"replacement")
+            source = self._comic(completed / "Saga.001.2012" / "Saga 001 (2012).cbz", comic_page("replacement"))
             destination = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbz"
             destination.parent.mkdir(parents=True)
             destination.write_bytes(source.read_bytes())
@@ -11244,7 +11256,7 @@ class CbzConversionTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, True)
         self.source = self.root / "Example 001 (2020).cbr"
         with tarfile.open(self.source, "w") as archive:
-            for name, data in (("Example/10.jpg", b"\xff\xd8page ten"), ("Example/2.jpg", b"\xff\xd8page two"),
+            for name, data in (("Example/10.jpg", comic_page("page ten")), ("Example/2.jpg", comic_page("page two")),
                                ("Example/ComicInfo.xml", b"<ComicInfo><Number>1</Number></ComicInfo>")):
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
@@ -11265,7 +11277,7 @@ class CbzConversionTests(unittest.TestCase):
         self.assertEqual(first.read_bytes(), second.read_bytes(), "an import restarted part way finds it already there")
         with zipfile.ZipFile(first) as archive:
             self.assertEqual(archive.namelist(), ["Example/2.jpg", "Example/10.jpg", "Example/ComicInfo.xml"])
-            self.assertEqual(archive.read("Example/10.jpg"), b"\xff\xd8page ten")
+            self.assertEqual(archive.read("Example/10.jpg"), comic_page("page ten"))
             self.assertTrue(all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist()))
         self.assertEqual(app.archive_page_members(first), app.archive_page_members(self.source))
         self.assertEqual(list((self.root / "unpack").iterdir()), [], "nothing left unpacked")
@@ -11291,6 +11303,18 @@ class CbzConversionTests(unittest.TestCase):
                 self.assertIs(app._comic_archive_as_cbz(selected, {}), selected, "never a reason to refuse the comic")
         [row] = self.store.cbz_conversions()
         self.assertEqual((row["outcome"], row["reason"]), ("kept", "The archive has no pages"))
+
+    def test_a_page_the_archive_holds_whole_but_that_is_no_image_is_never_converted(self):
+        """The 15 comics converted before 2026-10-13 carried such pages."""
+        import tarfile
+        with tarfile.open(self.source, "w") as archive:
+            for name, data in (("Example/1.jpg", comic_page("one")), ("Example/2.jpg", b"\xff\xd8not a picture")):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        with self.assertRaises(app.UnreadablePages) as caught:
+            app.convert_archive_to_cbz(self.source, self.root / "out.cbz")
+        self.assertEqual((caught.exception.pages, caught.exception.proven), (["Example/2.jpg"], True))
 
     def _cut_short(self, member="Example/2.jpg"):
         import tarfile
@@ -11328,10 +11352,10 @@ class CbzConversionTests(unittest.TestCase):
     def test_a_zip_page_failing_its_crc_is_damage(self):
         comic = self.root / "Example 002.cbz"
         with zipfile.ZipFile(comic, "w", zipfile.ZIP_STORED) as archive:
-            archive.writestr("01.jpg", b"\xff\xd8" + b"a" * 4000)
-            archive.writestr("02.jpg", b"\xff\xd8" + b"b" * 4000)
+            archive.writestr("01.jpg", comic_page("one"))
+            archive.writestr("02.jpg", comic_page("two"))
         data = bytearray(comic.read_bytes())
-        data[data.index(b"b" * 4000) + 100] ^= 0xFF
+        data[data.index(comic_page("two")) + len(comic_page("two")) // 2] ^= 0xFF
         comic.write_bytes(bytes(data))
         with self.assertRaises(app.UnreadablePages) as caught:
             app.verify_comic_archive(comic)
@@ -11469,6 +11493,125 @@ class _ComicCopiesTestCase(unittest.TestCase):
         with sqlite3.connect(self.store.database_path) as connection:
             return {name: file_id for name, file_id in connection.execute("SELECT filename, id FROM files")}
 
+
+
+class ArchiveCheckTests(_ComicCopiesTestCase):
+    """The owner, 2026-10-13: every comic's pages read once, damage marked in
+    Library health with its evidence kept, and damaged comics replaced in
+    bulk or -- when the admin turns it on -- by themselves."""
+
+    def _damaged_and_whole(self):
+        pages = [self._page(index) for index in range(3)]
+        return self._comics({
+            "Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+            "Example 002.cbz": [("01.jpg", pages[0]), ("02.jpg", pages[1][: len(pages[1]) // 2])],
+        })
+
+    def test_a_page_is_judged_by_its_image_not_its_end_marker(self):
+        page = self._page(0)
+        self.assertIsNone(app.page_image_damage("01.jpg", page))
+        self.assertIsNone(app.page_image_damage("01.jpg", page + b"Nahga-Empire\n"),
+                          "a release group's name after the image is not damage")
+        self.assertTrue(app.page_image_damage("01.jpg", page[: len(page) // 2]))
+        self.assertTrue(app.page_image_damage("01.png", b"\x00" * 64))
+
+    def test_the_check_marks_a_damaged_comic_keeps_why_and_skips_what_it_read_whole(self):
+        ids = self._damaged_and_whole()
+        whole, damaged = ids["Example 001.cbz"], ids["Example 002.cbz"]
+        app._run_archive_check(app._unchecked_comics())
+        health = self.store.file_health_of(damaged)
+        self.assertEqual((health["code"], health["proven"], health["source"]), ("unreadable_pages", True, "check"))
+        self.assertEqual(health["signature"], app._file_signature(self.root / "Example 002.cbz"))
+        self.assertIn("1 of 2 pages are damaged", health["message"])
+        with sqlite3.connect(self.store.database_path) as connection:
+            rows = dict(connection.execute("SELECT file_id, outcome FROM archive_checks").fetchall())
+        self.assertEqual(rows, {whole: "whole", damaged: "damaged"})
+        self.assertEqual(app._unchecked_comics(), [], "neither is read again until it changes")
+
+    def test_a_mark_is_lifted_only_when_the_comic_has_changed_since(self):
+        whole = self._damaged_and_whole()["Example 001.cbz"]
+        path = self.root / "Example 001.cbz"
+        by_hand = {"status": "error", "code": "unreadable_pages", "message": "marked by hand"}
+        self.store.set_file_health(whole, str(path), by_hand)
+        self.assertEqual(app.check_library_comic(whole, path), "whole")
+        self.assertEqual(self.store.file_health_of(whole), by_hand, "a hand mark is the person's to lift")
+        self.store.set_file_health(whole, str(path), {**by_hand, "signature": "an-earlier-copy"})
+        app.check_library_comic(whole, path)
+        self.assertEqual(self.store.file_health_of(whole)["status"], "ok", "a new copy that reads whole clears it")
+
+    def _mark(self, file_id, *, proven=True, code="unreadable_pages"):
+        self.store.set_file_health(file_id, self.store.library_file_path(file_id).as_posix(),
+                                   {"status": "error", "code": code, "proven": proven, "message": "damaged"})
+
+    def _many(self, count):
+        ids = self._comics({f"Example {index:03d}.cbz": [("01.jpg", self._page(index))] for index in range(1, count + 1)})
+        return [ids[f"Example {index:03d}.cbz"] for index in range(1, count + 1)]
+
+    def test_replace_all_asks_once_for_each_counts_the_open_and_says_what_it_skipped(self):
+        first, second, third = self._many(3)
+        for file_id in (first, second, third):
+            self._mark(file_id, proven=False, code="corrupt_archive" if file_id == third else "unreadable_pages")
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("""INSERT INTO file_replacement_requests(file_id, reason_code, status, created_at, updated_at)
+                                  VALUES (?, 'corrupt', 'searching', 'now', 'now')""", (second,))
+        def request(file_id, reason, *_args, **kwargs):
+            if file_id == third:
+                raise ValueError("Flipparr cannot replace this comic safely until its issue contents are mapped.")
+            return {"id": "1", "fileId": str(file_id), "acquisitionRequestId": "5"}
+        with patch.object(self.store, "request_file_replacement", side_effect=request) as asked, \
+                patch.object(self.store, "reconcile_acquisition_jobs") as reconciled, \
+                patch("app._start_automatic_release_grabs") as searched:
+            result = app.replace_damaged_files()
+        self.assertEqual((result["requested"], result["alreadyOpen"]), (1, 1))
+        self.assertEqual([item["fileId"] for item in result["skipped"]], [str(third)])
+        self.assertEqual(asked.call_args.kwargs, {"refresh": False, "automatic": False})
+        reconciled.assert_called_once_with(5)
+        searched.assert_called_once_with({"id": "5"})
+
+    def test_automatic_replacement_takes_proven_damage_only_up_to_the_cap_and_tells_the_admin(self):
+        ids = self._many(4)
+        for file_id in ids[:3]:
+            self._mark(file_id)
+        self._mark(ids[3], proven=False)
+        made = iter(range(10, 20))
+        def request(file_id, *_args, **kwargs):
+            return {"id": str(next(made)), "fileId": str(file_id), "acquisitionRequestId": str(file_id)}
+        with patch.object(self.store, "request_file_replacement", side_effect=request) as asked, \
+                patch.object(self.store, "reconcile_acquisition_jobs"), patch("app._start_automatic_release_grabs"), \
+                patch("app.AUTO_REPLACE_OPEN_MAX", 2):
+            with patch("app.load_app_settings", return_value={"autoReplaceDamaged": False}):
+                self.assertIsNone(app.auto_replace_damaged(), "off: nothing")
+            with patch("app.load_app_settings", return_value={"autoReplaceDamaged": True}):
+                result = app.auto_replace_damaged()
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual([call.args[0] for call in asked.call_args_list], ids[:2])
+        self.assertTrue(all(call.kwargs["automatic"] for call in asked.call_args_list))
+        with sqlite3.connect(self.store.database_path) as connection:
+            kind, payload = connection.execute("SELECT kind, payload_json FROM notifications").fetchone()
+        self.assertEqual((kind, len(json.loads(payload)["items"])), ("damaged_replacing", 2))
+
+    def test_a_damaged_copy_whose_issue_has_a_whole_copy_is_not_downloaded_again(self):
+        ids = self._many(2)
+        with sqlite3.connect(self.store.database_path) as connection:
+            linked = {row[0] for row in connection.execute("SELECT issue_id FROM file_issue_links WHERE file_id IN (?, ?)", ids)}
+        self.assertEqual(len(linked), 1, "two copies of Example #1")
+        self._mark(ids[0])
+        with patch.object(self.store, "request_file_replacement") as asked, \
+                patch("app.load_app_settings", return_value={"autoReplaceDamaged": True}):
+            result = app.auto_replace_damaged()
+        asked.assert_not_called()
+        self.assertEqual([item["fileId"] for item in result["skipped"]], [str(ids[0])])
+
+    def test_an_automatic_replacement_whose_search_ran_out_is_left_for_a_person(self):
+        [file_id] = self._many(1)
+        self._mark(file_id)
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("""INSERT INTO file_replacement_requests(file_id, reason_code, status, created_at, updated_at,
+                                  automatic) VALUES (?, 'corrupt', 'failed', 'now', 'now', 1)""", (file_id,))
+        with patch.object(self.store, "request_file_replacement") as asked, \
+                patch("app.load_app_settings", return_value={"autoReplaceDamaged": True}):
+            self.assertEqual(app.auto_replace_damaged()["requested"], 0)
+        asked.assert_not_called()
 
 
 class ComicPlaceTests(_ComicCopiesTestCase):

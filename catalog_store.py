@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 73
+SCHEMA_VERSION = 74
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -1384,6 +1384,7 @@ class CatalogStore:
                     error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    automatic INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(file_id)
                 );
                 CREATE INDEX IF NOT EXISTS file_replacement_requests_status
@@ -1592,6 +1593,26 @@ class CatalogStore:
                     cover_url TEXT,
                     updated_at TEXT NOT NULL
                 );
+                -- Every page of a comic read whole, and what was found (schema
+                -- 74): by the library check, a conversion or an import. The
+                -- evidence behind a "Damaged pages" mark, kept past the log,
+                -- and what lets the check skip a comic already read whole as
+                -- it is now (`file_signature`). `outcome` "damaged" is proof
+                -- (a failed checksum, data cut short, a page that is no whole
+                -- image); "unreadable" may be this machine.
+                CREATE TABLE IF NOT EXISTS archive_checks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    file_signature TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('whole', 'damaged', 'unreadable')),
+                    bad_pages INTEGER NOT NULL DEFAULT 0,
+                    total_pages INTEGER NOT NULL DEFAULT 0,
+                    first_bad TEXT,
+                    said TEXT,
+                    source TEXT NOT NULL,
+                    checked_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS archive_checks_file ON archive_checks(file_id, id);
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -2313,6 +2334,11 @@ class CatalogStore:
             for column, kind in (("file_id", "INTEGER"), ("from_signature", "TEXT"), ("to_signature", "TEXT")):
                 if column not in conversion_columns:
                     connection.execute(f"ALTER TABLE cbz_conversions ADD COLUMN {column} {kind}")
+            # 74: a replacement Flipparr asked for by itself, for a comic with
+            # proven damage (`autoReplaceDamaged`), says so: those are capped.
+            replacement_columns = {row["name"] for row in connection.execute("PRAGMA table_info(file_replacement_requests)")}
+            if "automatic" not in replacement_columns:
+                connection.execute("ALTER TABLE file_replacement_requests ADD COLUMN automatic INTEGER NOT NULL DEFAULT 0")
             # 50: a profile's picture -- a photo, or a cover from the library.
             # The image is a file the app writes; the row says where it came
             # from and when, which is what makes its URL change with it.
@@ -5552,6 +5578,75 @@ class CatalogStore:
             connection.execute("UPDATE files SET result_json=?, updated_at=? WHERE id=?",
                                (_json(result), _utc_now(), int(file_id)))
         return True
+
+    def record_archive_check(self, file_id: int, file_signature: str, outcome: str, *, bad_pages: list[str],
+                             total_pages: int, said: str, source: str) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO archive_checks(file_id, file_signature, outcome, bad_pages, total_pages, first_bad,
+                                              said, source, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (int(file_id), file_signature, outcome, len(bad_pages), int(total_pages),
+                 bad_pages[0] if bad_pages else None, (said or "")[:1000] or None, source, _utc_now()),
+            )
+
+    def archive_check_candidates(self) -> list[dict[str, Any]]:
+        """Present comic archives with their latest check, if any: the job
+        skips one last read whole at the signature it has now."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT files.id, files.path, files.size_bytes, files.mtime_ns, files.result_json,
+                          (SELECT outcome FROM archive_checks c WHERE c.file_id=files.id ORDER BY c.id DESC LIMIT 1)
+                              AS last_outcome,
+                          (SELECT file_signature FROM archive_checks c WHERE c.file_id=files.id ORDER BY c.id DESC LIMIT 1)
+                              AS last_signature
+                     FROM files
+                    WHERE files.present=1 AND lower(files.extension) IN ('.cbz', '.cbr', '.cb7', '.cbt', '.zip', '.rar')
+                    ORDER BY files.id"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def damaged_files(self, *, proven_only: bool) -> list[dict[str, Any]]:
+        """Present comics whose file health is an error, with the open
+        replacement each has, if any. `proven_only`: marked "Damaged pages"
+        with proof -- all an automatic replacement may act on."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT files.id, files.path, files.filename, files.result_json,
+                          r.status AS replacement_status, r.automatic AS replacement_automatic,
+                          EXISTS(SELECT 1 FROM file_issue_links mine
+                                   JOIN file_issue_links theirs ON theirs.issue_id=mine.issue_id
+                                                               AND theirs.file_id<>mine.file_id
+                                   JOIN files other ON other.id=theirs.file_id AND other.present=1
+                                  WHERE mine.file_id=files.id
+                                    AND coalesce(json_extract(other.result_json, '$.file_health.status'), 'ok')<>'error')
+                              AS whole_copy
+                     FROM files LEFT JOIN file_replacement_requests r ON r.file_id=files.id
+                    WHERE files.present=1
+                      AND json_extract(files.result_json, '$.file_health.status')='error'
+                    ORDER BY files.id"""
+            ).fetchall()
+        damaged = []
+        for row in rows:
+            health = (_load_json(row["result_json"], {}) or {}).get("file_health") or {}
+            if proven_only and not (health.get("code") == "unreadable_pages" and health.get("proven")):
+                continue
+            damaged.append({"id": int(row["id"]), "path": row["path"], "filename": row["filename"],
+                            "code": health.get("code"), "replacementStatus": row["replacement_status"],
+                            "replacementAutomatic": bool(row["replacement_automatic"]),
+                            "wholeCopy": bool(row["whole_copy"])})
+        return damaged
+
+    def open_automatic_replacements(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute(
+                """SELECT COUNT(*) FROM file_replacement_requests
+                    WHERE automatic=1 AND status NOT IN ('fulfilled', 'cancelled', 'failed')"""
+            ).fetchone()[0])
+
+    def file_health_of(self, file_id: int) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT result_json FROM files WHERE id=?", (int(file_id),)).fetchone()
+        return ((_load_json(row["result_json"], {}) or {}).get("file_health") or {}) if row else {}
 
     def converted_from(self, file_id: int, from_signature: str, to_signature: str) -> bool:
         """Whether this file became `to_signature` by a CBZ conversion of
@@ -10032,9 +10127,11 @@ class CatalogStore:
 
     def request_file_replacement(
         self, file_id: int, reason_code: str, desired_language: str | None = None,
-        acquisition_preference: str = "either",
+        acquisition_preference: str = "either", *, refresh: bool = True, automatic: bool = False,
     ) -> dict[str, Any]:
-        """Queue a replacement without treating the damaged file as missing ownership."""
+        """Queue a replacement without treating the damaged file as missing
+        ownership. Without `refresh` (many at once), the caller reconciles
+        the requests and gets back only their numbers."""
         reason = str(reason_code or "").strip().casefold()
         allowed = {"corrupt", "no_pages", "empty", "wrong_language", "wrong_release", "poor_quality"}
         if reason not in allowed:
@@ -10129,19 +10226,21 @@ class CatalogStore:
                     """UPDATE file_replacement_requests
                        SET reason_code=?, desired_language=?, acquisition_preference=?,
                            acquisition_request_id=?, quarantine_path=NULL,
-                           status='wanted', error=NULL, updated_at=?
+                           status='wanted', error=NULL, updated_at=?, automatic=?
                        WHERE id=?""",
-                    (reason, language, preference, acquisition_request_id, now, request_id),
+                    (reason, language, preference, acquisition_request_id, now, int(automatic), request_id),
                 )
             else:
                 cursor = connection.execute(
                     """INSERT INTO file_replacement_requests(
                            file_id, reason_code, desired_language, acquisition_preference,
-                           acquisition_request_id, status, created_at, updated_at
-                       ) VALUES (?, ?, ?, ?, ?, 'wanted', ?, ?)""",
-                    (file_id, reason, language, preference, acquisition_request_id, now, now),
+                           acquisition_request_id, status, created_at, updated_at, automatic
+                       ) VALUES (?, ?, ?, ?, ?, 'wanted', ?, ?, ?)""",
+                    (file_id, reason, language, preference, acquisition_request_id, now, now, int(automatic)),
                 )
                 request_id = int(cursor.lastrowid)
+        if not refresh:
+            return {"id": str(request_id), "fileId": str(file_id), "acquisitionRequestId": str(acquisition_request_id)}
         self.reconcile_acquisition_jobs(acquisition_request_id)
         refreshed = self.catalog()
         return next(
@@ -11978,7 +12077,13 @@ class CatalogStore:
                               editions.subtitle AS edition_subtitle,
                               editions.volume_number,
                               series_runs.canonical_title AS series_title,
-                              series_runs.start_year AS series_year
+                              series_runs.start_year AS series_year,
+                              (SELECT j.status FROM acquisition_jobs j
+                                WHERE j.request_id=file_replacement_requests.acquisition_request_id
+                                ORDER BY j.updated_at DESC, j.id DESC LIMIT 1) AS search_status,
+                              (SELECT j.error FROM acquisition_jobs j
+                                WHERE j.request_id=file_replacement_requests.acquisition_request_id
+                                ORDER BY j.updated_at DESC, j.id DESC LIMIT 1) AS search_error
                        FROM file_replacement_requests
                        JOIN files ON files.id=file_replacement_requests.file_id
                        LEFT JOIN file_identities ON file_identities.file_id=files.id
@@ -12105,6 +12210,12 @@ class CatalogStore:
                 for review in file_review:
                     review["replacementRequestId"] = str(active_replacement["id"])
                     review["replacementStatus"] = active_replacement["status"]
+                    review["replacementAutomatic"] = bool(active_replacement.get("automatic"))
+                    # A search that ran out of releases says so, rather than
+                    # "Replacement requested" for good: the Fables a single
+                    # damaged release posted may have no other copy.
+                    if active_replacement.get("search_status") == "failed":
+                        review["replacementSearch"] = active_replacement.get("search_error") or "No release could be taken"
             inbox.extend(file_review)
             metadata_deferred = bool((result.get("source_status") or {}).get("external_metadata"))
             group["hasProblem"] = (

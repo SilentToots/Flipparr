@@ -579,11 +579,17 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # reading and packing for Flipparr View cheap (the owner, 2026-10-12).
     # Comics already in the library are left as they are.
     "convertNewToCbz": True,
+    # Whether a comic proven damaged -- a failed checksum, data cut short, a
+    # page that is no whole image -- is replaced by itself, through the
+    # wanted list, the damaged file kept until a good copy passes its checks.
+    # Off until the admin turns it on (the owner, 2026-10-13); Library
+    # health's "Replace all damaged" does the same by hand.
+    "autoReplaceDamaged": False,
 }
 RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
     "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
-    "ratingsFromCovers", "communityListsEnabled", "logClientAddresses", "convertNewToCbz",
+    "ratingsFromCovers", "communityListsEnabled", "logClientAddresses", "convertNewToCbz", "autoReplaceDamaged",
 })
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
@@ -1738,6 +1744,19 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
                 "detail": detail,
                 "tone": "warning",
                 "target": {"view": "settings", "section": "acquisition"}}
+    if row["kind"] == "damaged_replacing":
+        if not viewer.is_admin:
+            return None
+        items = [item for item in payload.get("items") or [] if isinstance(item, dict)]
+        if not items:
+            return None
+        return {**base,
+                "title": (f"Replacing {items[0].get('title') or 'a damaged comic'}" if len(items) == 1
+                          else f"Replacing {len(items)} damaged comics"),
+                "detail": "Its pages are damaged. It stays readable until a good copy passes its checks."
+                if len(items) == 1 else "Their pages are damaged. Each stays readable until a good copy passes its checks.",
+                "tone": "warning",
+                "target": {"view": "metadata"}}
     if row["kind"] == "connector_trouble":
         if not viewer.is_admin:
             return None
@@ -6983,6 +7002,7 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
                 raise UnreadablePages(unreadable, len(pages), proven=_says_damaged(
                     [*report.get("said", []), *(read[name][1] for name in unreadable)]))
         kept = 0
+        broken: list[str] = []
         with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as archive:
             for name in sorted(set(names), key=_natural_member_key):
                 try:
@@ -6996,6 +7016,10 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
                     if name in pages:
                         raise UnreadablePages([name], len(pages)) from None
                     continue  # an empty file, a link, a name outside the archive: not part of the comic
+                if name in pages and page_image_damage(name, data):
+                    # Bytes the archive holds whole but that are no whole
+                    # image: the 15 comics converted before 2026-10-13 had them.
+                    broken.append(name)
                 entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                 entry.compress_type = zipfile.ZIP_STORED
                 archive.writestr(entry, data)
@@ -7003,6 +7027,8 @@ def convert_archive_to_cbz(source: Path, target: Path) -> int:
     finally:
         if folder is not None:
             shutil.rmtree(folder, ignore_errors=True)
+    if broken:
+        raise UnreadablePages(broken, len(pages), proven=True)
     if archive_page_members(target) != pages:
         raise ValueError("The CBZ did not have the archive's pages")
     return kept
@@ -7046,43 +7072,107 @@ def _says_damaged(said: Iterable[str]) -> bool:
     return any(_ARCHIVE_DAMAGE_WORDS.search(line or "") for line in said)
 
 
-def verify_comic_archive(path: Path) -> None:
-    """Every page of a comic read whole, or UnreadablePages: the check a
-    download gets before it is filed (a CBZ conversion does the same as it
-    goes). A zip's pages are read against their CRCs; another archive is
-    unpacked in one pass, and, if the tool stopped part way, each page is
-    asked for on its own."""
-    if not path.is_file():
-        return
-    kind = archive_kind(path)
-    if kind is None:
-        return
+def page_image_damage(name: str, data: bytes) -> str | None:
+    """Why a page's bytes are not a whole image, or None. A JPEG that starts
+    and ends with its markers is taken as whole without decoding (most of a
+    library, and cheap); anything else is decoded in full. Release groups
+    append their name after a JPEG's end marker, so a missing end marker
+    alone proves nothing: in a sample of 300 of production's comics, 162
+    pages in 7 comics had one and every one decoded (2026-10-13), while all
+    15 damaged comics' bad pages failed to decode."""
+    if Path(name).suffix.lower() in (".jpg", ".jpeg"):
+        if data[:2] == b"\xff\xd8" and data.rstrip(b"\x00\r\n ")[-2:] == b"\xff\xd9":
+            return None
+    from PIL import Image  # noqa: PLC0415 -- decoded only when a page needs it
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.load()
+    except Exception as exc:  # noqa: BLE001 -- any refusal is a page that cannot be shown
+        return shown(exc) or type(exc).__name__
+    return None
+
+
+def check_comic_archive(path: Path) -> dict[str, Any]:
+    """Every page of a comic read whole: `outcome` "whole", "damaged" (proof:
+    a failed checksum, data cut short, a page that is not a whole image) or
+    "unreadable" (pages this machine could not read, which may be this
+    machine), with the pages that failed and what the reader said. A zip's
+    pages are read against their CRCs; another archive is unpacked in one
+    pass, and, if the tool stopped part way, each page is asked for on its
+    own. Every page's image is then screened (page_image_damage)."""
     pages = archive_page_members(path)
+    result: dict[str, Any] = {"outcome": "whole", "pages": [], "total": len(pages), "said": ""}
     if not pages:
-        return  # judged elsewhere: no pages is not a comic at all
-    if kind == "zip":
-        bad: list[str] = []
+        return result
+    bad: list[str] = []
+    said: list[str] = []
+    proven = True
+    if archive_kind(path) == "zip":
         with zipfile.ZipFile(path) as archive:
             for name in pages:
                 try:
-                    with archive.open(name) as member:
-                        while member.read(1024 * 1024):
-                            pass
-                except (zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError):
+                    data = archive.read(name)
+                except (zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError, KeyError) as exc:
                     bad.append(name)
-        if bad:
-            raise UnreadablePages(bad, len(pages), proven=True)
+                    said.append(f"{Path(name).name}: {shown(exc) or type(exc).__name__}")
+                    continue
+                damage = page_image_damage(name, data)
+                if damage:
+                    bad.append(name)
+                    said.append(f"{Path(name).name}: {damage}")
+    else:
+        report: dict[str, Any] = {}
+        folder = unpack_archive(path, report)
+        try:
+            if report.get("clean", True):
+                for name in pages:
+                    try:
+                        data = read_unpacked_member(folder, name, CBZ_MEMBER_MAX_BYTES)
+                    except ValueError as exc:
+                        bad.append(name)
+                        said.append(f"{Path(name).name}: {exc}")
+                        proven = False
+                        continue
+                    damage = page_image_damage(name, data)
+                    if damage:
+                        bad.append(name)
+                        said.append(f"{Path(name).name}: {damage}")
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+        if not report.get("clean", True):
+            # The tool stopped part way: nothing from that pass is trusted.
+            bad, said = [], []
+            tool_said = list(report.get("said", []))
+            unread = False
+            for name in pages:
+                data, complaint = _member_strictly(path, name)
+                if data is None:
+                    bad.append(name)
+                    tool_said.append(complaint)
+                    unread = True
+                    continue
+                damage = page_image_damage(name, data)
+                if damage:
+                    bad.append(name)
+                    said.append(f"{Path(name).name}: {damage}")
+            # Pages the tool would not hand over prove damage only when it
+            # said so; a page that is no whole image proves it regardless.
+            proven = not unread or _says_damaged(tool_said)
+            said = [*(line.strip().splitlines()[-1] for line in tool_said if line and line.strip()), *said]
+    if bad:
+        result.update({"outcome": "damaged" if proven else "unreadable", "pages": bad, "said": "; ".join(said)[:1000]})
+    return result
+
+
+def verify_comic_archive(path: Path) -> None:
+    """Every page of a comic read whole, or UnreadablePages: the check a
+    download gets before it is filed (a CBZ conversion does the same as it
+    goes)."""
+    if not path.is_file() or archive_kind(path) is None:
         return
-    report: dict[str, Any] = {}
-    folder = unpack_archive(path, report)
-    shutil.rmtree(folder, ignore_errors=True)
-    if report.get("clean", True):
-        return
-    read = {name: _member_strictly(path, name) for name in pages}
-    unreadable = [name for name in pages if read[name][0] is None]
-    if unreadable:
-        raise UnreadablePages(unreadable, len(pages), proven=_says_damaged(
-            [*report.get("said", []), *(read[name][1] for name in unreadable)]))
+    checked = check_comic_archive(path)
+    if checked["outcome"] != "whole":
+        raise UnreadablePages(checked["pages"], checked["total"], proven=checked["outcome"] == "damaged")
 
 
 def _damaged_download(exc: UnreadablePages) -> DownloadContentMismatch:
@@ -7176,6 +7266,7 @@ def _run_cbz_conversion(files: list[dict[str, Any]], keep_originals: bool) -> No
     finally:
         with _CBZ_JOB_LOCK:
             _CBZ_JOB.update({"running": False, "current": None, "finishedAt": _utc_now_iso()})
+        auto_replace_damaged()
 
 
 def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_original: bool = True) -> str:
@@ -7185,7 +7276,7 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
     the container's log; one whose pages cannot be read is marked damaged, so
     Library health offers to replace it."""
     try:
-        return _convert_library_file_to_cbz(file_id, path, root, keep_original=keep_original)
+        outcome = _convert_library_file_to_cbz(file_id, path, root, keep_original=keep_original)
     except Exception as exc:
         store = catalog_store()
         try:
@@ -7193,15 +7284,41 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
             store.record_cbz_conversion(path.name, archive_kind(path) if path.exists() else None, size, None, None,
                                         "kept", f"failed: {shown(exc) or type(exc).__name__}", file_id=file_id)
             if isinstance(exc, UnreadablePages):
-                store.set_file_health(file_id, str(path), {
-                    "status": "error", "code": "unreadable_pages",
-                    "message": f"{len(exc.pages)} of {exc.total} pages can't be read "
-                               f"({', '.join(Path(name).name for name in exc.pages[:3])}"
-                               f"{'…' if len(exc.pages) > 3 else ''}). The archive is damaged; replace the comic.",
-                })
+                mark_damaged(file_id, path, exc.pages, exc.total, proven=exc.proven, said=str(exc), source="conversion")
         except Exception as inner:  # noqa: BLE001 -- the comic's own failure is the one to raise
             log_exception("cbz_library_conversion_record_failed", inner, level="warning", fileId=file_id)
         raise
+    if outcome == "converted":
+        # Every page was read whole on the way: the check need not read it again.
+        target = path.with_suffix(".cbz")
+        try:
+            catalog_store().record_archive_check(file_id, _file_signature(target), "whole", bad_pages=[],
+                                                 total_pages=len(archive_page_members(target)), said="",
+                                                 source="conversion")
+        except Exception as inner:  # noqa: BLE001 -- evidence, not the conversion
+            log_exception("archive_check_record_failed", inner, level="warning", fileId=file_id)
+    return outcome
+
+
+def mark_damaged(file_id: int, path: Path, pages: list[str], total: int, *, proven: bool, said: str,
+                 source: str) -> None:
+    """A comic found with pages that cannot be read whole: the evidence in
+    archive_checks, and a "Damaged pages" mark in its file health that
+    Library health shows with Replace. The mark carries whether it is proof
+    (only then may an automatic replacement act on it) and the file's
+    signature, so a later check may lift it once the file has changed."""
+    store = catalog_store()
+    signature = _file_signature(path)
+    store.record_archive_check(file_id, signature, "damaged" if proven else "unreadable", bad_pages=pages,
+                               total_pages=total, said=said, source=source)
+    names = ", ".join(Path(name).name for name in pages[:3]) + ("…" if len(pages) > 3 else "")
+    store.set_file_health(file_id, str(path), {
+        "status": "error", "code": "unreadable_pages", "proven": bool(proven), "source": source,
+        "signature": signature,
+        "message": (f"{len(pages)} of {total} pages are damaged ({names}). Replace the comic." if proven else
+                    f"{len(pages)} of {total} pages can't be read here ({names}): the archive may be damaged, "
+                    "or stored in a way this machine can't read."),
+    })
 
 
 def _convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_original: bool = True) -> str:
@@ -7271,6 +7388,187 @@ def _convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_o
     finally:
         shutil.rmtree(folder, ignore_errors=True)
         partial.unlink(missing_ok=True)
+
+
+# ---- Checking every comic's pages, and replacing damaged comics -------------
+# The owner, 2026-10-13: the CBZ run found 35 damaged comics that nothing had
+# noticed (a scan's health check is structural), and the 809 comics already
+# CBZ had never had their pages read. The check reads every page of every
+# comic once, in the background lane, started by hand; what it finds is kept
+# in archive_checks and marked in Library health. Damaged comics are then
+# replaced from Library health ("Replace all damaged"), or by themselves when
+# `autoReplaceDamaged` is on -- proven damage only, through the wanted list,
+# the damaged file kept until a good copy passes its checks.
+
+_CHECK_JOB_LOCK = threading.Lock()
+_CHECK_JOB: dict[str, Any] = {"running": False, "stop": False, "total": 0, "done": 0, "whole": 0, "damaged": 0,
+                              "unreadable": 0, "failed": 0, "current": None, "startedAt": None, "finishedAt": None,
+                              "lastFound": None}
+
+
+def _unchecked_comics() -> list[dict[str, Any]]:
+    """Present comic archives not yet read as they are now: one checked at
+    its present signature -- whole or damaged -- is not read again until the
+    file changes."""
+    pending = []
+    for row in catalog_store().archive_check_candidates():
+        signature = f"{int(row['mtime_ns'] or 0):x}-{int(row['size_bytes'] or 0):x}"
+        if row["last_outcome"] and row["last_signature"] == signature:
+            continue
+        pending.append(row)
+    return pending
+
+
+def archive_check_status() -> dict[str, Any]:
+    with _CHECK_JOB_LOCK:
+        job = dict(_CHECK_JOB)
+    job.pop("stop", None)
+    job["candidates"] = len(_unchecked_comics())
+    job["autoReplace"] = bool(cached_setting("autoReplaceDamaged"))
+    return job
+
+
+def start_archive_check() -> dict[str, Any]:
+    with _CHECK_JOB_LOCK:
+        if _CHECK_JOB["running"]:
+            return archive_check_status()
+        files = _unchecked_comics()
+        _CHECK_JOB.update({"running": True, "stop": False, "total": len(files), "done": 0, "whole": 0, "damaged": 0,
+                           "unreadable": 0, "failed": 0, "current": None, "startedAt": _utc_now_iso(),
+                           "finishedAt": None, "lastFound": None})
+    threading.Thread(target=_run_archive_check, args=(files,), name="flipparr-archive-check", daemon=True).start()
+    return archive_check_status()
+
+
+def stop_archive_check() -> dict[str, Any]:
+    with _CHECK_JOB_LOCK:
+        _CHECK_JOB["stop"] = True
+    return archive_check_status()
+
+
+def _run_archive_check(files: list[dict[str, Any]]) -> None:
+    try:
+        for item in files:
+            with _CHECK_JOB_LOCK:
+                if _CHECK_JOB["stop"]:
+                    break
+                _CHECK_JOB["current"] = Path(item["path"]).name
+            try:
+                found = check_library_comic(int(item["id"]), Path(item["path"]))
+            except Exception as exc:  # noqa: BLE001 -- one comic's failure is said, and the job goes on
+                log_exception("archive_check_failed", exc, level="warning", fileId=item["id"])
+                found = "failed"
+            with _CHECK_JOB_LOCK:
+                _CHECK_JOB["done"] += 1
+                _CHECK_JOB[found] = _CHECK_JOB.get(found, 0) + 1
+                if found in ("damaged", "unreadable"):
+                    _CHECK_JOB["lastFound"] = Path(item["path"]).name
+    finally:
+        with _CHECK_JOB_LOCK:
+            _CHECK_JOB.update({"running": False, "current": None, "finishedAt": _utc_now_iso()})
+        auto_replace_damaged()
+
+
+def check_library_comic(file_id: int, path: Path) -> str:
+    """Read one library comic's every page: "whole", "damaged" or "unreadable".
+    A comic found damaged is marked; a mark is lifted only when the comic
+    has changed since it was made (a new copy), never because a mark made by
+    hand or on another reading meets bytes that now pass."""
+    store = catalog_store()
+    with cpu_lane("background"):
+        checked = check_comic_archive(path)
+    signature = _file_signature(path)
+    if checked["outcome"] != "whole":
+        mark_damaged(file_id, path, checked["pages"], checked["total"], proven=checked["outcome"] == "damaged",
+                     said=checked["said"], source="check")
+        return checked["outcome"]
+    store.record_archive_check(file_id, signature, "whole", bad_pages=[], total_pages=checked["total"], said="",
+                               source="check")
+    health = store.file_health_of(file_id)
+    if health.get("code") == "unreadable_pages" and health.get("signature") and health["signature"] != signature:
+        store.set_file_health(file_id, str(path), inspect_file_health(path))
+    return "whole"
+
+
+# At most this many replacements Flipparr asked for by itself are open at
+# once; the rest wait for those to finish, so a check that finds hundreds
+# does not put hundreds of searches in front of the indexers at once. A
+# person's "Replace all damaged" is not capped: they chose it.
+AUTO_REPLACE_OPEN_MAX = 20
+_REPLACE_LOCK = threading.Lock()
+
+
+def _replacement_reason(code: str | None) -> str:
+    return {"empty_archive": "empty", "no_image_pages": "no_pages"}.get(str(code or ""), "corrupt")
+
+
+def replace_damaged_files(file_ids: list[int] | None = None, *, automatic: bool = False) -> dict[str, Any]:
+    """Ask for a replacement of each damaged comic -- the ones named, or every
+    one Library health lists -- through the same path as Replace comic. A
+    comic already being replaced is counted, not asked for twice; one that
+    cannot be replaced safely (a volume whose issues are not mapped) is
+    skipped and said why. `automatic`: proven damage only, capped."""
+    store = catalog_store()
+    with _REPLACE_LOCK:
+        damaged = store.damaged_files(proven_only=automatic)
+        if file_ids is not None:
+            wanted = {int(value) for value in file_ids}
+            damaged = [item for item in damaged if item["id"] in wanted]
+        room = max(0, AUTO_REPLACE_OPEN_MAX - store.open_automatic_replacements()) if automatic else None
+        requested: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        already = 0
+        for item in damaged:
+            status = item["replacementStatus"]
+            if status in ("wanted", "searching", "grabbed"):
+                already += 1
+                continue
+            if automatic and status == "failed":
+                continue  # its search ran out of releases: a person decides what next
+            if item["wholeCopy"]:
+                # Another copy of the issue reads whole (production, 2026-10-13:
+                # 16 of 35 damaged comics had one): another download would be
+                # a third copy. The damaged one is removed instead.
+                skipped.append({"fileId": str(item["id"]), "file": item["filename"],
+                                "reason": "Another copy of this issue reads whole: remove this one instead"})
+                continue
+            if room is not None and len(requested) >= room:
+                break
+            try:
+                made = store.request_file_replacement(item["id"], _replacement_reason(item["code"]), None, "issues",
+                                                      refresh=False, automatic=automatic)
+            except ValueError as exc:
+                skipped.append({"fileId": str(item["id"]), "file": item["filename"], "reason": str(exc)})
+                continue
+            requested.append({**made, "file": item["filename"]})
+    for request_id in {item["acquisitionRequestId"] for item in requested}:
+        try:
+            store.reconcile_acquisition_jobs(int(request_id))
+            _start_automatic_release_grabs({"id": request_id})
+        except Exception as exc:  # noqa: BLE001 -- the request stands; the sweep searches it later
+            log_exception("replacement_search_failed", exc, level="warning", acquisitionRequestId=request_id)
+    if automatic and requested:
+        for user in store.list_users():
+            if user["role"] == "admin" and not user["disabled"]:
+                store.record_notification(int(user["id"]), "damaged_replacing", "damaged:replacing", {
+                    "items": [{"key": item["fileId"], "title": item["file"]} for item in requested]}, merge=True)
+    if requested or skipped:
+        log_event("damaged_replacements_requested", automatic=automatic, requested=len(requested),
+                  alreadyOpen=already, skipped=len(skipped))
+    return {"requested": len(requested), "alreadyOpen": already, "skipped": skipped}
+
+
+def auto_replace_damaged() -> dict[str, Any] | None:
+    """When `autoReplaceDamaged` is on, replace the comics proven damaged, up
+    to the cap: after a check or conversion run, and from the scan worker's
+    minute tick, so the capped rest follow as earlier ones finish."""
+    try:
+        if not load_app_settings().get("autoReplaceDamaged"):
+            return None
+        return replace_damaged_files(automatic=True)
+    except Exception as exc:  # noqa: BLE001 -- a background nicety; the list in Library health stands
+        log_exception("auto_replace_damaged_failed", exc, level="warning")
+        return None
 
 
 def _comic_archive_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -17628,6 +17926,9 @@ def auto_scan_worker(stop_event: threading.Event = _AUTO_SCAN_STOP) -> None:
     worker_beat("scans")
     while not stop_event.wait(AUTO_SCAN_POLL_SECONDS):
         worker_beat("scans")
+        # Damaged comics replaced by themselves, when that is on: the capped
+        # rest follow as earlier replacements finish.
+        auto_replace_damaged()
         try:
             store = catalog_store()
             schedule = store.scan_schedule()
@@ -19939,6 +20240,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        if parsed_url.path == "/api/v1/library/archive-check":
+            self.send_json(archive_check_status())
+            return
         if parsed_url.path == "/api/v1/library/cbz-conversion":
             self.send_json(cbz_conversion_status())
             return
@@ -20458,6 +20762,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             except OSError as exc:
                 self.send_json({"error": f"Could not read that folder: {exc.strerror}"}, 400)
+            return
+        if parsed_url.path == "/api/v1/library/archive-check":
+            # Reading every comic's pages: the admin's, by hand (access_policy).
+            action = str(payload.get("action") or "")
+            if action == "start":
+                self.send_json(start_archive_check())
+            elif action == "stop":
+                self.send_json(stop_archive_check())
+            else:
+                self.send_json({"error": "Say start or stop"}, 400)
+            return
+        if parsed_url.path == "/api/v1/library/replace-damaged":
+            ids = payload.get("fileIds")
+            if ids is not None and (not isinstance(ids, list) or not all(str(value).isdigit() for value in ids)):
+                self.send_json({"error": "fileIds is a list of comic file ids"}, 400)
+                return
+            self.send_json(replace_damaged_files([int(value) for value in ids] if ids is not None else None))
             return
         if parsed_url.path == "/api/v1/library/cbz-conversion":
             # Converting the library's RAR comics to CBZ: the admin's, by hand
