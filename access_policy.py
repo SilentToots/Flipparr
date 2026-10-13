@@ -101,6 +101,7 @@ ROUTE_ACCESS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"GET"}), r"/api/v1/art-swatch", READER),
     (frozenset({"GET"}), r"/api/file-cover", READER),
     (frozenset({"GET"}), r"/api/v1/files/(\d+)/cover/image", READER),
+    (frozenset({"GET"}), r"/api/v1/issues/(\d+)/cover/image", READER),
     (frozenset({"GET"}), r"/api/v1/series/(\d+)/cover/image", READER),
     (frozenset({"GET"}), r"/api/v1/series/(\d+)/backdrop", READER),
     (frozenset({"GET"}), r"/api/v1/series/(\d+)/synopsis", READER),

@@ -1889,6 +1889,7 @@ NOT_ADMIN = {
     ("GET", "/api/v1/app"): "public",
     ("GET", "/api/v1/files/1/offline"): "reader",
     ("GET", "/api/v1/files/1/package"): "reader",
+    ("GET", "/api/v1/issues/1/cover/image"): "reader",
     ("GET", "/api/v1/files/1/panels"): "reader",
     ("POST", "/api/v1/offline/check"): "reader",
     ("GET", "/api/v1/offline/downloads"): "reader",

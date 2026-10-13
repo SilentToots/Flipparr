@@ -13933,6 +13933,9 @@ def series_backdrop(series_run_id: int) -> dict[str, Any]:
                     "url": _page_url(preference["fileId"], index, path, "backdrop"),
                     "source": preference["source"], "fileId": preference["fileId"], "page": index,
                 }
+    relocated = _relocated_chosen_page(preference, files, lambda *found: store.set_series_backdrop(series_run_id, *found))
+    if relocated:
+        return relocated
     for item in files[:3]:
         path = Path(item["path"])
         try:
@@ -13953,6 +13956,51 @@ def series_backdrop(series_run_id: int) -> dict[str, Any]:
     return {"url": None, "source": "none", "fileId": None, "page": None}
 
 
+def _relocated_chosen_page(preference: dict[str, Any] | None, files: list[dict[str, Any]],
+                           remember: "Callable[..., None]") -> dict[str, Any] | None:
+    """A chosen header page whose comic was replaced, converted or changed,
+    found again by its fingerprint among the group's comics here, and kept as
+    the choice (docs/READING_STATE_PLAN.md step 4). The comics not
+    fingerprinted yet are, in the background, for the next time."""
+    if not preference or preference.get("source") != "chosen":
+        return None
+    store = catalog_store()
+    wanted = store.page_fingerprint_of(int(preference["fileId"]), preference["member"])
+    if not wanted:
+        return None
+    for item in files:
+        path = Path(item["path"])
+        try:
+            signature = _file_signature(path)
+        except OSError:
+            continue
+        prints = store.page_fingerprints(int(item["id"]), signature)
+        member = next((name for name, print_ in prints.items() if print_["sha256"] == wanted["sha256"]), None)
+        if member is None and wanted.get("dhash"):
+            near = sorted((panel_finder.dhash_distance(print_.get("dhash"), wanted["dhash"]), name)
+                          for name, print_ in prints.items() if print_.get("dhash"))
+            member = near[0][1] if near and near[0][0] <= panel_finder.DHASH_NEAR else None
+        if member is None:
+            if not prints:
+                fingerprint_in_background(int(item["id"]))
+            continue
+        pages = cached_page_members(path)
+        if member not in pages:
+            continue
+        remember(int(item["id"]), member, "chosen", signature)
+        index = pages.index(member)
+        return {"url": _page_url(item["id"], index, path, "backdrop"), "source": "chosen", "fileId": item["id"], "page": index}
+    return None
+
+
+def _fingerprint_chosen_page(file_id: int, path: Path, member: str) -> None:
+    """A page chosen as a header keeps its fingerprint, so it can be found
+    again if its comic is replaced."""
+    with contextlib.suppress(Exception):
+        if member not in catalog_store().page_fingerprints(int(file_id), _file_signature(path)):
+            note_page_fingerprint(int(file_id), path, member, read_archive_member(path, member))
+
+
 def choose_series_backdrop(series_run_id: int, file_id: str, page: int) -> dict[str, Any]:
     store = catalog_store()
     item = next(
@@ -13966,6 +14014,7 @@ def choose_series_backdrop(series_run_id: int, file_id: str, page: int) -> dict[
     if not 0 <= page < len(pages):
         raise ValueError("That page is not in this comic")
     store.set_series_backdrop(series_run_id, int(item["id"]), pages[page], "chosen", _file_signature(path))
+    _fingerprint_chosen_page(int(item["id"]), path, pages[page])
     return series_backdrop(series_run_id)
 
 
@@ -16464,6 +16513,7 @@ def choose_run_collection_backdrop(collection_id: int, file_id: str, page: int) 
         raise ValueError("That page is not in this comic")
     catalog_store().set_run_collection_backdrop(collection_id, int(file_id), pages[int(page)], "chosen",
                                                 _file_signature(path))
+    _fingerprint_chosen_page(int(file_id), path, pages[int(page)])
     return run_collection_backdrop(collection_id)
 
 
@@ -16486,6 +16536,9 @@ def _group_backdrop(
                 index = pages.index(preference["member"])
                 return {"url": _page_url(preference["fileId"], index, path, "backdrop"),
                         "source": preference["source"], "fileId": preference["fileId"], "page": index}
+    relocated = _relocated_chosen_page(preference, files, remember)
+    if relocated:
+        return relocated
     for item in files[:3]:
         path = Path(item["path"])
         try:
@@ -16515,6 +16568,7 @@ def choose_reading_list_backdrop(list_id: int, file_id: str, page: int) -> dict[
     if not 0 <= int(page) < len(pages):
         raise ValueError("That page is not in this comic")
     catalog_store().set_reading_list_backdrop(list_id, int(file_id), pages[int(page)], "chosen", _file_signature(path))
+    _fingerprint_chosen_page(int(file_id), path, pages[int(page)])
     return reading_list_backdrop(list_id)
 
 
@@ -19361,6 +19415,12 @@ class Handler(BaseHTTPRequestHandler):
         if uploaded_cover_match:
             self.handle_uploaded_cover(int(uploaded_cover_match.group(1)))
             return
+        # An issue's own uploaded cover (docs/READING_STATE_PLAN.md step 4):
+        # under /issues/{id}/, so the rating gate has answered already.
+        issue_cover_image_match = re.fullmatch(r"/api/v1/issues/(\d+)/cover/image", parsed_url.path)
+        if issue_cover_image_match:
+            self.handle_uploaded_cover(int(issue_cover_image_match.group(1)), "issues")
+            return
         series_cover_image_match = re.fullmatch(r"/api/v1/series/(\d+)/cover/image", parsed_url.path)
         if series_cover_image_match:
             self.handle_uploaded_cover(int(series_cover_image_match.group(1)), "series")
@@ -21680,7 +21740,16 @@ class Handler(BaseHTTPRequestHandler):
             elif kind == "series":
                 result = catalog_store().set_series_cover_preference(entity_id, "upload")
             else:
-                result = catalog_store().set_file_cover_preference(entity_id, "upload")
+                # Kept by issue too, so the issue keeps it when this file is
+                # replaced or converted (docs/READING_STATE_PLAN.md step 4).
+                issue_url = None
+                issue_id = catalog_store().issue_of_file(entity_id)
+                if issue_id is not None:
+                    issues_dir = user_cover_dir("issues")
+                    issues_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(covers / f"{entity_id}.jpg", issues_dir / f"{issue_id}.jpg")
+                    issue_url = f"/api/v1/issues/{issue_id}/cover/image"
+                result = catalog_store().set_file_cover_preference(entity_id, "upload", issue_cover_url=issue_url)
         except (OSError, ValueError) as exc:
             self.send_json({"error": str(exc)}, 422)
             return

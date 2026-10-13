@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 71
+SCHEMA_VERSION = 72
 
 
 class CatalogNewerThanBuild(RuntimeError):
@@ -1574,6 +1574,17 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS comic_reading_by_reader ON comic_reading(user_id, last_read_at DESC);
                 CREATE INDEX IF NOT EXISTS comic_reading_file ON comic_reading(file_id);
+                -- An issue's chosen cover (schema 72, docs/READING_STATE_PLAN.md
+                -- step 4): the choice belongs to the issue, so a replaced or
+                -- converted copy of it keeps it. "file" is each copy's own
+                -- embedded cover; an upload is kept by issue
+                -- (user-covers/issues), not by a file id a later file can reuse.
+                CREATE TABLE IF NOT EXISTS issue_cover_preferences (
+                    issue_id INTEGER PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
+                    source TEXT NOT NULL,
+                    cover_url TEXT,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -2270,6 +2281,20 @@ class CatalogStore:
             # move had stranded.
             if stored_version is not None and stored_version < 71:
                 self._backfill_comic_reading(connection)
+            # 72: a chosen cover belongs to the issue. Each issue takes its
+            # copies' latest choice -- files no longer present included, so a
+            # choice a replacement stranded comes back. An upload keeps its
+            # image where it is, served by the file it was made for.
+            if stored_version is not None and stored_version < 72:
+                connection.execute(
+                    """INSERT OR REPLACE INTO issue_cover_preferences(issue_id, source, cover_url, updated_at)
+                       SELECT l.issue_id, p.source,
+                              CASE WHEN p.source='upload' THEN '/api/v1/files/' || p.file_id || '/cover/image' ELSE p.cover_url END,
+                              p.updated_at
+                         FROM file_cover_preferences p JOIN file_issue_links l ON l.file_id=p.file_id
+                        WHERE p.source<>'auto'
+                        ORDER BY p.updated_at"""
+                )
             # 50: a profile's picture -- a photo, or a cover from the library.
             # The image is a file the app writes; the row says where it came
             # from and when, which is what makes its URL change with it.
@@ -3396,7 +3421,8 @@ class CatalogStore:
         """
         embedded = (result.get("file_cover") or {}).get("url")
         if cover_source == "upload":
-            return f"/api/v1/files/{file_id}/cover/image"
+            # Chosen for the issue (any copy), or for this file.
+            return preferred_cover_url or f"/api/v1/files/{file_id}/cover/image"
         if cover_source == "provider" and preferred_cover_url:
             return preferred_cover_url
         if cover_source == "file" and embedded:
@@ -3461,8 +3487,8 @@ class CatalogStore:
                           file_metadata_overrides.match_source,
                           file_metadata_overrides.match_source_id,
                           file_metadata_overrides.match_candidate_json,
-                          file_cover_preferences.source AS cover_source,
-                          file_cover_preferences.cover_url AS preferred_cover_url
+                          COALESCE(file_cover_preferences.source, issue_cover_preferences.source) AS cover_source,
+                          CASE WHEN file_cover_preferences.file_id IS NOT NULL THEN file_cover_preferences.cover_url ELSE issue_cover_preferences.cover_url END AS preferred_cover_url
                    FROM files
                    LEFT JOIN file_identities ON file_identities.file_id=files.id
                    LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
@@ -3470,6 +3496,8 @@ class CatalogStore:
                    LEFT JOIN editions ON editions.id=file_edition_links.edition_id
                    LEFT JOIN file_metadata_overrides ON file_metadata_overrides.file_id=files.id
                    LEFT JOIN file_cover_preferences ON file_cover_preferences.file_id=files.id
+                   LEFT JOIN file_issue_links AS cover_link ON cover_link.file_id=files.id
+                   LEFT JOIN issue_cover_preferences ON issue_cover_preferences.issue_id=cover_link.issue_id
                    WHERE files.id=? AND files.present=1""",
                 (file_id,),
             ).fetchone()
@@ -3848,11 +3876,13 @@ class CatalogStore:
             file_rows = list(connection.execute(
                 """SELECT files.id, files.filename, files.result_json,
                           file_identities.identity_kind, file_identities.issue_number,
-                          file_cover_preferences.source AS cover_source,
-                          file_cover_preferences.cover_url AS preferred_cover_url
+                          COALESCE(file_cover_preferences.source, issue_cover_preferences.source) AS cover_source,
+                          CASE WHEN file_cover_preferences.file_id IS NOT NULL THEN file_cover_preferences.cover_url ELSE issue_cover_preferences.cover_url END AS preferred_cover_url
                    FROM files
                    JOIN file_identities ON file_identities.file_id=files.id
                    LEFT JOIN file_cover_preferences ON file_cover_preferences.file_id=files.id
+                   LEFT JOIN file_issue_links AS cover_link ON cover_link.file_id=files.id
+                   LEFT JOIN issue_cover_preferences ON issue_cover_preferences.issue_id=cover_link.issue_id
                    WHERE file_identities.series_run_id=? AND files.present=1
                    ORDER BY files.filename COLLATE NOCASE""",
                 (series_run_id,),
@@ -5143,6 +5173,11 @@ class CatalogStore:
             "previous": previous[0] if previous else None,
         }
 
+    def issue_of_file(self, file_id: int) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT issue_id FROM file_issue_links WHERE file_id=?", (int(file_id),)).fetchone()
+        return int(row["issue_id"]) if row else None
+
     def comic_page_panels(self, file_id: int, page_hash: str, page_dhash: str | None, *, near: int,
                           include_self: bool = False) -> dict[str, Any] | None:
         """A reading of this same page kept on another copy of the comic -- a
@@ -5395,6 +5430,16 @@ class CatalogStore:
                        dhash=COALESCE(excluded.dhash, page_fingerprints.dhash), recorded_at=excluded.recorded_at""",
                 (int(file_id), page_member, file_signature, sha256, dhash, _utc_now()),
             )
+
+    def page_fingerprint_of(self, file_id: int, page_member: str) -> dict[str, Any] | None:
+        """A page's fingerprint as last recorded, whatever the file is now --
+        how a chosen page whose file has gone is recognised elsewhere."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT sha256, dhash FROM page_fingerprints WHERE file_id=? AND page_member=?",
+                (int(file_id), page_member),
+            ).fetchone()
+        return dict(row) if row else None
 
     def page_fingerprints(self, file_id: int, file_signature: str) -> dict[str, dict[str, Any]]:
         """A file's page fingerprints that still hold, by member name: those
@@ -6268,7 +6313,7 @@ class CatalogStore:
             )
 
     def set_file_cover_preference(
-        self, file_id: int, source: str, cover_url: str | None = None
+        self, file_id: int, source: str, cover_url: str | None = None, *, issue_cover_url: str | None = None,
     ) -> dict[str, Any]:
         if source not in {"auto", "file", "provider", "upload"}:
             raise ValueError("Unsupported cover source")
@@ -6284,7 +6329,7 @@ class CatalogStore:
             cover_url = f"/api/v1/files/{file_id}/cover/image"
         elif source in {"auto", "file"}:
             cover_url = None
-        with self._connect() as connection:
+        with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO file_cover_preferences(file_id, source, cover_url, updated_at)
                    VALUES (?, ?, ?, ?)
@@ -6292,6 +6337,22 @@ class CatalogStore:
                        source=excluded.source, cover_url=excluded.cover_url, updated_at=excluded.updated_at""",
                 (file_id, source, cover_url, _utc_now()),
             )
+            # And the issue's: a replaced or converted copy keeps it. An
+            # upload is the issue's own image once the app has kept it by issue.
+            link = connection.execute("SELECT issue_id FROM file_issue_links WHERE file_id=?", (int(file_id),)).fetchone()
+            if link is not None:
+                issue_url = issue_cover_url if source == "upload" else cover_url
+                if source == "upload" and not issue_url:
+                    pass
+                elif source == "auto":
+                    connection.execute("DELETE FROM issue_cover_preferences WHERE issue_id=?", (int(link["issue_id"]),))
+                else:
+                    connection.execute(
+                        """INSERT INTO issue_cover_preferences(issue_id, source, cover_url, updated_at) VALUES (?, ?, ?, ?)
+                           ON CONFLICT(issue_id) DO UPDATE SET source=excluded.source, cover_url=excluded.cover_url,
+                               updated_at=excluded.updated_at""",
+                        (int(link["issue_id"]), source, issue_url, _utc_now()),
+                    )
         return self.get_file_workbench(file_id)
 
     def update_file_metadata(
@@ -11390,6 +11451,7 @@ class CatalogStore:
             # A file-sourced pick points at a file, not a url, so that "make
             # issue 4 the face" keeps following issue 4's own chosen cover.
             resolved_cover_by_file: dict[int, str] = {}
+            issue_by_file: dict[int, int] | None = None
             rows = list(connection.execute(
                 """SELECT files.*,
                           file_identities.series_run_id,
@@ -11401,8 +11463,8 @@ class CatalogStore:
                           file_identities.match_basis_json,
                           editions.edition_kind AS edition_kind,
                           file_metadata_overrides.fields_json AS override_fields_json,
-                          file_cover_preferences.source AS cover_source,
-                          file_cover_preferences.cover_url AS preferred_cover_url,
+                          COALESCE(file_cover_preferences.source, issue_cover_preferences.source) AS cover_source,
+                          CASE WHEN file_cover_preferences.file_id IS NOT NULL THEN file_cover_preferences.cover_url ELSE issue_cover_preferences.cover_url END AS preferred_cover_url,
                           series_runs.canonical_title,
                           series_runs.start_year AS series_start_year,
                           series_runs.publisher AS series_publisher
@@ -11412,6 +11474,8 @@ class CatalogStore:
                    LEFT JOIN editions ON editions.id=file_edition_links.edition_id
                    LEFT JOIN file_metadata_overrides ON file_metadata_overrides.file_id=files.id
                    LEFT JOIN file_cover_preferences ON file_cover_preferences.file_id=files.id
+                   LEFT JOIN file_issue_links AS cover_link ON cover_link.file_id=files.id
+                   LEFT JOIN issue_cover_preferences ON issue_cover_preferences.issue_id=cover_link.issue_id
                    LEFT JOIN series_runs ON series_runs.id=file_identities.series_run_id
                    WHERE files.present=1
                    ORDER BY files.filename COLLATE NOCASE"""
@@ -11537,11 +11601,13 @@ class CatalogStore:
             for link in connection.execute(
                 """SELECT file_issue_links.issue_id AS issue_id, files.id AS file_id,
                           files.result_json, files.created_at AS file_created_at,
-                          file_cover_preferences.source AS cover_source,
-                          file_cover_preferences.cover_url AS preferred_cover_url
+                          COALESCE(file_cover_preferences.source, issue_cover_preferences.source) AS cover_source,
+                          CASE WHEN file_cover_preferences.file_id IS NOT NULL THEN file_cover_preferences.cover_url ELSE issue_cover_preferences.cover_url END AS preferred_cover_url
                    FROM file_issue_links
                    JOIN files ON files.id=file_issue_links.file_id
                    LEFT JOIN file_cover_preferences ON file_cover_preferences.file_id=files.id
+                   LEFT JOIN file_issue_links AS cover_link ON cover_link.file_id=files.id
+                   LEFT JOIN issue_cover_preferences ON issue_cover_preferences.issue_id=cover_link.issue_id
                    WHERE files.present=1
                    ORDER BY files.id"""
             ):
@@ -11956,6 +12022,17 @@ class CatalogStore:
             chosen = None
             if preference and preference["source"] == "file":
                 chosen = resolved_cover_by_file.get(preference["file_id"])
+                if chosen is None and preference["file_id"] is not None:
+                    # The chosen issue's file was replaced or converted: the
+                    # choice was the issue's face, so a present copy of that
+                    # issue shows it (docs/READING_STATE_PLAN.md step 4).
+                    if issue_by_file is None:
+                        with self._connect() as links:
+                            issue_by_file = {int(row["file_id"]): int(row["issue_id"])
+                                             for row in links.execute("SELECT file_id, issue_id FROM file_issue_links")}
+                    issue = issue_by_file.get(int(preference["file_id"]))
+                    chosen = next((cover for file, cover in resolved_cover_by_file.items()
+                                   if issue is not None and issue_by_file.get(file) == issue), None)
             elif preference and preference["source"] in {"provider", "upload"}:
                 chosen = preference["cover_url"]
             # group["covers"] is gathered from the files the library owns, so a

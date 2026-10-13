@@ -6511,3 +6511,33 @@ class ComicSummaryTests(ComicReadingTests):
         self.store.set_reading_progress(self.b, 7, 8, "sb", finished=True, user_id=ADMIN_USER_ID)
         stats = self.store.reading_activity(ADMIN_USER_ID)["stats"]
         self.assertEqual((stats["issuesRead"], stats["inProgress"], stats["pagesRead"], stats["runs"]), (1, 0, 8, 1))
+
+
+class ComicCoverTests(ComicReadingTests):
+    """docs/READING_STATE_PLAN.md step 4: a chosen cover belongs to the issue
+    and the run, not to the file it was chosen on."""
+
+    def _run_and_issue(self):
+        with sqlite3.connect(self.store.database_path) as connection:
+            issue = self.issue["Example 001.cbz"]
+            run = connection.execute("SELECT series_run_id FROM issues WHERE id=?", (issue,)).fetchone()[0]
+            connection.execute(
+                "INSERT INTO issue_cover_preferences(issue_id, source, cover_url, updated_at) VALUES (?, 'provider', 'https://covers/one.jpg', 'now')",
+                (issue,))
+            connection.execute("UPDATE files SET present=0 WHERE id=?", (self.a,))  # the copy it was chosen on, replaced
+        return run, issue
+
+    def test_an_issues_chosen_cover_shows_on_its_other_copy(self):
+        run, issue = self._run_and_issue()
+        series = next(item for item in self.store.catalog()["series"] if str(item["id"]) == str(run))
+        one = next(item for item in series["issues"] if item["number"] == "1")
+        self.assertEqual((one["fileId"], one["fileCover"]), (str(self.b), "https://covers/one.jpg"))
+
+    def test_a_run_cover_chosen_from_a_replaced_file_shows_through_the_issues_copy_here(self):
+        run, _issue = self._run_and_issue()
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute(
+                "INSERT INTO series_cover_preferences(series_run_id, source, cover_url, file_id, updated_at) VALUES (?, 'file', NULL, ?, 'now')",
+                (run, self.a))
+        series = next(item for item in self.store.catalog()["series"] if str(item["id"]) == str(run))
+        self.assertEqual(series["cover"], "https://covers/one.jpg", "issue 1's face, through the copy that is here")

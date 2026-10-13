@@ -11516,6 +11516,29 @@ class ComicPagePanelTests(_ComicCopiesTestCase):
         self.assertEqual(reading["source"], "vlm", "re-tagged, its pages the same: nothing read again")
 
 
+class ComicBackdropTests(_ComicCopiesTestCase):
+    """docs/READING_STATE_PLAN.md step 4: a chosen header page belongs to the
+    run, and is found again by its fingerprint when its comic is replaced."""
+
+    def test_a_chosen_backdrop_is_found_again_in_the_replacement(self):
+        pages = [self._page(index) for index in range(3)]
+        ids = self._comics({
+            "Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+            "Example 001 (new).cbz": [("00-ad.jpg", self._page(9))] + [(f"p{index + 1}.jpg", data) for index, data in enumerate(pages)],
+        })
+        old, new = ids["Example 001.cbz"], ids["Example 001 (new).cbz"]
+        with sqlite3.connect(self.store.database_path) as connection:
+            run = connection.execute("SELECT series_run_id FROM file_identities WHERE file_id=?", (old,)).fetchone()[0]
+        app.choose_series_backdrop(run, str(old), 2)
+        app.ensure_page_fingerprints(new)
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("UPDATE files SET present=0 WHERE id=?", (old,))  # replaced
+        backdrop = app.series_backdrop(run)
+        self.assertEqual((backdrop["source"], backdrop["fileId"], backdrop["page"]), ("chosen", str(new), 3),
+                         "the same page, one later in the replacement, still the choice")
+        self.assertEqual(self.store.series_backdrop_preference(run)["fileId"], str(new), "and kept as the choice")
+
+
 class _StopAfterOnePass(threading.Event):
     """A stop event that lets a worker loop finish one whole pass."""
 
