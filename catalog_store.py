@@ -4065,6 +4065,19 @@ class CatalogStore:
                 (series_run_id, int(file_id), member, source, file_signature, _utc_now()),
             )
 
+    def comic_reading_for_file(self, file_id: int, *, user_id: int) -> dict[str, Any] | None:
+        """Where this reader is with the comic this file is a copy of -- read on
+        any copy of it (docs/READING_STATE_PLAN.md step 2)."""
+        with self._connect() as connection:
+            comic = self._comic_of_file(connection, file_id)
+            if comic is None:
+                return None
+            row = connection.execute(
+                "SELECT * FROM comic_reading WHERE user_id=? AND subject_kind=? AND subject_id=?",
+                (int(user_id), *comic),
+            ).fetchone()
+        return dict(row) if row else None
+
     def reading_progress(self, file_id: int, *, user_id: int) -> dict[str, Any] | None:
         """Where this reader left this comic, if it is still the comic it was."""
         with self._connect() as connection:

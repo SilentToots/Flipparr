@@ -590,6 +590,15 @@ export function ReaderView({
   // (`readablePanels`), and says so once that takes long enough to notice.
   const findingPanels = panelMode && !overview && pages.state === "done" && count > 0 && !panels[index];
   const showFinding = useShownAfter(findingPanels, FINDING_PANELS_DELAY_MS);
+  // Opened in another copy of the comic, or a changed file, where the page
+  // left on could not be found exactly: said once, briefly (the owner,
+  // 2026-10-12: the same point of the way through, with a note).
+  const [placeNote, setPlaceNote] = useState("");
+  useEffect(() => {
+    if (!placeNote) return undefined;
+    const timer = window.setTimeout(() => setPlaceNote(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [placeNote]);
   const spread = Boolean(spreads[index]);
 
   useEffect(() => {
@@ -615,6 +624,9 @@ export function ReaderView({
         const asked = startPage !== null ? startPage
           : place?.finishedAt ? 0
           : Number(place?.page) || 0;
+        if (startPage === null && !place?.finishedAt && place?.placeFound === "fraction" && Number(place?.page) > 0) {
+          setPlaceNote("This comic\u2019s file has changed: opened about where you left off");
+        }
         const start = Math.min(Math.max(0, asked), Math.max(0, list.length - 1));
         // The panel the place was left on is taken up once that page's
         // panels are known (the fetch below), since a step is counted
@@ -1339,7 +1351,8 @@ export function ReaderView({
         <WarningCircle size={22} /><span>This file has no pages to read.</span>
       </div> : null}
       {/* Present always, so the words are announced when they arrive. */}
-      <div className="reader-finding" role="status">{showFinding ? <><LoadingSpinner size={16} /><span>Finding panels…</span></> : null}</div>
+      <div className="reader-finding" role="status">{showFinding ? <><LoadingSpinner size={16} /><span>Finding panels…</span></>
+        : placeNote ? <span>{placeNote}</span> : null}</div>
       {pageFailures[index]?.failed ? <div className="reader-status reader-status--error reader-page-error" role="alert"
         onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
         <WarningCircle size={22} /><span>Page {index + 1} could not be loaded.</span>

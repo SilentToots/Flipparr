@@ -15451,24 +15451,95 @@ def forget_page_panels(file_id: int, index: int) -> dict[str, Any]:
 
 
 def file_reading_progress(file_id: int, *, user_id: int) -> dict[str, Any]:
-    """Where a comic was left, and whether that place still exists.
+    """Where a comic was left, in this file of it.
 
-    The page is kept with the file's signature, so a file replaced since it
-    was read starts again rather than opening at a page it may not have.
+    Read from the comic -- the issue or volume -- not the file (the owner,
+    2026-10-12; docs/READING_STATE_PLAN.md step 2b): read on another copy, or
+    before this file replaced the one read, it is still where the reader is.
+    In the copy read, unchanged, the place is the page as kept. In another
+    copy, or a changed file, the same page is found by its fingerprint --
+    its bytes, else its image -- and failing that the same point of the way
+    through (`placeFound`: "exact", "near", "fraction"), never a page the
+    file does not have. A comic with no reading of its comic yet falls back
+    to the file's own row, as before.
     """
-    path = catalog_store().library_file_path(file_id)
-    record = catalog_store().reading_progress(file_id, user_id=user_id)
+    store = catalog_store()
+    path = store.library_file_path(file_id)
     try:
         signature = _file_signature(path)
     except OSError:
         signature = None
-    if record and signature and record["fileSignature"] == signature:
-        return record
-    return {
-        "fileId": str(file_id), "page": 0, "pageCount": 0, "fileSignature": signature,
-        "startedAt": None, "finishedAt": None, "updatedAt": None,
-        "stale": bool(record),
-    }
+    comic = store.comic_reading_for_file(file_id, user_id=user_id)
+    if comic is None:
+        record = store.reading_progress(file_id, user_id=user_id)
+        if record and signature and record["fileSignature"] == signature:
+            return record
+        return {
+            "fileId": str(file_id), "page": 0, "pageCount": 0, "fileSignature": signature,
+            "startedAt": None, "finishedAt": None, "updatedAt": None,
+            "stale": bool(record),
+        }
+    kept = {"fileId": str(file_id), "fileSignature": signature, "startedAt": comic["started_at"],
+            "finishedAt": comic["finished_at"], "updatedAt": comic["updated_at"]}
+    if comic["file_id"] == int(file_id) and signature and comic["file_signature"] == signature:
+        return {**kept, "page": int(comic["page"]), "panel": int(comic["panel"] or 0), "pageCount": int(comic["page_count"])}
+    if not signature:
+        return {**kept, "page": 0, "panel": 0, "pageCount": 0, "stale": True}
+    members = cached_page_members(path)
+    page, found = locate_place(file_id, signature, members, comic)
+    return {**kept, "page": page, "panel": 0, "pageCount": len(members), "placeFound": found}
+
+
+_FINGERPRINTING: set[int] = set()
+_FINGERPRINTING_LOCK = threading.Lock()
+
+
+def fingerprint_in_background(file_id: int) -> None:
+    """A comic's missing page fingerprints, from one pass over it in the
+    background lane, once at a time per comic; nobody waits on it."""
+    with _FINGERPRINTING_LOCK:
+        if int(file_id) in _FINGERPRINTING:
+            return
+        _FINGERPRINTING.add(int(file_id))
+
+    def fingerprint() -> None:
+        try:
+            ensure_page_fingerprints(file_id)
+        except Exception as exc:  # noqa: BLE001 -- a later open falls back as this one did
+            log_exception("page_fingerprints_failed", exc, level="warning", fileId=file_id)
+        finally:
+            with _FINGERPRINTING_LOCK:
+                _FINGERPRINTING.discard(int(file_id))
+    threading.Thread(target=fingerprint, name=f"flipparr-fingerprint-{int(file_id)}", daemon=True).start()
+
+
+def locate_place(file_id: int, signature: str, members: list[str], comic: dict[str, Any]) -> tuple[int, str]:
+    """The page of this file that is the page the comic was left on: by its
+    bytes, else its image, else the same point of the way through. A file
+    not yet fingerprinted is, in the background lane, for the next time --
+    the open never waits on reading the archive."""
+    if not members:
+        return 0, "fraction"
+    store = catalog_store()
+    prints = store.page_fingerprints(file_id, signature)
+    index_of = {member: index for index, member in enumerate(members)}
+    if comic.get("page_sha256"):
+        for member, print_ in prints.items():
+            if print_["sha256"] == comic["page_sha256"] and member in index_of:
+                return index_of[member], "exact"
+    if comic.get("page_dhash"):
+        near = sorted(
+            (panel_finder.dhash_distance(print_["dhash"], comic["page_dhash"]), index_of[member])
+            for member, print_ in prints.items() if print_.get("dhash") and member in index_of
+        )
+        if near and near[0][0] <= panel_finder.DHASH_NEAR:
+            return near[0][1], "near"
+    if len(prints) < len(members):
+        fingerprint_in_background(file_id)
+    count = int(comic.get("page_count") or 0)
+    if count <= 1:
+        return 0, "fraction"
+    return min(len(members) - 1, round(int(comic.get("page") or 0) / (count - 1) * (len(members) - 1))), "fraction"
 
 
 def reading_time(value: Any) -> str | None:
@@ -15503,10 +15574,17 @@ def set_file_reading_progress(
         raise ValueError("That page is not in this comic")
     if not 0 <= panel <= PANELS_MAX:
         raise ValueError("That panel is not on the page")
-    return catalog_store().set_reading_progress(
-        file_id, page, len(pages), _file_signature(path), finished=page >= len(pages) - 1, panel=panel,
+    signature = _file_signature(path)
+    saved = catalog_store().set_reading_progress(
+        file_id, page, len(pages), signature, finished=page >= len(pages) - 1, panel=panel,
         user_id=user_id, at=at, page_member=pages[page],
     )
+    # The place is found again in another copy by its page's fingerprint: a
+    # page not fingerprinted yet (rendered before they were kept) is, for
+    # the next save.
+    if pages[page] not in catalog_store().page_fingerprints(file_id, signature):
+        fingerprint_in_background(file_id)
+    return saved
 
 
 def mark_file_read(file_id: int, read: bool, *, user_id: int, at: str | None = None) -> dict[str, Any]:

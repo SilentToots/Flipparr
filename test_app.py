@@ -11356,6 +11356,91 @@ class PageFingerprintTests(unittest.TestCase):
         self.assertEqual(self._kept(), {}, "fingerprints hold for the file as it was")
 
 
+class ComicPlaceTests(unittest.TestCase):
+    """docs/READING_STATE_PLAN.md step 2b: where a comic was left is the
+    comic's, and opening another copy of it -- a replacement with an ad page
+    added, a re-encoded release -- finds the same page by its fingerprint."""
+
+    @staticmethod
+    def _page(index, quality=90):
+        from PIL import Image, ImageDraw
+        image = Image.new("RGB", (120, 180), (30 + index * 40, 80, 160 - index * 30))
+        ImageDraw.Draw(image).rectangle([10 + index * 15, 20, 60 + index * 15, 90 + index * 10], fill=(250, 250, 250))
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=quality)
+        return buffer.getvalue()
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.store = CatalogStore(self.root / "catalog.db")
+        for each in (patch("app.catalog_store", return_value=self.store),
+                     patch("app.reading_cache_dir", return_value=self.root / "reading-cache"),
+                     patch("app.cover_cache_dir", return_value=self.root / "cover-cache"),
+                     patch("app.unpack_work_dir", return_value=self.root / "unpack"),
+                     patch("app.fingerprint_in_background", side_effect=lambda file_id: app.ensure_page_fingerprints(file_id))):
+            each.start()
+            self.addCleanup(each.stop)
+
+    def _comics(self, copies):
+        parsed = []
+        for name, pages in copies.items():
+            with zipfile.ZipFile(self.root / name, "w") as archive:
+                for member, data in pages:
+                    archive.writestr(member, data)
+            parsed.append(app.ParsedFile(str(self.root / name), name, ".cbz", "Example", issue="1"))
+        self.store.perform_scan(self.store.begin_scan(str(self.root), True), lambda *_: list(parsed), lambda p: {
+            "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {}, "file_health": {"status": "ok"},
+            "recommendation": {"title": "Example", "issue": "1", "record_type": "single_issue", "publisher": "X", "source": "Test"},
+            "file_cover": None,
+        })
+        with sqlite3.connect(self.store.database_path) as connection:
+            return {name: file_id for name, file_id in connection.execute("SELECT filename, id FROM files")}
+
+    def test_a_replacement_with_an_ad_page_added_opens_on_the_same_page(self):
+        pages = [self._page(index) for index in range(4)]
+        ids = self._comics({
+            "Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+            "Example 001 (new).cbz": [("00-ad.jpg", self._page(9))] + [(f"p{index + 1}.jpg", data) for index, data in enumerate(pages)],
+        })
+        old, new = ids["Example 001.cbz"], ids["Example 001 (new).cbz"]
+        app.render_file_page(old, 2, "read")  # read, so the page is fingerprinted
+        app.set_file_reading_progress(old, 2, user_id=ADMIN_USER_ID)
+        first = app.file_reading_progress(new, user_id=ADMIN_USER_ID)
+        self.assertEqual(first["placeFound"], "fraction", "not fingerprinted yet: the open does not wait for it")
+        place = app.file_reading_progress(new, user_id=ADMIN_USER_ID)
+        self.assertEqual((place["page"], place["pageCount"], place["placeFound"]), (3, 5, "exact"),
+                         "the same page, one later for the ad, found by its bytes")
+        same = app.file_reading_progress(old, user_id=ADMIN_USER_ID)
+        self.assertEqual((same["page"], same.get("placeFound")), (2, None), "in the copy read, as kept")
+
+    def test_a_re_encoded_release_is_found_by_the_pages_image_and_an_unrelated_one_by_the_way_through(self):
+        pages = [self._page(index) for index in range(4)]
+        ids = self._comics({
+            "Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+            "Example 001 (scan).cbz": [(f"{index + 1:02d}.jpg", self._page(index, quality=40)) for index in range(4)],
+        })
+        original, scan = ids["Example 001.cbz"], ids["Example 001 (scan).cbz"]
+        app.render_file_page(original, 1, "read")
+        app.set_file_reading_progress(original, 1, user_id=ADMIN_USER_ID)
+        app.ensure_page_fingerprints(scan)
+        place = app.file_reading_progress(scan, user_id=ADMIN_USER_ID)
+        self.assertEqual((place["page"], place["placeFound"]), (1, "near"))
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("UPDATE comic_reading SET page_sha256=NULL, page_dhash=NULL, page=2, page_count=4")
+        guessed = app.file_reading_progress(scan, user_id=ADMIN_USER_ID)
+        self.assertEqual((guessed["page"], guessed["placeFound"]), (2, "fraction"), "the same point of the way through")
+
+    def test_finished_on_one_copy_is_finished_on_every_copy(self):
+        pages = [self._page(index) for index in range(3)]
+        ids = self._comics({
+            "Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+            "Example 001 (new).cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+        })
+        app.set_file_reading_progress(ids["Example 001.cbz"], 2, user_id=ADMIN_USER_ID)
+        self.assertTrue(app.file_reading_progress(ids["Example 001 (new).cbz"], user_id=ADMIN_USER_ID)["finishedAt"])
+
+
 class _StopAfterOnePass(threading.Event):
     """A stop event that lets a worker loop finish one whole pass."""
 
