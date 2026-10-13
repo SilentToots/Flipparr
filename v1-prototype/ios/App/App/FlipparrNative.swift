@@ -54,6 +54,7 @@ public class FlipparrNativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "transfers", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "unpack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setEdgeBack", returnType: CAPPluginReturnPromise),
     ]
 
     private func inside(_ relative: String) throws -> URL { try flipparrPath(relative) }
@@ -240,6 +241,16 @@ extension FlipparrNativePlugin {
             do { _ = try inside(unpack) } catch { call.reject(error.localizedDescription); return }
         }
         FlipparrDownloads.shared.enqueue(id: id, url: url, relative: relative, headers: headers, unpack: unpack)
+        call.resolve()
+    }
+
+    /// Whether a swipe in from the left edge means Back: on while a drawer or
+    /// sheet the page can close is in front, off otherwise -- the reader's
+    /// left edge is its previous-page zone, and the library has nothing to go
+    /// back from (src/reader-app/edge-back.js).
+    @objc func setEdgeBack(_ call: CAPPluginCall) {
+        let enabled = call.getBool("enabled") ?? false
+        DispatchQueue.main.async { EdgeBack.enabled = enabled }
         call.resolve()
     }
 
@@ -544,14 +555,52 @@ enum ComicPackage {
 }
 
 /// The app's web view controller: Capacitor's, plus the app's own plugin.
-class FlipparrViewController: CAPBridgeViewController {
+/// iOS's Back gesture, a swipe in from the left edge, for the page: the
+/// web app has Back (Safari's edge swipe and button go through the address,
+/// App.jsx), the app has no address, so a drawer or sheet closed only with
+/// its own button (the owner's backlog, 2026-10-12).
+enum EdgeBack {
+    static var enabled = false
+}
+
+class FlipparrViewController: CAPBridgeViewController, UIGestureRecognizerDelegate {
+    private let native = FlipparrNativePlugin()
+    private let feedback = UIImpactFeedbackGenerator(style: .light)
+
     override open func capacitorDidLoad() {
-        bridge?.registerPluginInstance(FlipparrNativePlugin())
+        bridge?.registerPluginInstance(native)
+        let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(edgePanned(_:)))
+        edge.edges = .left
+        edge.delegate = self
+        webView?.addGestureRecognizer(edge)
         // iOS's rubber band, which Capacitor turns off: pull to refresh rides
         // it (src/frame/pullRefresh.jsx), as on the web from a Home Screen,
         // and a page that stops dead at its ends is not how iOS scrolls (the
         // owner, 2026-10-11). Always, so a short page can be pulled too.
         webView?.scrollView.bounces = true
         webView?.scrollView.alwaysBounceVertical = true
+    }
+
+    /// Only while the page says a closable layer is in front.
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer is UIScreenEdgePanGestureRecognizer ? EdgeBack.enabled : true
+    }
+
+    /// Back, as iOS takes it: a third of the way across, or a flick.
+    @objc private func edgePanned(_ recognizer: UIScreenEdgePanGestureRecognizer) {
+        guard let view = recognizer.view else { return }
+        switch recognizer.state {
+        case .began:
+            feedback.prepare()
+        case .ended:
+            let moved = recognizer.translation(in: view).x
+            let speed = recognizer.velocity(in: view).x
+            if moved > view.bounds.width / 3 || (moved > 40 && speed > 600) {
+                feedback.impactOccurred()
+                native.notifyListeners("edgeBack", data: [:])
+            }
+        default:
+            break
+        }
     }
 }

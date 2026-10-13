@@ -5,6 +5,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, X } from "@phosphor-icons/react";
 import { sheetPullDecision } from "./sheet.js";
+import { backClosable, closeFrontForBack, dialogClosers, frontChanged, isTopDialog, onFrontDialogChange, openDialogs } from "./dialog-stack.js";
+
+export { backClosable, closeFrontForBack, dialogClosers, isTopDialog, onFrontDialogChange, openDialogs };
 
 export const DIALOG_FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
@@ -13,11 +16,12 @@ export const DIALOG_FOCUSABLE =
 // focus trap must apply only to the topmost one. Listener order alone can't do
 // this — every dialog listens on document, and capture order favours the one
 // that mounted first, which is the one underneath.
-export const openDialogs = [];
+// openDialogs, dialogClosers and the front-layer helpers live in dialog-stack.js,
+// plain JS so the node tests can load them; re-exported below.
 // Whether a dialog is the one in front. Keys belong to the front layer only:
 // Escape closes one layer at a time, and the reader's page turns must not
 // reach it while a drawer is open over it.
-export const isTopDialog = (node) => Boolean(node) && openDialogs[openDialogs.length - 1] === node;
+
 // A dialog and Back. On a phone the edge swipe is Back, and a drawer with no
 // history entry of its own left the page under it. Putting the entry back
 // from the popstate handler works under a Back button and not under the
@@ -30,7 +34,6 @@ export const isTopDialog = (node) => Boolean(node) && openDialogs[openDialogs.le
 // stacking on it. The two dialogs that live in the address, the run drawer
 // (?series=) and the reader (?read=), say so with data-in-address and close
 // by the address changing.
-export const dialogClosers = new WeakMap();
 export const dialogMarks = new WeakMap();
 export let dialogMarkCount = 0;
 export function closeTopDialog() {
@@ -187,6 +190,7 @@ export function useDialog(onClose) {
     backdrop?.addEventListener("mousedown", onBackdrop);
     openDialogs.push(node);
     dialogClosers.set(node, leave);
+    frontChanged();
     let mark = 0;
     if (!node.hasAttribute("data-in-address")) {
       mark = ++dialogMarkCount;
@@ -226,6 +230,7 @@ export function useDialog(onClose) {
       const index = openDialogs.indexOf(node);
       if (index !== -1) openDialogs.splice(index, 1);
       dialogClosers.delete(node);
+      frontChanged();
       dialogMarks.delete(node);
       // Its entry goes with it -- a moment later, so a view change made in
       // the same breath (a drawer's "View pull list") has written its own
