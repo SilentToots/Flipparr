@@ -1,6 +1,6 @@
 # Reading state, panels and covers belong to the comic, not the file
 
-Plan, 2026-10-12. Status: **proposed**, waiting on the owner's decisions (below).
+Plan, 2026-10-12. Status: **approved** -- the owner's decisions are recorded below.
 
 ## Why
 
@@ -164,12 +164,15 @@ panel fixes (`flipparr-panel-fixes/1`) already carries hashes.
 
 Each step ships on its own and keeps the API compatible.
 
-## Decisions for the owner
+## The owner's decisions (2026-10-12)
 
-1. **Reading a volume.** Does finishing a volume (a trade) mark the issues it collects as read?
-   - Recommended: yes, for that profile, where the volume's contents are known (`edition_coverage_claims`). Ownership stays separate, per the release scope.
-2. **A place that can't be found exactly.** The same fraction of the way through with a short note (recommended), or the start of the comic.
-3. **Re-identification.** Move a profile's state with a re-identified file, as above (recommended), or leave it on the old issue.
+1. **Finishing a volume marks the issues it collects read**, for that profile,
+   where its contents are known (`edition_coverage_claims`). Ownership stays
+   separate, as the release scope requires.
+2. **A place that cannot be found exactly** opens at the same fraction of the
+   way through, with a short note once that the file changed.
+3. **A re-identified file's reading moves with it** to the corrected issue,
+   unless that profile also read another copy of the old issue.
 
 ## Verification
 
