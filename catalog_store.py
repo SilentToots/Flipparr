@@ -5115,7 +5115,7 @@ class CatalogStore:
     def record_page_fingerprint(self, file_id: int, page_member: str, file_signature: str,
                                 sha256: str, dhash: str | None) -> None:
         """A page's fingerprint, as its bytes and image are now."""
-        with self._connect() as connection:
+        with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO page_fingerprints(file_id, page_member, file_signature, sha256, dhash, recorded_at)
                    VALUES (?, ?, ?, ?, ?, ?)
@@ -5138,7 +5138,7 @@ class CatalogStore:
     def record_cbz_conversion(self, source_name: str, source_kind: str | None, source_bytes: int | None,
                               cbz_bytes: int | None, members: int | None, outcome: str, reason: str | None = None) -> None:
         """One comic converted to CBZ at import, or kept as it came and why."""
-        with self._connect() as connection:
+        with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO cbz_conversions(source_name, source_kind, source_bytes, cbz_bytes, members,
                                                   outcome, reason, converted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
