@@ -10,8 +10,8 @@ a phone, remembering where everyone left off.
 configuration, authentication, providers and download clients, backup and
 restore, upgrade and rollback, troubleshooting, and known limitations.
 
-It is pre-release software on a production track: `0.1.0` is the first
-installable release, built and published by CI as
+It is pre-release software on a production track: `0.2.0` is the current
+installable release (`0.1.0` was the first), built and published by CI as
 `ghcr.io/silenttoots/flipparr`. What the release promises, how each promise
 is tested, and what is still open is in
 [`docs/RELEASE_TRACK.md`](docs/RELEASE_TRACK.md).

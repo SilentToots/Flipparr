@@ -13,7 +13,7 @@ services:
     # set FLIPPARR_IMAGE in .env. Rolling back is setting it to the previous
     # tag -- with the config folder restored from the backup taken before
     # the upgrade, if the schema moved (docs/OPERATING.md, section 4).
-    image: "${FLIPPARR_IMAGE:-ghcr.io/silenttoots/flipparr:0.1.0}"
+    image: "${FLIPPARR_IMAGE:-ghcr.io/silenttoots/flipparr:0.2.0}"
     container_name: flipparr
     restart: unless-stopped
     init: true

@@ -153,48 +153,70 @@ You lose manual corrections, aliases and request history — not files.
 
 ## 5. Release notes
 
-### 0.2.0 — unreleased
+### 0.2.0 — Flipparr View, reading that follows the comic, and a library kept whole
 
-**Schema:** 68 (adds `page_panel_history`: the reading a panel correction
-replaced is kept, so corrections can be measured; a page fingerprint on
-every panel row, so a hand-made fix follows its page;
-`page_vision_answers`, what a page-reading connector said about each page;
-and `offline_downloads`, what Flipparr View keeps on each device, kept
-after it leaves with when and why).
-Upgrading from 0.1.0
-keeps a `flipparr.db.pre-v64` copy beside the catalog; rolling back to
-0.1.0 means restoring it or a `/config` backup, as 0.1.0 refuses a newer
-catalog.
+**Schema:** 76 (from 64). Upgrading keeps a `flipparr.db.pre-v64` copy beside
+the catalog; rolling back to 0.1.0 means restoring it or a `/config` backup,
+as 0.1.0 refuses a newer catalog. Added: `page_panel_history`,
+`page_vision_answers`, `offline_downloads` (what Flipparr View keeps on each
+device), `cbz_conversions`, `page_fingerprints`, `comic_reading` (a
+profile's reading of an issue or volume), `issue_cover_preferences`,
+`archive_checks` (every page of a comic read, and what was found) and
+`duplicate_resolutions` (which copy of an issue was kept, which set aside).
 
-- The server side of Flipparr View, the coming iPad and iPhone app
-  (`docs/OFFLINE_READING_PLAN.md`, Phase 0). The app sends
-  `Flipparr-Client: app` and carries its session and device tokens in
-  headers, not cookies. `GET /api/v1/app` names the server and its reader
-  API. `GET /api/v1/files/{id}/offline` lists what a download needs, and
-  `POST /api/v1/offline/check` says which downloads a profile may still
-  read. A progress save may carry `at`, so a save replayed after reading
-  offline never undoes a newer one. `?vision=no` asks for a page's panels
-  without the vision model. The web app is unchanged.
-- Panel view: the leftover pass now runs on a page read with no detector
-  model and no connector (the default install). Measured against the
-  owner's hand-fixed pages in `docs/PANELS.md`.
-- Panel fixes made by hand are keyed to the page itself (its bytes and a
-  perceptual hash of its render) as well as the file: they survive a run's
-  removal, re-attach to a replaced or re-imported comic, and can be
-  exported and imported as a file (Settings → Reader → Panel view).
+**Upgrading changes what is on disk only when you ask:** converting
+existing CBR comics to CBZ, keeping one copy of an issue, and replacing a
+damaged comic each start from a button and move files aside under
+`.flipparr/` rather than deleting them.
+
+**Settings and environment, new:** *Store new comics as CBZ* (on);
+*Replace damaged comics automatically* (off). `FLIPPARR_CPUS` caps the CPUs
+Flipparr sizes its work for (it reads the container's quota otherwise);
+`FLIPPARR_PACKAGE_CACHE_MB` (4096) bounds the packed comics kept for
+Flipparr View; `FLIPPARR_READING_CACHE_MB` now defaults to 4096
+(OPERATING.md).
+
+- *Flipparr View*, the reader-only iPad and iPhone app (TestFlight): the
+  web's own screens, page and panel view, downloads in iOS's background
+  session read offline, offline places, ratings, marks, reading lists and
+  panel fixes sent with their time when back online, profile switching
+  offline, run/arc/collection downloads, Settings. The server side: tokens
+  in headers, `GET /api/v1/app`, offline manifests and checks, late saves
+  with `at`, and the reader API pinned by a contract test.
+- *Downloads that do not load the server:* a comic is packed once, at
+  reading size, in the background lane and served whole and resumably
+  (`GET /api/v1/files/{id}/package`); readers' work and bulk work run in
+  CPU lanes sized from the machine.
+- *Reading belongs to the comic, not the file* (docs/READING_STATE_PLAN.md):
+  a place, chosen covers and backdrops, and panels (by the page's image)
+  follow the issue into any copy, replacement or CBZ of it; merges,
+  rebuilds and re-matches keep them; a place is found again by the page's
+  fingerprint. Run, arc and collection counts count comics, not files.
+- *CBZ:* comics Flipparr downloads as RAR are stored as CBZ, every page as
+  it was; the existing library can be converted on the admin's word, each
+  comic keeping its record.
+- *Damaged comics:* every downloaded comic has its pages read before it is
+  filed, and a damaged release is refused and the next tried; *Check every
+  comic* reads the library's pages once and lists the damaged ones under
+  Library health, with *Replace all damaged* (and the automatic setting).
+- *One copy per issue:* an issue already in the library is never
+  downloaded or filed again; Library health lists issues with two copies,
+  the better picked, and keeps one on the admin's word.
+- *libarchive 3.8.9* is built into the image: Debian's 3.6.2 refused pages
+  of valid RAR comics (and so called them damaged), and stopped at the first
+  bad page of a damaged one.
+- Panel view: a benchmark against hand-fixed pages, fixes keyed to the page
+  itself and exportable, the leftover pass on default installs, a softer dim.
+  Reader: the place saved on leaving, a failed page offers Try again, a
+  swipe from the phone's edge no longer closes the comic.
 - Releases posted more than 90 days before an issue came out are refused
-  for it, by the indexer's posting date (a 1942 upload with no year in its
-  name was taken for a new issue on its release day).
-- Reader: your place is saved the moment the reader is left (a closed tab,
-  an app swiped away, a phone locked), not only 900 ms after a page settles;
-  a page image that fails to load says so and offers Try again; a panel
-  request that gets no answer is asked again instead of leaving the page in
-  quadrants. Panel editor: *Single image* marks a splash page outright.
-- The log is kept in `/config/logs` as well as the console, capped at 50 MB
-  (`FLIPPARR_LOG_DIR` moves it). Docker's own copy goes when the container
-  is recreated, which every upgrade does.
-- A page the vision connector never answered is kept among its answers
-  (`failed`, with why), beside whole, kept, refused and unreadable.
+  for it. The log is kept in `/config/logs` (50 MB). Status marks mean one
+  thing on every cover.
+
+**Proven for this release:** the unit suites in both orders and the
+fulfillment drill (12 scenarios) in CI; on the owner's library of 2,830
+comics: the conversion (1,998 converted, every page byte-identical), the
+damage check against unrar and libjpeg, and the owner's daily use since 0.1.0.
 
 ### 0.1.0 — first release
 

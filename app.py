@@ -94,7 +94,7 @@ def _env(name: str, default: str = "") -> str:
 # Bumped by hand at release. COMICARR_BUILD is stamped by the image build (a
 # commit sha), so a running container can be traced to the source that made it
 # even between releases.
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 APP_BUILD = _env("BUILD", "").strip() or "source"
 
 # Flipparr's own directory inside a library root, holding originals set aside by
