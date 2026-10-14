@@ -51,7 +51,7 @@ export function OvernightPanels() {
   return <SettingsCard title="Overnight panel read">
     <p className="settings-card-lead">Reads the panels of the comics you are likely to open next while nobody is reading &mdash; Keep Reading and each run&rsquo;s next issue, new arrivals, and comics on your devices &mdash; so panel view opens at once. A page it has not reached is still read the moment you open it.</p>
     <Toggle checked={status.enabled} onChange={(next) => save({ overnightPanels: next })} title="Read panels overnight"
-      description="Uses this server's own clock; readers' comics are read by Flipparr itself, never on your key unless readers' pages are allowed above." />
+      description="Uses this server's own clock; readers' comics are read by Flipparr itself, never on your key unless “Readers’ pages too” is on above." />
     {status.enabled ? <>
       <div className="form-field settings-language settings-scan-interval"><span>From</span>
         <GlassSelect label="From" value={status.start} onChange={(next) => save({ overnightPanelsStart: Number(next) })} options={HOURS} /></div>
