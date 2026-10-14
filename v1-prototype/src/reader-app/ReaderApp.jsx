@@ -254,10 +254,17 @@ export function ReaderApp() {
   const switchTo = useCallback(async (profile) => {
     // Offline, the picker knows what this iPad can switch to without Flipparr.
     if (isLocked(profile) || transportRef.current?.online === false) { setAsking(profile); setPhase("picker"); return; }
+    // The switch swaps the client's token at once; until the status settles
+    // and the next profile attaches, nothing of this profile's may go out
+    // under it (transport.suspend).
+    const resume = transportRef.current?.suspend();
     try {
       await client.api("/api/v1/profiles/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: profile.id }) });
       await settle(client, await client.api("/api/v1/auth/status"));
-    } catch (err) { setError(err.message); }
+    } catch (err) {
+      resume?.();
+      setError(err.message);
+    }
   }, [client]);
   // Sign out works whatever the server is doing (owner, 2026-10-09: with it
   // down there was no way out to another server):
@@ -271,6 +278,12 @@ export function ReaderApp() {
   const signOut = useCallback(async () => {
     if (status?.method !== "forms") { await forgetServerRef.current(); return; }
     const transport = transportRef.current;
+    const keys = tokenKeys(client.origin);
+    // The profile's kept session leaves the device on every path (the
+    // review of 2026-10-14: it stayed on the online and shared-iPad paths,
+    // so the offline picker still opened a profile that had signed out,
+    // and its token worked again once the server was back).
+    if (status?.viewer) await secureStore.remove(keys.profileSession(status.viewer.id));
     if (transport && transport.online !== false) {
       try {
         await transport.transport("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 5000 });
@@ -279,9 +292,7 @@ export function ReaderApp() {
     }
     setAsking(null);
     if (status?.household) { setPhase("picker"); return; }
-    const keys = tokenKeys(client.origin);
     await secureStore.remove(keys.session);
-    if (status?.viewer) await secureStore.remove(keys.profileSession(status.viewer.id));
     await deviceStore.forgetSession();
     transport?.attach(null);
     setPhase("signin");
@@ -411,6 +422,12 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
   // Every kept comic put to the server (Phase 5): one this profile may no
   // longer read goes from the device, and says so.
   function checkDownloads() {
+    // A comic of this profile's that another profile's download removed to
+    // make room, while this one was away: said once, here.
+    downloads.ready.then(() => {
+      const gone = downloads.takeEvicted();
+      if (gone.length) showToast(`${gone.length === 1 ? `${gone[0].seriesTitle || gone[0].filename || "A comic"} was` : `${gone.length} finished comics were`} removed to make room on this device.`);
+    }, () => {});
     downloads.check().then((removed) => {
       if (removed) showToast(`${removed} download${removed === 1 ? " was" : "s were"} removed: ${removed === 1 ? "it is" : "they are"} no longer available to this profile.`);
     }, () => {});

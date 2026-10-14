@@ -55,7 +55,12 @@ export const deviceStore = {
     try {
       const { files } = await Filesystem.readdir(at(""));
       const profiles = files.filter((entry) => entry.type === "directory" && /^u\d+$/.test(entry.name));
-      return (await Promise.all(profiles.map((entry) => readJson(`${entry.name}/downloads.json`, [])))).flat();
+      // Each row says whose it is: a download making room may remove another
+      // profile's finished comic, and it has to go from that profile's folder.
+      return (await Promise.all(profiles.map(async (entry) => {
+        const rows = await readJson(`${entry.name}/downloads.json`, []);
+        return rows.map((row) => ({ ...row, profileId: entry.name.slice(1) }));
+      }))).flat();
     } catch {
       return [];
     }

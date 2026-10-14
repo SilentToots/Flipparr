@@ -55,7 +55,9 @@ test("only finished comics make way, the one read longest ago first, never the o
 test("a download fits, makes room, or says how much more it needs", () => {
   const rows = [ready("a", 20 * MB, { finished: true }), ready("b", 20 * MB)];
   assert.deepEqual(planDownload(5 * MB, { capBytes: 50 * MB, rows }), { fits: true, evict: [], shortfall: 0 });
-  assert.deepEqual(planDownload(25 * MB, { capBytes: 50 * MB, rows }), { fits: true, evict: ["a"], shortfall: 0 });
+  // The rows themselves make way, not their ids: each says whose profile it is.
+  const room = planDownload(25 * MB, { capBytes: 50 * MB, rows });
+  assert.deepEqual([room.fits, room.evict.map((row) => row.fileId), room.shortfall], [true, ["a"], 0]);
   assert.deepEqual(planDownload(45 * MB, { capBytes: 50 * MB, rows }), { fits: false, evict: [], shortfall: 15 * MB });
   assert.equal(usageBytes([...rows, { fileId: "c", bytes: 1 * MB, estimate: 4 * MB, state: "downloading" }]), 44 * MB);
 });
@@ -84,7 +86,7 @@ test("a batch is planned whole: finished comics make way, and when it cannot all
   ];
   const batch = [{ fileId: "a", bytes: 8 * MB }, { fileId: "b", bytes: 8 * MB }];
   const plan = planDownloads(batch, { capBytes: 30 * MB, rows });
-  assert.deepEqual([plan.fits, plan.total, plan.evict], [true, 16 * MB, ["old"]], "the finished one goes, never the open one");
+  assert.deepEqual([plan.fits, plan.total, plan.evict.map((row) => row.fileId)], [true, 16 * MB, ["old"]], "the finished one goes, never the open one");
   const tight = planDownloads([...batch, { fileId: "c", bytes: 8 * MB }], { capBytes: 30 * MB, rows });
   assert.deepEqual([tight.fits, tight.fitting, tight.shortfall], [false, 2, 4 * MB]);
 });

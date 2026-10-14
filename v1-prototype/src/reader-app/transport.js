@@ -48,6 +48,20 @@ export const PANELS_TIMEOUT_MS = 60000;
 /** How long the server's public route gets to say it is there: it answers at once or not at all. */
 export const CHECK_TIMEOUT_MS = 5000;
 
+/**
+ * Whether a refusal is the server's moment, not the request's: busy or
+ * broken (5xx), a request that took too long or came too often (408, 429),
+ * or a session this device has to renew (401, 403). Such a save waits in
+ * its queue for the next replay. One the server will never take -- gone
+ * (404), malformed (400, 409, 422) -- is dropped. Before, every refusal was
+ * dropped: a 502 from the proxy during a redeploy threw away a flight's
+ * places, and a signed-out profile lost its queue to the 401.
+ */
+export function sendableLater(error) {
+  const status = Number(error?.status) || 0;
+  return status === 401 || status === 403 || status === 408 || status === 429 || status >= 500;
+}
+
 function unreachable(cause, timedOut = false) {
   return Object.assign(new Error("Flipparr could not be reached"), { network: true, timedOut, cause });
 }
@@ -275,9 +289,16 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
         await lost(error);
         return progressFromBody(fileId, body, at, { pageCount: row?.pageCount });
       }
-      // Refused, not unreachable: it will not be accepted later either.
-      await withQueue((queue) => queueDrop(queue, fileId, at));
       if (error.status === 401) onLost();
+      if (sendableLater(error)) {
+        // The server's moment, not the save's: the place stays queued for
+        // the next replay. A busy server answers like an absent one -- the
+        // place as kept here; a session to renew is thrown to the caller.
+        if (error.status === 401 || error.status === 403) throw error;
+        return progressFromBody(fileId, body, at, { pageCount: row?.pageCount });
+      }
+      // Refused: it will not be accepted later either.
+      await withQueue((queue) => queueDrop(queue, fileId, at));
       if (error.status === 404) downloads?.remove(fileId, "hidden").catch(() => {});
       throw error;
     }
@@ -347,6 +368,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
         } catch (error) {
           if (error.network) { await lost(error); return; }
           if (error.status === 401) { onLost(); return; }
+          if (sendableLater(error)) return; // the server's moment: the rest wait with it
           // Gone or refused: not sendable later either.
           await withQueue((queue) => queueDrop(queue, row.fileId, row.at));
           if (error.status === 404) downloads?.remove(row.fileId, "hidden").catch(() => {});
@@ -363,6 +385,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
         } catch (error) {
           if (error.network) { await lost(error); return; }
           if (error.status === 401) { onLost(); return; }
+          if (sendableLater(error)) return; // the server's moment: the rest wait with it
           // Gone or refused: not sendable later either.
         }
         await withChangeQueue((queue) => dropChange(queue, row.key, row.at));
@@ -401,8 +424,26 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       if (next !== profileId) downloads = nextDownloads ?? null;
       else if (nextDownloads !== undefined) downloads = nextDownloads;
       profileId = next;
+      downloads?.release?.();
     },
     useDownloads(nextDownloads) { downloads = nextDownloads; },
+    /**
+     * Nobody's, for the length of a profile switch: the queue is not
+     * replayed and the engine is held, so nothing of the leaving profile's
+     * is sent under the arriving profile's token. Returns what puts the
+     * leaving profile back, for a switch that fails.
+     */
+    suspend() {
+      const leaving = { profileId, downloads };
+      downloads?.hold?.();
+      profileId = null;
+      downloads = null;
+      return () => {
+        profileId = leaving.profileId;
+        downloads = leaving.downloads;
+        downloads?.release?.();
+      };
+    },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };
 }

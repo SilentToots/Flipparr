@@ -73,6 +73,78 @@ const packaged = {
   panelsUrl: "/api/v1/files/63/panels?stored=only",
 };
 
+// Two profiles' downloads on one device, in memory, for making room.
+function household({ cap = 2000 } = {}) {
+  const files = {
+    3: [{ fileId: "70", state: "ready", finished: false, bytes: 600, pageUrls: [], seriesTitle: "Mine" }],
+    4: [{ fileId: "42", state: "ready", finished: true, bytes: 700, lastReadAt: "2026-10-01T00:00:00Z", pageUrls: [], seriesTitle: "Theirs" }],
+  };
+  const removed = [];
+  const removals = {};
+  const store = {
+    async downloads(profileId) { return files[profileId] || []; },
+    async saveDownloads(profileId, rows) { files[profileId] = rows; },
+    async capBytes() { return cap; },
+    async allDownloads() { return Object.entries(files).flatMap(([profileId, rows]) => rows.map((row) => ({ ...row, profileId }))); },
+    async pagesOnDisk() { return []; },
+    async panelPartsOnDisk() { return []; },
+    async removeComic(profileId, fileId) { removed.push([profileId, fileId]); },
+    async pendingRemovals(profileId) { return removals[profileId] || []; },
+    async savePendingRemovals(profileId, rows) { removals[profileId] = rows; },
+    async exists() { return false; },
+  };
+  const native = {
+    async addListener() { return { remove() {} }; },
+    async enqueue() {},
+    async cancel() {},
+    async transfers() { return { transfers: [] }; },
+  };
+  const client = { origin: "http://server:8803", headers: () => ({}), async api(path) {
+    if (path === "/api/v1/files/63/offline") return manifest;
+    return {};
+  } };
+  return { files, removed, removals, store, native, client };
+}
+
+test("making room removes the other profile's finished comic from their folder, and leaves them a note", async () => {
+  // Before: every profile's rows were planned over, but the comic chosen
+  // was removed under this profile's id -- the other's stayed, this
+  // profile's unfinished copy could go instead, and the server was told of
+  // a removal that never was.
+  const { files, removed, removals, store, native, client } = household();
+  const mine = new Downloads({ client, profileId: 3, store, native, idOfDevice: async () => "ipad" });
+  await mine.ready;
+  await mine.download("63");
+  assert.deepEqual(removed, [["4", "42"]], "theirs goes, from their folder");
+  assert.ok(files[3].some((row) => row.fileId === "70" && row.state === "ready"), "mine, unfinished, stays");
+  assert.deepEqual(files[4].map((row) => [row.fileId, row.state]), [["42", "evicted"]], "a note in their rows");
+  assert.deepEqual(removals[4], [{ fileId: "42", reason: "evicted" }], "told to the server as them, when they are next here");
+  assert.deepEqual(removals[3] || [], [], "not as me");
+  // They open the app: the note is theirs once, counts for nothing, and is gone from the rows.
+  const theirs = new Downloads({ client, profileId: 4, store, native, idOfDevice: async () => "ipad" });
+  await theirs.ready;
+  assert.deepEqual(theirs.rows, []);
+  assert.deepEqual(theirs.takeEvicted().map((note) => note.seriesTitle), ["Theirs"]);
+  assert.deepEqual(theirs.takeEvicted(), [], "once");
+  assert.deepEqual(files[4], [], "and not kept");
+});
+
+test("a check answered after the profile switched away touches nothing", async () => {
+  // Asked as this profile, answered under the next one's token: a child's
+  // `hidden` would have removed the parent's downloads.
+  const rows = [{ fileId: "63", state: "ready", fileSignature: "sig", pageUrls: [] }];
+  const { downloads, saved } = setup({ rows, checkAnswers: { 63: "hidden" } });
+  await downloads.ready;
+  const client = downloads.client;
+  const answer = client.api.bind(client);
+  client.api = async (path, options) => { downloads.hold(); return answer(path, options); };
+  assert.equal(await downloads.check(), 0);
+  assert.equal(saved.removed, undefined, "nothing removed");
+  downloads.release();
+  client.api = answer;
+  assert.equal(await downloads.check(), 1, "as itself again, the answer counts");
+});
+
 test("a download hands each page and each page's panels to the background session", async () => {
   const { downloads, enqueued } = setup();
   await downloads.ready;

@@ -43,6 +43,14 @@ export class Downloads extends EventTarget {
 
   async start() {
     this.rows = await this.store.downloads(this.profileId);
+    // Notes another profile's download left when it removed one of this
+    // profile's finished comics to make room: taken out of the rows here,
+    // shown once (takeEvicted), never counted or listed as a download.
+    this.evicted = this.rows.filter((row) => row.state === "evicted");
+    if (this.evicted.length) {
+      this.rows = this.rows.filter((row) => row.state !== "evicted");
+      await this.store.saveDownloads(this.profileId, this.rows);
+    }
     this.device = await this.idOfDevice();
     this.listeners = [
       await this.native.addListener("transferDone", (event) => this.onDone(event)),
@@ -59,9 +67,20 @@ export class Downloads extends EventTarget {
   }
 
   stop() {
+    this.held = true;
     this.listeners?.forEach((listener) => listener.remove());
     if (this.onVisible && typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisible);
   }
+
+  /**
+   * Held while the app switches profile: a check or a flush already under
+   * way finishes without touching anything. The client's token becomes the
+   * next profile's the moment the switch is asked, and an answer to this
+   * profile's question would otherwise be read as theirs -- a child's
+   * `hidden` removed the parent's downloads (the review of 2026-10-14).
+   */
+  hold() { this.held = true; }
+  release() { this.held = false; }
 
   /** Reconcile again, one at a time. */
   recheck() {
@@ -115,7 +134,7 @@ export class Downloads extends EventTarget {
       const megabytes = Math.ceil(plan.shortfall / (1024 * 1024));
       throw new Error(`Needs ${megabytes} MB more than this device's download limit allows`);
     }
-    for (const evicted of plan.evict) await this.remove(evicted, "evicted");
+    for (const evicted of plan.evict) await this.evict(evicted);
     const row = downloadRow(manifest, { groupKey });
     this.rows = [row, ...this.rows.filter((other) => other.fileId !== row.fileId)];
     await this.save();
@@ -374,6 +393,41 @@ export class Downloads extends EventTarget {
   }
 
   /** Take a comic off the device, and tell the server why. */
+  /** The notes of comics removed to make room while this profile was away, once. */
+  takeEvicted() {
+    const notes = this.evicted || [];
+    this.evicted = [];
+    return notes;
+  }
+
+  /**
+   * A finished comic that makes way for a download -- as often another
+   * profile's as this one's, since the cap is the device's. It leaves its
+   * own profile's folder and rows; that profile is left a note, shown when
+   * they next open the app, and the server is told as them when their
+   * session is next at hand (removals.json, flushRemovals). Before, the
+   * comic was removed under *this* profile's id: the other's stayed, this
+   * profile's unfinished copy went instead, and the server was told of a
+   * removal that never was (the review of 2026-10-14).
+   */
+  async evict(row) {
+    const owner = String(row.profileId ?? this.profileId);
+    const fileId = String(row.fileId);
+    if (owner === this.profileId) {
+      await this.remove(fileId, "evicted");
+      return;
+    }
+    await this.store.removeComic(owner, fileId);
+    const theirs = await this.store.downloads(owner);
+    const note = {
+      fileId, seriesTitle: row.seriesTitle, issueNumber: row.issueNumber, filename: row.filename,
+      state: "evicted", evictedAt: new Date().toISOString(), evictedFor: this.profileId, bytes: 0, estimate: 0,
+    };
+    await this.store.saveDownloads(owner, [note, ...theirs.filter((other) => other.fileId !== fileId)]);
+    const waiting = await this.store.pendingRemovals(owner);
+    await this.store.savePendingRemovals(owner, [...waiting.filter((item) => item.fileId !== fileId), { fileId, reason: "evicted" }]);
+  }
+
   async remove(fileId, reason = "removed") {
     await this.native.cancel({ prefix: `${this.profileId}:${fileId}:` });
     await this.store.removeComic(this.profileId, fileId);
@@ -406,9 +460,11 @@ export class Downloads extends EventTarget {
     // A row from before `noted` existed counts as told: telling again is
     // harmless, but every old download at once is not worth it.
     for (const row of this.rows.filter((item) => item.state === "ready" && item.noted === false)) {
+      if (this.held) return;
       try { await this.noteDownloaded(row); } catch (error) { if (error.network) break; }
     }
     for (const removal of await this.store.pendingRemovals(this.profileId)) {
+      if (this.held) return;
       try {
         await this.client.api("/api/v1/offline/downloads/remove", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -432,6 +488,7 @@ export class Downloads extends EventTarget {
    */
   async check() {
     await this.ready;
+    if (this.held) return 0;
     const kept = this.rows.filter((row) => row.state === "ready" || row.state === "stale");
     let removed = 0;
     let changed = false;
@@ -446,6 +503,8 @@ export class Downloads extends EventTarget {
       } catch {
         break;
       }
+      // Asked as this profile, answered after a switch: not this profile's answer.
+      if (this.held) return 0;
       for (const { fileId, status, lastReadAt, finished, panelsAt } of answer?.files || []) {
         const row = this.row(fileId);
         if (!row) continue;

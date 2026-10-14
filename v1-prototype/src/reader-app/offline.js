@@ -123,7 +123,10 @@ export function progressOf(row) {
 
 /** Room taken: what is on the device, and what a download under way will take. */
 export function usageBytes(rows) {
-  return rows.reduce((sum, row) => sum + (row.state === "ready" ? row.bytes : Math.max(row.bytes, row.estimate || 0)), 0);
+  return rows.reduce((sum, row) => {
+    if (row.state === "evicted") return sum; // a note left for its profile, holding nothing
+    return sum + (row.state === "ready" ? row.bytes : Math.max(row.bytes, row.estimate || 0));
+  }, 0);
 }
 
 /**
@@ -144,10 +147,13 @@ export function evictionOrder(rows, { reading = null } = {}) {
  */
 export function planDownload(estimate, { capBytes = DEFAULT_CAP_BYTES, rows = [], reading = null } = {}) {
   let free = capBytes - usageBytes(rows);
+  // The rows to make way, not only their file ids: the cap is the device's,
+  // so a row may be another profile's (allDownloads tags each with its
+  // profileId), and it leaves from that profile's folder.
   const evict = [];
   for (const row of evictionOrder(rows, { reading })) {
     if (free >= estimate) break;
-    evict.push(row.fileId);
+    evict.push(row);
     free += row.bytes;
   }
   if (free >= estimate) return { fits: true, evict, shortfall: 0 };

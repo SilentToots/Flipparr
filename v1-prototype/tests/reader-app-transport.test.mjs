@@ -15,6 +15,7 @@ function setup({ reachable = true } = {}) {
       if (path === "/api/v1/catalog") return { series: [{ id: "61" }] };
       if (path === "/api/v1/files/63/progress" && !options.method) return server.progress;
       if (path === "/api/v1/files/99/progress") throw Object.assign(new Error("gone"), { status: 404 });
+      if (server.answer && options.method) throw Object.assign(new Error(`refused ${server.answer}`), { status: server.answer });
       if (path === "/api/v1/issues/5/rating") return { id: "5", yourRating: JSON.parse(options.body).rating };
       if (path === "/api/v1/series/61/rating" && server.refuseRatings) throw Object.assign(new Error("no"), { status: 404 });
       return { ok: true };
@@ -118,6 +119,86 @@ test("replay stops when the server goes again, and drops what it refuses", async
   assert.deepEqual(files.q2, [], "the 404 is dropped, the other sent");
   assert.deepEqual(removed, [["99", "hidden"]], "and its download, if any, goes as hidden");
 });
+
+test("a busy or broken server keeps the queue; only a refusal drops it", async () => {
+  // A 502 from the proxy during a redeploy, a 503 while a package is built,
+  // a 429: the server's moment. Before, every one of these threw the
+  // waiting places away.
+  const { transport, server, files, sent } = setup({ reachable: false });
+  transport.setOffline();
+  await transport.transport("/api/v1/files/63/progress", save({ page: 1 }));
+  await transport.transport("/api/v1/issues/5/rating", save({ rating: 4 })).catch(() => {});
+  server.reachable = true;
+  for (const status of [503, 502, 429, 408]) {
+    server.answer = status;
+    await transport.probe();
+    await transport.replay();
+    assert.equal(files.q2.length, 1, `${status}: the place waits`);
+    assert.equal(files.c2.length, 1, `${status}: the rating waits`);
+  }
+  server.answer = null;
+  await transport.replay();
+  assert.deepEqual(files.q2, [], "sent once the server is itself again");
+  assert.deepEqual(files.c2, []);
+  assert.ok(sent.some((item) => item.path === "/api/v1/files/63/progress" && item.body?.page === 1));
+});
+
+test("a live save met by a busy server is kept and answered from the device", async () => {
+  const { transport, server, files } = setup();
+  server.answer = 503;
+  const answer = await transport.transport("/api/v1/files/63/progress", save({ page: 2 }));
+  assert.equal(answer.page, 2, "the place as kept here, as when the server is absent");
+  assert.equal(files.q2.length, 1, "and it waits for the next replay");
+  assert.equal(transport.online, true, "a busy server is not a gone one");
+});
+
+test("a session the server no longer takes keeps the queue for when it signs in again", async () => {
+  let lost = 0;
+  const { transport, server, files } = setup({ reachable: false });
+  transport.setOffline();
+  await transport.transport("/api/v1/files/63/progress", save({ page: 1 }));
+  server.reachable = true;
+  server.answer = 401;
+  const sealed = createAppTransport({ client: server, store: { ...stubStore(files) }, onLost: () => { lost += 1; }, setTimer: () => 0, clearTimer: () => {} });
+  sealed.attach("2", null);
+  await sealed.replay();
+  assert.equal(files.q2.length, 1, "the place is this profile's, not the session's");
+  assert.equal(lost, 1);
+});
+
+test("suspended for a profile switch, nothing of the leaving profile's goes out; a failed switch puts it back", async () => {
+  // The switch swaps the client's token at once. Before, a replay already
+  // running sent the leaving profile's places under the arriving one's.
+  const { transport, server, files, sent } = setup({ reachable: false });
+  transport.setOffline();
+  await transport.transport("/api/v1/files/63/progress", save({ page: 1 }));
+  server.reachable = true;
+  let held = 0; let released = 0;
+  const engine = { hold() { held += 1; }, release() { released += 1; }, row: () => null, async remove() {}, async noteRead() {} };
+  transport.attach("2", engine);
+  assert.equal(released, 1, "attaching releases");
+  const resume = transport.suspend();
+  assert.equal(held, 1, "the engine is held");
+  await transport.probe();
+  await transport.replay();
+  assert.equal(files.q2.length, 1, "nobody's: the place waits");
+  assert.ok(!sent.some((item) => item.method === "POST"), "nothing posted while suspended");
+  resume();
+  assert.equal(released, 2);
+  await transport.replay();
+  assert.deepEqual(files.q2, [], "back as itself, it sends");
+});
+
+function stubStore(files) {
+  return {
+    async progressQueue(id) { return files[`q${id}`] || []; },
+    async saveProgressQueue(id, queue) { files[`q${id}`] = queue; },
+    async answer(id, path) { return files[`a${id}${path}`] ?? null; },
+    async saveAnswer(id, path, value) { files[`a${id}${path}`] = value; },
+    async changeQueue(id) { return files[`c${id}`] || []; },
+    async saveChangeQueue(id, queue) { files[`c${id}`] = queue; },
+  };
+}
 
 test("offline, a comic opens where the server last had it", async () => {
   const { transport, server } = setup();
