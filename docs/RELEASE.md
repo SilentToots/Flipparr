@@ -155,8 +155,24 @@ You lose manual corrections, aliases and request history — not files.
 
 ### Unreleased
 
-**Schema:** 78 (adds `overnight_panel_runs`; `duplicate_resolutions.state`).
-No change on disk.
+**Schema:** 79 (adds `overnight_panel_runs`, `duplicate_resolutions.state`,
+`revoked_sessions`). No change on disk.
+
+- *Signing out ends that device's session on the server* (`revoked_sessions`):
+  before, the sign-out only expired the cookie, and Flipparr View's token sat
+  valid in a signed-out device's Keychain for its 30 days. The profile's other
+  sign-ins -- a phone's, the web's -- stand; "sign out everywhere" is still
+  the admin's.
+- Flipparr View (needs the next TestFlight build): a download making room
+  removes another profile's *finished* comic from that profile's own folder,
+  leaves them a note shown when they next open the app, and tells the server
+  as them -- it removed this profile's unfinished copy instead; places,
+  ratings and marks waiting offline are kept through a busy or broken server
+  (5xx, 408, 429) and a session to renew (401, 403), and dropped only on a
+  refusal -- a 502 during a redeploy threw a flight's reading away; a profile
+  switch holds the leaving profile's engine and queue until the next profile
+  is attached, so nothing goes out under the wrong token; signing out
+  removes the profile's kept session from the device on every path.
 
 - Fixes from the review of the week's deployments (docs/REVIEW_2026-10-14_PLAN.md,
   Tier A): a replacement converted to CBZ that failed after its swap is

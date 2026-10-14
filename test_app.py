@@ -9532,7 +9532,30 @@ class ProfileTokenTests(unittest.TestCase):
         record = {"id": 2, "name": "Sam", "role": "reader", "colour": None, "canRequest": True,
                   "autoApprove": False, "disabled": False, "sessionVersion": 3, **user}
         store.user.side_effect = lambda user_id: dict(record) if user_id == record["id"] else None
+        store.session_revoked.return_value = False
         return store, record
+
+    def test_signing_out_ends_that_device_s_session_and_no_other(self):
+        # Flipparr View's token sat valid in a signed-out device's Keychain
+        # for its 30 days: the logout only expired the cookie. Revoking by
+        # signature ends the one token; bumping the version would have ended
+        # the profile's web session too.
+        store, record = self._store()
+        ipad = app.issue_profile_token(record, self.config, now=1000)
+        phone = app.issue_profile_token(record, self.config, now=1500)
+        revoked = set()
+        store.revoke_session.side_effect = lambda signature, user_id, expires_at: revoked.add(signature)
+        store.session_revoked.side_effect = lambda signature: signature in revoked
+        self.assertTrue(app.revoke_presented_session(ipad, store))
+        store.revoke_session.assert_called_once_with(ipad.split(".")[-1], 2, 1000 + app._SESSION_TTL_SECONDS)
+        self.assertIsNone(app.resolve_session_token(ipad, self.config, store, now=2000)[0], "the iPad's ended")
+        self.assertEqual(app.resolve_session_token(phone, self.config, store, now=2000)[0].id, 2, "the phone's stands")
+        shared = app.issue_profile_token(record, self.config, now=1000, shared=True)
+        self.assertTrue(app.revoke_presented_session(shared, store))
+        self.assertIsNone(app.resolve_session_token(shared, self.config, store, now=2000)[0])
+        self.assertFalse(app.revoke_presented_session("", store))
+        self.assertFalse(app.revoke_presented_session("owner:2000:abc", store), "a pre-profiles token has no row")
+        self.assertFalse(app.revoke_presented_session("v2.x.3.notanumber.sig", store))
 
     def test_a_profile_cookie_speaks_for_its_profile_until_its_version_moves_on(self):
         store, record = self._store()

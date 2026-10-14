@@ -15,6 +15,7 @@ import math
 import re
 import sqlite3
 import threading
+import time
 import urllib.parse
 import unicodedata
 from comic_language import detect_language, language_name, normalize_language
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 78
+SCHEMA_VERSION = 79
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -1635,6 +1636,18 @@ class CatalogStore:
                     -- drop, never a moved file no table knows of.
                     state TEXT NOT NULL DEFAULT 'done' CHECK(state IN ('pending', 'done'))
                 );
+                -- Sessions ended by a sign-out before they expired (schema
+                -- 79): one device's token, by its signature, so signing out
+                -- of Flipparr View ends that device's session and no other
+                -- of the profile's (bumping session_version would end them
+                -- all). Rows go once the token would have expired anyway.
+                CREATE TABLE IF NOT EXISTS revoked_sessions (
+                    signature TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    revoked_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS revoked_sessions_expiry ON revoked_sessions(expires_at);
                 -- Each night's overnight panel read (schema 77, the owner,
                 -- 2026-10-14): when it ran, what it read, how many pages went
                 -- to the vision connector -- the night's limit is counted from
@@ -6369,6 +6382,24 @@ class CatalogStore:
             if current["role"] == "admin" and not current["disabled"] and self._enabled_admins(connection) <= 1:
                 raise ValueError("The library needs an admin: this is the last one")
             connection.execute("DELETE FROM users WHERE id=?", (int(user_id),))
+
+    def revoke_session(self, signature: str, user_id: int, expires_at: int, *, now: float | None = None) -> None:
+        """End one session -- the token whose signature this is -- before its
+        expiry. Tokens already expired are pruned on the way."""
+        moment = int(now if now is not None else time.time())
+        with self._write_lock, self._connect() as connection:
+            connection.execute("DELETE FROM revoked_sessions WHERE expires_at < ?", (moment,))
+            connection.execute(
+                """INSERT OR IGNORE INTO revoked_sessions(signature, user_id, expires_at, revoked_at)
+                   VALUES (?, ?, ?, ?)""",
+                (str(signature), int(user_id), int(expires_at), _utc_now()),
+            )
+
+    def session_revoked(self, signature: str) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM revoked_sessions WHERE signature=?", (str(signature),),
+            ).fetchone() is not None
 
     def bump_session_version(self, user_id: int) -> int:
         """End every sign-in this profile has, everywhere. Returns the new version."""

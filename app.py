@@ -1069,6 +1069,10 @@ def resolve_session_token(
             return None, False
         if user is None or str(user["sessionVersion"]) != version:
             return None, False
+        # Signed out on its device before it expired (revoke_session): this
+        # token only, the profile's others stand.
+        if store.session_revoked(signature):
+            return None, False
         return viewer_for(user), False
     # From before profiles: the admin's, while nothing has been revoked since.
     if not session_token_valid(token, config):
@@ -1077,6 +1081,25 @@ def resolve_session_token(
     if admin is None or admin["sessionVersion"] != 0 or _household_epoch(config) != 0:
         return None, False
     return viewer_for(admin), True
+
+
+def revoke_presented_session(token: str, store: "CatalogStore") -> bool:
+    """End the session a sign-out came with (a `v2.`/`v3.` token), on the
+    server: its signature goes on the revoked list until the token would have
+    expired. Nothing to end for an empty, malformed or pre-profiles token.
+    Returns whether a session was revoked."""
+    parts = str(token or "").split(".")
+    if parts[0] == "v3" and len(parts) == 6:
+        _tag, user_id, _version, _epoch, expires, signature = parts
+    elif parts[0] == "v2" and len(parts) == 5:
+        _tag, user_id, _version, expires, signature = parts
+    else:
+        return False
+    try:
+        store.revoke_session(signature, int(user_id), int(expires))
+    except ValueError:
+        return False
+    return True
 
 
 def _has_password(user: dict[str, Any], config: dict[str, Any]) -> bool:
@@ -20057,6 +20080,9 @@ class Handler(BaseHTTPRequestHandler):
         # Opened from a shared device's picker: a session re-issued on this
         # request (a new password, forgetting devices) stays one.
         self._shared_session = session_value.startswith("v3.")
+        # The token itself, for a sign-out to revoke (this device's session
+        # only; the profile's others stand).
+        self._session_value = session_value
         if session_value:
             viewer, legacy = resolve_session_token(session_value, config, store)
             if viewer is not None and legacy:
@@ -21112,6 +21138,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_url.path == "/api/v1/auth/logout":
             if payload.get("forgetDevice"):
                 self._set_cookie(_DEVICE_COOKIE, "", 0)
+            # The session this request came with ends now, on the server too:
+            # the cookie goes from a browser, but Flipparr View's token sat
+            # valid in a signed-out device's Keychain for its 30 days (the
+            # review of 2026-10-14). This device's session only: a profile
+            # signed in elsewhere stays signed in there.
+            revoke_presented_session(getattr(self, "_session_value", ""), _profiles_store())
             self.send_session_cookie("", expire=True)
             return
         avatar_set = re.fullmatch(r"/api/v1/profiles/(\d+)/avatar", parsed_url.path)

@@ -4676,6 +4676,23 @@ class ReaderProfileTests(LibraryFixture):
             self.assertEqual(len(names), CatalogStore.PRE_UPGRADE_COPIES_KEPT, "the oldest beyond the last few are gone")
             self.assertNotIn(f"{path.name}.pre-v61", names)
 
+    def test_a_revoked_session_is_refused_until_it_would_have_expired(self):
+        """Schema 79: a sign-out ends one token, by signature; the row goes
+        once the token has expired anyway."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            store.revoke_session("sig-old", 2, expires_at=1000, now=900)
+            store.revoke_session("sig-new", 2, expires_at=5000, now=900)
+            self.assertTrue(store.session_revoked("sig-old"))
+            self.assertTrue(store.session_revoked("sig-new"))
+            self.assertFalse(store.session_revoked("sig-other"))
+            store.revoke_session("sig-later", 3, expires_at=9000, now=2000)
+            self.assertFalse(store.session_revoked("sig-old"), "expired: pruned, and refused by its expiry anyway")
+            self.assertTrue(store.session_revoked("sig-new"))
+            store.revoke_session("sig-new", 2, expires_at=5000, now=2000)  # twice is fine
+            store.revoke_session("sig-live", 2, expires_at=2 ** 40)  # the clock's own now
+            self.assertTrue(store.session_revoked("sig-live"))
+
     def test_a_set_aside_recorded_before_78_is_done(self):
         """Schema 78 writes a set-aside's record before its file moves and
         marks it done after. Every row from before was written after the
