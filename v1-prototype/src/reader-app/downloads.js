@@ -210,6 +210,10 @@ export class Downloads extends EventTarget {
     const row = this.row(fileId);
     if (!row || row.state !== "downloading") return;
     row.preparing = true;
+    // Whatever arrived so far was the "still being packed" answer, not the
+    // comic: the ring starts again from nothing (2026-10-14).
+    row.received = 0;
+    delete row.expected;
     this.changed();
   }
 

@@ -236,6 +236,21 @@ test("a packed comic is two transfers: the package, unpacked as it lands, and ev
   assert.deepEqual(posted.map((item) => item.path), ["/api/v1/offline/downloads"]);
 });
 
+test("a comic still being packed is Preparing, not 100%: the wait's own answer is not the comic", async () => {
+  // The owner, 2026-10-14: every issue of a run showed "Downloading 100%"
+  // while its package was still being made.
+  const { downloads, emit } = setup({ answer: packaged });
+  await downloads.ready;
+  await downloads.download("63");
+  await emit("transferDone", { id: "3:63:panels" });
+  await emit("transferProgress", { id: "3:63:pkg", written: 64, expected: 64 });
+  await emit("transferWaiting", { id: "3:63:pkg", seconds: 10 });
+  const { progressOf } = await import("../src/reader-app/offline.js");
+  const row = downloads.row("63");
+  assert.equal(row.preparing, true);
+  assert.ok(progressOf(row) < 0.05, `not done: ${progressOf(row)}`);
+});
+
 test("a packed comic whose panels could not be had reads whole; one changed on the server is downloaded again as it is", async () => {
   const { downloads, enqueued, emit } = setup({ answer: packaged });
   await downloads.ready;

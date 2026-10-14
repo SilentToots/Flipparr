@@ -443,6 +443,10 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         guard let job = job(downloadTask), job.unpack != nil else { return }
+        // Only the package's own bytes: "still being packed" (503) has a
+        // small body of its own, which read as the whole comic arrived --
+        // every comic of a run showed 100% at once (the owner, 2026-10-14).
+        if let status = (downloadTask.response as? HTTPURLResponse)?.statusCode, !(200..<300).contains(status) { return }
         let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : 0
         let fraction = expected > 0 ? Double(totalBytesWritten) / Double(expected) : 0
         progressLock.lock()
