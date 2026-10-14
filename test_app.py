@@ -2236,6 +2236,33 @@ class FilenameParserTests(unittest.TestCase):
             self.assertEqual(Path(replacement_call[1]).resolve(), destination.resolve())
             self.assertEqual(Path(replacement_call[2]).resolve(), quarantine.resolve())
 
+    def test_a_replacement_converted_to_cbz_takes_the_cbrs_place(self):
+        """Reading, ratings and fixes belong to the issue now, so a replacement
+        for a CBR is stored as CBZ like any download (2026-10-14): the swap
+        takes the .cbr to quarantine and puts the .cbz where it was."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "library"
+            original = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbr"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(b"damaged-original")
+            converted = root / "converted" / "Saga 001 (2012).cbz"
+            converted.parent.mkdir()
+            with zipfile.ZipFile(converted, "w") as archive:
+                archive.writestr("001.jpg", comic_page("replacement-page"))
+            store = Mock()
+            store.replacement_for_job.return_value = {"id": 9, "original_path": str(original), "library_root": str(library)}
+            context = {"seriesTitle": "Saga", "seriesYear": 2012, "publisher": "Image Comics", "issueNumber": "1",
+                       "issueTitle": None, "existingDirectory": str(original.parent), "replacementId": "9",
+                       "replacementFileId": "4", "replacementFilePath": str(original)}
+            with patch("app.catalog_store", return_value=store):
+                placed = app._import_selected_comic({"path": str(converted), "convertedFromSuffix": ".cbr"}, context,
+                                                    {"job_id": 7}, library)
+            self.assertEqual(Path(placed["destination"]).name, "Saga (2012) #001.cbz")
+            self.assertTrue(Path(placed["destination"]).is_file())
+            self.assertFalse(original.exists(), "the .cbr is not left beside it")
+            self.assertEqual(Path(placed["quarantineOriginal"]).read_bytes(), b"damaged-original")
+
     def test_invalid_replacement_never_moves_original(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -11297,8 +11324,6 @@ class CbzConversionTests(unittest.TestCase):
         with patch("app.cached_setting", return_value=False):
             self.assertIs(app._comic_archive_as_cbz(selected, {}), selected, "off: as it came")
         with patch("app.cached_setting", return_value=True):
-            self.assertIs(app._comic_archive_as_cbz(selected, {"replacementFilePath": "/library/Example 001.cbr"}), selected,
-                          "a replacement keeps its path, and so its reading progress")
             with patch("app.convert_archive_to_cbz", side_effect=ValueError("The archive has no pages")):
                 self.assertIs(app._comic_archive_as_cbz(selected, {}), selected, "never a reason to refuse the comic")
         [row] = self.store.cbz_conversions()

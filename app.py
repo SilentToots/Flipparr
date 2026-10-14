@@ -7702,15 +7702,14 @@ def keep_best_copies(choices: list[dict[str, Any]] | None = None) -> dict[str, A
 
 def _comic_archive_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """A comic that arrived as a RAR (or 7z), as the CBZ the library keeps,
-    when `convertNewToCbz` is on. Only the release already chosen, and never
-    a replacement for a file kept under another name: the comic would move to
-    a new path and leave its reading progress behind. A comic that cannot be
-    converted is filed as it came; that is never a reason to refuse it."""
+    when `convertNewToCbz` is on. Only the release already chosen. A
+    replacement for a CBR is converted too: what was read, rated or fixed
+    belongs to the issue now, not the file (docs/READING_STATE_PLAN.md), and
+    the swap takes the .cbr out as it puts the .cbz in
+    (_import_selected_comic). A comic that cannot be converted is filed as it
+    came; that is never a reason to refuse it."""
     source = Path(selected["path"])
     if not cached_setting("convertNewToCbz"):
-        return selected
-    original = str(context.get("replacementFilePath") or "")
-    if original and Path(original).suffix.lower() != ".cbz":
         return selected
     store = catalog_store()
     kind = archive_kind(source)
@@ -8207,9 +8206,12 @@ def _import_selected_comic(
                 "source": str(source), "destination": standing["path"], "size": source_size,
                 "sha256": source_hash, "alreadyPresent": True, "alreadyInLibrary": True,
             }
+    # The comic being replaced is at the organized destination, under its own
+    # extension: a replacement converted to CBZ takes the .cbr's place.
     replacing_destination = bool(
         replacement_id and replacement_original
-        and destination.resolve() == replacement_original.resolve()
+        and destination.resolve().with_suffix("") == replacement_original.resolve().with_suffix("")
+        and replacement_original.suffix.lower() in COMIC_ARCHIVE_EXTENSIONS
     )
     # A comic converted to CBZ is filed under .cbz; the same issue already in
     # the library as the .cbr it came as is a different comic at the
