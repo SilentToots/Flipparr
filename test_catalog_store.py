@@ -6424,8 +6424,8 @@ class _ComicCatalogTestCase(unittest.TestCase):
 
 
 class ComicReadingTests(_ComicCatalogTestCase):
-    """docs/READING_STATE_PLAN.md step 2a: reading belongs to the comic (the
-    issue, or the volume), written beside the file's row. Two copies of one
+    """docs/READING_STATE_PLAN.md steps 2a-2c: reading belongs to the comic
+    (the issue, or the volume), and since 2c is kept there only. Two copies of one
     issue are one comic; a place records the copy and page it was read on."""
 
     def test_two_copies_of_an_issue_are_one_comic_read_on_the_copy_last_opened(self):
@@ -6439,6 +6439,25 @@ class ComicReadingTests(_ComicCatalogTestCase):
         self.assertEqual((again["file_id"], again["page"], again["page_count"], again["page_member"]), (self.b, 2, 8, "03.jpg"))
         self.assertIsNone(again["finished_at"], "going back into a comic makes it unfinished, as a file's place does")
         self.assertEqual(again["started_at"], first["started_at"], "started when it was first read, on either copy")
+
+    def test_step_2c_a_place_is_kept_with_the_comic_only(self):
+        """Step 2c (2026-10-14): a file of an issue writes no row of its own;
+        the place is the comic's, and reads back the same."""
+        self.store.set_reading_progress(self.a, 3, 6, "sa", user_id=ADMIN_USER_ID)
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM reading_progress").fetchone()[0], 0)
+        place = self.store.reading_progress(self.a, user_id=ADMIN_USER_ID)
+        self.assertEqual((place["fileId"], place["page"], place["pageCount"]), (str(self.a), 3, 6))
+        self.assertEqual(self.store.reading_progress(self.b, user_id=ADMIN_USER_ID)["page"], 3, "the comic's, on either copy")
+
+    def test_step_2c_a_file_linked_to_no_comic_still_keeps_its_own_place(self):
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("DELETE FROM file_issue_links WHERE file_id=?", (self.a,))
+        self.store.set_reading_progress(self.a, 2, 6, "sa", user_id=ADMIN_USER_ID)
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.assertEqual(connection.execute("SELECT page FROM reading_progress WHERE file_id=?", (self.a,)).fetchone()[0], 2)
+        self.store.set_reading_progress(self.a, 1, 6, "sa", user_id=ADMIN_USER_ID, at="2000-01-01T00:00:00+00:00")
+        self.assertEqual(self.store.reading_progress(self.a, user_id=ADMIN_USER_ID)["page"], 2, "a late save is still older")
 
     def test_a_late_save_from_another_device_does_not_overwrite_newer_reading_of_the_comic(self):
         issue = self.issue["Example 001.cbz"]

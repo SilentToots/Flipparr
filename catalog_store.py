@@ -4258,8 +4258,25 @@ class CatalogStore:
         return dict(row) if row else None
 
     def reading_progress(self, file_id: int, *, user_id: int) -> dict[str, Any] | None:
-        """Where this reader left this comic, if it is still the comic it was."""
+        """Where this reader left this comic: the comic's reading (step 2c,
+        docs/READING_STATE_PLAN.md: the only one written for a file of an
+        issue or volume), else -- a file linked to no comic -- the file's own
+        row, as before."""
         with self._connect() as connection:
+            comic = self._comic_of_file(connection, file_id)
+            if comic is not None:
+                row = connection.execute(
+                    "SELECT * FROM comic_reading WHERE user_id=? AND subject_kind=? AND subject_id=?",
+                    (int(user_id), *comic),
+                ).fetchone()
+                if row is None:
+                    return None
+                return {
+                    "fileId": str(file_id), "page": int(row["page"] or 0), "panel": int(row["panel"] or 0),
+                    "pageCount": int(row["page_count"] or 0), "fileSignature": row["file_signature"],
+                    "startedAt": row["started_at"], "finishedAt": row["finished_at"],
+                    "updatedAt": row["updated_at"],
+                }
             row = connection.execute(
                 "SELECT * FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
             ).fetchone()
@@ -4327,6 +4344,13 @@ class CatalogStore:
         now = at or _utc_now()
         finished_at = now if finished else None
         with self._write_lock, self._connect() as connection:
+            if self._comic_of_file(connection, file_id) is not None:
+                # Step 2c: a file of an issue or volume keeps its place with
+                # the comic only; the comic's side checks a late save itself.
+                self._write_comic_reading(connection, user_id=user_id, file_id=file_id, page=page, panel=panel,
+                                          page_count=page_count, file_signature=file_signature, finished=finished,
+                                          now=now, at=at, page_member=page_member)
+                return self.reading_progress(file_id, user_id=user_id)
             if at is not None and self._newer_progress_stored(connection, file_id, user_id, at):
                 return self.reading_progress(file_id, user_id=user_id)
             connection.execute(
@@ -4342,9 +4366,6 @@ class CatalogStore:
                 (int(user_id), int(file_id), int(page), int(panel), int(page_count), file_signature,
                  now, finished_at, now),
             )
-            self._write_comic_reading(connection, user_id=user_id, file_id=file_id, page=page, panel=panel,
-                                      page_count=page_count, file_signature=file_signature, finished=finished,
-                                      now=now, at=at, page_member=page_member)
         return self.reading_progress(file_id, user_id=user_id)
 
     @staticmethod
@@ -4359,9 +4380,10 @@ class CatalogStore:
     def _write_comic_reading(self, connection: sqlite3.Connection, *, user_id: int, file_id: int, page: int, panel: int,
                              page_count: int, file_signature: str, finished: bool, now: str, at: str | None,
                              page_member: str | None) -> None:
-        """The comic's side of a saved place (step 2a: written beside the
-        file's row; nothing reads it yet). A late save (`at`) is kept only if
-        nothing newer is stored for the comic -- read on another copy too."""
+        """A saved place, kept with the comic -- since step 2c the only place
+        written for a file of an issue or volume. A late save (`at`) is kept
+        only if nothing newer is stored for the comic -- read on another copy
+        too."""
         comic = self._comic_of_file(connection, file_id)
         if comic is None:
             return
@@ -4509,12 +4531,19 @@ class CatalogStore:
         place leaves no time behind, so a later late save older than the
         clear still writes: last write by arrival, there."""
         with self._write_lock, self._connect() as connection:
+            if self._comic_of_file(connection, file_id) is not None:
+                # The comic's reading is the place; its side checks a late
+                # clear. The file's old row (written before step 2c) goes too.
+                self._clear_comic_reading(connection, user_id=user_id, file_id=file_id, at=at)
+                connection.execute(
+                    "DELETE FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
+                )
+                return
             if at is not None and self._newer_progress_stored(connection, file_id, user_id, at):
                 return
             connection.execute(
                 "DELETE FROM reading_progress WHERE user_id=? AND file_id=?", (int(user_id), int(file_id)),
             )
-            self._clear_comic_reading(connection, user_id=user_id, file_id=file_id, at=at)
 
     @staticmethod
     def _analysis_failed(result_json: Any) -> bool:

@@ -1,8 +1,10 @@
 # Reading state, panels and covers belong to the comic, not the file
 
-Plan, 2026-10-12. Status: **built** (steps 1-6, 2026-10-12, overnight); steps
-2a and 2b in production, steps 3-6 committed and awaiting the owner's review
-and deploy; 2c (stop writing the file's row) waits until 2b has run a while.
+Plan, 2026-10-12. Status: **done**. Steps 1-6 built 2026-10-12 and in
+production from 2026-10-13; 2c (2026-10-14, after 2b had run two days) stops
+writing the file's row: a file of an issue or volume keeps its place with the
+comic only. `reading_progress` keeps the rows written before, and is still
+written for a file linked to no comic, which has nowhere else to keep one.
 
 | Step | Commits | State |
 |---|---|---|
@@ -13,7 +15,7 @@ and deploy; 2c (stop writing the file's row) waits until 2b has run a while.
 | 4 Covers and backdrops | 588d53a | committed; schema 72 rehearsed on production's database |
 | 5 Merges, rebuilds, re-matches | 00c97a7 | committed |
 | 6 Convert existing CBR to CBZ (opt-in job) | d8b1c9b, see below | committed; not run on the library |
-| 2c Stop writing reading_progress | -- | later |
+| 2c Stop writing reading_progress | see below | built 2026-10-14 |
 
 Before the first library run (2026-10-13), the conversion was made a
 non-change: the pages are the same bytes under the same names, so what was
