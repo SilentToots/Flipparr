@@ -7327,7 +7327,7 @@ def mark_damaged(file_id: int, path: Path, pages: list[str], total: int, *, prov
     names = ", ".join(Path(name).name for name in pages[:3]) + ("…" if len(pages) > 3 else "")
     store.set_file_health(file_id, str(path), {
         "status": "error", "code": "unreadable_pages", "proven": bool(proven), "source": source,
-        "signature": signature,
+        "signature": signature, "reader": archive_reader(),
         "message": (f"{len(pages)} of {total} pages are damaged ({names}). Replace the comic." if proven else
                     f"{len(pages)} of {total} pages can't be read here ({names}): the archive may be damaged, "
                     "or stored in a way this machine can't read."),
@@ -7521,7 +7521,13 @@ def check_library_comic(file_id: int, path: Path) -> str:
     store.record_archive_check(file_id, signature, "whole", bad_pages=[], total_pages=checked["total"], said="",
                                source="check", reader=archive_reader())
     health = store.file_health_of(file_id)
-    if health.get("code") == "unreadable_pages" and health.get("signature") and health["signature"] != signature:
+    changed = bool(health.get("signature")) and health["signature"] != signature
+    # A mark a check or conversion made with another archive reader is that
+    # reader's verdict: libarchive 3.6.2 marked valid RARs damaged, and the
+    # reader that now reads every page whole lifts its mark. One made by hand
+    # (no source) is still the person's.
+    other_reader = health.get("source") in ("check", "conversion") and health.get("reader") != archive_reader()
+    if health.get("code") == "unreadable_pages" and (changed or other_reader):
         store.set_file_health(file_id, str(path), inspect_file_health(path))
     return "whole"
 

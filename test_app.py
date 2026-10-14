@@ -11547,6 +11547,16 @@ class ArchiveCheckTests(_ComicCopiesTestCase):
             app._run_archive_check(app._unchecked_comics())
             self.assertEqual(app._unchecked_comics(), [])
 
+    def test_a_mark_an_older_reader_made_is_lifted_when_this_one_reads_every_page(self):
+        whole = self._damaged_and_whole()["Example 001.cbz"]
+        path = self.root / "Example 001.cbz"
+        mark = {"status": "error", "code": "unreadable_pages", "source": "check", "reader": "libarchive 3.6.2",
+                "signature": app._file_signature(path), "message": "damaged"}
+        self.store.set_file_health(whole, str(path), mark)
+        with patch("app.archive_reader", return_value="libarchive 3.8.9"):
+            app.check_library_comic(whole, path)
+        self.assertEqual(self.store.file_health_of(whole)["status"], "ok")
+
     def test_a_mark_is_lifted_only_when_the_comic_has_changed_since(self):
         whole = self._damaged_and_whole()["Example 001.cbz"]
         path = self.root / "Example 001.cbz"
