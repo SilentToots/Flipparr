@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 74
+SCHEMA_VERSION = 75
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -1610,7 +1610,8 @@ class CatalogStore:
                     first_bad TEXT,
                     said TEXT,
                     source TEXT NOT NULL,
-                    checked_at TEXT NOT NULL
+                    checked_at TEXT NOT NULL,
+                    reader TEXT
                 );
                 CREATE INDEX IF NOT EXISTS archive_checks_file ON archive_checks(file_id, id);
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
@@ -2334,6 +2335,12 @@ class CatalogStore:
             for column, kind in (("file_id", "INTEGER"), ("from_signature", "TEXT"), ("to_signature", "TEXT")):
                 if column not in conversion_columns:
                     connection.execute(f"ALTER TABLE cbz_conversions ADD COLUMN {column} {kind}")
+            # 75: which archive reader gave a check's verdict: a damaged or
+            # unreadable one from an older reader is read again (libarchive
+            # 3.6.2 called valid RARs damaged; 3.8.9 replaced it).
+            check_columns = {row["name"] for row in connection.execute("PRAGMA table_info(archive_checks)")}
+            if "reader" not in check_columns:
+                connection.execute("ALTER TABLE archive_checks ADD COLUMN reader TEXT")
             # 74: a replacement Flipparr asked for by itself, for a comic with
             # proven damage (`autoReplaceDamaged`), says so: those are capped.
             replacement_columns = {row["name"] for row in connection.execute("PRAGMA table_info(file_replacement_requests)")}
@@ -5580,13 +5587,13 @@ class CatalogStore:
         return True
 
     def record_archive_check(self, file_id: int, file_signature: str, outcome: str, *, bad_pages: list[str],
-                             total_pages: int, said: str, source: str) -> None:
+                             total_pages: int, said: str, source: str, reader: str | None = None) -> None:
         with self._write_lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO archive_checks(file_id, file_signature, outcome, bad_pages, total_pages, first_bad,
-                                              said, source, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                              said, source, checked_at, reader) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (int(file_id), file_signature, outcome, len(bad_pages), int(total_pages),
-                 bad_pages[0] if bad_pages else None, (said or "")[:1000] or None, source, _utc_now()),
+                 bad_pages[0] if bad_pages else None, (said or "")[:1000] or None, source, _utc_now(), reader),
             )
 
     def archive_check_candidates(self) -> list[dict[str, Any]]:
@@ -5598,7 +5605,9 @@ class CatalogStore:
                           (SELECT outcome FROM archive_checks c WHERE c.file_id=files.id ORDER BY c.id DESC LIMIT 1)
                               AS last_outcome,
                           (SELECT file_signature FROM archive_checks c WHERE c.file_id=files.id ORDER BY c.id DESC LIMIT 1)
-                              AS last_signature
+                              AS last_signature,
+                          (SELECT reader FROM archive_checks c WHERE c.file_id=files.id ORDER BY c.id DESC LIMIT 1)
+                              AS last_reader
                      FROM files
                     WHERE files.present=1 AND lower(files.extension) IN ('.cbz', '.cbr', '.cb7', '.cbt', '.zip', '.rar')
                     ORDER BY files.id"""

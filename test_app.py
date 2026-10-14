@@ -11537,6 +11537,16 @@ class ArchiveCheckTests(_ComicCopiesTestCase):
         self.assertEqual(rows, {whole: "whole", damaged: "damaged"})
         self.assertEqual(app._unchecked_comics(), [], "neither is read again until it changes")
 
+    def test_a_damaged_verdict_from_an_older_reader_is_read_again(self):
+        ids = self._damaged_and_whole()
+        with patch("app.archive_reader", return_value="libarchive 3.6.2"):
+            app._run_archive_check(app._unchecked_comics())
+        with patch("app.archive_reader", return_value="libarchive 3.8.9"):
+            self.assertEqual([row["id"] for row in app._unchecked_comics()], [ids["Example 002.cbz"]],
+                             "the damaged one again; the whole one stands")
+            app._run_archive_check(app._unchecked_comics())
+            self.assertEqual(app._unchecked_comics(), [])
+
     def test_a_mark_is_lifted_only_when_the_comic_has_changed_since(self):
         whole = self._damaged_and_whole()["Example 001.cbz"]
         path = self.root / "Example 001.cbz"

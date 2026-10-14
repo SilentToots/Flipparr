@@ -7307,7 +7307,7 @@ def convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_or
         try:
             catalog_store().record_archive_check(file_id, _file_signature(target), "whole", bad_pages=[],
                                                  total_pages=len(archive_page_members(target)), said="",
-                                                 source="conversion")
+                                                 source="conversion", reader=archive_reader())
         except Exception as inner:  # noqa: BLE001 -- evidence, not the conversion
             log_exception("archive_check_record_failed", inner, level="warning", fileId=file_id)
     return outcome
@@ -7323,7 +7323,7 @@ def mark_damaged(file_id: int, path: Path, pages: list[str], total: int, *, prov
     store = catalog_store()
     signature = _file_signature(path)
     store.record_archive_check(file_id, signature, "damaged" if proven else "unreadable", bad_pages=pages,
-                               total_pages=total, said=said, source=source)
+                               total_pages=total, said=said, source=source, reader=archive_reader())
     names = ", ".join(Path(name).name for name in pages[:3]) + ("…" if len(pages) > 3 else "")
     store.set_file_health(file_id, str(path), {
         "status": "error", "code": "unreadable_pages", "proven": bool(proven), "source": source,
@@ -7419,14 +7419,37 @@ _CHECK_JOB: dict[str, Any] = {"running": False, "stop": False, "total": 0, "done
                               "lastFound": None}
 
 
+def archive_reader() -> str:
+    """The archive reader's name and version ("libarchive 3.8.9"), kept with
+    each check's verdict."""
+    global _ARCHIVE_READER
+    if _ARCHIVE_READER is None:
+        tool = _external_archive_tool()
+        found = ""
+        if tool:
+            try:
+                out = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=10).stdout
+                found = (re.search(r"libarchive [\d.]+", out) or re.search(r"\S+ [\d.]+", out) or [""])[0]
+            except (OSError, subprocess.SubprocessError):
+                found = ""
+        _ARCHIVE_READER = found or "unknown"
+    return _ARCHIVE_READER
+
+
+_ARCHIVE_READER: str | None = None
+
+
 def _unchecked_comics() -> list[dict[str, Any]]:
     """Present comic archives not yet read as they are now: one checked at
-    its present signature -- whole or damaged -- is not read again until the
-    file changes."""
+    its present signature is not read again until the file changes -- unless
+    an older archive reader called it damaged or unreadable (libarchive 3.6.2
+    did so to valid RARs), when it is read again with this one."""
     pending = []
+    reader = archive_reader()
     for row in catalog_store().archive_check_candidates():
         signature = f"{int(row['mtime_ns'] or 0):x}-{int(row['size_bytes'] or 0):x}"
-        if row["last_outcome"] and row["last_signature"] == signature:
+        if row["last_outcome"] and row["last_signature"] == signature and (
+                row["last_outcome"] == "whole" or row["last_reader"] == reader):
             continue
         pending.append(row)
     return pending
@@ -7496,7 +7519,7 @@ def check_library_comic(file_id: int, path: Path) -> str:
                      said=checked["said"], source="check")
         return checked["outcome"]
     store.record_archive_check(file_id, signature, "whole", bad_pages=[], total_pages=checked["total"], said="",
-                               source="check")
+                               source="check", reader=archive_reader())
     health = store.file_health_of(file_id)
     if health.get("code") == "unreadable_pages" and health.get("signature") and health["signature"] != signature:
         store.set_file_health(file_id, str(path), inspect_file_health(path))
