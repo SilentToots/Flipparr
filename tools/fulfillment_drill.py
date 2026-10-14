@@ -37,6 +37,7 @@ import datetime as dt
 import hashlib
 import http.server
 import json
+import io
 import os
 import re
 import shutil
@@ -87,6 +88,16 @@ def posixpath_name(path: str) -> str:
     return path.rstrip("/").rsplit("/", 1)[-1]
 
 
+def page(label: str) -> bytes:
+    """A small whole JPEG, the same bytes every run for the same label (the
+    torrent's hash depends on it). Pages are read whole before a comic is
+    filed (2026-10-13), so a placeholder of a few bytes is refused as damaged."""
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 12), (40, 90, 160)).save(buffer, "JPEG", comment=label.encode())
+    return buffer.getvalue()
+
+
 def pack_files() -> list[tuple[str, bytes]]:
     """The pack's comics, one an issue, each a real little zip -- a fixed
     content so the torrent's hash is the same on every run."""
@@ -96,9 +107,9 @@ def pack_files() -> list[tuple[str, bytes]]:
         buffer.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
             info = zipfile.ZipInfo("001.jpg", date_time=(2026, 1, 1, 0, 0, 0))
-            archive.writestr(info, b"\xff\xd8\xff\xe0 drill torrent page " + str(number).encode())
+            archive.writestr(info, page(f"drill torrent page {number}"))
             info = zipfile.ZipInfo("002.jpg", date_time=(2026, 1, 1, 0, 0, 0))
-            archive.writestr(info, b"\xff\xd8\xff\xe0 drill torrent page two " + str(number).encode())
+            archive.writestr(info, page(f"drill torrent page two {number}"))
         files.append((f"Drill Torrent (2026) #{number:03d}.cbz", buffer.read_bytes()))
     return files
 
@@ -443,8 +454,8 @@ def environment() -> dict[str, str]:
 def comic(path: Path, *, locked: bool = False) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("001.jpg", b"\xff\xd8\xff\xe0 drill page")
-        archive.writestr("002.jpg", b"\xff\xd8\xff\xe0 drill page two")
+        archive.writestr("001.jpg", page("drill page"))
+        archive.writestr("002.jpg", page("drill page two"))
     if locked:
         data = bytearray(path.read_bytes())
         data[data.find(b"PK\x03\x04") + 6] |= 0x1
