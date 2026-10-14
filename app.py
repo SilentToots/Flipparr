@@ -7962,18 +7962,19 @@ def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_
         },
         series_run_id=int(requested_run) if requested_run.isdigit() else None,
     )
-    _set_aside_damaged_copies(int(file_id), context)
+    _set_aside_damaged_copies(file_id, context)
     return file_id
 
 
-def _set_aside_damaged_copies(file_id: int, context: dict[str, Any]) -> None:
+def _set_aside_damaged_copies(file_id: Any, context: dict[str, Any]) -> None:
     """A download read whole, filed for an issue whose only copies were
     damaged, takes their place: they are set aside as duplicates, as a
     replacement's original goes to quarantine. Never for a replacement,
     which has its own swap, nor when this copy is itself damaged."""
     issue_id = str(context.get("issueId") or "")
-    if context.get("replacementId") or not issue_id.isdigit():
+    if context.get("replacementId") or not issue_id.isdigit() or not str(file_id).isdigit():
         return
+    file_id = int(file_id)
     copies = catalog_store().present_copies_of_issue(int(issue_id))
     mine = next((copy for copy in copies if copy["id"] == int(file_id)), None)
     others = [copy for copy in copies if copy["id"] != int(file_id)]
